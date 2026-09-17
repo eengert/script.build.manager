@@ -1,6 +1,21 @@
 # Handoff
 
-## Latest — 2026-09-17 Agent-state correction; canonical plan confirmed installed
+## Latest — 2026-09-17 Project plan §30 corrected (branch workflow)
+
+Documentation correction only. No BM-001 implementation files changed.
+
+**What changed**:
+- `BUILD_MANAGER_PROJECT_PLAN.md` §30: replaced incorrect `main`-only branch
+  recommendation with the actual established workflow (`matrix` as protected
+  integration branch; `agent/codex` and `agent/claude` as worktree branches;
+  short-lived task branches optional). No other sections touched.
+
+**BM-001 implementation unchanged**: `git diff 799b836 -- addon.xml default.py
+resources/ tests/ changelog.md LICENSE.txt` produced no output.
+
+---
+
+## Previous — 2026-09-17 Agent-state correction; canonical plan confirmed installed
 
 Documentation correction only. No BM-001 implementation files changed.
 

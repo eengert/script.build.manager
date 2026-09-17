@@ -1257,15 +1257,20 @@ One agent should finish, commit/handoff, then the next reviews or extends it.
 
 # 30. Source Control Workflow
 
-Recommended initially:
+Established branch structure:
 
 ```text
-main
+matrix          ← protected integration branch; supervisor-reviewed merges only
+agent/codex     ← Codex worktree branch
+agent/claude    ← Claude worktree branch
 ```
 
-plus short-lived task branches if useful.
+Normal implementation work occurs on the appropriate agent branch (`agent/codex`
+or `agent/claude`). Completed work is supervisor-reviewed before being merged
+into `matrix`. Do not introduce a `main` branch unless the project architecture
+is explicitly changed.
 
-Examples:
+Short-lived task branches off an agent branch are optional, not required:
 
 ```text
 feature/manifest-parser
