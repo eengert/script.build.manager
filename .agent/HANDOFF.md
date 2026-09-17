@@ -1,6 +1,38 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-006 complete; pending merge to matrix, BM-007 next
+## Latest — 2026-09-17 BM-006 merged to matrix; project idle, BM-007 next
+
+**matrix before**: `6d41279`
+**matrix after**: `70504e0` (fast-forward — no squash, no rebase)
+**Merge type**: Fast-forward via `git push origin 70504e0:refs/heads/matrix`
+
+**Commits merged** (in order):
+- `0c2bb5a` — chore: update agent state after BM-005 merge to matrix (state only)
+- `1c34024` — chore: record BM-005 live validation results (state only)
+- `7735e7a` — feat(BM-006): implement desired-vs-actual planner
+- `c922e37` — chore: record BM-006 completion in agent state
+- `b686153` — fix(BM-006): cross-category dedup and contradictory-state validation
+- `70504e0` — chore: record BM-006-correction in agent state
+
+**Tests on matrix**: 444/444 passing (`python3 -m unittest discover tests`)
+
+**Validation checks**:
+- planner.py imports: `__future__`, `dataclasses`, `typing`, `resources.lib.inspector`, `resources.lib.resolver` — no Kodi, no fs/network
+- CONFIGURE current_state: `"unchecked"` confirmed
+- Unmanaged add-ons: never emits ENSURE_ABSENT for unmentioned IDs
+- No real Kodi or device touched
+- `agent/codex` unchanged at `a970e83`
+
+**Usage (merge task)**: start 5h 95% / wk 50%, end 5h 97% / wk 50%,
+delta +2% / 0%. Model: claude-sonnet-4-6, effort: max.
+
+**BM-007**: not started.
+
+**Smallest next step**: Supervisor assigns BM-007 task prompt. Claude implements.
+
+---
+
+## Previous — 2026-09-17 BM-006 complete; pending merge to matrix, BM-007 next
 
 **Commit**: `7735e7a` on `agent/claude`
 

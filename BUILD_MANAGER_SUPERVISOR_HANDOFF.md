@@ -52,7 +52,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**BM-006 on agent/claude, pending merge — awaiting BM-007 assignment**
+**Idle — BM-006 merged, awaiting BM-007 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
@@ -61,9 +61,10 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 | BM-003 Manifest parser/validator | Merged | `a5d263e` |
 | BM-004 Profile merge/inheritance | Merged | `2ad253f` |
 | BM-005 Kodi/platform state inspector | Merged | `6d41279` |
-| BM-006 Desired-vs-actual diff / planner | On agent/claude | `7735e7a` (pending merge) |
+| BM-006 Desired-vs-actual diff / planner | Merged | `70504e0` |
+| BM-007 | Not started | — |
 
-**matrix HEAD**: `6d41279` (fast-forward from `2ad253f`)
+**matrix HEAD**: `70504e0` (fast-forward from `6d41279`)
 
 ## Completed Deliverables
 
@@ -123,17 +124,22 @@ Do not treat any shorter summary as a substitute for the canonical plan.
   `ENSURE_ABSENT`, `SET_SKIN`, `CONFIGURE`.
   Deterministic ordering: repos→installs→enable/disable→absent→skin→config,
   lexical by addon_id within category.
-  Skin dedup: `planned_install_ids` prevents duplicate INSTALL_ADDON for skin.
+  Cross-category dedup: INSTALL_REPOSITORY suppresses INSTALL_ADDON for same addon_id;
+  desired_state="disabled" propagated when overlapping desired add-on state is disabled.
+  Skin dedup: planned_install_ids (union of repo + addon installs) prevents duplicate
+  INSTALL_ADDON for skin even when skin-as-repo pathological manifest is used.
+  Contradictory-state validation: raises PlanningError when desired skin also declared
+  absent, or when required repository also declared absent.
   Unmanaged add-ons in actual state are never touched.
   CONFIGURE always `current_state="unchecked"` (BM-005 does not inspect config state).
   `PlanningError` on duplicate addon_ids in KodiState.
   Pure Python — no Kodi imports, no filesystem/network access, no mutation.
   Stdlib only — no new runtime dependencies.
-- `tests/test_planner.py` — 70 BM-006 tests
+- `tests/test_planner.py` — 86 BM-006 tests (70 initial + 16 correction)
 
 ## Test Status
 
-`python3 -m unittest discover tests` — **428/428 passing** (outside Kodi runtime; on agent/claude)
+`python3 -m unittest discover tests` — **444/444 passing** (outside Kodi runtime)
 
 ## Schema Summary
 
