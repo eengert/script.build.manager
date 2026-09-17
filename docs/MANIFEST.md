@@ -128,8 +128,10 @@ service, skin, etc.).
 
 A **platform profile** describes behavior common to all devices running a
 particular operating system (tvOS, Android, macOS). A **device profile**
-describes a specific physical device (bonus-room Apple TV, Shield Pro). A device
-profile declares which platform profile it extends.
+describes a specific physical device (bonus-room Apple TV, Shield Pro). Every
+device profile must declare exactly one platform profile via `extends`. Direct
+layering on the base build (without an intervening platform profile) is not
+permitted in v1.
 
 ### Public config declarations vs private overlay
 
@@ -301,9 +303,9 @@ Recommended platform IDs:
 }
 ```
 
-Keys are stable device IDs. Each device profile may declare `extends` to
-reference a platform profile ID. If `extends` is absent, the device profile
-layers directly on the base build.
+Keys are stable device IDs. Every device profile **must** declare `extends`
+naming exactly one platform profile ID. Direct inheritance from the base build
+(without an intervening platform profile) is not permitted in v1.
 
 ### `optional` *(optional)*
 

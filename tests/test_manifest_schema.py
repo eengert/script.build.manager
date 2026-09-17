@@ -256,8 +256,9 @@ def _validate_device_profile(profile, *, label):
     allowed = {"label", "extends", "addons", "config", "skin", "include_optional"}
     for key in profile:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
-    if "extends" in profile:
-        _assert(isinstance(profile["extends"], str), f"{label}: 'extends' must be a string")
+    _assert("extends" in profile, f"{label}: 'extends' is required for every device profile")
+    _assert(isinstance(profile["extends"], str), f"{label}: 'extends' must be a string")
+    _assert(profile["extends"], f"{label}: 'extends' must not be empty")
     # Validate shared sub-fields without re-checking the top-level key set
     if "addons" in profile:
         addons = profile["addons"]
@@ -582,15 +583,21 @@ class TestInvalidManifests(unittest.TestCase):
         })
         self._assert_invalid(doc, contains="state")
 
-    def test_device_profile_references_nonexistent_platform(self):
-        # The schema itself cannot enforce cross-reference validity (that is
-        # BM-004 parser logic), but the structural validator can check 'extends'
-        # is a string. This test confirms the field is accepted as a string.
+    def test_device_profile_with_extends_is_valid(self):
+        # extends is required; a device profile that provides it must be accepted.
+        # Cross-reference validation (does the named platform exist?) is parser
+        # logic deferred to BM-003/BM-004 — not enforced by the structural check.
         doc = self._make({
             "platform_profiles": {"tvos": {}},
             "device_profiles": {"bonus-room": {"extends": "tvos"}},
         })
         validate_manifest_structure(doc)  # should pass
+
+    def test_device_profile_missing_extends_is_invalid(self):
+        doc = self._make({
+            "device_profiles": {"bonus-room": {"label": "Bonus Room"}},
+        })
+        self._assert_invalid(doc, contains="extends")
 
     def test_optional_group_missing_id(self):
         doc = self._make({"optional": [{"label": "No ID here"}]})

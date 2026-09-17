@@ -266,8 +266,9 @@
 
     "device_profile": {
       "type": "object",
+      "required": ["extends"],
       "additionalProperties": false,
-      "description": "A device profile. Extends a platform profile. Represents a single physical device or role.",
+      "description": "A device profile. Must extend exactly one platform profile. Represents a single physical device or role.",
       "properties": {
         "label": {
           "type": "string",
@@ -275,7 +276,7 @@
         },
         "extends": {
           "type": "string",
-          "description": "Platform profile ID this device inherits from. Must match a key in platform_profiles. Absent means the device profile layers directly on the base build with no platform layer."
+          "description": "Required. Platform profile ID this device inherits from. Must match a key in platform_profiles. Semantic validation that the referenced ID exists is performed by the parser (BM-003), not the schema."
         },
         "addons": {
           "type": "array",
