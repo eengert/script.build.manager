@@ -1070,5 +1070,266 @@ class TestBM006Regression(unittest.TestCase):
         self.assertEqual(actual.addons, original_actual_addons)
 
 
+# ---------------------------------------------------------------------------
+# TestCrossCategoryDedup (BM-006 correction)
+# ---------------------------------------------------------------------------
+
+class TestCrossCategoryDedup(unittest.TestCase):
+    """Cross-category install dedup: INSTALL_REPOSITORY + desired add-on overlap."""
+
+    def test_repo_also_desired_enabled_missing_emits_install_repo_only(self):
+        """Case 1 — required repo also desired enabled; both missing.
+
+        Exactly one installation action; kind must be INSTALL_REPOSITORY.
+        No INSTALL_ADDON for the same ID.
+        """
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "enabled")],
+        )
+        actual = _make_state()
+        plan = plan_changes(desired, actual)
+        repo_installs = [a for a in plan.actions if a.kind == INSTALL_REPOSITORY
+                         and a.addon_id == "repository.foo"]
+        addon_installs = [a for a in plan.actions if a.kind == INSTALL_ADDON
+                          and a.addon_id == "repository.foo"]
+        self.assertEqual(len(repo_installs), 1,
+                         "Expected exactly one INSTALL_REPOSITORY")
+        self.assertEqual(len(addon_installs), 0,
+                         "INSTALL_ADDON must not be emitted for repo-covered ID")
+
+    def test_repo_also_desired_enabled_already_installed_no_install(self):
+        """Case 2 — required repo also desired enabled; repo already installed.
+
+        No installation action; correct enable/noop behavior preserved.
+        """
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "enabled")],
+        )
+        actual = _make_state(addons=[_addon("repository.foo", True)])
+        plan = plan_changes(desired, actual)
+        install_ids = {a.addon_id for a in plan.actions
+                       if a.kind in (INSTALL_REPOSITORY, INSTALL_ADDON)}
+        self.assertNotIn("repository.foo", install_ids)
+
+    def test_repo_also_desired_disabled_missing_single_install_repo(self):
+        """Case 3 — required repo also desired disabled; both missing.
+
+        Exactly one installation action (INSTALL_REPOSITORY), desired_state="disabled".
+        No INSTALL_ADDON. No DISABLE_ADDON (addon not yet installed at plan time).
+        """
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "disabled")],
+        )
+        actual = _make_state()
+        plan = plan_changes(desired, actual)
+        repo_installs = [a for a in plan.actions if a.kind == INSTALL_REPOSITORY
+                         and a.addon_id == "repository.foo"]
+        addon_installs = [a for a in plan.actions if a.kind == INSTALL_ADDON
+                          and a.addon_id == "repository.foo"]
+        self.assertEqual(len(repo_installs), 1)
+        self.assertEqual(repo_installs[0].desired_state, "disabled",
+                         "disabled desired add-on state must be encoded in INSTALL_REPOSITORY")
+        self.assertEqual(len(addon_installs), 0)
+        # No DISABLE_ADDON: addon is missing at plan time; executor handles disable
+        disable_actions = [a for a in plan.actions if a.kind == DISABLE_ADDON
+                           and a.addon_id == "repository.foo"]
+        self.assertEqual(len(disable_actions), 0)
+
+    def test_repo_also_desired_disabled_already_installed_enabled_disables(self):
+        """Case 3b — required repo also desired disabled; installed and enabled.
+
+        No installation action. DISABLE_ADDON emitted via normal enable/disable phase.
+        """
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "disabled")],
+        )
+        actual = _make_state(addons=[_addon("repository.foo", True)])
+        plan = plan_changes(desired, actual)
+        self.assertNotIn(INSTALL_REPOSITORY, _action_kinds(plan))
+        self.assertNotIn(INSTALL_ADDON, _action_kinds(plan))
+        disable_actions = [a for a in plan.actions if a.kind == DISABLE_ADDON
+                           and a.addon_id == "repository.foo"]
+        self.assertEqual(len(disable_actions), 1)
+
+    def test_desired_state_installed_for_repo_also_desired_enabled(self):
+        """desired_state on INSTALL_REPOSITORY is 'installed' (not 'enabled')
+        when overlapping desired add-on state is 'enabled'."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "enabled")],
+        )
+        actual = _make_state()
+        plan = plan_changes(desired, actual)
+        repo_action = next(a for a in plan.actions if a.kind == INSTALL_REPOSITORY)
+        self.assertEqual(repo_action.desired_state, "installed")
+
+    def test_skin_as_repo_dedup(self):
+        """Pathological: skin addon_id is also the required repository ID.
+
+        INSTALL_REPOSITORY covers the install; no separate INSTALL_ADDON for skin.
+        SET_SKIN still planned.
+        """
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="skin.foo", required=True)],
+            skin=SkinEntry(addon_id="skin.foo"),
+        )
+        actual = _make_state(active_skin="skin.estuary")
+        plan = plan_changes(desired, actual)
+        addon_installs = [a for a in plan.actions if a.kind == INSTALL_ADDON
+                          and a.addon_id == "skin.foo"]
+        self.assertEqual(len(addon_installs), 0,
+                         "Skin covered by INSTALL_REPOSITORY; no INSTALL_ADDON expected")
+        self.assertIn(SET_SKIN, _action_kinds(plan))
+
+    def test_unmanaged_addon_unaffected_by_cross_dedup(self):
+        """Unmanaged add-ons are still left alone when cross-dedup is active."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "enabled")],
+        )
+        actual = _make_state(addons=[
+            _addon("plugin.unmanaged", True),
+        ])
+        plan = plan_changes(desired, actual)
+        absent_ids = {a.addon_id for a in plan.actions if a.kind == ENSURE_ABSENT}
+        self.assertNotIn("plugin.unmanaged", absent_ids)
+
+    def test_deterministic_ordering_unchanged_with_repo_addon_overlap(self):
+        """INSTALL_REPOSITORY still comes before INSTALL_ADDON in ordering."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[
+                _desired("repository.foo", "enabled"),   # covered by INSTALL_REPOSITORY
+                _desired("plugin.new",     "enabled"),   # gets INSTALL_ADDON
+            ],
+        )
+        actual = _make_state()
+        plan = plan_changes(desired, actual)
+        kinds = _action_kinds(plan)
+        repo_idx = kinds.index(INSTALL_REPOSITORY)
+        addon_idx = kinds.index(INSTALL_ADDON)
+        self.assertLess(repo_idx, addon_idx)
+
+
+# ---------------------------------------------------------------------------
+# TestContradictoryDesiredState (BM-006 correction)
+# ---------------------------------------------------------------------------
+
+class TestContradictoryDesiredState(unittest.TestCase):
+    """PlanningError on contradictory desired declarations."""
+
+    def test_required_repo_also_desired_absent_raises(self):
+        """Case 4 — required repository also declared absent → PlanningError."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("repository.foo", "absent")],
+        )
+        actual = _make_state()
+        with self.assertRaises(PlanningError) as ctx:
+            plan_changes(desired, actual)
+        self.assertIn("repository.foo", str(ctx.exception))
+
+    def test_desired_skin_also_desired_absent_raises(self):
+        """Case 5 — desired skin also declared absent in addons → PlanningError."""
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.foo"),
+            addons=[_desired("skin.foo", "absent")],
+        )
+        actual = _make_state(active_skin="skin.estuary")
+        with self.assertRaises(PlanningError) as ctx:
+            plan_changes(desired, actual)
+        self.assertIn("skin.foo", str(ctx.exception))
+
+    def test_error_message_skin_absent(self):
+        """PlanningError message identifies the skin and the contradiction."""
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.bar"),
+            addons=[_desired("skin.bar", "absent")],
+        )
+        with self.assertRaises(PlanningError) as ctx:
+            plan_changes(desired, _make_state())
+        msg = str(ctx.exception)
+        self.assertIn("skin.bar", msg)
+        self.assertIn("absent", msg)
+
+    def test_error_message_repo_absent(self):
+        """PlanningError message identifies the repo and the contradiction."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.bar", required=True)],
+            addons=[_desired("repository.bar", "absent")],
+        )
+        with self.assertRaises(PlanningError) as ctx:
+            plan_changes(desired, _make_state())
+        msg = str(ctx.exception)
+        self.assertIn("repository.bar", msg)
+        self.assertIn("absent", msg)
+
+    def test_optional_repo_absent_not_contradictory(self):
+        """required=False repository declared absent is not a contradiction."""
+        desired = _make_resolved(
+            repositories=[Repository(addon_id="repository.foo", required=False)],
+            addons=[_desired("repository.foo", "absent")],
+        )
+        actual = _make_state()
+        # Must not raise; optional repos are not planned so no conflict
+        plan = plan_changes(desired, actual)
+        self.assertNotIn(INSTALL_REPOSITORY, _action_kinds(plan))
+
+    def test_skin_also_enabled_in_addons_not_contradictory(self):
+        """Case 6 — skin also in addons as enabled: not a contradiction.
+
+        Still exactly one INSTALL_ADDON + one SET_SKIN.
+        """
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.foo"),
+            addons=[_desired("skin.foo", "enabled")],
+        )
+        actual = _make_state(active_skin="skin.estuary")
+        plan = plan_changes(desired, actual)
+        install_count = sum(1 for a in plan.actions
+                            if a.kind == INSTALL_ADDON and a.addon_id == "skin.foo")
+        self.assertEqual(install_count, 1)
+        self.assertIn(SET_SKIN, _action_kinds(plan))
+
+    def test_contradiction_detected_before_actual_map_built(self):
+        """Contradiction check fires even when KodiState would also be invalid."""
+        actual = KodiState(
+            platform="macos", kodi_version="21.1", active_skin="",
+            addons=(
+                InstalledAddon(addon_id="dupe", enabled=True,  version=""),
+                InstalledAddon(addon_id="dupe", enabled=False, version=""),
+            ),
+        )
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.foo"),
+            addons=[_desired("skin.foo", "absent")],
+        )
+        # PlanningError must be raised (contradiction) — not AttributeError/other
+        with self.assertRaises(PlanningError):
+            plan_changes(desired, actual)
+
+    def test_no_false_positive_unrelated_absent(self):
+        """An addon declared absent that is NOT the skin or a required repo
+        must not raise PlanningError."""
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.estuary"),
+            repositories=[Repository(addon_id="repository.foo", required=True)],
+            addons=[_desired("plugin.bar", "absent")],
+        )
+        actual = _make_state(addons=[
+            _addon("plugin.bar", True),
+            _addon("skin.estuary", True),
+            _addon("repository.foo", True),
+        ], active_skin="skin.estuary")
+        # Must not raise; only ensures absent plugin.bar
+        plan = plan_changes(desired, actual)
+        absent_ids = [a.addon_id for a in plan.actions if a.kind == ENSURE_ABSENT]
+        self.assertIn("plugin.bar", absent_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

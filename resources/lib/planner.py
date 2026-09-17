@@ -204,17 +204,28 @@ def plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan:
     function does not change any Kodi state.
 
     Raises:
-        PlanningError: if KodiState contains duplicate addon_ids (indicates
-            a manually-constructed inconsistent state object).
+        PlanningError: if KodiState contains duplicate addon_ids, or if the
+            desired build contains contradictory declarations (e.g. skin also
+            declared absent, or required repository also declared absent).
     """
+    _validate_no_contradictions(desired)
     actual_map = _build_actual_map(actual)
 
-    # Phase 1 — repositories (category 0)
-    repo_actions = _plan_repositories(desired, actual_map)
+    # Phase 1 — repositories (category 0).
+    # Returns the set of addon_ids being installed as repositories so later
+    # phases can skip duplicate INSTALL_ADDON actions for those IDs.
+    repo_actions, repo_install_ids = _plan_repositories(desired, actual_map)
 
-    # Phase 2 — add-on installs (category 1); track which ids are being installed
-    # so the skin phase can avoid duplicates.
-    install_actions, planned_install_ids = _plan_addon_installs(desired, actual_map)
+    # Phase 2 — add-on installs (category 1).
+    # repo_install_ids prevents INSTALL_ADDON for IDs already covered by
+    # INSTALL_REPOSITORY (cross-category dedup).
+    install_actions, addon_install_ids = _plan_addon_installs(
+        desired, actual_map, repo_install_ids
+    )
+
+    # planned_install_ids = union of all installation actions so far.
+    # Used by the skin phase to prevent any duplicate INSTALL_ADDON.
+    planned_install_ids: Set[str] = repo_install_ids | addon_install_ids
 
     # Phase 3 — skin install prerequisite (category 1, interspersed lexically)
     skin_install = _plan_skin_install(desired, actual_map, planned_install_ids)
@@ -253,6 +264,38 @@ def plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _validate_no_contradictions(desired: ResolvedBuild) -> None:
+    """Raise PlanningError for cross-declaration contradictions in desired state.
+
+    Two contradictions are detected:
+
+    1. Desired skin also declared absent in desired.addons.
+       These are mutually exclusive: the planner cannot install+activate a skin
+       that is simultaneously required to be absent.
+
+    2. A required repository also declared absent in desired.addons.
+       These are mutually exclusive: the planner cannot install a required
+       repository that is simultaneously required to be absent.
+    """
+    absent_ids: Set[str] = {e.addon_id for e in desired.addons if e.state == "absent"}
+
+    if desired.skin is not None and desired.skin.addon_id in absent_ids:
+        raise PlanningError(
+            f"Desired skin {desired.skin.addon_id!r} is also declared absent "
+            f"in desired add-ons"
+        )
+
+    required_repo_ids: Set[str] = {
+        r.addon_id for r in desired.repositories if r.required
+    }
+    conflicting = sorted(required_repo_ids & absent_ids)
+    if conflicting:
+        raise PlanningError(
+            f"Required repository {conflicting[0]!r} is also declared absent "
+            f"in desired add-ons"
+        )
+
+
 def _build_actual_map(actual: KodiState) -> Dict[str, InstalledAddon]:
     """Index actual.addons by addon_id. Raise PlanningError on duplicates."""
     result: Dict[str, InstalledAddon] = {}
@@ -268,45 +311,77 @@ def _build_actual_map(actual: KodiState) -> Dict[str, InstalledAddon]:
 def _plan_repositories(
     desired: ResolvedBuild,
     actual_map: Dict[str, InstalledAddon],
-) -> List[PlanAction]:
-    """Plan INSTALL_REPOSITORY actions for missing required repositories."""
+) -> Tuple[List[PlanAction], Set[str]]:
+    """Plan INSTALL_REPOSITORY actions for missing required repositories.
+
+    Returns (actions, install_ids) where install_ids is the set of addon_ids
+    being installed as repositories.  Callers must exclude these IDs from
+    INSTALL_ADDON planning to prevent duplicate installation actions.
+
+    Cross-category desired_state hint:
+    When the same addon_id also appears in desired.addons with state="disabled",
+    the INSTALL_REPOSITORY action carries desired_state="disabled" so that the
+    executor knows to disable the add-on after repository installation.  For all
+    other overlapping desired add-on states ("enabled" or absent from the list),
+    desired_state="installed" is used (implying enabled, Kodi's default).
+    """
+    desired_addon_states: Dict[str, str] = {
+        e.addon_id: e.state for e in desired.addons
+    }
     actions: List[PlanAction] = []
+    install_ids: Set[str] = set()
+
     for repo in sorted(desired.repositories, key=lambda r: r.addon_id):
         if not repo.required:
             continue
         if repo.addon_id in actual_map:
             continue
+        overlapping_state = desired_addon_states.get(repo.addon_id)
+        desired_state = "disabled" if overlapping_state == "disabled" else "installed"
         reason = "Required repository not installed"
         if repo.bootstrap_url:
             reason += f"; bootstrap_url={repo.bootstrap_url!r}"
+        if overlapping_state == "disabled":
+            reason += "; overlapping desired add-on state: disabled"
+        install_ids.add(repo.addon_id)
         actions.append(PlanAction(
             kind=INSTALL_REPOSITORY,
             addon_id=repo.addon_id,
-            desired_state="installed",
+            desired_state=desired_state,
             current_state="missing",
             reason=reason,
         ))
-    return actions
+    return actions, install_ids
 
 
 def _plan_addon_installs(
     desired: ResolvedBuild,
     actual_map: Dict[str, InstalledAddon],
+    repo_install_ids: Set[str],
 ) -> Tuple[List[PlanAction], Set[str]]:
     """Plan INSTALL_ADDON actions for add-ons not currently present.
 
-    Returns (actions, planned_install_ids) so the skin phase can check for
-    duplicate installs before adding its own.
+    repo_install_ids: addon_ids already covered by INSTALL_REPOSITORY actions.
+    Any addon_id in this set is skipped here to prevent duplicate installation
+    actions for the same logical target.
+
+    Returns (actions, addon_install_ids) where addon_install_ids is the set of
+    addon_ids for which INSTALL_ADDON was emitted.  The caller merges this with
+    repo_install_ids before skin-install dedup.
     """
     actions: List[PlanAction] = []
-    planned_ids: Set[str] = set()
+    addon_ids: Set[str] = set()
 
     for entry in sorted(desired.addons, key=lambda e: e.addon_id):
         if entry.state == "absent":
             continue
         if entry.addon_id in actual_map:
             continue
-        planned_ids.add(entry.addon_id)
+        if entry.addon_id in repo_install_ids:
+            # Installation already covered by INSTALL_REPOSITORY; skip to
+            # prevent a duplicate installation action for the same target.
+            continue
+        addon_ids.add(entry.addon_id)
         actions.append(PlanAction(
             kind=INSTALL_ADDON,
             addon_id=entry.addon_id,
@@ -315,7 +390,7 @@ def _plan_addon_installs(
             reason=f"Add-on not installed; desired state after install: {entry.state!r}",
         ))
 
-    return actions, planned_ids
+    return actions, addon_ids
 
 
 def _plan_skin_install(
@@ -325,10 +400,14 @@ def _plan_skin_install(
 ) -> Optional[PlanAction]:
     """Return an INSTALL_ADDON for the desired skin if it needs installation.
 
+    planned_install_ids must be the union of repo_install_ids and
+    addon_install_ids so that both INSTALL_REPOSITORY and INSTALL_ADDON coverage
+    prevent a redundant skin install.
+
     Returns None when:
     - no desired skin
     - skin already installed in actual state
-    - skin is already being installed via a desired add-on entry (no duplicate)
+    - skin already covered by any planned installation action (no duplicate)
     """
     if desired.skin is None:
         return None
