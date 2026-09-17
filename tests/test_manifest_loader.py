@@ -912,5 +912,155 @@ class TestRegression(unittest.TestCase):
                 )
 
 
+# ---------------------------------------------------------------------------
+# Null rejection: explicit null must be rejected for non-null-able fields
+# ---------------------------------------------------------------------------
+
+class TestNullRejection(unittest.TestCase):
+    """Verify that explicit JSON null is rejected for every field that schema v1
+    does not permit to be null. Absence of a field must still be accepted."""
+
+    # Top-level optional objects
+    def test_null_skin_rejected(self):
+        _assert_invalid(self, _make({"skin": None}), contains="skin")
+
+    def test_null_config_rejected(self):
+        _assert_invalid(self, _make({"config": None}), contains="config")
+
+    def test_null_private_overlay_rejected(self):
+        _assert_invalid(self, _make({"private_overlay": None}), contains="private_overlay")
+
+    def test_null_restart_policy_rejected(self):
+        _assert_invalid(self, _make({"restart_policy": None}), contains="restart_policy")
+
+    # Top-level optional string
+    def test_null_engine_min_version_rejected(self):
+        _assert_invalid(self, _make({"engine_min_version": None}), contains="engine_min_version")
+
+    # build optional strings
+    def test_null_build_name_rejected(self):
+        doc = _make({"build": {"id": "test-build", "version": "0.1.0", "name": None}})
+        _assert_invalid(self, doc, contains="build.name")
+
+    def test_null_build_description_rejected(self):
+        doc = _make({"build": {"id": "test-build", "version": "0.1.0", "description": None}})
+        _assert_invalid(self, doc, contains="build.description")
+
+    # addon note
+    def test_null_addon_note_rejected(self):
+        doc = _make({"addons": [{"addon_id": "plugin.video.foo", "state": "enabled", "note": None}]})
+        _assert_invalid(self, doc, contains="note")
+
+    # platform profile optional object/string fields
+    def test_null_platform_profile_config_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {"config": None}}})
+        _assert_invalid(self, doc, contains="config")
+
+    def test_null_platform_profile_skin_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {"skin": None}}})
+        _assert_invalid(self, doc, contains="skin")
+
+    def test_null_platform_profile_label_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {"label": None}}})
+        _assert_invalid(self, doc, contains="label")
+
+    # device profile optional object/string fields
+    def test_null_device_profile_config_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {}},
+                     "device_profiles": {"bonus-room": {"extends": "tvos", "config": None}}})
+        _assert_invalid(self, doc, contains="config")
+
+    def test_null_device_profile_skin_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {}},
+                     "device_profiles": {"bonus-room": {"extends": "tvos", "skin": None}}})
+        _assert_invalid(self, doc, contains="skin")
+
+    def test_null_device_profile_label_rejected(self):
+        doc = _make({"platform_profiles": {"tvos": {}},
+                     "device_profiles": {"bonus-room": {"extends": "tvos", "label": None}}})
+        _assert_invalid(self, doc, contains="label")
+
+    # optional group optional object/string fields
+    def test_null_optional_group_config_rejected(self):
+        doc = _make({"optional": [{"id": "extras", "config": None}]})
+        _assert_invalid(self, doc, contains="config")
+
+    def test_null_optional_group_label_rejected(self):
+        doc = _make({"optional": [{"id": "extras", "label": None}]})
+        _assert_invalid(self, doc, contains="label")
+
+    def test_null_optional_group_description_rejected(self):
+        doc = _make({"optional": [{"id": "extras", "description": None}]})
+        _assert_invalid(self, doc, contains="description")
+
+    # private_overlay optional strings
+    def test_null_private_overlay_path_hint_rejected(self):
+        doc = _make({"private_overlay": {"type": "local_file", "path_hint": None}})
+        _assert_invalid(self, doc, contains="path_hint")
+
+    def test_null_private_overlay_description_rejected(self):
+        doc = _make({"private_overlay": {"type": "local_file", "description": None}})
+        _assert_invalid(self, doc, contains="description")
+
+    # Confirm omission still accepted for all these optional fields
+    def test_absent_skin_accepted(self):
+        m = validate_manifest(_make())
+        self.assertIsNone(m.skin)
+
+    def test_absent_config_accepted(self):
+        m = validate_manifest(_make())
+        self.assertIsNone(m.config)
+
+    def test_absent_private_overlay_accepted(self):
+        m = validate_manifest(_make())
+        self.assertIsNone(m.private_overlay)
+
+    def test_absent_restart_policy_accepted(self):
+        m = validate_manifest(_make())
+        self.assertIsNone(m.restart_policy)
+
+    def test_absent_engine_min_version_accepted(self):
+        m = validate_manifest(_make())
+        self.assertEqual(m.engine_min_version, "")
+
+    def test_absent_build_name_accepted(self):
+        m = validate_manifest(_make())
+        self.assertEqual(m.build.name, "")
+
+    def test_absent_build_description_accepted(self):
+        m = validate_manifest(_make())
+        self.assertEqual(m.build.description, "")
+
+    def test_absent_addon_note_accepted(self):
+        doc = _make({"addons": [{"addon_id": "plugin.video.foo", "state": "enabled"}]})
+        m = validate_manifest(doc)
+        self.assertEqual(m.addons[0].note, "")
+
+    def test_absent_platform_profile_config_accepted(self):
+        doc = _make({"platform_profiles": {"tvos": {}}})
+        m = validate_manifest(doc)
+        self.assertIsNone(m.platform_profiles["tvos"].config)
+
+    def test_absent_platform_profile_skin_accepted(self):
+        doc = _make({"platform_profiles": {"tvos": {}}})
+        m = validate_manifest(doc)
+        self.assertIsNone(m.platform_profiles["tvos"].skin)
+
+    def test_absent_optional_group_config_accepted(self):
+        doc = _make({"optional": [{"id": "extras"}]})
+        m = validate_manifest(doc)
+        self.assertIsNone(m.optional[0].config)
+
+    def test_absent_private_overlay_path_hint_accepted(self):
+        doc = _make({"private_overlay": {"type": "local_file"}})
+        m = validate_manifest(doc)
+        self.assertEqual(m.private_overlay.path_hint, "")
+
+    def test_absent_private_overlay_description_accepted(self):
+        doc = _make({"private_overlay": {"type": "local_file"}})
+        m = validate_manifest(doc)
+        self.assertEqual(m.private_overlay.description, "")
+
+
 if __name__ == "__main__":
     unittest.main()

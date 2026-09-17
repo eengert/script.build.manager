@@ -252,13 +252,13 @@ def validate_manifest(doc: object, *, source: str = "<dict>") -> Manifest:
     engine_min_version = _parse_engine_min_version(doc)
     repositories = _parse_repositories(doc.get("repositories", []))
     addons = _parse_addons(doc.get("addons", []), label="addons")
-    skin = _parse_skin(doc.get("skin"), label="skin")
-    config = _parse_config(doc.get("config"), label="config")
+    skin = _parse_skin(doc["skin"], label="skin") if "skin" in doc else None
+    config = _parse_config(doc["config"], label="config") if "config" in doc else None
     platform_profiles = _parse_platform_profiles(doc.get("platform_profiles", {}))
     device_profiles = _parse_device_profiles(doc.get("device_profiles", {}))
     optional = _parse_optional(doc.get("optional", []))
-    private_overlay = _parse_private_overlay(doc.get("private_overlay"))
-    restart_policy = _parse_restart_policy(doc.get("restart_policy"))
+    private_overlay = _parse_private_overlay(doc["private_overlay"]) if "private_overlay" in doc else None
+    restart_policy = _parse_restart_policy(doc["restart_policy"]) if "restart_policy" in doc else None
 
     _validate_semantic(
         platform_profiles=platform_profiles,
@@ -332,26 +332,36 @@ def _parse_build(raw: dict) -> BuildInfo:
             f"build.version: invalid semver {version!r} (must be MAJOR.MINOR.PATCH)"
         )
 
-    name = raw.get("name", "")
-    if name is not None and not isinstance(name, str):
-        raise ManifestValidationError("build.name: must be a string if present")
+    name = ""
+    if "name" in raw:
+        name_val = raw["name"]
+        if not isinstance(name_val, str):
+            raise ManifestValidationError(
+                f"build.name: must be a string if present, got {type(name_val).__name__}"
+            )
+        name = name_val
 
-    description = raw.get("description", "")
-    if description is not None and not isinstance(description, str):
-        raise ManifestValidationError("build.description: must be a string if present")
+    description = ""
+    if "description" in raw:
+        desc_val = raw["description"]
+        if not isinstance(desc_val, str):
+            raise ManifestValidationError(
+                f"build.description: must be a string if present, got {type(desc_val).__name__}"
+            )
+        description = desc_val
 
     return BuildInfo(
         id=id_,
         version=version,
-        name=name or "",
-        description=description or "",
+        name=name,
+        description=description,
     )
 
 
 def _parse_engine_min_version(doc: dict) -> str:
-    val = doc.get("engine_min_version")
-    if val is None:
+    if "engine_min_version" not in doc:
         return ""
+    val = doc["engine_min_version"]
     if not isinstance(val, str):
         raise ManifestValidationError(
             f"engine_min_version: must be a string, got {type(val).__name__}"
@@ -456,11 +466,16 @@ def _parse_addon_entry(raw: object, *, label: str) -> AddonEntry:
             f"{label}.state: expected enabled|disabled|absent, got {state!r}"
         )
 
-    note = raw.get("note", "")
-    if note is not None and not isinstance(note, str):
-        raise ManifestValidationError(f"{label}.note: must be a string if present")
+    note = ""
+    if "note" in raw:
+        note_val = raw["note"]
+        if not isinstance(note_val, str):
+            raise ManifestValidationError(
+                f"{label}.note: must be a string if present, got {type(note_val).__name__}"
+            )
+        note = note_val
 
-    return AddonEntry(addon_id=addon_id, state=state, note=note or "")
+    return AddonEntry(addon_id=addon_id, state=state, note=note)
 
 
 # ---------------------------------------------------------------------------
@@ -468,8 +483,6 @@ def _parse_addon_entry(raw: object, *, label: str) -> AddonEntry:
 # ---------------------------------------------------------------------------
 
 def _parse_skin(raw: object, *, label: str) -> Optional[SkinEntry]:
-    if raw is None:
-        return None
     if not isinstance(raw, dict):
         raise ManifestValidationError(f"{label}: must be an object")
     _reject_unknown(raw, _SKIN_KEYS, label)
@@ -500,8 +513,6 @@ def _parse_skin(raw: object, *, label: str) -> Optional[SkinEntry]:
 # ---------------------------------------------------------------------------
 
 def _parse_config(raw: object, *, label: str) -> Optional[ConfigDeclarations]:
-    if raw is None:
-        return None
     if not isinstance(raw, dict):
         raise ManifestValidationError(f"{label}: must be an object")
     _reject_unknown(raw, _CONFIG_KEYS, label)
@@ -606,8 +617,8 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
     if "addons" in raw:
         addons = _parse_addons(raw["addons"], label=f"{label}.addons")
 
-    config = _parse_config(raw.get("config"), label=f"{label}.config")
-    skin = _parse_skin(raw.get("skin"), label=f"{label}.skin")
+    config = _parse_config(raw["config"], label=f"{label}.config") if "config" in raw else None
+    skin = _parse_skin(raw["skin"], label=f"{label}.skin") if "skin" in raw else None
 
     include_optional: Tuple[str, ...] = ()
     if "include_optional" in raw:
@@ -623,12 +634,17 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
                 )
         include_optional = tuple(io)
 
-    label_val = raw.get("label", "")
-    if label_val is not None and not isinstance(label_val, str):
-        raise ManifestValidationError(f"{label}.label: must be a string if present")
+    profile_label = ""
+    if "label" in raw:
+        lv = raw["label"]
+        if not isinstance(lv, str):
+            raise ManifestValidationError(
+                f"{label}.label: must be a string if present, got {type(lv).__name__}"
+            )
+        profile_label = lv
 
     return ProfileLayer(
-        label=label_val or "",
+        label=profile_label,
         addons=addons,
         config=config,
         skin=skin,
@@ -667,8 +683,8 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
     if "addons" in raw:
         addons = _parse_addons(raw["addons"], label=f"{label}.addons")
 
-    config = _parse_config(raw.get("config"), label=f"{label}.config")
-    skin = _parse_skin(raw.get("skin"), label=f"{label}.skin")
+    config = _parse_config(raw["config"], label=f"{label}.config") if "config" in raw else None
+    skin = _parse_skin(raw["skin"], label=f"{label}.skin") if "skin" in raw else None
 
     include_optional: Tuple[str, ...] = ()
     if "include_optional" in raw:
@@ -684,13 +700,18 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
                 )
         include_optional = tuple(io)
 
-    label_val = raw.get("label", "")
-    if label_val is not None and not isinstance(label_val, str):
-        raise ManifestValidationError(f"{label}.label: must be a string if present")
+    profile_label = ""
+    if "label" in raw:
+        lv = raw["label"]
+        if not isinstance(lv, str):
+            raise ManifestValidationError(
+                f"{label}.label: must be a string if present, got {type(lv).__name__}"
+            )
+        profile_label = lv
 
     return DeviceProfile(
         extends=extends,
-        label=label_val or "",
+        label=profile_label,
         addons=addons,
         config=config,
         skin=skin,
@@ -734,12 +755,30 @@ def _parse_optional(raw: object) -> Tuple[OptionalGroup, ...]:
         if "addons" in group:
             addons = _parse_addons(group["addons"], label=f"{lbl}.addons")
 
-        config = _parse_config(group.get("config"), label=f"{lbl}.config")
+        config = _parse_config(group["config"], label=f"{lbl}.config") if "config" in group else None
+
+        group_label = ""
+        if "label" in group:
+            lv = group["label"]
+            if not isinstance(lv, str):
+                raise ManifestValidationError(
+                    f"{lbl}.label: must be a string if present, got {type(lv).__name__}"
+                )
+            group_label = lv
+
+        group_desc = ""
+        if "description" in group:
+            dv = group["description"]
+            if not isinstance(dv, str):
+                raise ManifestValidationError(
+                    f"{lbl}.description: must be a string if present, got {type(dv).__name__}"
+                )
+            group_desc = dv
 
         out.append(OptionalGroup(
             id=group_id,
-            label=group.get("label", "") or "",
-            description=group.get("description", "") or "",
+            label=group_label,
+            description=group_desc,
             addons=addons,
             config=config,
         ))
@@ -751,8 +790,6 @@ def _parse_optional(raw: object) -> Tuple[OptionalGroup, ...]:
 # ---------------------------------------------------------------------------
 
 def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
-    if raw is None:
-        return None
     if not isinstance(raw, dict):
         raise ManifestValidationError("private_overlay: must be an object")
     _reject_unknown(raw, _OVERLAY_KEYS, "private_overlay")
@@ -768,11 +805,25 @@ def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
             f"expected one of: {sorted(_VALID_OVERLAY_TYPES)}"
         )
 
-    return PrivateOverlayRef(
-        type=ov_type,
-        path_hint=raw.get("path_hint", "") or "",
-        description=raw.get("description", "") or "",
-    )
+    path_hint = ""
+    if "path_hint" in raw:
+        ph = raw["path_hint"]
+        if not isinstance(ph, str):
+            raise ManifestValidationError(
+                f"private_overlay.path_hint: must be a string if present, got {type(ph).__name__}"
+            )
+        path_hint = ph
+
+    overlay_desc = ""
+    if "description" in raw:
+        dv = raw["description"]
+        if not isinstance(dv, str):
+            raise ManifestValidationError(
+                f"private_overlay.description: must be a string if present, got {type(dv).__name__}"
+            )
+        overlay_desc = dv
+
+    return PrivateOverlayRef(type=ov_type, path_hint=path_hint, description=overlay_desc)
 
 
 # ---------------------------------------------------------------------------
@@ -780,8 +831,6 @@ def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
 # ---------------------------------------------------------------------------
 
 def _parse_restart_policy(raw: object) -> Optional[RestartPolicy]:
-    if raw is None:
-        return None
     if not isinstance(raw, dict):
         raise ManifestValidationError("restart_policy: must be an object")
     _reject_unknown(raw, _RESTART_POLICY_KEYS, "restart_policy")
