@@ -20,7 +20,8 @@ The test suite covers:
 | `test_manifest_resolver.py` | Profile resolver (BM-004) | 78 |
 | `test_kodi_inspector.py` | Kodi state inspector (BM-005) | 67 |
 | `test_planner.py` | Desired-vs-actual planner (BM-006) | 86 |
-| `test_kodi_harness.py` | Disposable Kodi harness (BM-009) | 56+ |
+| `test_kodi_harness.py` | Disposable Kodi harness (BM-009) | 74 |
+| `test_repository.py` | Repository detection/install (BM-010) | 87 |
 
 ## Disposable Kodi harness
 
@@ -84,6 +85,9 @@ Commands are run from the project root:
 # Full validation sequence (recommended for CI or first-run verification)
 python3 tools/kodi_test.py validate
 
+# BM-010 live validation: repository detection and installation
+python3 tools/kodi_test.py validate-repo
+
 # Step by step
 python3 tools/kodi_test.py reset
 python3 tools/kodi_test.py install
@@ -100,7 +104,7 @@ python3 tools/kodi_test.py status
 ### Requirements
 
 - macOS with `/Applications/Kodi.app` installed (Kodi 21.x recommended)
-- No other process using port 8920
+- No other process using port 8920 (Kodi JSON-RPC) or port 8921 (validate-repo HTTP server)
 
 The harness is not required for the standard unit test suite — `validate` is
 a manual or CI step run after a full `reset → install → configure` sequence.
@@ -115,6 +119,7 @@ run simultaneously without collision.
 |---------|------|----------|
 | Build Manager (`tools/kodi_test.py`) | 8920 | `bm-test` |
 | Backup Pro (`tools/kodi_test.py`) | 8899 | `kodi-test` |
+| validate-repo HTTP server (127.0.0.1 only) | 8921 | n/a |
 
 ### Add-on install
 
@@ -138,9 +143,35 @@ Tests, tools, and documentation are excluded from the disposable profile.
 
 All calls are read-only. No Kodi state is mutated.
 
-### Out of scope for BM-009
+### validate-repo command (BM-010)
 
-- Repository ZIP installation (BM-010+)
-- Add-on provisioning from the planner's action plan (BM-010+)
+`validate-repo` runs a 12-step live sequence to prove repository detection and
+installation work end-to-end against a real Kodi instance:
+
+1. Reset the disposable harness
+2. Install Build Manager
+3. Configure web server
+4. Launch Kodi
+5. Wait for JSON-RPC ready
+6. Create a minimal test repository ZIP (`repository.build-manager-test`)
+7. Start a localhost-only HTTP server (127.0.0.1:8921) to serve the ZIP
+8. Verify the repository is NOT yet installed
+9. Call `RepositoryManager.install()` via `_HttpRepositoryBackend`
+10. Verify result status = INSTALLED
+11. Verify `is_installed()` returns True (via JSON-RPC)
+12. Stop Kodi and shut down the HTTP server
+
+The backend (`_HttpRepositoryBackend`) uses HTTP JSON-RPC for detection and
+polling, direct filesystem writes for ZIP extraction, and a Kodi restart
+(stop → launch → wait) to trigger the add-on scanner — since
+`UpdateLocalAddons` is a Kodi GUI builtin not accessible via HTTP JSON-RPC.
+
+All mutation occurs only in the `.kodi-test` disposable environment. The real
+Kodi profile is never touched.
+
+### Out of scope for BM-009 / BM-010
+
+- General add-on installation (BM-011+)
+- Add-on provisioning from the full planner action plan (BM-011+)
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
 - Windows or Linux harnesses

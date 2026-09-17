@@ -52,7 +52,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**BM-009 on agent/claude — awaiting supervisor review and merge**
+**BM-009 and BM-010 on agent/claude — awaiting supervisor review and merge**
 
 | Task | Status | matrix SHA | Notes |
 |---|---|---|---|
@@ -65,6 +65,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 | BM-007 | Absorbed by BM-006 | — | desired-state model = BM-004; planner = BM-006 |
 | BM-008 | Absorbed by BM-006 | — | reconciliation tests = BM-006 test suite |
 | BM-009 Disposable Kodi harness | On agent/claude | — | pending review |
+| BM-010 Repository detection/install | On agent/claude | — | pending review |
 
 **matrix HEAD**: `70504e0` (unchanged)
 
@@ -145,6 +146,50 @@ kodi_version=21.1, active_skin=skin.estuary, addon_count=30.
 script.build.manager visible (enabled=False — freshly installed add-ons start
 disabled in Kodi, as expected). Real profile untouched.
 
+### BM-010 (on agent/claude — pending review)
+
+- `resources/lib/repository.py` — repository detection and installation.
+  Public API: `RepositoryManager(backend).is_installed(addon_id)` and
+  `RepositoryManager(backend).install(repository) -> RepositoryInstallResult`.
+  Errors: `RepositoryError`, `RepositoryValidationError`, `RepositoryInstallError`.
+  Result: `RepositoryStatus` enum (ALREADY_INSTALLED|INSTALLED|FAILED),
+  `RepositoryInstallResult(addon_id, status, message)` frozen dataclass.
+  Backend interface: `RepositoryBackend` (5 abstract methods); production
+  backend: `KodiRuntimeRepositoryBackend` (lazy xbmc/xbmcvfs import).
+  Security: `_validate_url_policy()` (https/http only, no credentials),
+  `_SafeRedirectHandler` (rejects file:// and credential-containing redirects),
+  `_build_safe_opener()` (no FileHandler), `_download_artifact()` (50 MB limit,
+  30s timeout, chunked reads). ZIP safety: `validate_repository_zip()` (path
+  traversal rejection, addon.xml presence+ID match, xbmc.addon.repository
+  extension required). Extraction: `_extract_zip_to_directory()` (handles
+  prefixed and flat ZIPs, path containment check before every write).
+  Idempotent: ALREADY_INSTALLED returned if add-on already present (no mutation).
+  Installation mechanism: ZIP extraction + `xbmc.executebuiltin('UpdateLocalAddons')`.
+  Verification: `poll_addon_installed()` via JSON-RPC polling.
+  Stdlib only — no new runtime dependencies. No dependency on tools/kodi_test.py.
+- `tests/test_repository.py` — 87 BM-010 unit tests; no real Kodi required.
+  Covers: detection (is_installed), idempotency, URL validation (schemes,
+  credentials, empty), redirect safety (_SafeRedirectHandler), download (size
+  limit, network error, empty), ZIP entry validation (traversal, absolute paths,
+  null bytes), ZIP validation (valid/invalid, wrong ID, missing extension),
+  extraction (prefixed/flat/nested), install happy path (6 checks), all failure
+  paths (10 cases), result types (enum values, immutability, hashability),
+  security policy (max size constant, data/javascript/empty URLs), error
+  hierarchy, backend abstract interface, KodiRuntimeRepositoryBackend without Kodi.
+- `tools/kodi_test.py` — `validate-repo` command added.
+  `_make_test_repo_zip()`: minimal `repository.build-manager-test` ZIP.
+  `_HttpRepositoryBackend`: harness backend using HTTP JSON-RPC + direct
+  filesystem; `trigger_addon_scan()` restarts Kodi (stop→launch→wait) since
+  `UpdateLocalAddons` is not accessible via HTTP JSON-RPC.
+  `_SingleFileHandler`: serves one file at 127.0.0.1:8921.
+  `validate_repo()`: 12-step live sequence (port 8921 for HTTP server).
+- `docs/TESTING.md` — updated test counts, validate-repo usage and port table.
+
+Live validation results (Kodi 21.1 macOS, 2026-09-17): 12/12 steps passed.
+repository.build-manager-test (392 bytes) installed; is_installed() confirmed
+True after install; Kodi restarted once for UpdateLocalAddons trigger. Real
+profile untouched. Stdlib HTTP server bound to 127.0.0.1 only.
+
 ### BM-006 (on agent/claude `7735e7a` — pending merge)
 - `resources/lib/planner.py` — desired-vs-actual planner.
   Public API: `plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`.
@@ -168,9 +213,10 @@ disabled in Kodi, as expected). Real profile untouched.
 
 ## Test Status
 
-`python3 -m unittest discover tests` — **518/518 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **605/605 passing** (outside Kodi runtime)
 
 Live validation (BM-009): **11/11 steps passed** against Kodi 21.1 macOS (2026-09-17)
+Live validation (BM-010): **12/12 steps passed** against Kodi 21.1 macOS (2026-09-17)
 
 ## Schema Summary
 
@@ -202,12 +248,14 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-009 review + merge** — supervisor review of agent/claude:
-   - `tools/kodi_test.py` harness
-   - `tests/test_kodi_harness.py` (74 tests)
+1. **BM-009 + BM-010 review + merge** — supervisor review of agent/claude:
+   - `tools/kodi_test.py` harness (BM-009 + validate-repo from BM-010)
+   - `tests/test_kodi_harness.py` (74 tests, BM-009)
+   - `resources/lib/repository.py` (BM-010)
+   - `tests/test_repository.py` (87 tests, BM-010)
    - `docs/TESTING.md`
 
-2. **BM-010** — Add-on executor: apply the plan from BM-006 to a live Kodi instance
+2. **BM-011** — General add-on detection and installation (distinct from repository bootstrap)
 
 ## Open Questions (from BM-002)
 

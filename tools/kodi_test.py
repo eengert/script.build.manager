@@ -25,24 +25,30 @@ Commands
   restart         stop + launch
   inspect         Query disposable Kodi state via HTTP JSON-RPC
   status          Print current harness state (pid, paths, running/stopped)
-  validate        Full live validation sequence
+  validate        Full live validation sequence (BM-009)
+  validate-repo   BM-010 live validation: repository detection and installation
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import http.server
+import io
 import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved relative to this file's location
@@ -655,6 +661,238 @@ def validate() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Repository validation support (BM-010)
+# ---------------------------------------------------------------------------
+
+_TEST_REPO_ADDON_ID = "repository.build-manager-test"
+_REPO_SERVER_PORT = 8921  # distinct from WEBSERVER_PORT (8920)
+
+
+def _make_test_repo_zip() -> bytes:
+    """Build a minimal valid repository ZIP for live validation.
+
+    The ZIP contains repository.build-manager-test/addon.xml declaring the
+    xbmc.addon.repository extension. This is the minimum Kodi requires to
+    recognize an add-on as a repository.
+    """
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_TEST_REPO_ADDON_ID}" name="Build Manager Test Repo"'
+        ' version="1.0.0" provider-name="Build Manager">'
+        '<extension point="xbmc.addon.repository" name="Build Manager Test"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Disposable test repository for BM-010 validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_TEST_REPO_ADDON_ID}/addon.xml", addon_xml.encode("utf-8"))
+    return buf.getvalue()
+
+
+class _HttpRepositoryBackend:
+    """Repository backend for live validation. Uses HTTP JSON-RPC + filesystem.
+
+    This backend is used only by validate_repo() in the disposable harness.
+    It is never imported by production code.
+
+    trigger_addon_scan() restarts Kodi (stop → launch → wait_for_ready) because
+    UpdateLocalAddons is a Kodi GUI builtin not accessible via HTTP JSON-RPC.
+    """
+
+    def get_installed_addon_ids(self) -> FrozenSet[str]:
+        req = {
+            "jsonrpc": "2.0",
+            "method": "Addons.GetAddons",
+            "params": {"installed": True, "properties": ["enabled"]},
+            "id": 1,
+        }
+        resp = jsonrpc("Addons.GetAddons", {"installed": True, "properties": ["enabled"]})
+        if not isinstance(resp, dict):
+            return frozenset()
+        addons = resp.get("addons", [])
+        if not isinstance(addons, list):
+            return frozenset()
+        return frozenset(
+            a["addonid"]
+            for a in addons
+            if isinstance(a, dict) and "addonid" in a
+        )
+
+    def download_artifact(
+        self,
+        url: str,
+        *,
+        max_bytes: int = 50 * 1024 * 1024,
+        timeout: float = 30.0,
+    ) -> bytes:
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+        from resources.lib.repository import _download_artifact
+        return _download_artifact(url, max_bytes=max_bytes, timeout=timeout)
+
+    def install_zip_to_addons(self, addon_id: str, zip_bytes: bytes) -> None:
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+        from resources.lib.repository import _extract_zip_to_directory
+        target = KODI_ADDONS_DIR / addon_id
+        if target.exists():
+            shutil.rmtree(target)
+        _extract_zip_to_directory(zip_bytes, addon_id, target)
+
+    def trigger_addon_scan(self) -> None:
+        print("    trigger_addon_scan: restart Kodi to run UpdateLocalAddons")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+
+    def poll_addon_installed(
+        self,
+        addon_id: str,
+        *,
+        timeout: float = 60.0,
+        interval: float = 1.0,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if addon_id in self.get_installed_addon_ids():
+                    return True
+            except RuntimeError:
+                pass
+            time.sleep(interval)
+        return False
+
+
+class _SingleFileHandler(http.server.BaseHTTPRequestHandler):
+    """Serve a single static file at any path. Binds only to 127.0.0.1."""
+
+    _data: bytes = b""
+    _content_type: str = "application/zip"
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", self._content_type)
+        self.send_header("Content-Length", str(len(self._data)))
+        self.end_headers()
+        self.wfile.write(self._data)
+
+    def log_message(self, fmt, *args):  # suppress request logging
+        pass
+
+
+def validate_repo() -> None:
+    """Live validation of BM-010 repository detection and installation.
+
+    Sequence (12 steps):
+     1  Reset disposable harness
+     2  Install Build Manager
+     3  Configure web server
+     4  Launch Kodi
+     5  Wait for ready
+     6  Create test repository ZIP
+     7  Start localhost HTTP server (127.0.0.1 only)
+     8  Verify repository NOT yet installed
+     9  Call RepositoryManager.install()
+    10  Verify result status = INSTALLED
+    11  Verify is_installed() now returns True
+    12  Stop Kodi + shut down HTTP server
+
+    ALL mutation occurs only in the disposable .kodi-test environment.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.manifest import Repository
+    from resources.lib.repository import RepositoryManager, RepositoryStatus
+
+    print("=== Build Manager BM-010 live validation: repository detection/install ===")
+    verify_isolation()
+
+    print("\n[1/12] reset")
+    reset()
+
+    print("\n[2/12] install Build Manager")
+    install()
+
+    print("\n[3/12] configure web server")
+    configure_webserver()
+
+    print("\n[4/12] launch Kodi")
+    launch()
+
+    print("\n[5/12] wait for ready (up to 90s)")
+    try:
+        wait_for_ready(timeout=90.0)
+    except TimeoutError as exc:
+        stop()
+        raise RuntimeError(f"Validation failed at step 5: {exc}") from exc
+
+    print("\n[6/12] create test repository ZIP")
+    zip_bytes = _make_test_repo_zip()
+    print(f"  {_TEST_REPO_ADDON_ID}: {len(zip_bytes)} bytes")
+
+    print("\n[7/12] start localhost HTTP server (127.0.0.1 only)")
+
+    class _Handler(_SingleFileHandler):
+        _data = zip_bytes  # type: ignore[assignment]
+
+    server = http.server.HTTPServer(("127.0.0.1", _REPO_SERVER_PORT), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    repo_url = f"http://127.0.0.1:{_REPO_SERVER_PORT}/{_TEST_REPO_ADDON_ID}.zip"
+    print(f"  serving {repo_url}")
+
+    try:
+        backend = _HttpRepositoryBackend()
+        mgr = RepositoryManager(backend)
+        test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
+
+        print("\n[8/12] verify repository NOT yet installed")
+        before = mgr.is_installed(_TEST_REPO_ADDON_ID)
+        if before:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: {_TEST_REPO_ADDON_ID!r} already installed before test"
+            )
+        print(f"  is_installed({_TEST_REPO_ADDON_ID!r}) = False ✓")
+
+        print("\n[9/12] install repository")
+        result = mgr.install(test_repo)
+        print(f"  result.status = {result.status.value!r}")
+        print(f"  result.message = {result.message!r}")
+
+        print("\n[10/12] verify result status = INSTALLED")
+        if result.status != RepositoryStatus.INSTALLED:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: install returned {result.status.value!r} "
+                f"— {result.message}"
+            )
+        print("  status = INSTALLED ✓")
+
+        print("\n[11/12] verify is_installed() now returns True")
+        after = mgr.is_installed(_TEST_REPO_ADDON_ID)
+        if not after:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: {_TEST_REPO_ADDON_ID!r} not detected after install"
+            )
+        print(f"  is_installed({_TEST_REPO_ADDON_ID!r}) = True ✓")
+
+    finally:
+        print("\n[12/12] stop Kodi + shut down HTTP server")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        server.shutdown()
+
+    print("\n=== BM-010 validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -693,6 +931,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("inspect", help="Query disposable Kodi state via HTTP JSON-RPC")
     sub.add_parser("status", help="Print current harness state")
     sub.add_parser("validate", help="Run the full live validation sequence")
+    sub.add_parser("validate-repo", help="BM-010 live validation: repository detection/install")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -721,6 +960,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"{k}: {v}")
         elif cmd == "validate":
             validate()
+        elif cmd == "validate-repo":
+            validate_repo()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
