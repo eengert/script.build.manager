@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "engine_min_version": "0.1.0",
+  "build": {
+    "id": "eric-main",
+    "version": "1.0.0",
+    "name": "Eric Main Build",
+    "description": "Eric's primary Kodi build across all personal devices."
+  },
+  "repositories": [
+    {
+      "addon_id": "repository.eengert",
+      "bootstrap_url": "https://example.invalid/repository.eengert-1.0.0.zip",
+      "required": true
+    }
+  ],
+  "addons": [
+    {"addon_id": "skin.arctic.fuse.3",              "state": "enabled"},
+    {"addon_id": "plugin.video.redlight",            "state": "enabled"},
+    {"addon_id": "plugin.video.themoviedb.helper",   "state": "enabled"},
+    {"addon_id": "plugin.video.pov",                 "state": "enabled"},
+    {"addon_id": "plugin.video.umbrella",            "state": "enabled"},
+    {"addon_id": "script.module.myaccounts",         "state": "enabled", "note": "Required by Red Light"}
+  ],
+  "skin": {
+    "addon_id": "skin.arctic.fuse.3",
+    "config_packages": ["af3-common"]
+  },
+  "config": {
+    "packages": ["af3-common", "redlight-common"],
+    "managed_settings": [
+      {
+        "addon_id": "plugin.video.redlight",
+        "keys": ["server_url", "playback_quality", "subtitle_language"]
+      },
+      {
+        "addon_id": "skin.arctic.fuse.3",
+        "keys": ["home_menu_items", "widget_refresh_interval"]
+      }
+    ],
+    "managed_files": [
+      "addon_data/skin.arctic.fuse.3/settings.xml"
+    ]
+  },
+  "platform_profiles": {
+    "tvos": {
+      "label": "Apple TV / tvOS",
+      "addons": [],
+      "include_optional": []
+    },
+    "android": {
+      "label": "Android TV / Nvidia Shield",
+      "addons": [
+        {
+          "addon_id": "plugin.video.pov",
+          "state": "disabled",
+          "note": "POV is disabled on Android; use Umbrella instead"
+        }
+      ],
+      "include_optional": ["shield-extras"]
+    }
+  },
+  "device_profiles": {
+    "bonus-room": {
+      "label": "Bonus Room Apple TV",
+      "extends": "tvos",
+      "addons": [
+        {
+          "addon_id": "plugin.video.themoviedb.helper",
+          "state": "disabled",
+          "note": "Disabled on bonus-room by household preference"
+        }
+      ]
+    },
+    "family-room": {
+      "label": "Family Room Apple TV",
+      "extends": "tvos"
+    },
+    "shield": {
+      "label": "Nvidia Shield Pro",
+      "extends": "android"
+    }
+  },
+  "optional": [
+    {
+      "id": "shield-extras",
+      "label": "Shield-specific add-ons",
+      "description": "Add-ons that only function or are only useful on Android TV.",
+      "addons": [
+        {"addon_id": "plugin.video.example.android-helper", "state": "enabled"}
+      ]
+    }
+  ],
+  "private_overlay": {
+    "type": "local_file",
+    "path_hint": "~/.config/kodi-private/eric-main-private.json",
+    "description": "Optional private overlay for portable authorization state (Real-Debrid, Trakt, EasyNews, etc.). Never committed to the public repository."
+  },
+  "restart_policy": {
+    "allow_skin_reload": true,
+    "allow_kodi_restart": true
+  }
+}

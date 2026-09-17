@@ -1,0 +1,375 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/eengert/script.build.manager/resources/builds/schema-v1.json",
+  "title": "Build Manager Manifest v1",
+  "description": "Declares the desired state of a Kodi installation. See docs/MANIFEST.md for the full reference.",
+  "type": "object",
+  "required": ["schema_version", "build"],
+  "additionalProperties": false,
+  "properties": {
+
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest format version. Must be 1 for this schema. Allows the parser to reject or upgrade manifests written for a different format."
+    },
+
+    "engine_min_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Minimum Build Manager engine (add-on) version required to process this manifest. Absent means no minimum constraint is declared."
+    },
+
+    "build": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "description": "Build identity and versioning. The build version is independent of the Build Manager engine version.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "Stable machine-readable identifier. Set once and never changed. Used for version tracking and repair detection."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Semantic version of this build definition. Increment when the desired state changes. Independent of the Build Manager add-on version."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name shown in the Build Manager UI."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description of this build."
+        }
+      }
+    },
+
+    "repositories": {
+      "type": "array",
+      "description": "Kodi repositories that must be installed before add-on resolution. Processed in order.",
+      "items": { "$ref": "#/definitions/repository" },
+      "default": []
+    },
+
+    "addons": {
+      "type": "array",
+      "description": "Base set of add-ons and their desired state. Applies to all profiles unless overridden by a platform or device profile.",
+      "items": { "$ref": "#/definitions/addon_entry" },
+      "default": []
+    },
+
+    "skin": {
+      "$ref": "#/definitions/skin_entry",
+      "description": "Desired active skin. Absent means Build Manager does not manage skin selection for this build."
+    },
+
+    "config": {
+      "$ref": "#/definitions/config_declarations",
+      "description": "Common managed-configuration declarations. Lists which packages, setting keys, and files this build owns. Contains no setting values."
+    },
+
+    "platform_profiles": {
+      "type": "object",
+      "description": "Platform-specific overrides. Keys are stable platform identifiers (e.g. 'tvos', 'android', 'macos'). Each value extends the base build.",
+      "additionalProperties": { "$ref": "#/definitions/profile_layer" }
+    },
+
+    "device_profiles": {
+      "type": "object",
+      "description": "Device-specific overrides. Keys are stable device identifiers (e.g. 'bonus-room', 'shield'). Each device profile must declare which platform profile it extends.",
+      "additionalProperties": { "$ref": "#/definitions/device_profile" }
+    },
+
+    "optional": {
+      "type": "array",
+      "description": "Named optional component groups. Platform and device profiles may include them by ID. Groups are applied after platform and device layers.",
+      "items": { "$ref": "#/definitions/optional_group" },
+      "default": []
+    },
+
+    "private_overlay": {
+      "$ref": "#/definitions/private_overlay_ref",
+      "description": "Reference to an optional private configuration overlay. Describes where to find it; contains no secrets or credential values."
+    },
+
+    "restart_policy": {
+      "$ref": "#/definitions/restart_policy",
+      "description": "Declares which restart types Build Manager may perform during provisioning."
+    }
+  },
+
+  "definitions": {
+
+    "addon_state": {
+      "type": "string",
+      "enum": ["enabled", "disabled", "absent"],
+      "description": "'enabled': must be installed and enabled. 'disabled': must be installed but disabled. 'absent': must not be installed. An add-on omitted from a profile layer inherits its state from the parent layer — omission is NOT equivalent to 'disabled'."
+    },
+
+    "addon_entry": {
+      "type": "object",
+      "required": ["addon_id", "state"],
+      "additionalProperties": false,
+      "description": "An add-on and its required state in this layer.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "description": "Kodi add-on identifier exactly as Kodi knows it."
+        },
+        "state": { "$ref": "#/definitions/addon_state" },
+        "note": {
+          "type": "string",
+          "description": "Human-readable note for maintainers. Not processed by the engine."
+        }
+      }
+    },
+
+    "addon_override": {
+      "type": "object",
+      "required": ["addon_id", "state"],
+      "additionalProperties": false,
+      "description": "Overrides the state of an add-on inherited from a parent layer. If the addon_id does not appear in the parent, it is added to the resolved set.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "state": { "$ref": "#/definitions/addon_state" },
+        "note": { "type": "string" }
+      }
+    },
+
+    "repository": {
+      "type": "object",
+      "required": ["addon_id"],
+      "additionalProperties": false,
+      "description": "A Kodi repository that must be installed before add-on resolution. Repositories are not subject to profile layering; the base list applies globally.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^repository\\.[a-z0-9._-]+$",
+          "description": "Kodi repository add-on identifier. Must start with 'repository.'."
+        },
+        "bootstrap_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL to the repository ZIP used for initial bootstrap when the repository is not yet installed. Not used if the repository is already present."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "If true (default), provisioning must not continue if this repository cannot be installed.",
+          "default": true
+        }
+      }
+    },
+
+    "skin_entry": {
+      "type": "object",
+      "required": ["addon_id"],
+      "additionalProperties": false,
+      "description": "The desired active skin and optional configuration packages to apply after activation.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^skin\\.[a-z0-9._-]+$",
+          "description": "Kodi skin add-on identifier. Must start with 'skin.'."
+        },
+        "config_packages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Named configuration packages to apply after skin activation. Package names correspond to entries in config.packages.",
+          "default": []
+        }
+      }
+    },
+
+    "config_declarations": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Declares which configuration is owned by this build layer. Contains no setting values. Values are stored in separate configuration packages (not in the manifest).",
+      "properties": {
+        "packages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Named configuration packages included in this layer. Package names are opaque to the schema; the engine resolves them to actual files.",
+          "default": []
+        },
+        "managed_settings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/managed_setting_scope" },
+          "description": "Declares which setting keys within specific add-ons are owned by this build. The engine will overwrite these keys; it will not touch keys not listed here.",
+          "default": []
+        },
+        "managed_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relative Kodi userdata paths that Build Manager owns and may overwrite. Paths are relative to the Kodi userdata directory. Path traversal sequences are forbidden.",
+          "default": []
+        }
+      }
+    },
+
+    "managed_setting_scope": {
+      "type": "object",
+      "required": ["addon_id", "keys"],
+      "additionalProperties": false,
+      "description": "Declares that Build Manager owns specific setting keys for one add-on.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Setting key names owned by this build for the given add-on."
+        }
+      }
+    },
+
+    "profile_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A platform profile. Layered on top of the base build. All fields are optional; absent fields mean 'inherit from base'.",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Human-readable platform name for display in the UI."
+        },
+        "addons": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/addon_override" },
+          "description": "Add-on state overrides for this platform. Only add-ons listed here are affected; all others inherit from the base. Merge rule: same addon_id overrides state; new addon_id is appended to the resolved set.",
+          "default": []
+        },
+        "config": {
+          "$ref": "#/definitions/config_declarations",
+          "description": "Configuration declarations merged on top of the base. Package lists union; managed_settings keys union per add-on."
+        },
+        "skin": {
+          "$ref": "#/definitions/skin_entry",
+          "description": "Platform-specific skin override. Absent means inherit the base skin."
+        },
+        "include_optional": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional group IDs (from the top-level 'optional' list) to activate for this platform.",
+          "default": []
+        }
+      }
+    },
+
+    "device_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A device profile. Extends a platform profile. Represents a single physical device or role.",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Human-readable device name shown in the profile selection UI."
+        },
+        "extends": {
+          "type": "string",
+          "description": "Platform profile ID this device inherits from. Must match a key in platform_profiles. Absent means the device profile layers directly on the base build with no platform layer."
+        },
+        "addons": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/addon_override" },
+          "description": "Add-on state overrides for this device. Applied after the platform layer. Merge rule: same as platform layer — same addon_id overrides, new addon_id appended.",
+          "default": []
+        },
+        "config": {
+          "$ref": "#/definitions/config_declarations",
+          "description": "Device-specific configuration declarations merged on top of the platform layer."
+        },
+        "skin": {
+          "$ref": "#/definitions/skin_entry",
+          "description": "Device-specific skin override. Absent means inherit from the platform layer (or base)."
+        },
+        "include_optional": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional group IDs to activate for this device, in addition to any activated at the platform layer.",
+          "default": []
+        }
+      }
+    },
+
+    "optional_group": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "description": "A named set of optional components. Activated by platform or device profiles via include_optional. Applied after device profile resolution.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "Stable identifier used in include_optional lists."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable group name."
+        },
+        "description": {
+          "type": "string"
+        },
+        "addons": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/addon_entry" },
+          "description": "Add-ons in this optional group. Applied after device profile layer. Merge rule: same as profile layers.",
+          "default": []
+        },
+        "config": {
+          "$ref": "#/definitions/config_declarations",
+          "description": "Configuration declarations contributed by this optional group."
+        }
+      }
+    },
+
+    "private_overlay_ref": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "A reference to a private configuration overlay. The public manifest describes where to find the overlay; the overlay itself is never committed to the public repository.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["local_file"],
+          "description": "'local_file': the overlay is a JSON file at a local filesystem path on the target device."
+        },
+        "path_hint": {
+          "type": "string",
+          "description": "Suggested local path. Build Manager may use this as a default and prompt the user if the file is absent. Must not contain secrets."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what the private overlay contains."
+        }
+      }
+    },
+
+    "restart_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Governs which restart actions Build Manager may take during provisioning. Both default to true.",
+      "properties": {
+        "allow_skin_reload": {
+          "type": "boolean",
+          "description": "Permit a skin reload (lighter than a full restart). Required for some skin configuration changes.",
+          "default": true
+        },
+        "allow_kodi_restart": {
+          "type": "boolean",
+          "description": "Permit a full Kodi restart. Required after skin changes and some add-on installations.",
+          "default": true
+        }
+      }
+    }
+
+  }
+}
