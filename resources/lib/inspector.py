@@ -214,7 +214,10 @@ def _parse_version_response(response_text: str) -> str:
         return ""
     major = version.get("major")
     minor = version.get("minor")
-    if isinstance(major, int) and isinstance(minor, int):
+    if (
+        isinstance(major, int) and not isinstance(major, bool)
+        and isinstance(minor, int) and not isinstance(minor, bool)
+    ):
         return f"{major}.{minor}"
     return ""
 
@@ -223,31 +226,76 @@ def _parse_version_response(response_text: str) -> str:
 # Add-on list normalizer (pure function; testable without xbmc)
 # ---------------------------------------------------------------------------
 
+def _parse_addon_entry(item: object, index: int) -> InstalledAddon:
+    """Parse one raw add-on entry from Addons.GetAddons.
+
+    Raises KodiInspectionError for any constraint violation so that callers
+    never receive a partial or silently-wrong InstalledAddon.
+
+    Required fields: addonid (non-empty string), enabled (bool).
+    Optional field:  version (string); absent → ""; present non-string → error.
+    """
+    if not isinstance(item, dict):
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}] must be an object, "
+            f"got {type(item).__name__}"
+        )
+    if "addonid" not in item:
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}].addonid: required field missing"
+        )
+    addon_id = item["addonid"]
+    if not isinstance(addon_id, str):
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}].addonid: "
+            f"must be a string, got {type(addon_id).__name__}"
+        )
+    if not addon_id:
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}].addonid: must not be empty"
+        )
+    if "enabled" not in item:
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}].enabled: required field missing"
+        )
+    enabled = item["enabled"]
+    if not isinstance(enabled, bool):
+        raise KodiInspectionError(
+            f"Addons.GetAddons: result.addons[{index}].enabled: "
+            f"must be a boolean, got {type(enabled).__name__}"
+        )
+    version = ""
+    if "version" in item:
+        version_raw = item["version"]
+        if not isinstance(version_raw, str):
+            raise KodiInspectionError(
+                f"Addons.GetAddons: result.addons[{index}].version: "
+                f"must be a string if present, got {type(version_raw).__name__}"
+            )
+        version = version_raw
+    return InstalledAddon(addon_id=addon_id, enabled=enabled, version=version)
+
+
 def _parse_addon_list(raw: List[object]) -> Tuple[InstalledAddon, ...]:
     """Convert a raw add-on list to a sorted tuple of InstalledAddon.
 
-    Malformed entries are silently skipped:
-    - entry is not a dict
-    - 'addonid' is absent, non-str, or empty
-
-    Field defaults for present-but-wrong-type values:
-    - enabled: False when absent or non-bool
-    - version: "" when absent or non-str
+    Fail-closed: raises KodiInspectionError if any entry is malformed or if
+    the same addon_id appears more than once. A partial KodiState is never
+    returned — either all entries parse cleanly or the entire call fails.
 
     Output is sorted by addon_id for deterministic ordering.
     """
+    seen_ids: set = set()
     out: List[InstalledAddon] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        addon_id = item.get("addonid")
-        if not isinstance(addon_id, str) or not addon_id:
-            continue
-        enabled_raw = item.get("enabled")
-        enabled = enabled_raw if isinstance(enabled_raw, bool) else False
-        version_raw = item.get("version")
-        version = version_raw if isinstance(version_raw, str) else ""
-        out.append(InstalledAddon(addon_id=addon_id, enabled=enabled, version=version))
+    for i, item in enumerate(raw):
+        addon = _parse_addon_entry(item, i)
+        if addon.addon_id in seen_ids:
+            raise KodiInspectionError(
+                f"Addons.GetAddons: result.addons[{i}].addonid: "
+                f"duplicate addon_id {addon.addon_id!r}"
+            )
+        seen_ids.add(addon.addon_id)
+        out.append(addon)
     out.sort(key=lambda a: a.addon_id)
     return tuple(out)
 

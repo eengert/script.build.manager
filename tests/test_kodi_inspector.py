@@ -196,27 +196,24 @@ class TestAddons(unittest.TestCase):
         state = self._inspect([])
         self.assertEqual(state.addons, ())
 
-    def test_malformed_entry_not_dict_skipped(self):
-        state = self._inspect([
-            "not-a-dict",
-            {"addonid": "a.b", "enabled": True, "version": "1.0.0"},
-        ])
-        self.assertEqual(len(state.addons), 1)
-        self.assertEqual(state.addons[0].addon_id, "a.b")
+    def test_non_object_entry_raises(self):
+        with self.assertRaises(KodiInspectionError):
+            self._inspect([
+                "not-a-dict",
+                {"addonid": "a.b", "enabled": True, "version": "1.0.0"},
+            ])
 
-    def test_malformed_entry_missing_addon_id_skipped(self):
-        state = self._inspect([{"enabled": True, "version": "1.0.0"}])
-        self.assertEqual(state.addons, ())
+    def test_missing_addonid_raises(self):
+        with self.assertRaises(KodiInspectionError):
+            self._inspect([{"enabled": True, "version": "1.0.0"}])
 
-    def test_malformed_enabled_type_defaults_to_false(self):
-        state = self._inspect([{"addonid": "a.b", "enabled": "yes", "version": "1.0.0"}])
-        self.assertEqual(len(state.addons), 1)
-        self.assertFalse(state.addons[0].enabled)
+    def test_non_bool_enabled_raises(self):
+        with self.assertRaises(KodiInspectionError):
+            self._inspect([{"addonid": "a.b", "enabled": "yes", "version": "1.0.0"}])
 
-    def test_malformed_version_type_defaults_to_empty_string(self):
-        state = self._inspect([{"addonid": "a.b", "enabled": True, "version": 123}])
-        self.assertEqual(len(state.addons), 1)
-        self.assertEqual(state.addons[0].version, "")
+    def test_malformed_version_type_raises(self):
+        with self.assertRaises(KodiInspectionError):
+            self._inspect([{"addonid": "a.b", "enabled": True, "version": 123}])
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +293,60 @@ class TestAddonResponseParsing(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Fail-closed add-on parsing (supervisor BM-005 correction)
+# ---------------------------------------------------------------------------
+
+class TestAddonParsingFailClosed(unittest.TestCase):
+    """Focused tests for fail-closed constraints on add-on entries.
+
+    Every constraint violation must raise KodiInspectionError. No partial
+    KodiState may be returned when any entry in result.addons is malformed.
+    """
+
+    def _inspect(self, addons: List[Any]) -> KodiState:
+        return _make_inspector(installed_addons=addons).inspect()
+
+    def test_empty_addonid_raises(self):
+        with self.assertRaises(KodiInspectionError) as ctx:
+            self._inspect([{"addonid": "", "enabled": True, "version": "1.0.0"}])
+        self.assertIn("addonid", str(ctx.exception))
+
+    def test_non_string_addonid_raises(self):
+        with self.assertRaises(KodiInspectionError) as ctx:
+            self._inspect([{"addonid": 12345, "enabled": True, "version": "1.0.0"}])
+        self.assertIn("addonid", str(ctx.exception))
+
+    def test_missing_enabled_raises(self):
+        with self.assertRaises(KodiInspectionError) as ctx:
+            self._inspect([{"addonid": "a.b", "version": "1.0.0"}])
+        self.assertIn("enabled", str(ctx.exception))
+
+    def test_duplicate_addonid_raises(self):
+        with self.assertRaises(KodiInspectionError) as ctx:
+            self._inspect([
+                {"addonid": "a.b", "enabled": True, "version": "1.0.0"},
+                {"addonid": "a.b", "enabled": False, "version": "2.0.0"},
+            ])
+        self.assertIn("duplicate", str(ctx.exception))
+
+    def test_no_partial_state_when_second_entry_invalid(self):
+        # First entry valid, second malformed — no KodiState returned at all.
+        with self.assertRaises(KodiInspectionError):
+            self._inspect([
+                {"addonid": "a.b", "enabled": True, "version": "1.0.0"},
+                {"addonid": "c.d", "enabled": "not-a-bool"},
+            ])
+
+    def test_missing_version_accepted_as_empty_string(self):
+        state = self._inspect([{"addonid": "a.b", "enabled": True}])
+        self.assertEqual(state.addons[0].version, "")
+
+    def test_valid_version_preserved(self):
+        state = self._inspect([{"addonid": "a.b", "enabled": True, "version": "3.1.4"}])
+        self.assertEqual(state.addons[0].version, "3.1.4")
+
+
+# ---------------------------------------------------------------------------
 # Application.GetProperties version response parsing
 # ---------------------------------------------------------------------------
 
@@ -324,6 +375,17 @@ class TestVersionResponseParsing(unittest.TestCase):
     def test_missing_minor_returns_empty_string(self):
         self.assertEqual(
             _parse_version_response('{"result":{"version":{"major":21}}}'), ""
+        )
+
+    def test_bool_major_returns_empty_string(self):
+        # bool is a subclass of int in Python; must be excluded from version parsing.
+        self.assertEqual(
+            _parse_version_response('{"result":{"version":{"major":true,"minor":0}}}'), ""
+        )
+
+    def test_bool_minor_returns_empty_string(self):
+        self.assertEqual(
+            _parse_version_response('{"result":{"version":{"major":21,"minor":false}}}'), ""
         )
 
 
