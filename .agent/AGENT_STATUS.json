@@ -1,8 +1,8 @@
 {
-  "active_agent": null,
-  "status": "idle",
-  "reason": "Bootstrap complete. No implementation task assigned yet.",
-  "last_commit": "c0032f1",
-  "next_agent": null,
+  "active_agent": "claude",
+  "status": "in_progress",
+  "reason": "BM-001: project skeleton implementation in progress. Codex temporarily unavailable.",
+  "last_commit": "a970e83",
+  "next_agent": "codex",
   "updated_at": "2026-09-17T00:00:00Z"
 }

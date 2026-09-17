@@ -28,27 +28,20 @@ and does not clone device state by copying files from one device to another.
 
 ## Current State
 
-**Phase**: Bootstrap — repository initialized, no implementation yet.
+**Phase**: BM-001 — project skeleton, in progress.
 
-- Bootstrap files committed to `matrix` (commit `c0032f1`).
-- Agent branches fast-forwarded to bootstrap commit.
-- `BUILD_MANAGER_PROJECT_PLAN.md` is a placeholder pending supervisor-approved
-  plan.
-- No Kodi addon code, tests, or configuration files exist yet.
+- Bootstrap commit: `a970e83` on `matrix`.
+- Codex temporarily unavailable; Claude is primary agent for BM-001.
+- BM-001 work committed to `agent/claude` (not yet merged to `matrix`).
+- `BUILD_MANAGER_PROJECT_PLAN.md` is populated with the full phased plan.
 
-## Next Task
+## Active Task
 
-**BM-001: Project skeleton**
+**BM-001: Project skeleton** — `agent/claude`
 
-Create the standard Kodi addon directory layout:
-- `addon.xml` (metadata, platform declarations)
-- `default.py` (entrypoint)
-- `service.py` (background service stub, if needed)
-- `resources/` tree (`lib/`, `settings.xml`, `language/`, `images/`)
-- Empty test suite (`tests/`)
-- `tools/` (packaging, test runner)
-
-This task has not been assigned. Assign it to an agent branch when ready.
+Creating `addon.xml`, `default.py`, `resources/lib/build_manager.py` stub,
+`resources/settings.xml`, `resources/language/`, `tests/`, `changelog.md`,
+`LICENSE.txt`. No provisioning logic. See `.agent/CURRENT_TASK.md`.
 
 ## Worktree Paths
 
@@ -68,4 +61,5 @@ authorized bootstrap or housekeeping operations.
 
 | Date | Milestone |
 |---|---|
-| 2026-09-17 | Repository initialized; bootstrap files committed to `matrix` |
+| 2026-09-17 | Repository initialized; bootstrap files committed to `matrix` (`a970e83`) |
+| 2026-09-17 | BM-001 in progress on `agent/claude`; project plan populated |

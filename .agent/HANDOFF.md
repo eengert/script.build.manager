@@ -1,23 +1,23 @@
 # Handoff
 
-## Latest — 2026-09-17 Bootstrap complete; awaiting first development task
+## Latest — 2026-09-17 BM-001 in progress; Claude is primary agent
+
+Codex is temporarily unavailable. Claude is acting as primary development agent
+until Codex rejoins. Current task: BM-001 (project skeleton).
+
+See `.agent/CURRENT_TASK.md` for scope and acceptance criteria.
+See `BUILD_MANAGER_SUPERVISOR_HANDOFF.md` for project state.
+See `BUILD_MANAGER_PROJECT_PLAN.md` for the full phased plan.
+
+**Note for Codex when rejoining**: Codex was unavailable during BM-001.
+Claude will commit the skeleton to `agent/claude`. When Codex rejoins, it
+should fast-forward `agent/codex` to the `matrix` commit that includes
+BM-001 (once the supervisor merges it) before beginning new work.
+
+## Previous — 2026-09-17 Bootstrap complete; awaiting first development task
 
 Project initialized. All bootstrap files committed to `matrix`; `agent/codex`
 and `agent/claude` fast-forwarded to the same commit. No production code
-exists yet — this is a repository scaffold only.
+existed yet — repository scaffold only.
 
-**State**: idle. No implementation work was performed. No real Kodi profile,
-device, or external service was touched.
-
-**Next recommended task**: BM-001 — project skeleton (directory layout,
-`addon.xml`, `default.py`, `service.py`, `addon_data/` structure, empty test
-suite). See `BUILD_MANAGER_SUPERVISOR_HANDOFF.md` for architecture principles
-and `BUILD_MANAGER_PROJECT_PLAN.md` for the canonical plan once populated.
-
-**Agent workflow note**: normal implementation work should occur on the agent
-branches (`agent/codex` or `agent/claude`), not directly on `matrix`. The
-`matrix` branch is the integration/protected branch; only supervisor-reviewed
-work is merged there.
-
-No open code task remains from this bootstrap. Historical entries below will
-accumulate as real development begins.
+No open code task remained. Next task: BM-001 — now in progress.

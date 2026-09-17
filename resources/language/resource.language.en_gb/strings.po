@@ -1,0 +1,37 @@
+# Kodi Media Center language file
+# Addon Name: Build Manager
+# Addon id: script.build.manager
+# Addon Provider: eengert
+msgid ""
+msgstr ""
+"Project-Id-Version: Build Manager\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-17 00:00+0000\n"
+"PO-Revision-Date: 2026-09-17 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: English\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en_GB\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "Addon Summary"
+msgid "Declarative multi-device Kodi provisioning."
+msgstr ""
+
+msgctxt "Addon Description"
+msgid "Build Manager provisions Kodi devices to a declared desired state. Define what each device should have installed and configured; Build Manager applies the specification."
+msgstr ""
+
+msgctxt "#32000"
+msgid "Build Manager"
+msgstr ""
+
+msgctxt "#32001"
+msgid "General"
+msgstr ""
+
+msgctxt "#32010"
+msgid "Build Manager is not yet configured.\n\nProvisioning features are coming in a future release."
+msgstr ""

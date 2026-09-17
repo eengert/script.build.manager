@@ -1,18 +1,39 @@
 # Current Task
 
-## Status: No Active Task
+## BM-001 — Project Skeleton
 
-Project initialized. Bootstrap files committed to `matrix`. Agent branches
-(`agent/codex`, `agent/claude`) are synchronized to the bootstrap commit.
+**Agent**: Claude (Codex temporarily unavailable; Claude is primary until Codex rejoins)
+**Branch**: `agent/claude`
+**Status**: In progress
 
-No implementation task is in progress. The next task to be assigned is
-**BM-001: project skeleton** — see `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`
-for context and `BUILD_MANAGER_PROJECT_PLAN.md` for the canonical plan
-(to be populated before implementation begins).
+### Scope
 
-When a task is assigned, replace this file's content with:
-- Task ID and title
-- Scope (what is and is not included)
-- Files to create or modify
-- Acceptance criteria
-- Links to relevant design docs
+Create the Kodi add-on skeleton for `script.build.manager` without implementing
+provisioning logic. See `BUILD_MANAGER_PROJECT_PLAN.md` → "Phase 1".
+
+**In scope**:
+- `addon.xml`
+- `default.py` (minimal safe entrypoint)
+- `resources/lib/` (importable Python package)
+- `resources/lib/build_manager.py` (stub class)
+- `resources/settings.xml` (placeholder)
+- `resources/language/resource.language.en_gb/strings.po` (initial strings)
+- `tests/__init__.py`, `tests/test_imports.py`
+- `changelog.md`
+- `LICENSE.txt`
+
+**Out of scope**:
+- Provisioning logic
+- Manifest parsing
+- Platform-specific adapters
+- Network operations
+- Skin management
+- Merging to `matrix`
+
+### Acceptance Criteria
+
+- `addon.xml` is syntactically valid XML
+- `resources/lib/build_manager.py` imports cleanly outside Kodi
+- `tests/test_imports.py` passes with `python3 -m unittest`
+- No secrets or machine-specific paths
+- No modification to real Kodi profiles or devices
