@@ -1,6 +1,66 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-004 merged to matrix; project idle, BM-005 next
+## Latest — 2026-09-17 BM-005 complete; awaiting supervisor review
+
+**Files created**:
+- `resources/lib/inspector.py` — NEW. Kodi state inspector.
+  Public API: `KodiStateInspector(backend=None).inspect() -> KodiState` and
+  `inspect_kodi_state() -> KodiState`.
+  Error: `KodiInspectionError`.
+  Types: `KodiState` (frozen dataclass), `InstalledAddon` (frozen dataclass).
+  Backend: `KodiBackend` (injectable base), `KodiRuntimeBackend` (lazy xbmc).
+  JSON-RPC helpers (testable without xbmc): `_parse_addon_response`,
+  `_parse_version_response`. Add-on normalizer: `_parse_addon_list`.
+  Stdlib only — no new runtime dependencies.
+- `tests/test_kodi_inspector.py` — NEW. 58 BM-005 tests (all passing).
+
+**Tests**: 349/349 passing (`python3 -m unittest discover tests`)
+- 291 prior (BM-001 through BM-004)
+- 58 new BM-005 inspector tests
+
+**What was live-proven**: All 349 tests passing with fake backend. No Kodi
+runtime required; no real Kodi profiles touched.
+
+**Platform mapping** (Kodi condition → BM platform ID):
+- `system.platform.tvos`    → `tvos`
+- `system.platform.android` → `android` (includes Fire TV)
+- `system.platform.osx`     → `macos`
+- `system.platform.ios`     → `ios`
+- `system.platform.windows` → `windows`
+- `system.platform.linux`   → `linux`
+- (none matched)            → `unknown`
+Precedence: tvos > android > macos > ios > windows > linux > unknown.
+
+**JSON-RPC methods used (read-only)**:
+- `Addons.GetAddons` with `installed:true` and properties `[enabled, version]`
+- `Application.GetProperties` with properties `[version]`
+- `xbmc.getSkinDir()` — active skin directory (==addon_id by Kodi convention)
+- `xbmc.getCondVisibility()` — platform condition flags
+
+**No mutating JSON-RPC methods called**. No Kodi state written.
+
+**Add-on ordering**: sorted by addon_id; malformed entries silently skipped.
+
+**Skin detection**: `xbmc.getSkinDir()` returns folder name matching addon_id
+for all standard Kodi skins. Returns "" if result doesn't start with "skin.".
+
+**What was NOT live-proven outside tests**: `KodiRuntimeBackend` methods
+require a live Kodi process. The JSON-RPC parsing helpers are fully tested;
+the xbmc API call paths are not testable outside Kodi.
+
+**Runtime dependencies added**: None.
+
+**BM-006**: not started.
+
+**Usage (this task)**: start 5h 56% / wk 44%, end 5h 63% / wk 45%,
+delta +7% / +1%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor reviews BM-005 on `agent/claude`. Merges to
+`matrix`. Claude continues with BM-006 (desired-vs-actual diff / planner).
+
+---
+
+## Previous — 2026-09-17 BM-004 merged to matrix; project idle, BM-005 next
 
 **matrix before**: `a5d263e`
 **matrix after**: `2ad253f` (fast-forward — no squash, no rebase)

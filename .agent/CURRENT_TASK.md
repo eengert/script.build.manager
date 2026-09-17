@@ -1,29 +1,34 @@
 # Current Task
 
-## Idle — awaiting BM-005 assignment
+## BM-005 Complete — awaiting supervisor review
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Idle — BM-004 complete and merged to `matrix` (`2ad253f`)
+**Status**: Awaiting supervisor review; BM-006 not started
 
 ### Deliverables
 
-- `resources/lib/resolver.py` — profile resolver
-  - Public API: `resolve_manifest(manifest, device_profile_id) -> ResolvedBuild`
-  - Error: `ManifestResolutionError`
-  - Output type: `ResolvedBuild` (frozen dataclass)
-  - Merge order: base → platform → device → optional groups
+- `resources/lib/inspector.py` — NEW. Kodi state inspector.
+  - Public API: `KodiStateInspector(backend=None).inspect() -> KodiState`
+  - Convenience: `inspect_kodi_state() -> KodiState`
+  - Error: `KodiInspectionError`
+  - Types: `KodiState` (frozen), `InstalledAddon` (frozen)
+  - Backend: `KodiBackend` (abstract), `KodiRuntimeBackend` (xbmc lazy-import)
+  - Helpers: `_parse_addon_response`, `_parse_version_response`, `_parse_addon_list`
   - No new runtime dependencies (stdlib only)
-- `tests/test_manifest_resolver.py` — 78 BM-004 tests (all passing)
-- `docs/MANIFEST.md` — optional-group deduplication rule documented, open question #5 closed
+- `tests/test_kodi_inspector.py` — NEW. 58 BM-005 tests (all passing).
 
-### Last Completed: BM-004 — Profile Merge / Inheritance
+### Test Count
 
-Merged to `matrix` at `2ad253f`. Tests: 291/291 passing.
+291 prior + 58 new = **349 / 349 passing**
 
-### Next: BM-005 — Kodi/Platform State Inspector
+### Last Completed: BM-005 — Kodi/Platform State Inspector
 
-Not started.
+On `agent/claude`. Not yet merged to `matrix`.
+
+### Next: BM-006 — Desired-vs-Actual Diff / Planner
+
+Not started. Needs `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
 
 ### Prerequisites
 
@@ -31,3 +36,4 @@ Not started.
 - BM-002 merged to `matrix` ✓ (`89039d6`)
 - BM-003 merged to `matrix` ✓ (`a5d263e`)
 - BM-004 merged to `matrix` ✓ (`2ad253f`)
+- BM-005 on `agent/claude` ✓ (awaiting supervisor review)
