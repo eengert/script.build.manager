@@ -1,10 +1,10 @@
 # Current Task
 
-## BM-004 — Profile Merge / Inheritance
+## Idle — awaiting BM-005 assignment
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Complete — awaiting supervisor review and merge to `matrix`
+**Status**: Idle — BM-004 complete and merged to `matrix` (`2ad253f`)
 
 ### Deliverables
 
@@ -17,16 +17,17 @@
 - `tests/test_manifest_resolver.py` — 78 BM-004 tests (all passing)
 - `docs/MANIFEST.md` — optional-group deduplication rule documented, open question #5 closed
 
-### Out of scope (BM-005+)
+### Last Completed: BM-004 — Profile Merge / Inheritance
 
-- Platform / device auto-detection
-- Kodi state inspection
-- Diff / planner
-- Private overlay loading
-- Add-on installation, config deployment, skin activation
+Merged to `matrix` at `2ad253f`. Tests: 291/291 passing.
+
+### Next: BM-005 — Kodi/Platform State Inspector
+
+Not started.
 
 ### Prerequisites
 
 - BM-001 merged to `matrix` ✓ (`5442f13`)
 - BM-002 merged to `matrix` ✓ (`89039d6`)
 - BM-003 merged to `matrix` ✓ (`a5d263e`)
+- BM-004 merged to `matrix` ✓ (`2ad253f`)

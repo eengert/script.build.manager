@@ -52,16 +52,17 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**Idle — BM-003 merged, awaiting BM-004 assignment**
+**Idle — BM-004 merged, awaiting BM-005 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
 | BM-001 Project skeleton | Merged | `5442f13` |
 | BM-002 Manifest schema v1 | Merged | `89039d6` |
 | BM-003 Manifest parser/validator | Merged | `a5d263e` |
-| BM-004 Profile merge/inheritance | Not started | — |
+| BM-004 Profile merge/inheritance | Merged | `2ad253f` |
+| BM-005 Kodi/platform state inspector | Not started | — |
 
-**matrix HEAD**: `a5d263e` (fast-forward from `a983df8`)
+**matrix HEAD**: `2ad253f` (fast-forward from `a5d263e`)
 
 ## Completed Deliverables
 
@@ -87,9 +88,19 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 - Null-vs-omission correction included: explicit JSON `null` rejected for all
   non-nullable fields; omission still returns documented defaults.
 
+### BM-004 (merged `2ad253f`)
+- `resources/lib/resolver.py` — profile resolver.
+  Public API: `resolve_manifest(manifest, device_profile_id) -> ResolvedBuild`.
+  Error: `ManifestResolutionError`. Output: `ResolvedBuild` (frozen dataclass).
+  Layer order: base → platform → device → optional groups.
+  Optional-group de-duplication: platform-first, then device, first-occurrence wins.
+  Stdlib only — no new runtime dependencies.
+- `tests/test_manifest_resolver.py` — 78 BM-004 tests
+- `docs/MANIFEST.md` — optional-group dedup rule documented; open question #5 closed
+
 ## Test Status
 
-`python3 -m unittest discover tests` — **213/213 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **291/291 passing** (outside Kodi runtime)
 
 ## Schema Summary
 
@@ -121,17 +132,13 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-004** — Profile merge/inheritance logic (merge semantics fully
-   documented in `docs/MANIFEST.md` §Merge semantics; no implementation yet):
-   - Add-on merge: base → platform → device → optional groups
-   - Config merge: union of packages, managed_settings (per addon_id), managed_files
-   - Skin merge: deepest layer that declares skin wins
-   - Optional group deduplication (when both platform and device include same group)
-   - Return fully-resolved `ResolvedBuild` or equivalent typed result
+1. **BM-005** — Kodi/platform state inspector:
+   - Read actual installed add-on state from Kodi's database or filesystem
+   - Detect active skin and platform type
+   - No mutation; pure read
+   - Output feeds BM-006 diff/planner
 
-2. **BM-005** — Kodi/platform state inspector
-
-3. **BM-005** — Kodi/platform state inspector
+2. **BM-006** — Desired-vs-actual diff / planner
 
 ## Open Questions (from BM-002)
 
@@ -190,3 +197,4 @@ Supervisor reviews and merges to `matrix`.
 | 2026-09-17 | BM-002 manifest schema v1 complete and merged to `matrix` (`89039d6`) |
 | 2026-09-17 | WF-001 usage-tracking docs merged to `matrix` (`a983df8`); project idle |
 | 2026-09-17 | BM-003 manifest parser/validator merged to `matrix` (`a5d263e`); project idle |
+| 2026-09-17 | BM-004 profile resolver merged to `matrix` (`2ad253f`); project idle |

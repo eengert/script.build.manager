@@ -1,6 +1,26 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-004 complete; profile resolver committed
+## Latest — 2026-09-17 BM-004 merged to matrix; project idle, BM-005 next
+
+**matrix before**: `a5d263e`
+**matrix after**: `2ad253f` (fast-forward — no squash, no rebase)
+**Merge type**: Fast-forward via `git push origin 2ad253f:refs/heads/matrix`
+
+**Tests on matrix**: 291/291 passing (`python3 -m unittest discover tests`)
+
+**Codex**: untouched at `a970e83`
+
+**BM-005**: not started
+
+**Usage (merge task)**: start 5h 52% / wk 44%, end 5h 52% / wk 44%,
+delta ~0% / 0%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor assigns BM-005 task prompt. Claude implements
+Kodi/platform state inspector per §38 of the canonical plan.
+
+---
+
+## Previous — 2026-09-17 BM-004 complete; profile resolver committed
 
 **Files created/changed**:
 - `resources/lib/resolver.py` — NEW. Profile resolver.
