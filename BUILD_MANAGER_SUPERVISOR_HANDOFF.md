@@ -52,36 +52,38 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**BM-002 — Manifest schema v1: complete, awaiting supervisor review**
+**Idle — BM-002 merged, awaiting BM-003 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
 | BM-001 Project skeleton | Merged | `5442f13` |
-| BM-002 Manifest schema v1 | Complete on `agent/claude`, pending review | — |
+| BM-002 Manifest schema v1 | Merged | `89039d6` |
+| BM-003 Manifest parser | Not started | — |
 
-**BM-002 deliverables** (committed on `agent/claude`, not yet merged):
+**matrix HEAD**: `89039d6` (fast-forward from `5442f13`)
+
+## Completed Deliverables
+
+### BM-001 (merged `5442f13`)
+- `addon.xml`, `default.py`, `resources/lib/`, `resources/settings.xml`,
+  `resources/language/resource.language.en_gb/strings.po`
+- `tests/test_imports.py` — 3/3 passing
+
+### BM-002 (merged `89039d6`)
 - `docs/MANIFEST.md` — schema reference (layering, merge semantics, field docs)
 - `resources/builds/schema-v1.json` — JSON Schema Draft 7
-- `resources/builds/examples/minimal.json` — minimal valid manifest
-- `resources/builds/examples/eric-main.example.json` — realistic example (no secrets)
-- `tests/test_manifest_schema.py` — 47 new structural validation tests
+- `resources/builds/examples/minimal.json`
+- `resources/builds/examples/eric-main.example.json`
+- `tests/test_manifest_schema.py` — 48 structural validation tests
 
 ## Test Status
 
-`python3 -m unittest discover tests` — **50/50 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **51/51 passing** (outside Kodi runtime)
 
-- 3 BM-001 import tests
-- 8 schema-file structure tests
-- 5 minimal-example tests
-- 18 eric-main example tests
-- 16 invalid-case tests
-- 2 BM-001 regression tests
+## Schema Summary
 
-## Schema Summary (for review)
+Format: JSON, JSON Schema Draft 7. Top-level structure:
 
-Format: JSON, JSON Schema Draft 7 (`resources/builds/schema-v1.json`).
-
-Top-level structure:
 ```json
 {
   "schema_version": 1,
@@ -93,41 +95,40 @@ Top-level structure:
   "config": { "packages": [...], "managed_settings": [...], "managed_files": [...] },
   "platform_profiles": { "<platform-id>": { ... } },
   "device_profiles": { "<device-id>": { "extends": "<platform-id>", ... } },
-  "optional": [ { "id": "...", "addons": [...], "config": {...} } ],
+  "optional": [ { "id": "...", "addons": [...] } ],
   "private_overlay": { "type": "local_file", "path_hint": "..." },
   "restart_policy": { "allow_skin_reload": true, "allow_kodi_restart": true }
 }
 ```
 
-Key semantic decisions:
-- `enabled` / `disabled` / `absent` — explicit states; omitted field = inherit
+Key constraints:
+- `device_profile.extends` is **required** — every device profile must extend a platform profile
 - `additionalProperties: false` everywhere — malformed manifests rejected
-- Layering: base → platform → device → optional groups → private overlay
-- `private_overlay` is a reference only; no credentials in public manifest
+- Add-on states: `enabled` | `disabled` | `absent`; omitted = inherit (not disabled)
+- No credentials in public manifest; `private_overlay` is reference only
 - Full JSON Schema validation deferred to BM-003 (no `jsonschema` dependency yet)
 
 ## Next Recommended Tasks
 
-After supervisor review and merge of BM-002 to `matrix`:
+1. **BM-003** — Implement manifest loader/parser:
+   - Load JSON, validate against `resources/builds/schema-v1.json`
+   - Expose typed Python objects for the engine
+   - Path-traversal safety on `managed_files`
+   - Consider adding `jsonschema` as runtime dependency (requires `addon.xml` update)
+   - Unit tests against provided examples and invalid cases
 
-1. **BM-003** — Implement manifest validation/parser (load JSON, validate against
-   schema, expose typed Python objects; may add `jsonschema` dependency)
-2. **BM-004** — Implement profile inheritance/overrides (merge semantics defined
+2. **BM-004** — Profile inheritance/overrides (merge semantics fully documented
    in `docs/MANIFEST.md` §Merge semantics)
-3. **BM-005** — Implement Kodi/platform state inspector
-4. **BM-006** — Create desired-state model
 
-Claude is the active development agent. Per §49: do not begin Kodi mutation
-until the planning layer (BM-007) is stable.
+3. **BM-005** — Kodi/platform state inspector
 
 ## Open Questions (from BM-002)
 
 1. Private overlay schema — format not yet defined; needed before auth work
-2. Config package format — package names defined; resolution not yet specified
+2. Config package resolution — package names defined; format TBD
 3. `bootstrap_url` validation — checksum/signature strategy TBD
-4. `firetv` vs `android` platform split — defer until cross-platform testing
-5. Optional group deduplication — BM-004 must deduplicate `include_optional`
-   when a platform and device both activate the same group
+4. `firetv` vs `android` platform split — defer to cross-platform testing
+5. Optional group deduplication — BM-004 must deduplicate when platform + device both include same group
 
 ## Worktree Paths
 
@@ -149,4 +150,4 @@ Supervisor reviews and merges to `matrix`.
 |---|---|
 | 2026-09-17 | Repository initialized; bootstrap committed to `matrix` (`a970e83`) |
 | 2026-09-17 | BM-001 skeleton complete and merged to `matrix` (`5442f13`) |
-| 2026-09-17 | BM-002 manifest schema v1 complete on `agent/claude`; awaiting review |
+| 2026-09-17 | BM-002 manifest schema v1 complete and merged to `matrix` (`89039d6`) |

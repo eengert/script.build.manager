@@ -1,33 +1,35 @@
 # Current Task
 
-## BM-002 — Manifest Schema v1
+## BM-003 — Manifest Validation / Parser
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Complete — awaiting supervisor review
+**Status**: Not started — awaiting task prompt from supervisor
 
-### Scope
+### Scope (anticipated — subject to task prompt)
 
-Define the v1 build manifest format (data contract only). No parser, loader,
-or validation Python in production code. No Kodi mutation. No new runtime
-dependencies.
+Implement the manifest loader and validator in Python. See
+`BUILD_MANAGER_PROJECT_PLAN.md` §38 (BM-003) and `docs/MANIFEST.md` for the
+schema reference and merge semantics.
 
-**Delivered**:
-- `docs/MANIFEST.md` — full schema reference (layering model, merge semantics,
-  field-by-field docs, security notes, open questions for BM-003/BM-004)
-- `resources/builds/schema-v1.json` — JSON Schema Draft 7
-- `resources/builds/examples/minimal.json` — minimal valid manifest (2 required fields)
-- `resources/builds/examples/eric-main.example.json` — realistic example (AF3,
-  Red Light, TMDb Helper, POV, Umbrella; tvos/android platform profiles;
-  bonus-room/family-room/shield device profiles; optional groups; private
-  overlay reference; no secrets)
-- `tests/test_manifest_schema.py` — 47 new tests (schema file, minimal example,
-  eric-main example, 16 invalid-case tests, BM-001 regression)
+**Expected deliverables** (subject to task prompt):
+- Python manifest loader (load JSON from file or string)
+- Structural validation against `resources/builds/schema-v1.json`
+- Typed Python objects (dataclasses or similar) for engine consumption
+- Path-traversal safety check on `managed_files` values
+- Unit tests against `minimal.json`, `eric-main.example.json`, and invalid cases
 
-**Total tests**: 50/50 passing (3 BM-001 + 47 BM-002)
+**Dependencies**:
+- `jsonschema` PyPI package — may be added as a runtime dependency in BM-003
+  if supervisor approves; document in `addon.xml` if added
 
-**Out of scope** (BM-003+):
-- Production manifest loader/parser
-- Profile merge/inheritance logic (`docs/MANIFEST.md` defines the semantics)
+**Out of scope** (BM-004+):
+- Profile merge/inheritance logic (semantics defined in `docs/MANIFEST.md`)
 - Platform detection
 - Any Kodi mutation
+
+### Prerequisites
+
+- BM-001 merged to `matrix` ✓ (`5442f13`)
+- BM-002 merged to `matrix` ✓ (`89039d6`)
+- Per §49: do not begin Kodi mutation until planner layer (BM-007) is stable

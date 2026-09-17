@@ -1,6 +1,28 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-002 complete; manifest schema v1 defined
+## Latest — 2026-09-17 BM-002 merged to matrix; ready for BM-003
+
+Integration only. No implementation changes.
+
+**What happened**:
+- `agent/claude` fast-forwarded `matrix` from `5442f13` → `89039d6`
+- Includes BM-002 commits: `7bfda71`, `98e93db`, `4ac58c6`, `89039d6`
+- `matrix` pushed to origin
+- `agent/claude` agent-state updated: status=idle, next task=BM-003
+- `agent/codex` not touched (Codex still temporarily unavailable)
+- 51/51 tests passing on `matrix`
+
+**matrix now contains** (key commits):
+- `5442f13` — BM-001 complete (§30 branch-workflow correction)
+- `7bfda71` — BM-002: manifest schema v1
+- `89039d6` — BM-002: require extends on every device profile
+
+**Smallest next step**: Supervisor assigns BM-003 task prompt. Claude implements
+manifest loader/parser on `agent/claude` per §38 and `docs/MANIFEST.md`.
+
+---
+
+## Previous — 2026-09-17 BM-002 complete; manifest schema v1 defined
 
 Data contract only. No production parser code. No Kodi mutation. No new
 runtime dependencies. BM-001 implementation files unchanged from `799b836`.

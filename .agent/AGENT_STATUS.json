@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
-  "status": "completed",
-  "reason": "BM-002 complete. Manifest schema v1 committed (7bfda71). Awaiting supervisor review and matrix merge.",
-  "last_commit": "7bfda71",
+  "status": "idle",
+  "reason": "BM-002 merged to matrix (89039d6). Awaiting BM-003 task assignment.",
+  "last_commit": "89039d6",
   "next_agent": "claude",
   "updated_at": "2026-09-17T00:00:00Z"
 }
