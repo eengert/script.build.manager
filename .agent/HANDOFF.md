@@ -1,6 +1,39 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-006 merged to matrix; project idle, BM-007 next
+## Latest — 2026-09-17 BM-009 complete on agent/claude; pending supervisor merge
+
+**Deliverables on agent/claude** (not yet on matrix):
+- `tools/__init__.py` — empty package marker
+- `tools/kodi_test.py` — standalone disposable Kodi harness (stdlib only)
+- `tests/test_kodi_harness.py` — 74 BM-009 unit tests
+- `docs/TESTING.md` — harness documentation
+- `.gitignore` — added `.kodi-test/`
+- Agent state files updated
+
+**Tests**: 518/518 passing (444 pre-BM-009 + 74 new)
+
+**Live validation**: All 11 steps PASSED against Kodi 21.1 macOS (2026-09-17):
+- platform=macos, kodi_version=21.1, active_skin=skin.estuary, addon_count=30
+- script.build.manager visible (enabled=False — expected for freshly installed add-on)
+- Real profile untouched ✓
+
+**BM-007/BM-008 absorption**: Both tasks fully covered by prior work.
+- BM-007 desired-state model = BM-004 ResolvedBuild ✓
+- BM-007 operation planner = BM-006 plan_changes() ✓
+- BM-008 reconciliation loop tests = BM-006 test suite ✓
+- No separate implementation needed.
+
+**Usage (BM-009)**: start 5h 8% / wk 52%, end 5h 17% / wk 53%,
+delta +9% / +1%. Model: claude-sonnet-4-6, effort: max.
+
+**Next**: BM-010 (supervisor to assign scope).
+
+**Security note**: No real Kodi profiles or Apple TVs were accessed. The
+disposable harness verified this explicitly in step 11 of live validation.
+
+---
+
+## 2026-09-17 BM-006 merged to matrix; project idle, BM-007 next
 
 **matrix before**: `6d41279`
 **matrix after**: `70504e0` (fast-forward — no squash, no rebase)

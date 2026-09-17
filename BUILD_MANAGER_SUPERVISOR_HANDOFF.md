@@ -52,19 +52,21 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**Idle — BM-006 merged, awaiting BM-007 assignment**
+**BM-009 on agent/claude — awaiting supervisor review and merge**
 
-| Task | Status | matrix SHA |
-|---|---|---|
-| BM-001 Project skeleton | Merged | `5442f13` |
-| BM-002 Manifest schema v1 | Merged | `89039d6` |
-| BM-003 Manifest parser/validator | Merged | `a5d263e` |
-| BM-004 Profile merge/inheritance | Merged | `2ad253f` |
-| BM-005 Kodi/platform state inspector | Merged | `6d41279` |
-| BM-006 Desired-vs-actual diff / planner | Merged | `70504e0` |
-| BM-007 | Not started | — |
+| Task | Status | matrix SHA | Notes |
+|---|---|---|---|
+| BM-001 Project skeleton | Merged | `5442f13` | |
+| BM-002 Manifest schema v1 | Merged | `89039d6` | |
+| BM-003 Manifest parser/validator | Merged | `a5d263e` | |
+| BM-004 Profile merge/inheritance | Merged | `2ad253f` | |
+| BM-005 Kodi/platform state inspector | Merged | `6d41279` | |
+| BM-006 Desired-vs-actual diff / planner | Merged | `70504e0` | |
+| BM-007 | Absorbed by BM-006 | — | desired-state model = BM-004; planner = BM-006 |
+| BM-008 | Absorbed by BM-006 | — | reconciliation tests = BM-006 test suite |
+| BM-009 Disposable Kodi harness | On agent/claude | — | pending review |
 
-**matrix HEAD**: `70504e0` (fast-forward from `6d41279`)
+**matrix HEAD**: `70504e0` (unchanged)
 
 ## Completed Deliverables
 
@@ -116,6 +118,33 @@ Do not treat any shorter summary as a substitute for the canonical plan.
   Stdlib only — no new runtime dependencies.
 - `tests/test_kodi_inspector.py` — 67 BM-005 tests (58 original + 9 correction)
 
+### BM-009 (on agent/claude — pending review)
+- `tools/__init__.py` — empty package marker
+- `tools/kodi_test.py` — standalone disposable Kodi test harness.
+  Isolation via HOME env override → `.kodi-test/home/`. Commands: reset,
+  install, configure / enable-webserver, launch, wait, stop, restart,
+  inspect, status, validate.
+  Safety: `verify_isolation()` before every mutating op; stop refuses to SIGTERM
+  non-Kodi process; reset double-checks path before rmtree.
+  Install: copies only addon.xml, default.py, resources/ — excludes tests/tools/docs.
+  Inspect: HTTP JSON-RPC queries (platform, version, skin, addons) — read-only.
+  Validate: 11-step live sequence; real profile mtime compared before/after.
+  Webserver port 8920 (distinct from Backup Pro 8899 to allow simultaneous use).
+  Stdlib only — no runtime dependencies.
+- `tests/test_kodi_harness.py` — 74 BM-009 unit tests; no real Kodi required.
+  Covers path safety, isolation guards, reset, install source validation,
+  copy filtering, PID file, status, stop guard (non-Kodi process refusal),
+  command dispatch (12 routes + error handling), readiness polling, and
+  webserver configuration.
+- `docs/TESTING.md` — harness documentation (isolation model, safety, usage,
+  port table, INSPECT command, out-of-scope notes).
+- `.gitignore` — added `.kodi-test/`
+
+Live validation results (Kodi 21.1 macOS, 2026-09-17): platform=macos,
+kodi_version=21.1, active_skin=skin.estuary, addon_count=30.
+script.build.manager visible (enabled=False — freshly installed add-ons start
+disabled in Kodi, as expected). Real profile untouched.
+
 ### BM-006 (on agent/claude `7735e7a` — pending merge)
 - `resources/lib/planner.py` — desired-vs-actual planner.
   Public API: `plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`.
@@ -139,7 +168,9 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Test Status
 
-`python3 -m unittest discover tests` — **444/444 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **518/518 passing** (outside Kodi runtime)
+
+Live validation (BM-009): **11/11 steps passed** against Kodi 21.1 macOS (2026-09-17)
 
 ## Schema Summary
 
@@ -171,12 +202,12 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-006** — Desired-vs-actual diff / planner:
-   - Consume `ResolvedBuild` (BM-004) + `KodiState` (BM-005)
-   - Diff desired add-on states vs. actual installed/enabled state
-   - Produce ordered action plan (no execution yet)
+1. **BM-009 review + merge** — supervisor review of agent/claude:
+   - `tools/kodi_test.py` harness
+   - `tests/test_kodi_harness.py` (74 tests)
+   - `docs/TESTING.md`
 
-2. **BM-007** — Add-on installation / enable / disable executor
+2. **BM-010** — Add-on executor: apply the plan from BM-006 to a live Kodi instance
 
 ## Open Questions (from BM-002)
 

@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "reason": "BM-006 merged to matrix (70504e0). 444/444 tests passing. Awaiting BM-007 assignment.",
-  "last_commit": "70504e0",
+  "reason": "BM-009 disposable Kodi harness complete on agent/claude. 518/518 tests. Live validation passed (11/11 steps). Awaiting supervisor review and merge to matrix. BM-007/BM-008 absorbed by BM-006. BM-010 next.",
+  "last_commit": "pending",
   "next_agent": "claude",
-  "updated_at": "2026-09-17T21:10:00Z"
+  "updated_at": "2026-09-17T23:50:00Z"
 }
