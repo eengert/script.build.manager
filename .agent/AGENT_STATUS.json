@@ -3,6 +3,6 @@
   "status": "completed",
   "reason": "BM-001 complete. Skeleton committed to agent/claude (799b836). Awaiting supervisor review and matrix merge.",
   "last_commit": "799b836",
-  "next_agent": "codex",
+  "next_agent": "claude",
   "updated_at": "2026-09-17T00:00:00Z"
 }

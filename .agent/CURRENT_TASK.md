@@ -2,27 +2,28 @@
 
 ## BM-001 — Project Skeleton
 
-**Agent**: Claude (Codex temporarily unavailable; Claude is primary until Codex rejoins)
+**Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: In progress
+**Status**: Complete — awaiting supervisor review and `matrix` merge
 
 ### Scope
 
 Create the Kodi add-on skeleton for `script.build.manager` without implementing
-provisioning logic. See `BUILD_MANAGER_PROJECT_PLAN.md` → "Phase 1".
+provisioning logic. See `BUILD_MANAGER_PROJECT_PLAN.md` §38 (BM-001 in the
+initial development backlog).
 
-**In scope**:
+**Delivered**:
 - `addon.xml`
 - `default.py` (minimal safe entrypoint)
 - `resources/lib/` (importable Python package)
 - `resources/lib/build_manager.py` (stub class)
+- `resources/lib/utils.py` (getString helper)
 - `resources/settings.xml` (placeholder)
 - `resources/language/resource.language.en_gb/strings.po` (initial strings)
-- `tests/__init__.py`, `tests/test_imports.py`
-- `changelog.md`
-- `LICENSE.txt`
+- `tests/__init__.py`, `tests/test_imports.py` (3/3 passing)
+- `changelog.md`, `LICENSE.txt`, `.gitignore`
 
-**Out of scope**:
+**Out of scope** (BM-002+):
 - Provisioning logic
 - Manifest parsing
 - Platform-specific adapters
@@ -30,10 +31,11 @@ provisioning logic. See `BUILD_MANAGER_PROJECT_PLAN.md` → "Phase 1".
 - Skin management
 - Merging to `matrix`
 
-### Acceptance Criteria
+### Result
 
-- `addon.xml` is syntactically valid XML
-- `resources/lib/build_manager.py` imports cleanly outside Kodi
-- `tests/test_imports.py` passes with `python3 -m unittest`
+- Implementation commit: `799b836` on `agent/claude`
+- `python3 -m unittest tests/test_imports.py`: **3/3 passed**
+- `addon.xml` and `resources/settings.xml`: parse correctly
+- No Kodi runtime imports in tested modules
 - No secrets or machine-specific paths
-- No modification to real Kodi profiles or devices
+- No real Kodi profiles or devices touched
