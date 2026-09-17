@@ -52,44 +52,82 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**BM-001 — Project skeleton: complete, awaiting supervisor review**
+**BM-002 — Manifest schema v1: complete, awaiting supervisor review**
 
-- Bootstrap: `a970e83` on `matrix` (2026-09-17)
-- BM-001 implementation: `799b836` on `agent/claude` (2026-09-17)
-- Agent-state correction commit follows on `agent/claude`
-- Canonical project plan installed: `BUILD_MANAGER_PROJECT_PLAN.md`
-- Not yet merged to `matrix`
+| Task | Status | matrix SHA |
+|---|---|---|
+| BM-001 Project skeleton | Merged | `5442f13` |
+| BM-002 Manifest schema v1 | Complete on `agent/claude`, pending review | — |
 
-**BM-001 deliverables** (all committed at `799b836`):
-- `addon.xml` — v0.1.0, MIT, `xbmc.python 3.0`, all platforms
-- `default.py` — safe placeholder entrypoint
-- `resources/lib/__init__.py`, `build_manager.py` stub, `utils.py`
-- `resources/settings.xml` — placeholder section
-- `resources/language/resource.language.en_gb/strings.po` — strings 32000/32001/32010
-- `tests/__init__.py`, `tests/test_imports.py` — 3/3 passing
-- `changelog.md`, `LICENSE.txt`, `.gitignore`
-
-**Known gap**: `resources/images/icon.png` is referenced in `addon.xml` but the
-binary asset does not exist. Kodi shows no icon rather than erroring.
+**BM-002 deliverables** (committed on `agent/claude`, not yet merged):
+- `docs/MANIFEST.md` — schema reference (layering, merge semantics, field docs)
+- `resources/builds/schema-v1.json` — JSON Schema Draft 7
+- `resources/builds/examples/minimal.json` — minimal valid manifest
+- `resources/builds/examples/eric-main.example.json` — realistic example (no secrets)
+- `tests/test_manifest_schema.py` — 47 new structural validation tests
 
 ## Test Status
 
-`python3 -m unittest tests/test_imports.py` — **3/3 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **50/50 passing** (outside Kodi runtime)
+
+- 3 BM-001 import tests
+- 8 schema-file structure tests
+- 5 minimal-example tests
+- 18 eric-main example tests
+- 16 invalid-case tests
+- 2 BM-001 regression tests
+
+## Schema Summary (for review)
+
+Format: JSON, JSON Schema Draft 7 (`resources/builds/schema-v1.json`).
+
+Top-level structure:
+```json
+{
+  "schema_version": 1,
+  "engine_min_version": "0.1.0",
+  "build": { "id": "...", "version": "...", "name": "...", "description": "..." },
+  "repositories": [...],
+  "addons": [...],
+  "skin": { "addon_id": "skin.*", "config_packages": [...] },
+  "config": { "packages": [...], "managed_settings": [...], "managed_files": [...] },
+  "platform_profiles": { "<platform-id>": { ... } },
+  "device_profiles": { "<device-id>": { "extends": "<platform-id>", ... } },
+  "optional": [ { "id": "...", "addons": [...], "config": {...} } ],
+  "private_overlay": { "type": "local_file", "path_hint": "..." },
+  "restart_policy": { "allow_skin_reload": true, "allow_kodi_restart": true }
+}
+```
+
+Key semantic decisions:
+- `enabled` / `disabled` / `absent` — explicit states; omitted field = inherit
+- `additionalProperties: false` everywhere — malformed manifests rejected
+- Layering: base → platform → device → optional groups → private overlay
+- `private_overlay` is a reference only; no credentials in public manifest
+- Full JSON Schema validation deferred to BM-003 (no `jsonschema` dependency yet)
 
 ## Next Recommended Tasks
 
-After supervisor review and merge of BM-001 to `matrix`:
+After supervisor review and merge of BM-002 to `matrix`:
 
-1. **BM-002** — Create manifest schema v1 (§38; see §3.2 for declarative format example, §7 for layering model)
-2. **BM-003** — Implement manifest validation/parser
-3. **BM-004** — Implement profile inheritance/overrides
-4. **BM-005** — Implement Kodi/platform state inspector
+1. **BM-003** — Implement manifest validation/parser (load JSON, validate against
+   schema, expose typed Python objects; may add `jsonschema` dependency)
+2. **BM-004** — Implement profile inheritance/overrides (merge semantics defined
+   in `docs/MANIFEST.md` §Merge semantics)
+3. **BM-005** — Implement Kodi/platform state inspector
+4. **BM-006** — Create desired-state model
 
-Claude is the active development agent. Codex rejoins when available; before
-beginning new work, Codex should fast-forward `agent/codex` to the `matrix`
-commit that includes BM-001.
+Claude is the active development agent. Per §49: do not begin Kodi mutation
+until the planning layer (BM-007) is stable.
 
-Per §49: do not begin Kodi mutation until the planning layer (BM-007) is stable.
+## Open Questions (from BM-002)
+
+1. Private overlay schema — format not yet defined; needed before auth work
+2. Config package format — package names defined; resolution not yet specified
+3. `bootstrap_url` validation — checksum/signature strategy TBD
+4. `firetv` vs `android` platform split — defer until cross-platform testing
+5. Optional group deduplication — BM-004 must deduplicate `include_optional`
+   when a platform and device both activate the same group
 
 ## Worktree Paths
 
@@ -100,9 +138,7 @@ Per §49: do not begin Kodi mutation until the planning layer (BM-007) is stable
 
 ## Agent Workflow
 
-See §22–31 of `BUILD_MANAGER_PROJECT_PLAN.md` for full workflow guidance,
-task prompt template, handoff format, cross-agent review criteria, model/effort
-recommendations, parallel-work rules, and source control conventions.
+See §22–31 of `BUILD_MANAGER_PROJECT_PLAN.md` for full workflow guidance.
 
 Normal implementation work happens on `agent/codex` or `agent/claude`.
 Supervisor reviews and merges to `matrix`.
@@ -112,5 +148,5 @@ Supervisor reviews and merges to `matrix`.
 | Date | Milestone |
 |---|---|
 | 2026-09-17 | Repository initialized; bootstrap committed to `matrix` (`a970e83`) |
-| 2026-09-17 | BM-001 skeleton complete on `agent/claude` (`799b836`); awaiting review |
-| 2026-09-17 | Canonical project plan installed; agent state corrected |
+| 2026-09-17 | BM-001 skeleton complete and merged to `matrix` (`5442f13`) |
+| 2026-09-17 | BM-002 manifest schema v1 complete on `agent/claude`; awaiting review |

@@ -1,6 +1,43 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-001 merged to matrix; ready for BM-002
+## Latest — 2026-09-17 BM-002 complete; manifest schema v1 defined
+
+Data contract only. No production parser code. No Kodi mutation. No new
+runtime dependencies. BM-001 implementation files unchanged from `799b836`.
+
+**Files created**:
+- `docs/MANIFEST.md` — human-readable schema reference (layering model, merge
+  semantics for BM-004, field-by-field docs, security notes, open questions)
+- `resources/builds/schema-v1.json` — JSON Schema Draft 7
+- `resources/builds/examples/minimal.json` — minimal valid manifest
+- `resources/builds/examples/eric-main.example.json` — realistic example
+- `tests/test_manifest_schema.py` — 47 new structural validation tests
+
+**Tests**: 50/50 passing (`python3 -m unittest discover tests`)
+- 3 BM-001 import tests
+- 8 schema-file structure tests
+- 5 minimal-example tests
+- 18 eric-main example tests
+- 16 invalid-case tests (missing fields, bad states, unknown keys, etc.)
+- 2 BM-001 regression tests
+
+**Key schema decisions**:
+- JSON format, JSON Schema Draft 7 (no added runtime dependency)
+- `schema_version: 1` (integer constant) — format versioning independent of build version
+- Layering: base → platform profile → device profile → optional groups → private overlay
+- Explicit states: `enabled` | `disabled` | `absent`; omitted = inherit (not disabled)
+- `additionalProperties: false` at top level and on all named object types (fail-closed)
+- `private_overlay` is a reference only; no credentials in public manifest
+
+**What was live-proven**: All 50 tests passing with `python3 -m unittest`.
+No Kodi runtime required; no real Kodi profiles touched.
+
+**Smallest next step**: Supervisor review → BM-003 (manifest parser/validator
+in Python, using the schema and merge semantics defined here).
+
+---
+
+## Previous — 2026-09-17 BM-001 merged to matrix; ready for BM-002
 
 Integration only. No implementation changes.
 
