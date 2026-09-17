@@ -30,3 +30,4 @@ See `AGENTS.md` §"Usage Tracking" for the shared rules, `CLAUDE.md`
 | Task | Agent | Model | Effort | Type | Difficulty | Start | End | Delta | Result | Notes |
 |------|-------|-------|--------|------|------------|-------|-----|-------|--------|-------|
 | WF-001 | claude | Opus 5 (`claude-opus-5`) | xhigh | docs/workflow | easy | unknown | 5h 94% / wk 35% | unknown | clean | Usage-tracking instructions. Start not captured (this task established the convention); first reading, taken mid-task, was 5h 92%. Task prompt specified Sonnet 4.6; session actually ran `claude-opus-5` — observed values recorded. No retries. |
+| WF-001-merge | claude | claude-sonnet-4-6 | max | integration | trivial | 5h 96% / wk 35% | 5h 96% / wk 35% | ~0% / 0% | clean | Matrix integration of WF-001 usage-tracking commit (a983df8). Fast-forward. No implementation changes. 51/51 tests. |

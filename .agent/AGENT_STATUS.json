@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "reason": "BM-002 merged to matrix (89039d6). Awaiting BM-003 task assignment.",
-  "last_commit": "89039d6",
+  "reason": "WF-001 usage-tracking docs merged to matrix (a983df8). Awaiting BM-003 task assignment.",
+  "last_commit": "a983df8",
   "next_agent": "claude",
   "updated_at": "2026-09-17T00:00:00Z"
 }

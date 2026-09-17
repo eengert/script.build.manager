@@ -1,6 +1,26 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-002 merged to matrix; ready for BM-003
+## Latest — 2026-09-17 WF-001 usage-tracking docs merged to matrix
+
+Integration only. No implementation changes. No BM-003 work started.
+
+**What happened**:
+- `agent/claude` fast-forwarded `matrix` from `89039d6` → `a983df8`
+- Includes `a4c999f` (post-BM-002 merge state) and `a983df8` (WF-001: usage-tracking)
+- `matrix` pushed to origin
+- `agent/claude` agent-state updated: status=idle, last_commit=a983df8
+- `agent/codex` not touched
+- 51/51 tests passing
+
+**Usage (this task)**: start 5h 96% / wk 35%, end 5h 96% / wk 35%, delta ~0%.
+Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor assigns BM-003 task prompt. Claude implements
+manifest loader/parser on `agent/claude` per §38 and `docs/MANIFEST.md`.
+
+---
+
+## Previous — 2026-09-17 BM-002 merged to matrix; ready for BM-003
 
 Integration only. No implementation changes.
 

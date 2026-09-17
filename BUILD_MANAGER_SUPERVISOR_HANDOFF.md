@@ -177,3 +177,4 @@ Supervisor reviews and merges to `matrix`.
 | 2026-09-17 | Repository initialized; bootstrap committed to `matrix` (`a970e83`) |
 | 2026-09-17 | BM-001 skeleton complete and merged to `matrix` (`5442f13`) |
 | 2026-09-17 | BM-002 manifest schema v1 complete and merged to `matrix` (`89039d6`) |
+| 2026-09-17 | WF-001 usage-tracking docs merged to `matrix` (`a983df8`); project idle |
