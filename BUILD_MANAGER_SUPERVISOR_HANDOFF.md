@@ -130,6 +130,32 @@ Key constraints:
 4. `firetv` vs `android` platform split — defer to cross-platform testing
 5. Optional group deduplication — BM-004 must deduplicate when platform + device both include same group
 
+## Agent/Model Usage Policy
+
+Usage tracking is **enabled where reliable data is available**.
+
+- Model/effort recommendations should be driven by **empirically observed burn
+  and task success**, not by assuming a lower model or lower reasoning setting
+  is cheaper. The target is lowest total cost to a correct result (§28).
+- **Raw usage history lives in `.agent/USAGE_HISTORY.md`**, not here and not in
+  `BUILD_MANAGER_PROJECT_PLAN.md`. This file carries only short summarized
+  observations.
+- **Never fabricate usage data.** Missing readings are recorded as `unknown` or
+  `unavailable`. An absent measurement is acceptable; an invented one is not.
+- Available sources, as of 2026-09-17:
+  - **Claude** — Claude Code reports plan limit windows (5-hour, weekly) and
+    the session's model/effort. Documented in `CLAUDE.md`.
+  - **Codex** — no usage/quota source exists. Codex rows record
+    `unavailable` for start/end/delta. Documented in `AGENTS.md`.
+- Claude and Codex model/effort terminology are separate namespaces and are
+  never translated into each other. Claude: Sonnet/Opus with Claude Code's
+  `effort` value. Codex: Luna/Sol/Astra with Codex effort names.
+
+### Observations
+
+*(none yet — WF-001 recorded a partial reading only; no comparable-task
+baseline exists)*
+
 ## Worktree Paths
 
 | Branch | Worktree |
