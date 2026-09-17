@@ -1,6 +1,48 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-005 merged to matrix; project idle, BM-006 next
+## Latest — 2026-09-17 BM-005 live validation complete; project idle, BM-006 next
+
+**Validation method**: Disposable Kodi 21.1 (macOS) via script.backup.pro
+kodi_test.py harness. All calls read-only. Real Kodi profile not touched.
+
+**Validation results**: 9/9 items passed.
+
+| Item | Result | Detail |
+|---|---|---|
+| 1. Platform flags | PASS | `system.platform.osx=True`, all others False; detected platform=`macos` |
+| 2. Kodi version | PASS | `_parse_version_response` → `"21.1"` from `{"major":21,"minor":1,...}` |
+| 3. Active skin | PASS | `Settings.GetSettingValue(lookandfeel.skin)` → `"skin.estuary"` |
+| 4. Addons shape | PASS | `result.addons` present; 29 add-ons; each has `addonid`/`enabled`/`version` |
+| 5a. Parse addon response | PASS | `_parse_addon_response` → 29 entries without error |
+| 5b. Parse addon list | PASS | `_parse_addon_list` → 29 sorted `InstalledAddon` objects |
+| 5c. KodiState | PASS | Constructed and frozen; `platform=macos`, `kodi_version=21.1`, `skin=skin.estuary` |
+| 6. Determinism | PASS | Two successive KodiState snapshots are equal |
+| 7. Read-only proof | PASS | No add-on files added/removed during validation |
+
+**Discovery — platform flags via HTTP JSON-RPC**: `XBMC.GetCondVisibility` does
+not exist in Kodi 21's HTTP JSON-RPC API (returns `-32601 Method not found`).
+The correct HTTP equivalent is `XBMC.GetInfoBooleans(booleans:[...])`. The
+inspector uses `xbmc.getCondVisibility()` in-process — both go through Kodi's
+internal condition evaluator. Validation used `XBMC.GetInfoBooleans` as a proxy.
+
+**Discovery — Addons.GetAddons extra field**: Each add-on entry also includes
+a `"type"` field (e.g. `"kodi.audioencoder"`) not declared in BM-005's expected
+fields. Inspector correctly ignores it — no code change required.
+
+**No code change**: inspector.py and tests unchanged. 358/358 tests still pass.
+
+**Kodi version confirmed**: 21.1 (`20240817-183eb85f10`, stable), macOS.
+
+**Usage (validation task)**: start 5h 75% / wk 47%, end 5h 78% / wk 48%,
+delta +3% / +1%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor assigns BM-006 task prompt. Claude implements
+desired-vs-actual diff / planner consuming `ResolvedBuild` (BM-004) and
+`KodiState` (BM-005).
+
+---
+
+## Previous — 2026-09-17 BM-005 merged to matrix; project idle, BM-006 next
 
 **matrix before**: `2ad253f`
 **matrix after**: `6d41279` (fast-forward — no squash, no rebase)
