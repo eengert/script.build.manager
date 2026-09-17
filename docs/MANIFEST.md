@@ -358,15 +358,15 @@ Governs which restart actions Build Manager may perform. Both default to `true`.
 The schema file (`resources/builds/schema-v1.json`) follows **JSON Schema Draft
 7** (`http://json-schema.org/draft-07/schema#`).
 
-**Runtime validation in BM-002**: The Python standard library includes `json`
-for parsing but no JSON Schema validator. Full structural validation using the
-schema file is deferred to BM-003 (manifest parser). BM-002 tests perform
-Python-level structural assertions against the examples and the schema itself.
+**Runtime validation**: BM-003 implements validation using Python standard
+library only — no `jsonschema` runtime dependency. The schema file
+(`resources/builds/schema-v1.json`) serves as the formal machine-readable
+contract and documentation artifact; the runtime validator in
+`resources/lib/manifest.py` enforces the same constraints in Python.
 
-When BM-003 adds the parser, use the `jsonschema` package (PyPI) to validate
-against this schema file at load time. The schema is self-contained and
-compatible with `jsonschema` Draft 7 mode. Do not add `jsonschema` as a runtime
-dependency until BM-003.
+**Unknown properties**: The schema uses `"additionalProperties": false` at the
+top level and on all named object types. Manifests with unknown top-level keys
+must be rejected.
 
 **Unknown properties**: The schema uses `"additionalProperties": false` at the
 top level and on all named object types. Manifests with unknown top-level keys

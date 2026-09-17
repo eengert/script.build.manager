@@ -4,27 +4,23 @@
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Not started — awaiting task prompt from supervisor
+**Status**: Complete — awaiting supervisor review and merge to `matrix`
 
-### Scope (anticipated — subject to task prompt)
+### Deliverables
 
-Implement the manifest loader and validator in Python. See
-`BUILD_MANAGER_PROJECT_PLAN.md` §38 (BM-003) and `docs/MANIFEST.md` for the
-schema reference and merge semantics.
+- `resources/lib/manifest.py` — loader, validator, typed representation
+  - Public API: `load_manifest_file`, `load_manifest_json`, `validate_manifest`
+  - Errors: `ManifestError`, `ManifestParseError`, `ManifestValidationError`
+  - Dataclasses: `Manifest`, `BuildInfo`, `AddonEntry`, `Repository`, `SkinEntry`,
+    `ManagedSettingScope`, `ConfigDeclarations`, `ProfileLayer`, `DeviceProfile`,
+    `OptionalGroup`, `PrivateOverlayRef`, `RestartPolicy`
+  - No runtime dependencies added (stdlib only)
+- `tests/test_manifest_loader.py` — 127 BM-003 tests (all passing)
+- `docs/MANIFEST.md` — updated runtime-validation note (stdlib, not jsonschema)
 
-**Expected deliverables** (subject to task prompt):
-- Python manifest loader (load JSON from file or string)
-- Structural validation against `resources/builds/schema-v1.json`
-- Typed Python objects (dataclasses or similar) for engine consumption
-- Path-traversal safety check on `managed_files` values
-- Unit tests against `minimal.json`, `eric-main.example.json`, and invalid cases
+### Out of scope (BM-004+)
 
-**Dependencies**:
-- `jsonschema` PyPI package — may be added as a runtime dependency in BM-003
-  if supervisor approves; document in `addon.xml` if added
-
-**Out of scope** (BM-004+):
-- Profile merge/inheritance logic (semantics defined in `docs/MANIFEST.md`)
+- Profile merge/inheritance logic
 - Platform detection
 - Any Kodi mutation
 
@@ -32,4 +28,3 @@ schema reference and merge semantics.
 
 - BM-001 merged to `matrix` ✓ (`5442f13`)
 - BM-002 merged to `matrix` ✓ (`89039d6`)
-- Per §49: do not begin Kodi mutation until planner layer (BM-007) is stable

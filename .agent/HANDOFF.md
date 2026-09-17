@@ -1,6 +1,52 @@
 # Handoff
 
-## Latest — 2026-09-17 WF-001 usage-tracking docs merged to matrix
+## Latest — 2026-09-17 BM-003 complete; manifest loader/validator committed
+
+**Files created/changed**:
+- `resources/lib/manifest.py` — NEW. Production manifest loader and validator.
+  Public API: `load_manifest_file`, `load_manifest_json`, `validate_manifest`.
+  Errors: `ManifestError`, `ManifestParseError`, `ManifestValidationError`.
+  Typed dataclasses: `Manifest`, `BuildInfo`, `AddonEntry`, `Repository`,
+  `SkinEntry`, `ManagedSettingScope`, `ConfigDeclarations`, `ProfileLayer`,
+  `DeviceProfile`, `OptionalGroup`, `PrivateOverlayRef`, `RestartPolicy`.
+  No new runtime dependencies (stdlib only: `json`, `re`, `posixpath`,
+  `urllib.parse`, `dataclasses`).
+- `tests/test_manifest_loader.py` — NEW. 127 BM-003 tests (all passing).
+- `docs/MANIFEST.md` — Updated runtime-validation note to reflect stdlib-only
+  implementation (removed jsonschema recommendation).
+- `.agent/` state files updated.
+
+**Tests**: 181/181 passing (`python3 -m unittest discover tests`)
+- 3 BM-001 import tests
+- 51 BM-002 schema structural tests
+- 127 BM-003 loader/validator tests
+
+**What was live-proven**: All 181 tests passing. `load_manifest_file` used
+against `minimal.json` and `eric-main.example.json` within tests.
+
+**No Kodi runtime involved**. No real Kodi profiles touched.
+
+**Runtime dependencies added**: None.
+
+**BM-003 implementation decisions**:
+- Stdlib-only: no `jsonschema` dependency (per supervisor instruction)
+- Semantic cross-references validated: device_profile.extends must reference
+  existing platform, include_optional references must exist, duplicate IDs
+  rejected at all layers
+- Path safety: rejects absolute, UNC, Windows drive, `..` traversal, null bytes
+- URL policy: `https` (preferred) + `http` (local/dev), embedded credentials rejected
+- Frozen dataclasses for all types except `Manifest` (which contains dict fields)
+
+**Usage (this task)**: start 5h 19% / wk 39%, end 5h 31% / wk 41%,
+delta +12% / +2%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor reviews and merges BM-003 to `matrix`.
+Claude continues with BM-004 (profile merge/inheritance logic, semantics
+documented in `docs/MANIFEST.md`).
+
+---
+
+## Previous — 2026-09-17 WF-001 usage-tracking docs merged to matrix
 
 Integration only. No implementation changes. No BM-003 work started.
 
