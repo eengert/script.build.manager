@@ -52,7 +52,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**Idle — BM-005 merged, awaiting BM-006 assignment**
+**BM-006 on agent/claude, pending merge — awaiting BM-007 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
@@ -61,7 +61,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 | BM-003 Manifest parser/validator | Merged | `a5d263e` |
 | BM-004 Profile merge/inheritance | Merged | `2ad253f` |
 | BM-005 Kodi/platform state inspector | Merged | `6d41279` |
-| BM-006 Desired-vs-actual diff / planner | Not started | — |
+| BM-006 Desired-vs-actual diff / planner | On agent/claude | `7735e7a` (pending merge) |
 
 **matrix HEAD**: `6d41279` (fast-forward from `2ad253f`)
 
@@ -115,9 +115,25 @@ Do not treat any shorter summary as a substitute for the canonical plan.
   Stdlib only — no new runtime dependencies.
 - `tests/test_kodi_inspector.py` — 67 BM-005 tests (58 original + 9 correction)
 
+### BM-006 (on agent/claude `7735e7a` — pending merge)
+- `resources/lib/planner.py` — desired-vs-actual planner.
+  Public API: `plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`.
+  Error: `PlanningError`. Output types: `Plan`, `PlanAction` (both frozen dataclasses).
+  Action kinds: `INSTALL_REPOSITORY`, `INSTALL_ADDON`, `ENABLE_ADDON`, `DISABLE_ADDON`,
+  `ENSURE_ABSENT`, `SET_SKIN`, `CONFIGURE`.
+  Deterministic ordering: repos→installs→enable/disable→absent→skin→config,
+  lexical by addon_id within category.
+  Skin dedup: `planned_install_ids` prevents duplicate INSTALL_ADDON for skin.
+  Unmanaged add-ons in actual state are never touched.
+  CONFIGURE always `current_state="unchecked"` (BM-005 does not inspect config state).
+  `PlanningError` on duplicate addon_ids in KodiState.
+  Pure Python — no Kodi imports, no filesystem/network access, no mutation.
+  Stdlib only — no new runtime dependencies.
+- `tests/test_planner.py` — 70 BM-006 tests
+
 ## Test Status
 
-`python3 -m unittest discover tests` — **358/358 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **428/428 passing** (outside Kodi runtime; on agent/claude)
 
 ## Schema Summary
 

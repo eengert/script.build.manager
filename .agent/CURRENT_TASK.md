@@ -1,30 +1,35 @@
 # Current Task
 
-## Idle — awaiting BM-006 assignment
+## Idle — awaiting BM-007 assignment
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Idle — BM-005 complete and merged to `matrix` (`6d41279`)
+**Status**: Idle — BM-006 complete on `agent/claude`; not yet merged to `matrix`
 
-### Deliverables (BM-005)
+### Deliverables (BM-006)
 
-- `resources/lib/inspector.py` — Kodi state inspector
-  - Public API: `KodiStateInspector(backend=None).inspect() -> KodiState`
-  - Convenience: `inspect_kodi_state() -> KodiState`
-  - Error: `KodiInspectionError`
-  - Types: `KodiState` (frozen), `InstalledAddon` (frozen)
-  - Backend: `KodiBackend` (injectable), `KodiRuntimeBackend` (lazy xbmc)
-  - Fail-closed: all add-on entry fields validated; duplicates rejected
-  - No new runtime dependencies (stdlib only)
-- `tests/test_kodi_inspector.py` — 67 BM-005 tests (58 original + 9 correction)
+- `resources/lib/planner.py` — desired-vs-actual planner
+  - Public API: `plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`
+  - Errors: `PlanningError`
+  - Types: `Plan` (frozen), `PlanAction` (frozen)
+  - Action kinds: `INSTALL_REPOSITORY`, `INSTALL_ADDON`, `ENABLE_ADDON`,
+    `DISABLE_ADDON`, `ENSURE_ABSENT`, `SET_SKIN`, `CONFIGURE`
+  - Deterministic ordering: repos→installs→enable/disable→absent→skin→config,
+    lexical by addon_id within each category
+  - Skin dedup: tracks `planned_install_ids` to prevent duplicate INSTALL_ADDON
+  - Unmanaged add-ons: never emits ENSURE_ABSENT for unmentioned add-ons
+  - Config: always `current_state="unchecked"` (BM-005 does not inspect config)
+  - Stdlib only — no Kodi imports, no filesystem/network access
+- `tests/test_planner.py` — 70 BM-006 tests
 
-### Last Completed: BM-005 — Kodi/Platform State Inspector
+### Last Completed: BM-006 — Desired-vs-Actual Diff / Planner
 
-Merged to `matrix` at `6d41279`. Tests: 358/358 passing.
+Committed to `agent/claude`. Tests: 428/428 passing (358 existing + 70 new).
+Awaiting supervisor merge to `matrix` and BM-007 assignment.
 
-### Next: BM-006 — Desired-vs-Actual Diff / Planner
+### Next: BM-007
 
-Not started. Feeds from `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
+Not started. Scope to be assigned by supervisor.
 
 ### Prerequisites
 
@@ -33,3 +38,4 @@ Not started. Feeds from `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
 - BM-003 merged to `matrix` ✓ (`a5d263e`)
 - BM-004 merged to `matrix` ✓ (`2ad253f`)
 - BM-005 merged to `matrix` ✓ (`6d41279`)
+- BM-006 on `agent/claude` ✓ (pending merge)

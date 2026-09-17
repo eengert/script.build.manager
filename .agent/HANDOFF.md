@@ -1,6 +1,49 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-005 live validation complete; project idle, BM-006 next
+## Latest — 2026-09-17 BM-006 complete; pending merge to matrix, BM-007 next
+
+**Commit**: `7735e7a` on `agent/claude`
+
+**Files created**:
+- `resources/lib/planner.py` — desired-vs-actual planner
+- `tests/test_planner.py` — 70 BM-006 tests
+
+**Tests**: 428/428 passing (`python3 -m unittest discover tests`)
+
+**What BM-006 implements**:
+`plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`
+Pure Python, no Kodi imports, no filesystem/network access, no mutation.
+Deterministic ordering: INSTALL_REPOSITORY → INSTALL_ADDON → ENABLE/DISABLE_ADDON
+→ ENSURE_ABSENT → SET_SKIN → CONFIGURE; lexical by addon_id within category.
+Skin dedup: `planned_install_ids` set prevents duplicate INSTALL_ADDON when skin
+add-on appears in both `desired.addons` and `desired.skin`.
+CONFIGURE always `current_state="unchecked"` (BM-005 does not inspect config).
+`PlanningError` raised on duplicate addon_ids in `KodiState`.
+Unmanaged add-ons (in actual but not desired) are never touched.
+
+**Key semantic decisions documented in planner.py docstring**:
+- `desired=disabled, actual=missing` → single INSTALL_ADDON with `desired_state="disabled"`;
+  executor handles install-then-disable.
+- Optional repositories (required=False) → no action planned.
+- Platform profile ID vs runtime platform ID → not compared (different namespaces;
+  mapping not formally specified; deferred to a future task).
+- Config state → always "unchecked"; BM-005 does not inspect managed settings/files.
+
+**Not live-tested** (no Kodi runtime required per task spec). All validation is
+unit tests with injectable backends / hand-built fixture objects.
+
+**Usage**: start 5h 78% / wk 48% (from prior session end), end 5h 90% / wk 49%,
+delta +12% / +1%. Model: claude-sonnet-4-6, effort: max.
+
+**Human gate before BM-007**: Supervisor must merge `agent/claude` → `matrix`
+(or authorize Claude to push). No merge conflicts anticipated (BM-006 adds two
+new files only).
+
+**Smallest next step**: Supervisor merges BM-006 to `matrix`, then assigns BM-007.
+
+---
+
+## Previous — 2026-09-17 BM-005 live validation complete; project idle, BM-006 next
 
 **Validation method**: Disposable Kodi 21.1 (macOS) via script.backup.pro
 kodi_test.py harness. All calls read-only. Real Kodi profile not touched.
