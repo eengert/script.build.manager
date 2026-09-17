@@ -1,6 +1,56 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-003 merged to matrix; project idle, BM-004 next
+## Latest — 2026-09-17 BM-004 complete; profile resolver committed
+
+**Files created/changed**:
+- `resources/lib/resolver.py` — NEW. Profile resolver.
+  Public API: `resolve_manifest(manifest, device_profile_id) -> ResolvedBuild`.
+  Error: `ManifestResolutionError` (subclass of `ManifestError`).
+  Output: `ResolvedBuild` (frozen dataclass).
+  Stdlib only — no new runtime dependencies.
+- `tests/test_manifest_resolver.py` — NEW. 78 BM-004 tests (all passing).
+- `docs/MANIFEST.md` — Optional-group deduplication rule added to §Optional groups;
+  open question #5 closed.
+- `.agent/` state files updated.
+
+**Tests**: 291/291 passing (`python3 -m unittest discover tests`)
+- 213 prior (BM-001/BM-002/BM-003)
+- 78 new BM-004 resolver tests
+
+**Layer application order**: base → platform → device → optional groups
+
+**Optional-group de-duplication**: platform.include_optional (listed order), then
+device.include_optional (listed order); duplicate IDs dropped by first occurrence;
+each group applied at most once. Resolves BM-002 open question #5.
+
+**Add-on ordering**: overridden entry retains original position; new entries appended
+in first-seen order.
+
+**Config merge**: packages / managed_files: union, first-seen order, no duplicates.
+Managed settings: per addon_id, keys unioned in first-seen order, addon order is
+first-seen.
+
+**Skin resolution**: deepest explicit layer wins (base → platform → device).
+
+**What was live-proven**: All 291 tests passing. `resolve_manifest` exercised
+against both minimal manifests (via dict) and `eric-main.example.json` (loaded
+from disk). Three device profiles resolved: bonus-room, family-room, shield.
+
+**No Kodi runtime involved**. No real Kodi profiles touched.
+
+**Runtime dependencies added**: None.
+
+**BM-005 status**: Not started.
+
+**Usage (this task)**: start 5h 44% / wk 42%, end 5h 50% / wk 43%,
+delta +6% / +1%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor reviews BM-004 on `agent/claude`. Merges to
+`matrix`. Claude continues with BM-005 (Kodi/platform state inspector).
+
+---
+
+## Previous — 2026-09-17 BM-003 merged to matrix; project idle, BM-004 next
 
 **matrix before**: `a983df8`
 **matrix after**: `a5d263e` (fast-forward — no squash, no rebase)

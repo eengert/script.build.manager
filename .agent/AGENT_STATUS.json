@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "reason": "BM-003 merged to matrix (a5d263e). 213/213 tests passing. Awaiting BM-004 assignment.",
-  "last_commit": "a5d263e",
+  "reason": "BM-004 complete. Profile resolver committed. 291/291 tests passing. Awaiting supervisor review and BM-005 assignment.",
+  "last_commit": "pending",
   "next_agent": "claude",
-  "updated_at": "2026-09-17T19:25:00Z"
+  "updated_at": "2026-09-17T19:35:00Z"
 }

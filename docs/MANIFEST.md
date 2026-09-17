@@ -86,8 +86,17 @@ The **deepest layer** that explicitly declares a `skin` wins completely. Absent
 
 Optional groups are applied **after** the device profile has been fully resolved.
 Each optional group's `addons` and `config` are merged using the same rules as
-other layers. Optional groups themselves do not have an `extends` field; their
-content is applied in the order listed.
+other layers. Optional groups themselves do not have an `extends` field.
+
+**Application order and de-duplication (resolved in BM-004):**
+
+1. Collect group IDs from `platform_profile.include_optional` in listed order.
+2. Then collect group IDs from `device_profile.include_optional` in listed order.
+3. De-duplicate by first occurrence — each group ID appears at most once.
+4. Apply the resulting ordered list after the device layer.
+
+If both the platform profile and the device profile name the same optional group,
+it is applied once (at the platform's position).
 
 ---
 
@@ -388,15 +397,15 @@ must be rejected.
 
 ---
 
-## Unresolved questions for BM-003/BM-004
+## Unresolved questions for BM-005+
 
 1. **Private overlay schema**: The format of the private overlay file is not
-   defined in v1. BM-003 or a dedicated task should define it before
-   authentication work begins.
+   defined in v1. A dedicated task should define it before authentication work
+   begins.
 
 2. **Config package format**: Configuration packages are named here but their
-   internal format is not yet defined. BM-003 must specify what a "package"
-   resolves to on disk.
+   internal format is not yet defined. A dedicated task must specify what a
+   "package" resolves to on disk.
 
 3. **`bootstrap_url` security**: The engine must decide how to validate
    downloaded repository ZIPs (checksum, signature, or trust-on-first-use).
@@ -405,6 +414,5 @@ must be rejected.
    Shield to warrant a separate platform profile. Defer until cross-platform
    testing begins.
 
-5. **Optional group ordering**: When a device profile and a platform profile both
-   include the same optional group, it should be applied once. BM-004 must
-   deduplicate `include_optional` lists before resolution.
+5. ~~**Optional group ordering**~~ — **Resolved by BM-004.** See §Optional groups
+   above. De-duplication is by first occurrence, platform-first then device.
