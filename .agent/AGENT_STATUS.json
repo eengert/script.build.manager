@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
-  "status": "in_progress",
-  "reason": "BM-001: project skeleton implementation in progress. Codex temporarily unavailable.",
-  "last_commit": "a970e83",
+  "status": "completed",
+  "reason": "BM-001 complete. Skeleton committed to agent/claude (799b836). Awaiting supervisor review and matrix merge.",
+  "last_commit": "799b836",
   "next_agent": "codex",
   "updated_at": "2026-09-17T00:00:00Z"
 }
