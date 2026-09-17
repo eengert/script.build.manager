@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "reason": "BM-009 disposable Kodi harness complete on agent/claude. 518/518 tests. Live validation passed (11/11 steps). Awaiting supervisor review and merge to matrix. BM-007/BM-008 absorbed by BM-006. BM-010 next.",
-  "last_commit": "pending",
+  "reason": "BM-009 disposable Kodi harness complete on agent/claude (fc95e5f). 518/518 tests. Live validation passed (11/11 steps). Awaiting supervisor review and merge to matrix. BM-007/BM-008 absorbed by BM-006. BM-010 next.",
+  "last_commit": "fc95e5f",
   "next_agent": "claude",
-  "updated_at": "2026-09-17T23:50:00Z"
+  "updated_at": "2026-09-17T23:55:00Z"
 }
