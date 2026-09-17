@@ -2,7 +2,7 @@
   "active_agent": "claude",
   "status": "idle",
   "reason": "BM-004 complete. Profile resolver committed. 291/291 tests passing. Awaiting supervisor review and BM-005 assignment.",
-  "last_commit": "pending",
+  "last_commit": "d47fb51",
   "next_agent": "claude",
   "updated_at": "2026-09-17T19:35:00Z"
 }
