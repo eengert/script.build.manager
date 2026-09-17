@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
-  "status": "completed",
-  "reason": "BM-001 complete. Skeleton committed to agent/claude (799b836). Awaiting supervisor review and matrix merge.",
-  "last_commit": "799b836",
+  "status": "idle",
+  "reason": "BM-001 merged to matrix (5442f13). Awaiting BM-002 task assignment.",
+  "last_commit": "5442f13",
   "next_agent": "claude",
   "updated_at": "2026-09-17T00:00:00Z"
 }

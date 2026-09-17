@@ -1,6 +1,32 @@
 # Handoff
 
-## Latest — 2026-09-17 Project plan §30 corrected (branch workflow)
+## Latest — 2026-09-17 BM-001 merged to matrix; ready for BM-002
+
+Integration only. No implementation changes.
+
+**What happened**:
+- `agent/claude` fast-forwarded `matrix` from `a970e83` → `5442f13`
+- `matrix` pushed to origin; all BM-001 work and documentation corrections are
+  now on the integration branch
+- `agent/claude` agent-state updated: status=idle, next task=BM-002
+- `agent/codex` not touched (Codex still temporarily unavailable)
+
+**matrix now contains**:
+- Bootstrap (`a970e83`)
+- BM-001 skeleton (`799b836`)
+- Agent-state correction + canonical plan (`1789386`)
+- §30 branch-workflow correction (`5442f13`)
+
+**BM-001 implementation files on matrix**: `addon.xml`, `default.py`,
+`resources/lib/`, `resources/settings.xml`, `resources/language/`, `tests/`,
+`changelog.md`, `LICENSE.txt`, `.gitignore`
+
+**Smallest next step**: Supervisor assigns BM-002 task prompt. Claude implements
+manifest schema v1 on `agent/claude` per §38 and §7 of the canonical plan.
+
+---
+
+## Previous — 2026-09-17 Project plan §30 corrected (branch workflow)
 
 Documentation correction only. No BM-001 implementation files changed.
 
