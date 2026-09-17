@@ -1,6 +1,27 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-003 complete; manifest loader/validator committed
+## Latest — 2026-09-17 BM-003 merged to matrix; project idle, BM-004 next
+
+**matrix before**: `a983df8`
+**matrix after**: `a5d263e` (fast-forward — no squash, no rebase)
+**Merge type**: Fast-forward via `git push origin a5d263e:refs/heads/matrix`
+
+**Tests on matrix**: 213/213 passing (`python3 -m unittest discover tests`)
+
+**Codex**: untouched at `a970e83`
+
+**BM-004**: not started
+
+**Usage (merge task)**: start 5h 41% / wk 42%, end 5h 42% / wk 42%,
+delta +1% / 0%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor assigns BM-004 task prompt. Claude implements
+profile merge/inheritance logic per merge semantics documented in
+`docs/MANIFEST.md` §Merge semantics.
+
+---
+
+## Previous — 2026-09-17 BM-003 complete; manifest loader/validator committed
 
 **Files created/changed**:
 - `resources/lib/manifest.py` — NEW. Production manifest loader and validator.

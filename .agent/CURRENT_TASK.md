@@ -1,30 +1,21 @@
 # Current Task
 
-## BM-003 — Manifest Validation / Parser
+## Idle — awaiting BM-004 assignment
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Complete — awaiting supervisor review and merge to `matrix`
+**Status**: Idle — BM-003 complete and merged to `matrix` (`a5d263e`)
 
-### Deliverables
+### Last Completed: BM-003 — Manifest Validation / Parser
 
-- `resources/lib/manifest.py` — loader, validator, typed representation
-  - Public API: `load_manifest_file`, `load_manifest_json`, `validate_manifest`
-  - Errors: `ManifestError`, `ManifestParseError`, `ManifestValidationError`
-  - Dataclasses: `Manifest`, `BuildInfo`, `AddonEntry`, `Repository`, `SkinEntry`,
-    `ManagedSettingScope`, `ConfigDeclarations`, `ProfileLayer`, `DeviceProfile`,
-    `OptionalGroup`, `PrivateOverlayRef`, `RestartPolicy`
-  - No runtime dependencies added (stdlib only)
-- `tests/test_manifest_loader.py` — 127 BM-003 tests (all passing)
-- `docs/MANIFEST.md` — updated runtime-validation note (stdlib, not jsonschema)
+Merged to `matrix` at `a5d263e`. Tests: 213/213 passing.
 
-### Out of scope (BM-004+)
+### Next: BM-004 — Profile Merge / Inheritance
 
-- Profile merge/inheritance logic
-- Platform detection
-- Any Kodi mutation
+Not started. Merge semantics documented in `docs/MANIFEST.md` §Merge semantics.
 
 ### Prerequisites
 
 - BM-001 merged to `matrix` ✓ (`5442f13`)
 - BM-002 merged to `matrix` ✓ (`89039d6`)
+- BM-003 merged to `matrix` ✓ (`a5d263e`)

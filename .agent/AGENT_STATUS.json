@@ -1,8 +1,8 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "reason": "BM-003 correction complete. Null-vs-omission fix committed (a5d263e). 213/213 tests passing. Awaiting supervisor review and BM-004 assignment.",
+  "reason": "BM-003 merged to matrix (a5d263e). 213/213 tests passing. Awaiting BM-004 assignment.",
   "last_commit": "a5d263e",
   "next_agent": "claude",
-  "updated_at": "2026-09-17T19:21:00Z"
+  "updated_at": "2026-09-17T19:25:00Z"
 }

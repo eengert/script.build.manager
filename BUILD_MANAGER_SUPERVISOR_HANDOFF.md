@@ -52,15 +52,16 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**Idle — BM-002 merged, awaiting BM-003 assignment**
+**Idle — BM-003 merged, awaiting BM-004 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
 | BM-001 Project skeleton | Merged | `5442f13` |
 | BM-002 Manifest schema v1 | Merged | `89039d6` |
-| BM-003 Manifest parser | Not started | — |
+| BM-003 Manifest parser/validator | Merged | `a5d263e` |
+| BM-004 Profile merge/inheritance | Not started | — |
 
-**matrix HEAD**: `89039d6` (fast-forward from `5442f13`)
+**matrix HEAD**: `a5d263e` (fast-forward from `a983df8`)
 
 ## Completed Deliverables
 
@@ -76,9 +77,19 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 - `resources/builds/examples/eric-main.example.json`
 - `tests/test_manifest_schema.py` — 48 structural validation tests
 
+### BM-003 (merged `a5d263e`)
+- `resources/lib/manifest.py` — loader, validator, typed representation.
+  Public API: `load_manifest_file`, `load_manifest_json`, `validate_manifest`.
+  Errors: `ManifestError`, `ManifestParseError`, `ManifestValidationError`.
+  Stdlib only — no `jsonschema` runtime dependency.
+- `tests/test_manifest_loader.py` — 162 BM-003 tests (127 original + 35 null-rejection)
+- `docs/MANIFEST.md` — updated runtime-validation note (stdlib, not jsonschema)
+- Null-vs-omission correction included: explicit JSON `null` rejected for all
+  non-nullable fields; omission still returns documented defaults.
+
 ## Test Status
 
-`python3 -m unittest discover tests` — **51/51 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **213/213 passing** (outside Kodi runtime)
 
 ## Schema Summary
 
@@ -110,15 +121,15 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-003** — Implement manifest loader/parser:
-   - Load JSON, validate against `resources/builds/schema-v1.json`
-   - Expose typed Python objects for the engine
-   - Path-traversal safety on `managed_files`
-   - Consider adding `jsonschema` as runtime dependency (requires `addon.xml` update)
-   - Unit tests against provided examples and invalid cases
+1. **BM-004** — Profile merge/inheritance logic (merge semantics fully
+   documented in `docs/MANIFEST.md` §Merge semantics; no implementation yet):
+   - Add-on merge: base → platform → device → optional groups
+   - Config merge: union of packages, managed_settings (per addon_id), managed_files
+   - Skin merge: deepest layer that declares skin wins
+   - Optional group deduplication (when both platform and device include same group)
+   - Return fully-resolved `ResolvedBuild` or equivalent typed result
 
-2. **BM-004** — Profile inheritance/overrides (merge semantics fully documented
-   in `docs/MANIFEST.md` §Merge semantics)
+2. **BM-005** — Kodi/platform state inspector
 
 3. **BM-005** — Kodi/platform state inspector
 
@@ -178,3 +189,4 @@ Supervisor reviews and merges to `matrix`.
 | 2026-09-17 | BM-001 skeleton complete and merged to `matrix` (`5442f13`) |
 | 2026-09-17 | BM-002 manifest schema v1 complete and merged to `matrix` (`89039d6`) |
 | 2026-09-17 | WF-001 usage-tracking docs merged to `matrix` (`a983df8`); project idle |
+| 2026-09-17 | BM-003 manifest parser/validator merged to `matrix` (`a5d263e`); project idle |
