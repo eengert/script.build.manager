@@ -1,6 +1,27 @@
 # Handoff
 
-## Latest — 2026-09-17 BM-005 complete; awaiting supervisor review
+## Latest — 2026-09-17 BM-005 merged to matrix; project idle, BM-006 next
+
+**matrix before**: `2ad253f`
+**matrix after**: `6d41279` (fast-forward — no squash, no rebase)
+**Merge type**: Fast-forward via `git push origin 6d41279:refs/heads/matrix`
+
+**Tests on matrix**: 358/358 passing (`python3 -m unittest discover tests`)
+
+**Codex**: untouched at `a970e83`
+
+**BM-006**: not started
+
+**Usage (merge task)**: start 5h 67% / wk 46%, end 5h 67% / wk 46%,
+delta ~0% / 0%. Model: claude-sonnet-4-6, effort: max.
+
+**Smallest next step**: Supervisor assigns BM-006 task prompt. Claude implements
+desired-vs-actual diff / planner consuming `ResolvedBuild` (BM-004) and
+`KodiState` (BM-005).
+
+---
+
+## Previous — 2026-09-17 BM-005 complete; awaiting supervisor review
 
 **Files created**:
 - `resources/lib/inspector.py` — NEW. Kodi state inspector.

@@ -52,7 +52,7 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 
 ## Current State
 
-**Idle — BM-004 merged, awaiting BM-005 assignment**
+**Idle — BM-005 merged, awaiting BM-006 assignment**
 
 | Task | Status | matrix SHA |
 |---|---|---|
@@ -60,9 +60,10 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 | BM-002 Manifest schema v1 | Merged | `89039d6` |
 | BM-003 Manifest parser/validator | Merged | `a5d263e` |
 | BM-004 Profile merge/inheritance | Merged | `2ad253f` |
-| BM-005 Kodi/platform state inspector | Not started | — |
+| BM-005 Kodi/platform state inspector | Merged | `6d41279` |
+| BM-006 Desired-vs-actual diff / planner | Not started | — |
 
-**matrix HEAD**: `2ad253f` (fast-forward from `a5d263e`)
+**matrix HEAD**: `6d41279` (fast-forward from `2ad253f`)
 
 ## Completed Deliverables
 
@@ -98,9 +99,25 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 - `tests/test_manifest_resolver.py` — 78 BM-004 tests
 - `docs/MANIFEST.md` — optional-group dedup rule documented; open question #5 closed
 
+### BM-005 (merged `6d41279`)
+- `resources/lib/inspector.py` — Kodi state inspector.
+  Public API: `KodiStateInspector(backend=None).inspect() -> KodiState` and
+  `inspect_kodi_state() -> KodiState`.
+  Error: `KodiInspectionError`. Output types: `KodiState`, `InstalledAddon`
+  (both frozen dataclasses).
+  Injectable backend: `KodiBackend` (abstract), `KodiRuntimeBackend` (lazy xbmc).
+  Pure-function JSON-RPC helpers: `_parse_addon_response`, `_parse_version_response`.
+  Fail-closed add-on parsing: all entry fields validated; duplicates rejected;
+  no partial KodiState returned on any malformed response.
+  Platform mapping: tvos/android/macos/ios/windows/linux/unknown with documented
+  precedence. bool/int distinguished for Kodi version major/minor.
+  All JSON-RPC calls read-only. No Kodi state mutated.
+  Stdlib only — no new runtime dependencies.
+- `tests/test_kodi_inspector.py` — 67 BM-005 tests (58 original + 9 correction)
+
 ## Test Status
 
-`python3 -m unittest discover tests` — **291/291 passing** (outside Kodi runtime)
+`python3 -m unittest discover tests` — **358/358 passing** (outside Kodi runtime)
 
 ## Schema Summary
 
@@ -132,13 +149,12 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-005** — Kodi/platform state inspector:
-   - Read actual installed add-on state from Kodi's database or filesystem
-   - Detect active skin and platform type
-   - No mutation; pure read
-   - Output feeds BM-006 diff/planner
+1. **BM-006** — Desired-vs-actual diff / planner:
+   - Consume `ResolvedBuild` (BM-004) + `KodiState` (BM-005)
+   - Diff desired add-on states vs. actual installed/enabled state
+   - Produce ordered action plan (no execution yet)
 
-2. **BM-006** — Desired-vs-actual diff / planner
+2. **BM-007** — Add-on installation / enable / disable executor
 
 ## Open Questions (from BM-002)
 
@@ -198,3 +214,4 @@ Supervisor reviews and merges to `matrix`.
 | 2026-09-17 | WF-001 usage-tracking docs merged to `matrix` (`a983df8`); project idle |
 | 2026-09-17 | BM-003 manifest parser/validator merged to `matrix` (`a5d263e`); project idle |
 | 2026-09-17 | BM-004 profile resolver merged to `matrix` (`2ad253f`); project idle |
+| 2026-09-17 | BM-005 Kodi state inspector merged to `matrix` (`6d41279`); project idle |

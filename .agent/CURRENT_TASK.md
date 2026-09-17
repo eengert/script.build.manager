@@ -1,34 +1,30 @@
 # Current Task
 
-## BM-005 Complete — awaiting supervisor review
+## Idle — awaiting BM-006 assignment
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: Awaiting supervisor review; BM-006 not started
+**Status**: Idle — BM-005 complete and merged to `matrix` (`6d41279`)
 
-### Deliverables
+### Deliverables (BM-005)
 
-- `resources/lib/inspector.py` — NEW. Kodi state inspector.
+- `resources/lib/inspector.py` — Kodi state inspector
   - Public API: `KodiStateInspector(backend=None).inspect() -> KodiState`
   - Convenience: `inspect_kodi_state() -> KodiState`
   - Error: `KodiInspectionError`
   - Types: `KodiState` (frozen), `InstalledAddon` (frozen)
-  - Backend: `KodiBackend` (abstract), `KodiRuntimeBackend` (xbmc lazy-import)
-  - Helpers: `_parse_addon_response`, `_parse_version_response`, `_parse_addon_list`
+  - Backend: `KodiBackend` (injectable), `KodiRuntimeBackend` (lazy xbmc)
+  - Fail-closed: all add-on entry fields validated; duplicates rejected
   - No new runtime dependencies (stdlib only)
-- `tests/test_kodi_inspector.py` — NEW. 58 BM-005 tests (all passing).
-
-### Test Count
-
-291 prior + 58 new = **349 / 349 passing**
+- `tests/test_kodi_inspector.py` — 67 BM-005 tests (58 original + 9 correction)
 
 ### Last Completed: BM-005 — Kodi/Platform State Inspector
 
-On `agent/claude`. Not yet merged to `matrix`.
+Merged to `matrix` at `6d41279`. Tests: 358/358 passing.
 
 ### Next: BM-006 — Desired-vs-Actual Diff / Planner
 
-Not started. Needs `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
+Not started. Feeds from `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
 
 ### Prerequisites
 
@@ -36,4 +32,4 @@ Not started. Needs `ResolvedBuild` (BM-004) + `KodiState` (BM-005).
 - BM-002 merged to `matrix` ✓ (`89039d6`)
 - BM-003 merged to `matrix` ✓ (`a5d263e`)
 - BM-004 merged to `matrix` ✓ (`2ad253f`)
-- BM-005 on `agent/claude` ✓ (awaiting supervisor review)
+- BM-005 merged to `matrix` ✓ (`6d41279`)
