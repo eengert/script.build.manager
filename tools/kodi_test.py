@@ -1162,16 +1162,30 @@ class _MultiFileHandler(http.server.BaseHTTPRequestHandler):
 
 
 class _HttpAddonBackend:
-    """Add-on backend for BM-011 live validation. Uses HTTP JSON-RPC.
+    """Add-on backend for BM-011 live validation. Mirrors the production algorithm.
 
-    invoke_install() triggers Kodi's InstallAddon builtin via the harness
-    trigger script (Addons.ExecuteAddon). This is equivalent to what
-    KodiRuntimeAddonBackend.invoke_install() does from inside Kodi.
+    invoke_install() uses the same constrained package-install fallback as
+    KodiRuntimeAddonBackend:
+      1. Resolve ZIP URL from installed+enabled repository metadata
+      2. Download ZIP via HTTP (using _fetch_bytes from resources.lib.addons)
+      3. Validate ZIP (using _validate_addon_zip from resources.lib.addons)
+      4. Staged extract → atomic rename (using _staged_install)
+      5. Restart Kodi (harness substitute for UpdateLocalAddons builtin)
+
+    enable_addon() is separate — called by AddonManager.install() after poll.
+
+    The only harness-specific difference from production:
+      - Production calls xbmc.executebuiltin("UpdateLocalAddons") for discovery.
+      - Harness calls stop() + launch() + wait_for_ready() instead, which achieves
+        the same result (Kodi discovers newly placed addons at startup).
     """
 
-    def get_addon_details(self, addon_id: str) -> Optional["InstalledAddonInfo"]:
+    def _ensure_project_in_sys_path(self) -> None:
         if str(PROJECT) not in sys.path:
             sys.path.insert(0, str(PROJECT))
+
+    def get_addon_details(self, addon_id: str) -> Optional["InstalledAddonInfo"]:
+        self._ensure_project_in_sys_path()
         from resources.lib.addons import InstalledAddonInfo
         try:
             resp = jsonrpc("Addons.GetAddonDetails", {
@@ -1191,81 +1205,187 @@ class _HttpAddonBackend:
         except RuntimeError:
             return None
 
-    def invoke_install(self, addon_id: str) -> None:
-        """Download addon ZIP from HTTP server, extract, restart Kodi, enable.
+    def _resolve_package_url(self, addon_id: str) -> tuple:
+        """Resolve addon_id in installed+enabled repos. Returns (zip_url, version).
 
-        Kodi 21's InstallAddon builtin always shows an interactive confirmation
-        dialog and cannot be driven headlessly. This method replicates what
-        Kodi would ultimately do: download the ZIP, extract to the addons
-        directory, restart Kodi so FindAddons discovers the new addon, then
-        enable it via SetAddonEnabled.
-
-        KodiRuntimeAddonBackend.invoke_install (production) still calls
-        InstallAddon — tested by unit tests. This path exercises AddonManager's
-        is_installed/install/poll flow against a real Kodi process.
+        Mirrors KodiRuntimeAddonBackend._resolve_package_url but uses:
+          - jsonrpc() HTTP calls instead of xbmc.executeJSONRPC
+          - Direct filesystem reads instead of xbmcvfs.File
+          - Same _fetch_bytes for addons.xml download
+          - Same URL construction logic
         """
-        if str(PROJECT) not in sys.path:
-            sys.path.insert(0, str(PROJECT))
-        from resources.lib.addons import AddonInstallError
-        import urllib.request, shutil
-
-        zip_url = (
-            f"http://127.0.0.1:{_ADDON_SERVER_PORT}"
-            f"/{addon_id}/{_BM011_TEST_ADDON_VERSION}"
-            f"/{addon_id}-{_BM011_TEST_ADDON_VERSION}.zip"
+        self._ensure_project_in_sys_path()
+        import xml.etree.ElementTree as ET
+        from resources.lib.addons import (
+            AddonInstallError, _fetch_bytes, _validate_url,
+            _MAX_ADDONS_XML_BYTES,
         )
-        print(f"  [invoke_install] downloading {zip_url}")
+
+        # Get all installed repository add-ons
         try:
-            with urllib.request.urlopen(zip_url, timeout=10) as resp:
-                zip_data = resp.read()
-        except Exception as exc:
+            repos_resp = jsonrpc("Addons.GetAddons", {
+                "type": "xbmc.addon.repository",
+                "installed": True,
+            })
+        except RuntimeError as exc:
             raise AddonInstallError(
-                f"Download failed {zip_url!r}: {exc}"
+                f"Addons.GetAddons(repository) failed: {exc}"
             ) from exc
+
+        if not isinstance(repos_resp, dict):
+            raise AddonInstallError(
+                f"Addons.GetAddons returned non-dict: {repos_resp!r}"
+            )
+
+        addons_list = repos_resp.get("addons") or []
+        repo_ids = [
+            a["addonid"]
+            for a in addons_list
+            if isinstance(a, dict) and "addonid" in a
+        ]
+
+        if not repo_ids:
+            raise AddonInstallError(
+                f"No installed repository add-ons; cannot resolve {addon_id!r}"
+            )
+
+        for repo_id in repo_ids:
+            # Check if repo is enabled
+            try:
+                det_resp = jsonrpc("Addons.GetAddonDetails", {
+                    "addonid": repo_id,
+                    "properties": ["enabled"],
+                })
+            except RuntimeError:
+                continue
+            repo_detail = det_resp.get("addon", {}) if isinstance(det_resp, dict) else {}
+            if not isinstance(repo_detail, dict) or not repo_detail.get("enabled"):
+                continue
+
+            # Read repo's addon.xml from the addons filesystem
+            addon_xml_path = KODI_ADDONS_DIR / repo_id / "addon.xml"
+            try:
+                xml_bytes = addon_xml_path.read_bytes()
+            except OSError:
+                continue
+
+            try:
+                repo_root = ET.fromstring(xml_bytes)
+            except ET.ParseError:
+                continue
+
+            # Parse <extension point="xbmc.addon.repository"> → <dir> elements
+            for ext in repo_root.findall("extension"):
+                if ext.get("point") != "xbmc.addon.repository":
+                    continue
+                for dir_el in ext.findall("dir"):
+                    info_el = dir_el.find("info")
+                    datadir_el = dir_el.find("datadir")
+                    if info_el is None or datadir_el is None:
+                        continue
+                    info_url = (info_el.text or "").strip()
+                    datadir_url = (datadir_el.text or "").strip()
+                    zip_flag = datadir_el.get("zip", "false").lower() == "true"
+                    if not info_url or not datadir_url or not zip_flag:
+                        continue
+
+                    # Fetch and parse addons.xml
+                    try:
+                        _validate_url(info_url, context=f"{repo_id} <info> URL")
+                        addons_xml_data = _fetch_bytes(
+                            info_url, max_bytes=_MAX_ADDONS_XML_BYTES
+                        )
+                        addons_root = ET.fromstring(addons_xml_data)
+                    except (AddonInstallError, ET.ParseError):
+                        continue
+
+                    for addon_el in addons_root.findall("addon"):
+                        if addon_el.get("id") != addon_id:
+                            continue
+                        version = (addon_el.get("version") or "").strip()
+                        if not version:
+                            continue
+                        try:
+                            _validate_url(datadir_url,
+                                          context=f"{repo_id} <datadir> URL")
+                        except AddonInstallError:
+                            continue
+                        pkg_url = (
+                            datadir_url.rstrip("/")
+                            + f"/{addon_id}/{version}/{addon_id}-{version}.zip"
+                        )
+                        print(
+                            f"  [resolve] found {addon_id!r} v{version} in {repo_id!r}"
+                        )
+                        print(f"  [resolve] package URL: {pkg_url}")
+                        return pkg_url, version
+
+        raise AddonInstallError(
+            f"{addon_id!r} not found in any installed+enabled repository"
+        )
+
+    def invoke_install(self, addon_id: str) -> None:
+        """Install addon_id via the constrained package-install fallback.
+
+        Mirrors KodiRuntimeAddonBackend.invoke_install exactly, using the
+        same shared helpers from resources.lib.addons:
+          resolve → _fetch_bytes → _validate_addon_zip → _staged_install
+
+        Harness-specific: restarts Kodi instead of UpdateLocalAddons so that
+        FindAddons discovers the newly placed addon directory at startup.
+        """
+        self._ensure_project_in_sys_path()
+        from resources.lib.addons import (
+            AddonInstallError, _fetch_bytes, _validate_addon_zip,
+            _staged_install, _MAX_ADDON_ZIP_BYTES,
+        )
+
+        # 1. Resolve package URL from repository metadata
+        pkg_url, version = self._resolve_package_url(addon_id)
+
+        # 2. Download ZIP via HTTP (same _fetch_bytes as production)
+        print(f"  [invoke_install] fetching {pkg_url}")
+        zip_data = _fetch_bytes(pkg_url, max_bytes=_MAX_ADDON_ZIP_BYTES)
         print(f"  [invoke_install] downloaded {len(zip_data)} bytes")
 
+        # 3. Validate ZIP (same _validate_addon_zip as production)
+        found_version = _validate_addon_zip(zip_data, addon_id,
+                                            expected_version=version)
+        print(f"  [invoke_install] ZIP validated (version={found_version!r})")
+
+        # 4. Staged install (same _staged_install as production)
         target = KODI_ADDONS_DIR / addon_id
         if target.exists():
             raise AddonInstallError(
-                f"Addon directory already exists: {target}"
+                f"Target already exists: {addon_id!r} — "
+                f"should have been caught by is_installed() check"
             )
-        try:
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-                zf.extractall(KODI_ADDONS_DIR)
-        except Exception as exc:
-            if target.exists():
-                shutil.rmtree(target)
-            raise AddonInstallError(f"Extraction failed: {exc}") from exc
-        print(f"  [invoke_install] extracted to {target}")
+        _staged_install(zip_data, addon_id, KODI_ADDONS_DIR)
+        print(f"  [invoke_install] staged install complete → {target}")
 
-        # Restart Kodi so FindAddons discovers the new addon on disk.
+        # 5. Trigger discovery: restart Kodi (harness substitute for UpdateLocalAddons)
         print("  [invoke_install] restarting Kodi (FindAddons discovers new addon)")
         stop()
         launch()
         wait_for_ready(timeout=90.0)
+        print("  [invoke_install] Kodi ready after restart ✓")
 
-        # FindAddons runs at startup; wait for the addon to appear in the DB.
-        _WAIT = 30.0
-        deadline = time.monotonic() + _WAIT
-        while time.monotonic() < deadline:
-            try:
-                resp = jsonrpc("Addons.GetAddonDetails", {
-                    "addonid": addon_id,
-                    "properties": ["enabled"],
-                })
-                if isinstance(resp, dict) and isinstance(resp.get("addon"), dict):
-                    break
-            except RuntimeError:
-                pass
-            time.sleep(0.5)
-        else:
+    def enable_addon(self, addon_id: str) -> None:
+        """Enable addon_id via Addons.SetAddonEnabled JSON-RPC.
+
+        Called by AddonManager.install() when desired_state='enabled'.
+        SyncInstalled registers newly discovered addons as disabled (enabled=0)
+        by default in Kodi 21; this call makes them active.
+        """
+        self._ensure_project_in_sys_path()
+        from resources.lib.addons import AddonInstallError
+        try:
+            jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": True})
+        except RuntimeError as exc:
             raise AddonInstallError(
-                f"{addon_id!r} not in Kodi DB after restart ({_WAIT:.0f}s timeout)"
-            )
-
-        # SyncInstalled registers new addons as enabled=0; enable explicitly.
-        jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": True})
-        print(f"  [invoke_install] enabled {addon_id!r} via SetAddonEnabled ✓")
+                f"SetAddonEnabled({addon_id!r}) failed: {exc}"
+            ) from exc
+        print(f"  [enable_addon] {addon_id!r} enabled via SetAddonEnabled ✓")
 
     def poll_addon_installed(
         self,
@@ -1335,13 +1455,15 @@ def validate_addon() -> None:
     16  Stop Kodi + shut down HTTP server
     17  Confirm real Kodi profile untouched
 
-    NOTE on step 10: Kodi 21's InstallAddon builtin shows an interactive
-    confirmation dialog and cannot be driven headlessly. _HttpAddonBackend
-    replicates the install at the filesystem level (download ZIP via urllib,
-    extract, restart, SetAddonEnabled). KodiRuntimeAddonBackend.invoke_install
-    (production path, calls InstallAddon) is exercised by unit tests. This
-    live test exercises AddonManager's is_installed/install/poll_addon_installed
-    API against a real Kodi 21 process.
+    NOTE on step 10: Both harness and production use the same constrained
+    package-install fallback algorithm (resolve → download → validate →
+    staged install → discover). _HttpAddonBackend.invoke_install mirrors
+    KodiRuntimeAddonBackend.invoke_install using the shared helpers from
+    resources.lib.addons (_fetch_bytes, _validate_addon_zip, _staged_install).
+    The only harness-specific difference: harness restarts Kodi instead of
+    calling UpdateLocalAddons (which is a Kodi builtin unavailable outside Kodi).
+    HTTP server logs prove Build Manager's algorithm fetched addons.xml and
+    the addon ZIP from the repository.
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     """
@@ -1477,7 +1599,8 @@ def validate_addon() -> None:
         print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = False ✓ (available, not installed)")
 
         print("\n[10/17] install test add-on via AddonManager.install")
-        print("  (harness: direct ZIP extraction + Kodi restart; production: InstallAddon dialog)")
+        print("  (production algorithm: resolve repo metadata → download → validate → stage → restart)")
+
         install_result = addon_mgr.install(_BM011_TEST_ADDON_ID, desired_state="enabled")
         print(f"  result.status = {install_result.status.value!r}")
         print(f"  result.enabled = {install_result.enabled!r}")

@@ -1,25 +1,35 @@
 """
-Unit tests for resources/lib/addons.py (BM-011).
+Unit tests for resources/lib/addons.py (BM-011-C).
 
 All tests run without Kodi — no xbmc imports required.
 Tests cover:
-  VALIDATION     -- addon_id grammar enforcement (injection prevention)
-  IS_INSTALLED   -- detection via backend.get_addon_details
-  IDEMPOTENCY    -- ALREADY_INSTALLED when already present, no mutation
-  HAPPY_PATH     -- INSTALLED when Kodi successfully installs the add-on
-  INVALID_ID     -- FAILED before any backend call on bad addon_id
-  INVOKE_FAIL    -- FAILED when invoke_install raises
-  POLL_TIMEOUT   -- FAILED when poll returns None (install didn't complete)
-  POLL_ERROR     -- FAILED when poll_addon_installed raises
-  RESULT_FIELDS  -- all fields populated correctly on every path
-  DESIRED_STATE  -- desired_state preserved verbatim in all results
-  RUNTIME_BACKEND -- KodiRuntimeAddonBackend unit tests (mocked xbmc)
+  VALIDATION        -- addon_id grammar enforcement (injection prevention)
+  URL_SECURITY      -- _validate_url accepts only safe http/https URLs
+  FETCH_BYTES       -- _fetch_bytes: bounded download, error mapping
+  ZIP_VALIDATION    -- _validate_addon_zip: safe paths, ID match, traversal
+  STAGED_INSTALL    -- _staged_install: temp dir, atomic rename, cleanup
+  IS_INSTALLED      -- detection via backend.get_addon_details
+  IDEMPOTENCY       -- ALREADY_INSTALLED when already present, no mutation
+  HAPPY_PATH        -- INSTALLED when Kodi successfully installs the add-on
+  DESIRED_STATE     -- enable_addon called on enabled, skipped on disabled
+  ENABLE_FAIL       -- FAILED when enable_addon raises
+  INVALID_ID        -- FAILED before any backend call on bad addon_id
+  INVOKE_FAIL       -- FAILED when invoke_install raises
+  POLL_TIMEOUT      -- FAILED when poll returns None (install didn't complete)
+  POLL_ERROR        -- FAILED when poll_addon_installed raises
+  RESULT_FIELDS     -- all fields populated correctly on every path
+  RUNTIME_BACKEND   -- KodiRuntimeAddonBackend unit tests (mocked xbmc)
+  REPO_RESOLUTION   -- _resolve_package_url scenarios
 """
 
+import io
 import json
+import pathlib
+import tempfile
 import unittest
+import zipfile
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from resources.lib.addons import (
     AddonBackend,
@@ -33,7 +43,12 @@ from resources.lib.addons import (
     KodiRuntimeAddonBackend,
     _INSTALL_INTERVAL,
     _INSTALL_TIMEOUT,
+    _MAX_ADDON_ZIP_BYTES,
+    _MAX_ADDONS_XML_BYTES,
     _validate_addon_id,
+    _validate_addon_zip,
+    _validate_url,
+    _staged_install,
 )
 
 
@@ -42,7 +57,13 @@ from resources.lib.addons import (
 # ---------------------------------------------------------------------------
 
 class FakeAddonBackend(AddonBackend):
-    """Configurable fake backend for AddonManager unit tests."""
+    """Configurable fake backend for AddonManager unit tests.
+
+    After poll_addon_installed returns _poll_result, the result is registered
+    in _installed so that subsequent get_addon_details calls find it.
+    enable_addon updates the installed entry to enabled=True (unless
+    _enable_error is set, in which case it raises that error).
+    """
 
     def __init__(
         self,
@@ -50,14 +71,17 @@ class FakeAddonBackend(AddonBackend):
         invoke_error: Optional[Exception] = None,
         poll_result: Optional[InstalledAddonInfo] = None,
         poll_error: Optional[Exception] = None,
+        enable_error: Optional[Exception] = None,
     ):
         self._installed: Dict[str, InstalledAddonInfo] = dict(installed or {})
         self._invoke_error = invoke_error
         self._poll_result = poll_result
         self._poll_error = poll_error
+        self._enable_error = enable_error
         self.invoke_calls: List[str] = []
         self.poll_calls: List[str] = []
         self.details_calls: List[str] = []
+        self.enable_calls: List[str] = []
 
     def get_addon_details(self, addon_id: str) -> Optional[InstalledAddonInfo]:
         self.details_calls.append(addon_id)
@@ -67,6 +91,17 @@ class FakeAddonBackend(AddonBackend):
         self.invoke_calls.append(addon_id)
         if self._invoke_error is not None:
             raise self._invoke_error
+
+    def enable_addon(self, addon_id: str) -> None:
+        self.enable_calls.append(addon_id)
+        if self._enable_error is not None:
+            raise self._enable_error
+        # Update the installed entry so get_addon_details returns enabled=True
+        if addon_id in self._installed:
+            old = self._installed[addon_id]
+            self._installed[addon_id] = InstalledAddonInfo(
+                addon_id=old.addon_id, enabled=True, version=old.version
+            )
 
     def poll_addon_installed(
         self,
@@ -78,6 +113,9 @@ class FakeAddonBackend(AddonBackend):
         self.poll_calls.append(addon_id)
         if self._poll_error is not None:
             raise self._poll_error
+        if self._poll_result is not None:
+            # Register poll result in _installed so get_addon_details finds it
+            self._installed[addon_id] = self._poll_result
         return self._poll_result
 
 
@@ -328,7 +366,8 @@ class TestInstallHappyPath(unittest.TestCase):
         self.assertTrue(result.enabled)
 
     def test_disabled_from_poll(self):
-        result, _ = self._run(enabled=False)
+        # desired="disabled" → enable_addon NOT called → result reflects poll state
+        result, _ = self._run(enabled=False, desired="disabled")
         self.assertFalse(result.enabled)
 
     def test_version_from_poll(self):
@@ -434,9 +473,9 @@ class TestInstallInvocationFailure(unittest.TestCase):
         _, be = self._run()
         self.assertEqual(be.poll_calls, [])
 
-    def test_message_mentions_invocation(self):
+    def test_message_mentions_install_failed(self):
         result, _ = self._run()
-        self.assertIn("invocation", result.message.lower())
+        self.assertIn("install", result.message.lower())
 
     def test_enabled_none(self):
         result, _ = self._run()
@@ -728,27 +767,107 @@ class TestKodiRuntimeBackend(unittest.TestCase):
         info = be.get_addon_details("plugin.video.test")
         self.assertIsNone(info)
 
-    # invoke_install
+    # invoke_install — tests patch the internal helpers to isolate the orchestration
 
-    def test_invoke_install_calls_executebuiltin(self):
+    def _make_test_zip(self, addon_id: str, version: str = "1.0.0") -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                f"{addon_id}/addon.xml",
+                f'<?xml version="1.0"?><addon id="{addon_id}" version="{version}"/>',
+            )
+        return buf.getvalue()
+
+    def _invoke_with_patches(self, addon_id="plugin.video.test", version="1.0.0"):
+        """Run invoke_install with all internal helpers mocked out."""
         xbmc = MagicMock()
         be = self._backend(xbmc)
-        be.invoke_install("plugin.video.test")
-        xbmc.executebuiltin.assert_called_once()
+        zip_data = self._make_test_zip(addon_id, version)
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            with patch.object(be, "_resolve_package_url", return_value=(
+                f"http://127.0.0.1:8922/{addon_id}/{version}/{addon_id}-{version}.zip",
+                version,
+            )), \
+            patch(
+                "resources.lib.addons._fetch_bytes", return_value=zip_data
+            ), \
+            patch(
+                "resources.lib.addons._validate_addon_zip", return_value=version
+            ), \
+            patch(
+                "resources.lib.addons._staged_install"
+            ) as mock_stage, \
+            patch.object(be, "_get_addons_dir", return_value=addons_dir):
+                be.invoke_install(addon_id)
+                return xbmc, mock_stage
 
-    def test_invoke_install_includes_addon_id_in_builtin(self):
+    def test_invoke_install_calls_update_local_addons(self):
+        xbmc, _ = self._invoke_with_patches()
+        xbmc.executebuiltin.assert_called_once_with("UpdateLocalAddons")
+
+    def test_invoke_install_does_not_call_install_addon_builtin(self):
+        xbmc, _ = self._invoke_with_patches()
+        builtin_arg = xbmc.executebuiltin.call_args[0][0]
+        self.assertNotIn("InstallAddon", builtin_arg)
+
+    def test_invoke_install_calls_staged_install(self):
+        _, mock_stage = self._invoke_with_patches()
+        mock_stage.assert_called_once()
+
+    def test_invoke_install_raises_when_target_exists(self):
         xbmc = MagicMock()
         be = self._backend(xbmc)
-        be.invoke_install("plugin.video.test")
-        call_arg = xbmc.executebuiltin.call_args[0][0]
-        self.assertIn("plugin.video.test", call_arg)
-        self.assertIn("InstallAddon", call_arg)
+        version = "1.0.0"
+        addon_id = "plugin.video.test"
+        zip_data = self._make_test_zip(addon_id)
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            # Pre-create target to simulate already-installed on disk
+            (addons_dir / addon_id).mkdir()
+            with patch.object(be, "_resolve_package_url", return_value=(
+                f"http://127.0.0.1:8922/{addon_id}/{version}/{addon_id}-{version}.zip",
+                version,
+            )), \
+            patch("resources.lib.addons._fetch_bytes", return_value=zip_data), \
+            patch("resources.lib.addons._validate_addon_zip", return_value=version), \
+            patch.object(be, "_get_addons_dir", return_value=addons_dir):
+                with self.assertRaises(AddonInstallError):
+                    be.invoke_install(addon_id)
 
-    def test_invoke_install_does_not_call_jsonrpc(self):
+    def test_invoke_install_raises_when_resolve_fails(self):
         xbmc = MagicMock()
         be = self._backend(xbmc)
-        be.invoke_install("plugin.video.test")
-        xbmc.executeJSONRPC.assert_not_called()
+        with patch.object(
+            be, "_resolve_package_url",
+            side_effect=AddonInstallError("no repos"),
+        ):
+            with self.assertRaises(AddonInstallError):
+                be.invoke_install("plugin.video.test")
+
+    # enable_addon
+
+    def test_enable_addon_calls_set_addon_enabled(self):
+        xbmc = MagicMock()
+        xbmc.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "result": "OK"
+        })
+        be = self._backend(xbmc)
+        be.enable_addon("plugin.video.test")
+        call_json = json.loads(xbmc.executeJSONRPC.call_args[0][0])
+        self.assertEqual(call_json["method"], "Addons.SetAddonEnabled")
+        self.assertEqual(call_json["params"]["addonid"], "plugin.video.test")
+        self.assertTrue(call_json["params"]["enabled"])
+
+    def test_enable_addon_raises_on_json_error(self):
+        xbmc = MagicMock()
+        xbmc.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32602, "message": "addon not found"},
+        })
+        be = self._backend(xbmc)
+        with self.assertRaises(AddonInstallError):
+            be.enable_addon("plugin.video.test")
 
     # poll_addon_installed
 
@@ -791,6 +910,10 @@ class TestAddonBackendInterface(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             AddonBackend().invoke_install("a.b")
 
+    def test_enable_addon_raises(self):
+        with self.assertRaises(NotImplementedError):
+            AddonBackend().enable_addon("a.b")
+
     def test_poll_addon_installed_raises(self):
         with self.assertRaises(NotImplementedError):
             AddonBackend().poll_addon_installed("a.b")
@@ -806,6 +929,462 @@ class TestAddonErrorHierarchy(unittest.TestCase):
 
     def test_install_error_is_addon_error(self):
         self.assertTrue(issubclass(AddonInstallError, AddonError))
+
+
+# ---------------------------------------------------------------------------
+# TestValidateUrl — URL security
+# ---------------------------------------------------------------------------
+
+class TestValidateUrl(unittest.TestCase):
+    """_validate_url accepts only safe http/https URLs; rejects all else."""
+
+    def test_http_allowed(self):
+        _validate_url("http://example.com/addons.xml")
+
+    def test_https_allowed(self):
+        _validate_url("https://example.com/addons.xml")
+
+    def test_localhost_http_allowed(self):
+        _validate_url("http://127.0.0.1:8922/addons.xml")
+
+    def test_file_scheme_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("file:///etc/passwd")
+
+    def test_ftp_scheme_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("ftp://example.com/file.zip")
+
+    def test_no_scheme_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("example.com/file.zip")
+
+    def test_empty_string_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("")
+
+    def test_none_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url(None)  # type: ignore[arg-type]
+
+    def test_credentials_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("http://user:pass@example.com/file.zip")
+
+    def test_username_only_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("http://user@example.com/file.zip")
+
+    def test_missing_host_rejected(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_url("http:///path")
+
+    def test_context_appears_in_error(self):
+        with self.assertRaises(AddonInstallError) as ctx:
+            _validate_url("ftp://x.com", context="datadir URL")
+        self.assertIn("datadir URL", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# TestValidateAddonZip — ZIP content validation
+# ---------------------------------------------------------------------------
+
+def _make_zip(addon_id: str, version: str = "1.0.0", extra_files=None) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            f"{addon_id}/addon.xml",
+            f'<?xml version="1.0"?><addon id="{addon_id}" version="{version}"/>',
+        )
+        for name, data in (extra_files or []):
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+class TestValidateAddonZip(unittest.TestCase):
+    """_validate_addon_zip: version returned on success; various failures raise AddonInstallError."""
+
+    def test_valid_zip_returns_version(self):
+        data = _make_zip("plugin.video.test", "2.1.0")
+        ver = _validate_addon_zip(data, "plugin.video.test")
+        self.assertEqual(ver, "2.1.0")
+
+    def test_expected_version_match_ok(self):
+        data = _make_zip("plugin.video.test", "1.0.0")
+        ver = _validate_addon_zip(data, "plugin.video.test", expected_version="1.0.0")
+        self.assertEqual(ver, "1.0.0")
+
+    def test_expected_version_mismatch_raises(self):
+        data = _make_zip("plugin.video.test", "2.0.0")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(data, "plugin.video.test", expected_version="1.0.0")
+
+    def test_invalid_zip_raises(self):
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(b"not a zip", "plugin.video.test")
+
+    def test_missing_addon_xml_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("plugin.video.test/README.txt", "hello")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(buf.getvalue(), "plugin.video.test")
+
+    def test_id_mismatch_raises(self):
+        data = _make_zip("plugin.video.test")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(data, "plugin.video.other")
+
+    def test_traversal_path_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("plugin.video.test/addon.xml",
+                        '<addon id="plugin.video.test" version="1.0"/>')
+            zf.writestr("plugin.video.test/../../../evil.py", "harm")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(buf.getvalue(), "plugin.video.test")
+
+    def test_absolute_path_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("plugin.video.test/addon.xml",
+                        '<addon id="plugin.video.test" version="1.0"/>'),
+            zf.writestr("/etc/evil", "harm")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(buf.getvalue(), "plugin.video.test")
+
+    def test_malformed_addon_xml_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("plugin.video.test/addon.xml", "<<<not xml")
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(buf.getvalue(), "plugin.video.test")
+
+    def test_no_version_attribute_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("plugin.video.test/addon.xml",
+                        '<addon id="plugin.video.test"/>')
+        with self.assertRaises(AddonInstallError):
+            _validate_addon_zip(buf.getvalue(), "plugin.video.test")
+
+    def test_extra_files_ok(self):
+        data = _make_zip("plugin.video.test", extra_files=[
+            ("plugin.video.test/resources/data.json", "{}"),
+        ])
+        ver = _validate_addon_zip(data, "plugin.video.test")
+        self.assertEqual(ver, "1.0.0")
+
+
+# ---------------------------------------------------------------------------
+# TestStagedInstall — staged extraction + atomic rename
+# ---------------------------------------------------------------------------
+
+class TestStagedInstall(unittest.TestCase):
+    """_staged_install: extracts to temp dir, renames atomically, cleans up staging."""
+
+    def test_happy_path_places_addon_in_addons_dir(self):
+        data = _make_zip("plugin.video.test")
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            _staged_install(data, "plugin.video.test", addons_dir)
+            self.assertTrue((addons_dir / "plugin.video.test").is_dir())
+
+    def test_addon_xml_present_after_install(self):
+        data = _make_zip("plugin.video.test")
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            _staged_install(data, "plugin.video.test", addons_dir)
+            self.assertTrue((addons_dir / "plugin.video.test" / "addon.xml").is_file())
+
+    def test_staging_dir_cleaned_up_on_success(self):
+        data = _make_zip("plugin.video.test")
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            _staged_install(data, "plugin.video.test", addons_dir)
+            staging = addons_dir / "_bm011_staging_plugin.video.test"
+            self.assertFalse(staging.exists())
+
+    def test_stale_staging_dir_cleaned_before_install(self):
+        data = _make_zip("plugin.video.test")
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            staging = addons_dir / "_bm011_staging_plugin.video.test"
+            staging.mkdir()
+            (staging / "leftover.txt").write_text("stale")
+            _staged_install(data, "plugin.video.test", addons_dir)
+            self.assertFalse(staging.exists())
+            self.assertTrue((addons_dir / "plugin.video.test").is_dir())
+
+    def test_invalid_zip_raises_and_no_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            with self.assertRaises(AddonInstallError):
+                _staged_install(b"garbage", "plugin.video.test", addons_dir)
+            self.assertFalse((addons_dir / "plugin.video.test").exists())
+
+    def test_staging_cleaned_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            try:
+                _staged_install(b"garbage", "plugin.video.test", addons_dir)
+            except AddonInstallError:
+                pass
+            staging = addons_dir / "_bm011_staging_plugin.video.test"
+            self.assertFalse(staging.exists())
+
+    def test_zip_missing_expected_subdir_raises(self):
+        # ZIP has wrong top-level directory name
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("wrong.name/addon.xml", '<addon id="wrong.name" version="1.0"/>')
+        with tempfile.TemporaryDirectory() as tmp:
+            addons_dir = pathlib.Path(tmp)
+            with self.assertRaises(AddonInstallError):
+                _staged_install(buf.getvalue(), "plugin.video.test", addons_dir)
+
+
+# ---------------------------------------------------------------------------
+# TestDesiredStateEnable — enable_addon called when needed
+# ---------------------------------------------------------------------------
+
+class TestDesiredStateEnable(unittest.TestCase):
+    """install() with desired_state='enabled' calls enable_addon when poll returns disabled."""
+
+    def test_enable_addon_called_when_poll_returns_disabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(poll_result=poll_info)
+        AddonManager(be).install("plugin.video.test", desired_state="enabled")
+        self.assertEqual(be.enable_calls, ["plugin.video.test"])
+
+    def test_enable_addon_not_called_when_poll_returns_enabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=True)
+        be = FakeAddonBackend(poll_result=poll_info)
+        AddonManager(be).install("plugin.video.test", desired_state="enabled")
+        self.assertEqual(be.enable_calls, [])
+
+    def test_result_enabled_after_enable(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(poll_result=poll_info)
+        result = AddonManager(be).install("plugin.video.test", desired_state="enabled")
+        self.assertEqual(result.status, AddonStatus.INSTALLED)
+        self.assertTrue(result.enabled)
+
+    def test_result_version_preserved_after_enable(self):
+        poll_info = _make_info("plugin.video.test", enabled=False, version="3.2.1")
+        be = FakeAddonBackend(poll_result=poll_info)
+        result = AddonManager(be).install("plugin.video.test", desired_state="enabled")
+        self.assertEqual(result.version, "3.2.1")
+
+
+# ---------------------------------------------------------------------------
+# TestDesiredStateDisable — enable_addon NOT called for disabled desired state
+# ---------------------------------------------------------------------------
+
+class TestDesiredStateDisable(unittest.TestCase):
+    """install() with desired_state='disabled' never calls enable_addon."""
+
+    def test_enable_addon_not_called_when_desired_disabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(poll_result=poll_info)
+        AddonManager(be).install("plugin.video.test", desired_state="disabled")
+        self.assertEqual(be.enable_calls, [])
+
+    def test_result_enabled_false_when_desired_disabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(poll_result=poll_info)
+        result = AddonManager(be).install("plugin.video.test", desired_state="disabled")
+        self.assertFalse(result.enabled)
+
+    def test_status_installed_when_desired_disabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(poll_result=poll_info)
+        result = AddonManager(be).install("plugin.video.test", desired_state="disabled")
+        self.assertEqual(result.status, AddonStatus.INSTALLED)
+
+
+# ---------------------------------------------------------------------------
+# TestEnableAddonFails — FAILED when enable_addon raises
+# ---------------------------------------------------------------------------
+
+class TestEnableAddonFails(unittest.TestCase):
+    """install() returns FAILED when enable_addon raises AddonInstallError."""
+
+    def _run(self):
+        poll_info = _make_info("plugin.video.test", enabled=False)
+        be = FakeAddonBackend(
+            poll_result=poll_info,
+            enable_error=AddonInstallError("SetAddonEnabled rejected"),
+        )
+        return AddonManager(be).install("plugin.video.test", desired_state="enabled")
+
+    def test_status_failed(self):
+        self.assertEqual(self._run().status, AddonStatus.FAILED)
+
+    def test_message_mentions_enable(self):
+        self.assertIn("enable", self._run().message.lower())
+
+    def test_enabled_none_on_enable_fail(self):
+        self.assertIsNone(self._run().enabled)
+
+    def test_version_none_on_enable_fail(self):
+        self.assertIsNone(self._run().version)
+
+
+# ---------------------------------------------------------------------------
+# TestRepoResolution — _resolve_package_url scenarios (mocked Kodi)
+# ---------------------------------------------------------------------------
+
+def _make_addons_xml(addon_id: str, version: str) -> bytes:
+    return (
+        f'<?xml version="1.0"?><addons>'
+        f'<addon id="{addon_id}" version="{version}"/>'
+        f'</addons>'
+    ).encode()
+
+
+def _make_repo_addon_xml(info_url: str, datadir_url: str) -> bytes:
+    return (
+        '<?xml version="1.0"?>'
+        '<addon id="repository.test" version="1.0">'
+        '<extension point="xbmc.addon.repository" name="Test Repo">'
+        f'<dir><info compressed="false">{info_url}</info>'
+        f'<checksum>{info_url}.md5</checksum>'
+        f'<datadir zip="true">{datadir_url}</datadir></dir>'
+        '</extension>'
+        '</addon>'
+    ).encode()
+
+
+class TestRepoResolution(unittest.TestCase):
+    """_resolve_package_url: mocked xbmc/xbmcvfs/xbmcaddon, mocked HTTP."""
+
+    def _mock_xbmc(self, repo_ids, enabled_repos, addon_xml_content, addons_xml_content):
+        """Build a mock xbmc that returns repo list, details, and addon XML."""
+        xbmc_mock = MagicMock()
+        call_count = [0]
+
+        def execute_jsonrpc(req_str):
+            req = json.loads(req_str)
+            if req["method"] == "Addons.GetAddons":
+                return json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {"addons": [{"addonid": r} for r in repo_ids]},
+                })
+            if req["method"] == "Addons.GetAddonDetails":
+                repo_id = req["params"]["addonid"]
+                enabled = repo_id in enabled_repos
+                return json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {"addon": {"addonid": repo_id, "enabled": enabled}},
+                })
+            return json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -1}})
+
+        xbmc_mock.executeJSONRPC.side_effect = execute_jsonrpc
+        return xbmc_mock
+
+    def _backend_with_mocks(self, repo_ids, enabled_repos,
+                             addon_xml_bytes, addons_xml_bytes,
+                             info_url="http://127.0.0.1:8922/addons.xml",
+                             datadir_url="http://127.0.0.1:8922"):
+        be = KodiRuntimeAddonBackend()
+        xbmc_mock = self._mock_xbmc(repo_ids, enabled_repos, addon_xml_bytes, addons_xml_bytes)
+        be._xbmc = lambda: xbmc_mock
+
+        addon_xml = _make_repo_addon_xml(info_url, datadir_url)
+        addons_xml = addons_xml_bytes
+
+        fake_file = MagicMock()
+        fake_file.read.return_value = addon_xml.decode("utf-8")
+
+        xbmcaddon_mock = MagicMock()
+        xbmcaddon_mock.Addon.return_value.getAddonInfo.return_value = "/kodi/addons/repo/"
+        xbmcvfs_mock = MagicMock()
+        xbmcvfs_mock.File.return_value = fake_file
+
+        return be, xbmc_mock, xbmcaddon_mock, xbmcvfs_mock, addons_xml
+
+    def test_found_in_first_repo_returns_url_and_version(self):
+        addons_xml = _make_addons_xml("plugin.video.test", "2.0.0")
+        be, _, xbmcaddon_m, xbmcvfs_m, addons_xml_data = self._backend_with_mocks(
+            repo_ids=["repository.test"],
+            enabled_repos={"repository.test"},
+            addon_xml_bytes=b"",
+            addons_xml_bytes=addons_xml,
+        )
+        with patch.dict("sys.modules", {
+            "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+        }), patch("resources.lib.addons._fetch_bytes", return_value=addons_xml_data):
+            url, version = be._resolve_package_url("plugin.video.test")
+        self.assertIn("plugin.video.test", url)
+        self.assertIn("2.0.0", url)
+        self.assertEqual(version, "2.0.0")
+
+    def test_url_ends_with_expected_zip_filename(self):
+        addons_xml = _make_addons_xml("plugin.video.test", "1.5.0")
+        be, _, xbmcaddon_m, xbmcvfs_m, addons_xml_data = self._backend_with_mocks(
+            repo_ids=["repository.test"],
+            enabled_repos={"repository.test"},
+            addon_xml_bytes=b"",
+            addons_xml_bytes=addons_xml,
+        )
+        with patch.dict("sys.modules", {
+            "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+        }), patch("resources.lib.addons._fetch_bytes", return_value=addons_xml_data):
+            url, _ = be._resolve_package_url("plugin.video.test")
+        self.assertTrue(url.endswith("plugin.video.test/1.5.0/plugin.video.test-1.5.0.zip"))
+
+    def test_not_found_raises(self):
+        addons_xml = _make_addons_xml("plugin.video.other", "1.0.0")
+        be, _, xbmcaddon_m, xbmcvfs_m, addons_xml_data = self._backend_with_mocks(
+            repo_ids=["repository.test"],
+            enabled_repos={"repository.test"},
+            addon_xml_bytes=b"",
+            addons_xml_bytes=addons_xml,
+        )
+        with patch.dict("sys.modules", {
+            "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+        }), patch("resources.lib.addons._fetch_bytes", return_value=addons_xml_data):
+            with self.assertRaises(AddonInstallError):
+                be._resolve_package_url("plugin.video.test")
+
+    def test_disabled_repo_skipped(self):
+        addons_xml = _make_addons_xml("plugin.video.test", "1.0.0")
+        be, _, xbmcaddon_m, xbmcvfs_m, addons_xml_data = self._backend_with_mocks(
+            repo_ids=["repository.disabled", "repository.enabled"],
+            enabled_repos={"repository.enabled"},
+            addon_xml_bytes=b"",
+            addons_xml_bytes=addons_xml,
+        )
+        repo_addon_xml = _make_repo_addon_xml(
+            "http://127.0.0.1:8922/addons.xml",
+            "http://127.0.0.1:8922",
+        )
+        fake_file = MagicMock()
+        fake_file.read.return_value = repo_addon_xml.decode("utf-8")
+        xbmcvfs_m.File.return_value = fake_file
+
+        with patch.dict("sys.modules", {
+            "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+        }), patch("resources.lib.addons._fetch_bytes", return_value=addons_xml_data):
+            url, version = be._resolve_package_url("plugin.video.test")
+        self.assertIn("plugin.video.test", url)
+
+    def test_no_repos_raises(self):
+        be = KodiRuntimeAddonBackend()
+        xbmc_mock = MagicMock()
+        xbmc_mock.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"addons": []},
+        })
+        be._xbmc = lambda: xbmc_mock
+        xbmcaddon_m = MagicMock()
+        xbmcvfs_m = MagicMock()
+        with patch.dict("sys.modules", {
+            "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+        }):
+            with self.assertRaises(AddonInstallError):
+                be._resolve_package_url("plugin.video.test")
 
 
 if __name__ == "__main__":
