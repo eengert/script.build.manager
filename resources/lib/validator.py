@@ -7,6 +7,7 @@ validate_build_state(
     desired: ResolvedBuild,
     actual: KodiState,
     dependency_closure: Optional[DependencyClosure] = None,
+    configuration_state: Optional[ConfigurationValidationState] = None,
 ) -> ValidationReport
 
     Read-only validator. Evaluates whether the observable Kodi state matches
@@ -18,6 +19,9 @@ validate_build_state(
     dependency_closure:   Optional BM-012 DependencyClosure for the managed
                           root add-ons. If None and dependency validation is
                           applicable, a NOT_CHECKED result is emitted.
+    configuration_state:  Optional BM-015 ConfigurationValidationState snapshot.
+                          If None and desired.config is present, a NOT_CHECKED
+                          result is emitted.
 
 ValidationReport
     report.checks         — all ValidationCheck results, deterministic order
@@ -53,7 +57,7 @@ Validation domains
 2. ADDON        — every explicitly managed add-on is in its desired state
 3. DEPENDENCY   — every required dependency node has a satisfying status
 4. SKIN         — desired skin (if any) is installed and active
-5. CONFIGURATION — desired config (if any) emits NOT_CHECKED (BM-015 deferred)
+5. CONFIGURATION — managed setting/file targets, against a BM-015 snapshot
 
 Read-only guarantee
 -------------------
@@ -73,6 +77,8 @@ Domain ordering
 All checks are returned in deterministic domain + lexical subject order:
   REPOSITORY → ADDON → DEPENDENCY → SKIN → CONFIGURATION
   Within each domain, subjects are sorted lexically by addon_id / subject key.
+  The CONFIGURATION domain emits its managed-setting checks (sorted by
+  addon_id then key) before its managed-file checks (sorted by destination).
 
 Aggregate semantics
 -------------------
@@ -103,11 +109,23 @@ Only add-ons explicitly listed in desired.addons are validated. Unmanaged
 installed add-ons (present in KodiState but absent from desired.addons) are
 silently ignored; they never produce FAIL results.
 
-BM-015 boundary
----------------
-Configuration-state inspection and validation is deferred to BM-015. BM-014
-emits a single configuration-domain NOT_CHECKED when desired.config is non-None,
-rather than silently producing a false PASS.
+BM-015 integration (Option A)
+-----------------------------
+BM-014 remains read-only and never inspects live configuration itself. BM-015
+produces an immutable ConfigurationValidationState snapshot describing exactly
+which managed targets it resolved and which of them it verified after applying
+them. Passing that snapshot lets BM-014 report the CONFIGURATION domain:
+
+  desired.config is None                      → no CONFIGURATION checks
+  desired.config present, snapshot None       → NOT_CHECKED (unchanged)
+  snapshot scope == declared managed scope    → PASS/FAIL per declared target
+  snapshot empty / partial / unrelated        → NOT_CHECKED (scope mismatch)
+
+Scope comparison is by set equality over declared (addon_id, key) setting
+targets and declared managed file destinations, mirroring the dependency-root
+scope discipline above. A successful BM-015 apply() never by itself makes
+BM-014 claim configuration is validated: the snapshot must cover exactly the
+resolved managed scope, and every target in it must have been verified.
 
 Stdlib only — no new runtime dependencies.
 """
@@ -118,6 +136,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
+from resources.lib.config import ConfigurationValidationState
 from resources.lib.dependencies import DependencyClosure, DependencyStatus
 from resources.lib.inspector import InstalledAddon, KodiState
 from resources.lib.resolver import ResolvedBuild
@@ -242,6 +261,7 @@ def validate_build_state(
     desired: ResolvedBuild,
     actual: KodiState,
     dependency_closure: Optional[DependencyClosure] = None,
+    configuration_state: Optional[ConfigurationValidationState] = None,
 ) -> ValidationReport:
     """Validate observable Kodi state against a resolved desired Build Manager state.
 
@@ -268,7 +288,7 @@ def validate_build_state(
     checks.extend(_validate_addons(desired, actual_map))
     checks.extend(_validate_dependencies(desired, dependency_closure))
     checks.extend(_validate_skin(desired, actual, actual_map))
-    checks.extend(_validate_configuration(desired))
+    checks.extend(_validate_configuration(desired, configuration_state))
 
     return ValidationReport(checks=tuple(checks))
 
@@ -626,23 +646,147 @@ def _validate_skin(
     )]
 
 
-def _validate_configuration(desired: ResolvedBuild) -> list:
-    """Emit NOT_CHECKED for configuration domain when desired.config is present.
+def _validate_configuration(
+    desired: ResolvedBuild,
+    configuration_state: Optional[ConfigurationValidationState],
+) -> list:
+    """Validate the configuration domain against an optional BM-015 snapshot.
 
-    Configuration-state inspection and validation is deferred to BM-015. This
-    NOT_CHECKED prevents a false full-PASS when managed configuration exists.
+    Four cases, mirroring the dependency-root scope discipline:
+
+    1. desired.config is None
+       Configuration validation is not applicable; no checks are emitted.
+    2. desired.config present, configuration_state is None
+       NOT_CHECKED — nothing inspected configuration state.
+    3. desired.config present, snapshot scope exactly matches the declared
+       managed scope
+       One PASS/FAIL check per declared target (or a single domain PASS when
+       the manifest declares no managed targets).
+    4. desired.config present, snapshot scope is empty, partial or unrelated
+       NOT_CHECKED — a snapshot from a different resolution can never be
+       reported as a complete configuration validation.
+
+    Scope comparison is by set equality, so ordering is irrelevant. This
+    function never mutates anything; it reads an immutable snapshot the caller
+    obtained from BM-015.
     """
-    if desired.config is None:
+    config = desired.config
+    if config is None:
         return []
-    return [ValidationCheck(
-        domain=ValidationDomain.CONFIGURATION,
-        subject="configuration_domain",
-        status=ValidationStatus.NOT_CHECKED,
-        expected="managed configuration matches deployed state",
-        actual_state="not inspected",
-        reason=(
-            "Configuration-state inspection is not yet implemented. "
-            "Validation of managed files, settings, and packages is "
-            "deferred to BM-015 or a later validation extension."
-        ),
-    )]
+
+    if configuration_state is None:
+        return [ValidationCheck(
+            domain=ValidationDomain.CONFIGURATION,
+            subject="configuration_domain",
+            status=ValidationStatus.NOT_CHECKED,
+            expected="managed configuration matches deployed state",
+            actual_state="not inspected",
+            reason=(
+                "No configuration validation state was supplied. Run BM-015 "
+                "configuration deployment and pass its validation_state to "
+                "validate_build_state() to validate this domain."
+            ),
+        )]
+
+    declared_settings = {
+        (scope.addon_id, key)
+        for scope in config.managed_settings
+        for key in scope.keys
+    }
+    declared_files = set(config.managed_files)
+
+    snapshot_settings = set(configuration_state.setting_targets)
+    snapshot_files = set(configuration_state.file_targets)
+
+    if snapshot_settings != declared_settings or snapshot_files != declared_files:
+        return [ValidationCheck(
+            domain=ValidationDomain.CONFIGURATION,
+            subject="configuration_domain",
+            status=ValidationStatus.NOT_CHECKED,
+            expected=(
+                f"snapshot covering {len(declared_settings)} managed setting(s) "
+                f"and {len(declared_files)} managed file(s)"
+            ),
+            actual_state=(
+                f"snapshot covering {len(snapshot_settings)} setting(s) "
+                f"and {len(snapshot_files)} file(s)"
+            ),
+            reason=(
+                "Configuration validation state does not cover exactly the "
+                "manifest-declared managed scope. A partial or unrelated "
+                "snapshot is never reported as a complete configuration "
+                "validation."
+            ),
+        )]
+
+    if not declared_settings and not declared_files:
+        return [ValidationCheck(
+            domain=ValidationDomain.CONFIGURATION,
+            subject="configuration_domain",
+            status=ValidationStatus.PASS,
+            expected="no managed configuration targets",
+            actual_state="no managed configuration targets",
+            reason=(
+                "The manifest declares managed configuration but names no "
+                "setting or file targets; there is nothing to reconcile."
+            ),
+        )]
+
+    verified_settings = set(configuration_state.verified_settings)
+    verified_files = set(configuration_state.verified_files)
+
+    checks = []
+    for addon_id, key in sorted(declared_settings):
+        subject = f"{addon_id}/{key}"
+        if (addon_id, key) in verified_settings:
+            checks.append(ValidationCheck(
+                domain=ValidationDomain.CONFIGURATION,
+                subject=subject,
+                status=ValidationStatus.PASS,
+                expected="managed setting matches the desired value",
+                actual_state="verified after deployment",
+                reason=(
+                    f"Managed setting {subject} was verified against its "
+                    f"desired value"
+                ),
+            ))
+        else:
+            checks.append(ValidationCheck(
+                domain=ValidationDomain.CONFIGURATION,
+                subject=subject,
+                status=ValidationStatus.FAIL,
+                expected="managed setting matches the desired value",
+                actual_state="not verified",
+                reason=(
+                    f"Managed setting {subject} was not verified against its "
+                    f"desired value"
+                ),
+            ))
+
+    for destination in sorted(declared_files):
+        if destination in verified_files:
+            checks.append(ValidationCheck(
+                domain=ValidationDomain.CONFIGURATION,
+                subject=destination,
+                status=ValidationStatus.PASS,
+                expected="managed file matches the desired content",
+                actual_state="verified after deployment",
+                reason=(
+                    f"Managed file {destination!r} was verified against its "
+                    f"desired content"
+                ),
+            ))
+        else:
+            checks.append(ValidationCheck(
+                domain=ValidationDomain.CONFIGURATION,
+                subject=destination,
+                status=ValidationStatus.FAIL,
+                expected="managed file matches the desired content",
+                actual_state="not verified",
+                reason=(
+                    f"Managed file {destination!r} was not verified against its "
+                    f"desired content"
+                ),
+            ))
+
+    return checks
