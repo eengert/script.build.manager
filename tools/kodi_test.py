@@ -992,6 +992,8 @@ def validate_repo() -> None:
 _ADDON_SERVER_PORT = 8922           # distinct from Kodi (8920) and BM-010 repo (8921)
 _BM011_TEST_ADDON_ID = "script.module.build-manager-test"
 _BM011_TEST_ADDON_VERSION = "1.0.0"
+_BM011_TEST_ADDON_ID_B = "script.module.build-manager-test-b"
+_BM011_TEST_ADDON_VERSION_B = "1.0.0"
 _HARNESS_TRIGGER_ADDON_ID = "script.build-manager-harness-trigger"
 _HARNESS_TRIGGER_VERSION = "1.0.0"
 
@@ -1022,8 +1024,34 @@ def _make_bm011_test_addon_zip() -> bytes:
     return buf.getvalue()
 
 
+def _make_bm011_test_addon_b_zip() -> bytes:
+    """Build a minimal valid test add-on ZIP for BM-011 disabled-path validation.
+
+    Creates script.module.build-manager-test-b as an xbmc.python.module add-on.
+    Used to prove desired_state='disabled' installs and leaves the addon disabled.
+    """
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM011_TEST_ADDON_ID_B}"'
+        f' name="Build Manager Test Module B"'
+        f' version="{_BM011_TEST_ADDON_VERSION_B}"'
+        f' provider-name="Build Manager">'
+        '<extension point="xbmc.python.module" library="lib"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Disposable test module B for BM-011 disabled-path validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM011_TEST_ADDON_ID_B}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM011_TEST_ADDON_ID_B}/lib/__init__.py", b"")
+    return buf.getvalue()
+
+
 def _make_bm011_addons_xml() -> bytes:
-    """Build the addons.xml repository index listing the test add-on."""
+    """Build the addons.xml repository index listing both test add-ons."""
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<addons>\n'
@@ -1034,6 +1062,16 @@ def _make_bm011_addons_xml() -> bytes:
         '    <extension point="xbmc.python.module" library="lib"/>\n'
         '    <extension point="xbmc.addon.metadata">\n'
         '      <summary lang="en_gb">Disposable test module for BM-011 validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM011_TEST_ADDON_ID_B}"'
+        f' name="Build Manager Test Module B"'
+        f' version="{_BM011_TEST_ADDON_VERSION_B}"'
+        f' provider-name="Build Manager">\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Disposable test module B for BM-011 disabled-path validation</summary>\n'
         '      <platform>all</platform>\n'
         '    </extension>\n'
         '  </addon>\n'
@@ -1172,7 +1210,7 @@ class _HttpAddonBackend:
       4. Staged extract → atomic rename (using _staged_install)
       5. Restart Kodi (harness substitute for UpdateLocalAddons builtin)
 
-    enable_addon() is separate — called by AddonManager.install() after poll.
+    set_addon_enabled() is separate — called by AddonManager.install() after poll.
 
     The only harness-specific difference from production:
       - Production calls xbmc.executebuiltin("UpdateLocalAddons") for discovery.
@@ -1370,22 +1408,22 @@ class _HttpAddonBackend:
         wait_for_ready(timeout=90.0)
         print("  [invoke_install] Kodi ready after restart ✓")
 
-    def enable_addon(self, addon_id: str) -> None:
-        """Enable addon_id via Addons.SetAddonEnabled JSON-RPC.
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        """Set enabled state of addon_id via Addons.SetAddonEnabled JSON-RPC.
 
-        Called by AddonManager.install() when desired_state='enabled'.
+        Called by AddonManager.install() after poll to finalize desired_state.
         SyncInstalled registers newly discovered addons as disabled (enabled=0)
-        by default in Kodi 21; this call makes them active.
+        by default in Kodi 21; this call enables or disables them as requested.
         """
         self._ensure_project_in_sys_path()
         from resources.lib.addons import AddonInstallError
         try:
-            jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": True})
+            jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": enabled})
         except RuntimeError as exc:
             raise AddonInstallError(
-                f"SetAddonEnabled({addon_id!r}) failed: {exc}"
+                f"SetAddonEnabled({addon_id!r}, {enabled}) failed: {exc}"
             ) from exc
-        print(f"  [enable_addon] {addon_id!r} enabled via SetAddonEnabled ✓")
+        print(f"  [set_addon_enabled] {addon_id!r} enabled={enabled} via SetAddonEnabled ✓")
 
     def poll_addon_installed(
         self,
@@ -1435,25 +1473,27 @@ def _wait_for_addon_in_repo_index(
 def validate_addon() -> None:
     """Live validation of BM-011 general add-on detection and installation.
 
-    Sequence (17 steps):
+    Sequence (19 steps):
      1  Reset disposable harness
      2  Install Build Manager + harness trigger script
      3  Configure web server
      4  Create test content + start HTTP server (127.0.0.1:8922)
      5  Launch Kodi + wait for ready
-     6  Verify test add-on NOT installed before any action
+     6  Verify test add-on A NOT installed before any action
      7  Install test repository via BM-010 RepositoryManager.install
         (includes UpdateLocalAddons restart; trigger script registered)
      8  Wait for Kodi to index the test repository (fetches addons.xml)
-     9  Verify test add-on still NOT installed (available but not installed)
-    10  Install test add-on via AddonManager.install (harness direct-extraction path)
+     9  Verify test add-on A still NOT installed (available but not installed)
+    10  Install addon A via AddonManager.install desired_state='enabled'
     11  Verify result.status == INSTALLED
-    12  Verify Addons.GetAddonDetails: installed + enabled
-    13  Restart disposable Kodi + wait for ready
-    14  Verify test add-on still installed and enabled after restart
-    15  Install again → verify ALREADY_INSTALLED (idempotency)
-    16  Stop Kodi + shut down HTTP server
-    17  Confirm real Kodi profile untouched
+    12  Verify Addons.GetAddonDetails: addon A installed + enabled
+    13  Install addon B via AddonManager.install desired_state='disabled' (proves disabled path)
+    14  Verify Addons.GetAddonDetails: addon B installed + enabled=False
+    15  Restart disposable Kodi + wait for ready
+    16  Verify addon A still enabled + addon B still disabled after restart
+    17  Install both again → verify ALREADY_INSTALLED (idempotency)
+    18  Stop Kodi + shut down HTTP server
+    19  Confirm real Kodi profile untouched
 
     NOTE on step 10: Both harness and production use the same constrained
     package-install fallback algorithm (resolve → download → validate →
@@ -1480,34 +1520,41 @@ def validate_addon() -> None:
     if NORMAL_APPDATA_DIR.exists():
         real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
-    print("\n[1/17] reset")
+    print("\n[1/19] reset")
     reset()
 
-    print("\n[2/17] install Build Manager + harness trigger script")
+    print("\n[2/19] install Build Manager + harness trigger script")
     install()
     _install_harness_trigger_script()
 
-    print("\n[3/17] configure web server")
+    print("\n[3/19] configure web server")
     configure_webserver()
 
-    print("\n[4/17] create test content + start HTTP server (127.0.0.1:8922)")
+    print("\n[4/19] create test content + start HTTP server (127.0.0.1:8922)")
     addon_zip = _make_bm011_test_addon_zip()
+    addon_zip_b = _make_bm011_test_addon_b_zip()
     addons_xml = _make_bm011_addons_xml()
     addons_xml_md5 = hashlib.md5(addons_xml).hexdigest().encode("utf-8")
     repo_zip = _make_bm011_repo_zip(_ADDON_SERVER_PORT)
     print(f"  test repo ZIP: {len(repo_zip)} bytes")
     print(f"  addons.xml: {len(addons_xml)} bytes (md5={addons_xml_md5.decode()})")
-    print(f"  test addon ZIP: {len(addon_zip)} bytes")
+    print(f"  test addon A ZIP: {len(addon_zip)} bytes")
+    print(f"  test addon B ZIP: {len(addon_zip_b)} bytes")
 
     addon_zip_path = (
         f"/{_BM011_TEST_ADDON_ID}/{_BM011_TEST_ADDON_VERSION}"
         f"/{_BM011_TEST_ADDON_ID}-{_BM011_TEST_ADDON_VERSION}.zip"
+    )
+    addon_zip_b_path = (
+        f"/{_BM011_TEST_ADDON_ID_B}/{_BM011_TEST_ADDON_VERSION_B}"
+        f"/{_BM011_TEST_ADDON_ID_B}-{_BM011_TEST_ADDON_VERSION_B}.zip"
     )
     server_files = {
         f"/{_TEST_REPO_ADDON_ID}.zip": repo_zip,
         "/addons.xml": addons_xml,
         "/addons.xml.md5": addons_xml_md5,
         addon_zip_path: addon_zip,
+        addon_zip_b_path: addon_zip_b,
     }
 
     class _Handler(_MultiFileHandler):
@@ -1526,7 +1573,7 @@ def validate_addon() -> None:
     test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
 
     try:
-        print("\n[5/17] launch Kodi + wait for ready (up to 90s)")
+        print("\n[5/19] launch Kodi + wait for ready (up to 90s)")
         launch()
         try:
             wait_for_ready(timeout=90.0)
@@ -1534,7 +1581,7 @@ def validate_addon() -> None:
             stop()
             raise RuntimeError(f"Validation failed at step 5: {exc}") from exc
 
-        print("\n[6/17] verify test add-on NOT installed before any action")
+        print("\n[6/19] verify test add-on NOT installed before any action")
         if addon_mgr.is_installed(_BM011_TEST_ADDON_ID):
             stop()
             raise RuntimeError(
@@ -1542,7 +1589,7 @@ def validate_addon() -> None:
             )
         print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = False ✓")
 
-        print("\n[7/17] install test repository via BM-010 RepositoryManager.install")
+        print("\n[7/19] install test repository via BM-010 RepositoryManager.install")
         print("  (trigger_addon_scan restarts Kodi; harness trigger script registered)")
         repo_result = repo_mgr.install(test_repo)
         print(f"  repo result.status = {repo_result.status.value!r}")
@@ -1580,7 +1627,7 @@ def validate_addon() -> None:
         })
         print("  triggered UpdateAddonRepos via harness ✓")
 
-        print("\n[8/17] wait for Kodi to index test repository (up to 90s)")
+        print("\n[8/19] wait for Kodi to index test repository (up to 90s)")
         found = _wait_for_addon_in_repo_index(_BM011_TEST_ADDON_ID, timeout=90.0)
         if found:
             print(f"  {_BM011_TEST_ADDON_ID!r} found in Kodi repo index ✓")
@@ -1590,7 +1637,7 @@ def validate_addon() -> None:
                 f"after 90s; proceeding (InstallAddon may still succeed)"
             )
 
-        print("\n[9/17] verify test add-on still NOT installed (available, not installed)")
+        print("\n[9/19] verify test add-on still NOT installed (available, not installed)")
         if addon_mgr.is_installed(_BM011_TEST_ADDON_ID):
             raise RuntimeError(
                 f"Validation failed: {_BM011_TEST_ADDON_ID!r} appeared as installed "
@@ -1598,7 +1645,7 @@ def validate_addon() -> None:
             )
         print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = False ✓ (available, not installed)")
 
-        print("\n[10/17] install test add-on via AddonManager.install")
+        print("\n[10/19] install test add-on via AddonManager.install")
         print("  (production algorithm: resolve repo metadata → download → validate → stage → restart)")
 
         install_result = addon_mgr.install(_BM011_TEST_ADDON_ID, desired_state="enabled")
@@ -1607,7 +1654,7 @@ def validate_addon() -> None:
         print(f"  result.version = {install_result.version!r}")
         print(f"  result.message = {install_result.message!r}")
 
-        print("\n[11/17] verify result.status == INSTALLED")
+        print("\n[11/19] verify result.status == INSTALLED")
         if install_result.status != AddonStatus.INSTALLED:
             raise RuntimeError(
                 f"Validation failed: install returned {install_result.status.value!r} "
@@ -1615,7 +1662,7 @@ def validate_addon() -> None:
             )
         print("  status = INSTALLED ✓")
 
-        print("\n[12/17] verify Addons.GetAddonDetails: installed + enabled")
+        print("\n[12/19] verify Addons.GetAddonDetails: installed + enabled")
         try:
             details_resp = jsonrpc("Addons.GetAddonDetails", {
                 "addonid": _BM011_TEST_ADDON_ID,
@@ -1648,16 +1695,50 @@ def validate_addon() -> None:
             )
         print(f"  addon directory present: {addon_dir} ✓")
 
-        print("\n[13/17] restart disposable Kodi + wait for ready")
+        print("\n[13/19] install addon B with desired_state='disabled'")
+        print("  (proves symmetric finalization: discovered enabled → SetAddonEnabled(False))")
+        install_b_result = addon_mgr.install(_BM011_TEST_ADDON_ID_B, desired_state="disabled")
+        print(f"  result.status = {install_b_result.status.value!r}")
+        print(f"  result.enabled = {install_b_result.enabled!r}")
+        print(f"  result.message = {install_b_result.message!r}")
+        if install_b_result.status != AddonStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: addon B install returned {install_b_result.status.value!r} "
+                f"— {install_b_result.message}"
+            )
+        print(f"  status = INSTALLED ✓")
+
+        print("\n[14/19] verify addon B is installed but disabled (enabled=False)")
+        try:
+            details_b = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": _BM011_TEST_ADDON_ID_B,
+                "properties": ["enabled", "version"],
+            })
+            addon_b_info = details_b.get("addon", {}) if isinstance(details_b, dict) else {}
+            b_enabled = addon_b_info.get("enabled")
+            b_version = addon_b_info.get("version", "")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Validation failed: Addons.GetAddonDetails({_BM011_TEST_ADDON_ID_B!r}) "
+                f"raised: {exc}"
+            ) from exc
+        if b_enabled is not False:
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID_B!r} expected enabled=False "
+                f"but got enabled={b_enabled!r}"
+            )
+        print(f"  enabled=False, version={b_version!r} ✓ (disabled-path proven)")
+
+        print("\n[15/19] restart disposable Kodi + wait for ready")
         stop()
         launch()
         try:
             wait_for_ready(timeout=90.0)
         except TimeoutError as exc:
-            raise RuntimeError(f"Validation failed at step 13: {exc}") from exc
+            raise RuntimeError(f"Validation failed at step 15: {exc}") from exc
         print("  Kodi restarted ✓")
 
-        print("\n[14/17] verify test add-on still installed and enabled after restart")
+        print("\n[16/19] verify addon A still enabled + addon B still disabled after restart")
         after_restart = addon_mgr.is_installed(_BM011_TEST_ADDON_ID)
         if not after_restart:
             raise RuntimeError(
@@ -1677,28 +1758,50 @@ def validate_addon() -> None:
                 f"Validation failed: {_BM011_TEST_ADDON_ID!r} present after restart "
                 f"but enabled=False"
             )
-        print(f"  enabled=True after restart ✓")
-        print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = True after restart ✓")
+        print(f"  addon A: enabled=True after restart ✓")
+        # Verify addon B remains disabled after restart
+        try:
+            details_b2 = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": _BM011_TEST_ADDON_ID_B,
+                "properties": ["enabled"],
+            })
+            addon_b2 = details_b2.get("addon", {}) if isinstance(details_b2, dict) else {}
+            b_enabled_after = addon_b2.get("enabled")
+        except RuntimeError:
+            b_enabled_after = None
+        if b_enabled_after is not False:
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID_B!r} expected enabled=False "
+                f"after restart but got enabled={b_enabled_after!r}"
+            )
+        print(f"  addon B: enabled=False after restart ✓")
 
-        print("\n[15/17] install again → verify ALREADY_INSTALLED (idempotency)")
+        print("\n[17/19] install both again → verify ALREADY_INSTALLED (idempotency)")
         result2 = addon_mgr.install(_BM011_TEST_ADDON_ID, desired_state="enabled")
-        print(f"  result.status = {result2.status.value!r}")
+        print(f"  addon A result.status = {result2.status.value!r}")
         if result2.status != AddonStatus.ALREADY_INSTALLED:
             raise RuntimeError(
-                f"Validation failed: second install returned {result2.status.value!r} "
+                f"Validation failed: second install of addon A returned {result2.status.value!r} "
+                f"instead of already_installed"
+            )
+        result2b = addon_mgr.install(_BM011_TEST_ADDON_ID_B, desired_state="disabled")
+        print(f"  addon B result.status = {result2b.status.value!r}")
+        if result2b.status != AddonStatus.ALREADY_INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: second install of addon B returned {result2b.status.value!r} "
                 f"instead of already_installed"
             )
         print("  status = ALREADY_INSTALLED ✓ (no mutation)")
 
     finally:
-        print("\n[16/17] stop Kodi + shut down HTTP server")
+        print("\n[18/19] stop Kodi + shut down HTTP server")
         try:
             stop()
         except RuntimeError:
             pass
         server.shutdown()
 
-    print("\n[17/17] confirm real Kodi profile untouched")
+    print("\n[19/19] confirm real Kodi profile untouched")
     if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
         current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
         if current_mtime_ns != real_mtime_ns:
@@ -1708,7 +1811,7 @@ def validate_addon() -> None:
             )
     print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
 
-    print("\n=== BM-011 validation PASSED ===\n")
+    print("\n=== BM-011-C-final validation PASSED (19/19) ===\n")
 
 
 # ---------------------------------------------------------------------------

@@ -118,6 +118,9 @@ import pathlib
 import re
 import shutil
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
@@ -181,7 +184,6 @@ def _validate_url(url: str, context: str = "url") -> None:
     Rejected: missing or empty host.
     localhost is permitted (required for disposable test environments).
     """
-    import urllib.parse
     if not isinstance(url, str) or not url:
         raise AddonInstallError(f"{context}: URL must be a non-empty string")
     parsed = urllib.parse.urlparse(url)
@@ -206,21 +208,55 @@ _MAX_ADDONS_XML_BYTES: int = 10 * 1024 * 1024   # 10 MB per repository index
 _MAX_ADDON_ZIP_BYTES: int = 100 * 1024 * 1024    # 100 MB per addon ZIP
 _FETCH_TIMEOUT: float = 30.0                       # seconds
 
+_ALLOWED_DOWNLOAD_SCHEMES = ("http", "https")
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject any redirect to a disallowed URL scheme before following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme not in _ALLOWED_DOWNLOAD_SCHEMES:
+            raise AddonInstallError(
+                f"Redirect to disallowed URL scheme {parsed.scheme!r} rejected"
+            )
+        if parsed.username or parsed.password:
+            raise AddonInstallError(
+                "Redirect to URL with embedded credentials rejected"
+            )
+        if not parsed.netloc or not parsed.hostname:
+            raise AddonInstallError(
+                "Redirect to URL with missing or invalid host rejected"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _build_safe_opener() -> urllib.request.OpenerDirector:
+    """Build an OpenerDirector without FileHandler; uses _SafeRedirectHandler."""
+    opener = urllib.request.build_opener(_SafeRedirectHandler)
+    # Remove FileHandler so file:// cannot be opened even on redirect
+    opener.handlers = [
+        h for h in opener.handlers
+        if not isinstance(h, urllib.request.FileHandler)
+    ]
+    return opener
+
 
 def _fetch_bytes(url: str, max_bytes: int, timeout: float = _FETCH_TIMEOUT) -> bytes:
     """Download url with security constraints. Raises AddonInstallError on failure.
 
     - url must pass _validate_url (http/https, no credentials)
     - Response body is capped at max_bytes; exceeding it raises AddonInstallError
+    - Redirects are validated by _SafeRedirectHandler (scheme + credentials check)
     - Uses urllib; no third-party dependencies
     """
-    import urllib.request
-    import urllib.error
-
     _validate_url(url, context="download URL")
+    opener = _build_safe_opener()
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with opener.open(url, timeout=timeout) as resp:
             data = resp.read(max_bytes + 1)
+    except AddonInstallError:
+        raise
     except urllib.error.URLError as exc:
         raise AddonInstallError(f"Download failed {url!r}: {exc}") from exc
     except Exception as exc:
@@ -445,7 +481,7 @@ class AddonBackend:
 
         This call is synchronous and blocks until Kodi has been notified to
         perform discovery. Enable/disable state is handled separately by
-        enable_addon(), which AddonManager.install() calls based on desired_state.
+        set_addon_enabled(), which AddonManager.install() calls based on desired_state.
 
         addon_id has already been validated by _validate_addon_id before this
         method is called.
@@ -454,11 +490,11 @@ class AddonBackend:
         """
         raise NotImplementedError
 
-    def enable_addon(self, addon_id: str) -> None:
-        """Enable addon_id via the Kodi API (SetAddonEnabled).
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        """Set the enabled state of addon_id via the Kodi API (SetAddonEnabled).
 
-        Called by AddonManager.install() when desired_state="enabled" and
-        the addon was registered as disabled (Kodi 21's SyncInstalled default).
+        Called by AddonManager.install() to finalize desired_state after
+        discovery. enabled=True enables; enabled=False disables.
 
         Raises AddonInstallError on failure.
         """
@@ -527,11 +563,24 @@ class AddonManager:
 
         desired_state controls the final enabled state:
           "enabled"  → install and enable (SetAddonEnabled called after discovery)
-          "disabled" → install and leave disabled (SyncInstalled default)
+          "disabled" → install and leave disabled or explicitly disable if discovered enabled
+
+        Only "enabled" and "disabled" are accepted. Any other value returns FAILED
+        immediately without invoking any backend method.
 
         This is installation finalization. BM-013 handles drift reconciliation
         for add-ons that were already installed.
         """
+        if desired_state not in ("enabled", "disabled"):
+            return AddonInstallResult(
+                addon_id=addon_id,
+                status=AddonStatus.FAILED,
+                desired_state=desired_state,
+                enabled=None,
+                version=None,
+                message=f"Invalid desired_state {desired_state!r}: must be 'enabled' or 'disabled'",
+            )
+
         try:
             _validate_addon_id(addon_id)
         except AddonValidationError as exc:
@@ -595,10 +644,12 @@ class AddonManager:
                 ),
             )
 
-        # Apply desired_state: enable if requested and not yet enabled
-        if desired_state == "enabled" and not info.enabled:
+        # Finalize desired_state symmetrically: call set_addon_enabled only when
+        # the discovered state differs from what was requested.
+        desired_enabled = (desired_state == "enabled")
+        if info.enabled != desired_enabled:
             try:
-                self._backend.enable_addon(addon_id)
+                self._backend.set_addon_enabled(addon_id, desired_enabled)
             except AddonInstallError as exc:
                 return AddonInstallResult(
                     addon_id=addon_id,
@@ -606,18 +657,21 @@ class AddonManager:
                     desired_state=desired_state,
                     enabled=None,
                     version=None,
-                    message=f"Enable failed after install: {exc}",
+                    message=f"State change failed after install: {exc}",
                 )
-            # Verify enable took effect
+            # Verify state change took effect
             info = self._backend.get_addon_details(addon_id)
-            if info is None or not info.enabled:
+            if info is None or info.enabled != desired_enabled:
                 return AddonInstallResult(
                     addon_id=addon_id,
                     status=AddonStatus.FAILED,
                     desired_state=desired_state,
                     enabled=None,
                     version=None,
-                    message=f"Enable verification failed: {addon_id!r} not enabled after SetAddonEnabled",
+                    message=(
+                        f"State verification failed: {addon_id!r} expected "
+                        f"enabled={desired_enabled} after SetAddonEnabled"
+                    ),
                 )
 
         return AddonInstallResult(
@@ -839,7 +893,7 @@ class KodiRuntimeAddonBackend(AddonBackend):
         """Install addon_id via the constrained package-install fallback.
 
         Sequence: resolve URL → download → validate → staged extract →
-        UpdateLocalAddons. Does not enable; that is enable_addon()'s job.
+        UpdateLocalAddons. Does not enable; that is set_addon_enabled()'s job.
         """
         # 1. Resolve package URL from configured repositories
         pkg_url, version = self._resolve_package_url(addon_id)
@@ -864,24 +918,24 @@ class KodiRuntimeAddonBackend(AddonBackend):
         xbmc = self._xbmc()
         xbmc.executebuiltin("UpdateLocalAddons")
 
-    def enable_addon(self, addon_id: str) -> None:
-        """Enable addon_id via Addons.SetAddonEnabled JSON-RPC."""
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        """Set enabled state of addon_id via Addons.SetAddonEnabled JSON-RPC."""
         xbmc = self._xbmc()
         req = json.dumps({
             "jsonrpc": "2.0",
             "method": "Addons.SetAddonEnabled",
-            "params": {"addonid": addon_id, "enabled": True},
+            "params": {"addonid": addon_id, "enabled": enabled},
             "id": 1,
         })
         try:
             resp = json.loads(xbmc.executeJSONRPC(req))
         except Exception as exc:
             raise AddonInstallError(
-                f"Addons.SetAddonEnabled({addon_id!r}) failed: {exc}"
+                f"Addons.SetAddonEnabled({addon_id!r}, {enabled}) failed: {exc}"
             ) from exc
         if "error" in resp:
             raise AddonInstallError(
-                f"Addons.SetAddonEnabled({addon_id!r}) returned error: {resp['error']}"
+                f"Addons.SetAddonEnabled({addon_id!r}, {enabled}) returned error: {resp['error']}"
             )
 
     def poll_addon_installed(

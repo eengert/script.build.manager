@@ -11,8 +11,8 @@ Tests cover:
   IS_INSTALLED      -- detection via backend.get_addon_details
   IDEMPOTENCY       -- ALREADY_INSTALLED when already present, no mutation
   HAPPY_PATH        -- INSTALLED when Kodi successfully installs the add-on
-  DESIRED_STATE     -- enable_addon called on enabled, skipped on disabled
-  ENABLE_FAIL       -- FAILED when enable_addon raises
+  DESIRED_STATE     -- set_addon_enabled called symmetrically on enabled/disabled
+  ENABLE_FAIL       -- FAILED when set_addon_enabled raises
   INVALID_ID        -- FAILED before any backend call on bad addon_id
   INVOKE_FAIL       -- FAILED when invoke_install raises
   POLL_TIMEOUT      -- FAILED when poll returns None (install didn't complete)
@@ -27,6 +27,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+import urllib.request
 import zipfile
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock, call, patch
@@ -45,6 +46,7 @@ from resources.lib.addons import (
     _INSTALL_TIMEOUT,
     _MAX_ADDON_ZIP_BYTES,
     _MAX_ADDONS_XML_BYTES,
+    _SafeRedirectHandler,
     _validate_addon_id,
     _validate_addon_zip,
     _validate_url,
@@ -61,8 +63,8 @@ class FakeAddonBackend(AddonBackend):
 
     After poll_addon_installed returns _poll_result, the result is registered
     in _installed so that subsequent get_addon_details calls find it.
-    enable_addon updates the installed entry to enabled=True (unless
-    _enable_error is set, in which case it raises that error).
+    set_addon_enabled updates the installed entry to reflect the requested
+    enabled bool (unless _set_enabled_error is set, in which case it raises).
     """
 
     def __init__(
@@ -71,17 +73,17 @@ class FakeAddonBackend(AddonBackend):
         invoke_error: Optional[Exception] = None,
         poll_result: Optional[InstalledAddonInfo] = None,
         poll_error: Optional[Exception] = None,
-        enable_error: Optional[Exception] = None,
+        set_enabled_error: Optional[Exception] = None,
     ):
         self._installed: Dict[str, InstalledAddonInfo] = dict(installed or {})
         self._invoke_error = invoke_error
         self._poll_result = poll_result
         self._poll_error = poll_error
-        self._enable_error = enable_error
+        self._set_enabled_error = set_enabled_error
         self.invoke_calls: List[str] = []
         self.poll_calls: List[str] = []
         self.details_calls: List[str] = []
-        self.enable_calls: List[str] = []
+        self.set_enabled_calls: List[tuple] = []
 
     def get_addon_details(self, addon_id: str) -> Optional[InstalledAddonInfo]:
         self.details_calls.append(addon_id)
@@ -92,15 +94,15 @@ class FakeAddonBackend(AddonBackend):
         if self._invoke_error is not None:
             raise self._invoke_error
 
-    def enable_addon(self, addon_id: str) -> None:
-        self.enable_calls.append(addon_id)
-        if self._enable_error is not None:
-            raise self._enable_error
-        # Update the installed entry so get_addon_details returns enabled=True
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        self.set_enabled_calls.append((addon_id, enabled))
+        if self._set_enabled_error is not None:
+            raise self._set_enabled_error
+        # Update the installed entry so get_addon_details reflects new state
         if addon_id in self._installed:
             old = self._installed[addon_id]
             self._installed[addon_id] = InstalledAddonInfo(
-                addon_id=old.addon_id, enabled=True, version=old.version
+                addon_id=old.addon_id, enabled=enabled, version=old.version
             )
 
     def poll_addon_installed(
@@ -366,7 +368,7 @@ class TestInstallHappyPath(unittest.TestCase):
         self.assertTrue(result.enabled)
 
     def test_disabled_from_poll(self):
-        # desired="disabled" → enable_addon NOT called → result reflects poll state
+        # desired="disabled" + poll=disabled → set_addon_enabled NOT called → result reflects poll state
         result, _ = self._run(enabled=False, desired="disabled")
         self.assertFalse(result.enabled)
 
@@ -631,10 +633,13 @@ class TestDesiredState(unittest.TestCase):
         result = AddonManager(be).install("a.b", desired_state="disabled")
         self.assertEqual(result.desired_state, "disabled")
 
-    def test_custom_in_failed_result(self):
+    def test_custom_rejected_before_any_backend_call(self):
         be = FakeAddonBackend(poll_result=None)
         result = AddonManager(be).install("a.b", desired_state="custom")
+        self.assertEqual(result.status, AddonStatus.FAILED)
         self.assertEqual(result.desired_state, "custom")
+        self.assertEqual(be.invoke_calls, [])
+        self.assertEqual(be.details_calls, [])
 
     def test_default_is_enabled(self):
         be = FakeAddonBackend(poll_result=_make_info())
@@ -845,21 +850,31 @@ class TestKodiRuntimeBackend(unittest.TestCase):
             with self.assertRaises(AddonInstallError):
                 be.invoke_install("plugin.video.test")
 
-    # enable_addon
+    # set_addon_enabled
 
-    def test_enable_addon_calls_set_addon_enabled(self):
+    def test_set_addon_enabled_true_calls_jsonrpc(self):
         xbmc = MagicMock()
         xbmc.executeJSONRPC.return_value = json.dumps({
             "jsonrpc": "2.0", "id": 1, "result": "OK"
         })
         be = self._backend(xbmc)
-        be.enable_addon("plugin.video.test")
+        be.set_addon_enabled("plugin.video.test", True)
         call_json = json.loads(xbmc.executeJSONRPC.call_args[0][0])
         self.assertEqual(call_json["method"], "Addons.SetAddonEnabled")
         self.assertEqual(call_json["params"]["addonid"], "plugin.video.test")
         self.assertTrue(call_json["params"]["enabled"])
 
-    def test_enable_addon_raises_on_json_error(self):
+    def test_set_addon_enabled_false_calls_jsonrpc(self):
+        xbmc = MagicMock()
+        xbmc.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "result": "OK"
+        })
+        be = self._backend(xbmc)
+        be.set_addon_enabled("plugin.video.test", False)
+        call_json = json.loads(xbmc.executeJSONRPC.call_args[0][0])
+        self.assertEqual(call_json["params"]["enabled"], False)
+
+    def test_set_addon_enabled_raises_on_json_error(self):
         xbmc = MagicMock()
         xbmc.executeJSONRPC.return_value = json.dumps({
             "jsonrpc": "2.0", "id": 1,
@@ -867,7 +882,7 @@ class TestKodiRuntimeBackend(unittest.TestCase):
         })
         be = self._backend(xbmc)
         with self.assertRaises(AddonInstallError):
-            be.enable_addon("plugin.video.test")
+            be.set_addon_enabled("plugin.video.test", True)
 
     # poll_addon_installed
 
@@ -910,9 +925,9 @@ class TestAddonBackendInterface(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             AddonBackend().invoke_install("a.b")
 
-    def test_enable_addon_raises(self):
+    def test_set_addon_enabled_raises(self):
         with self.assertRaises(NotImplementedError):
-            AddonBackend().enable_addon("a.b")
+            AddonBackend().set_addon_enabled("a.b", True)
 
     def test_poll_addon_installed_raises(self):
         with self.assertRaises(NotImplementedError):
@@ -1145,23 +1160,23 @@ class TestStagedInstall(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestDesiredStateEnable — enable_addon called when needed
+# TestDesiredStateEnable — set_addon_enabled called when poll returns disabled
 # ---------------------------------------------------------------------------
 
 class TestDesiredStateEnable(unittest.TestCase):
-    """install() with desired_state='enabled' calls enable_addon when poll returns disabled."""
+    """install() with desired_state='enabled' calls set_addon_enabled(True) when poll returns disabled."""
 
-    def test_enable_addon_called_when_poll_returns_disabled(self):
+    def test_set_enabled_called_when_poll_returns_disabled(self):
         poll_info = _make_info("plugin.video.test", enabled=False)
         be = FakeAddonBackend(poll_result=poll_info)
         AddonManager(be).install("plugin.video.test", desired_state="enabled")
-        self.assertEqual(be.enable_calls, ["plugin.video.test"])
+        self.assertEqual(be.set_enabled_calls, [("plugin.video.test", True)])
 
-    def test_enable_addon_not_called_when_poll_returns_enabled(self):
+    def test_set_enabled_not_called_when_poll_returns_enabled(self):
         poll_info = _make_info("plugin.video.test", enabled=True)
         be = FakeAddonBackend(poll_result=poll_info)
         AddonManager(be).install("plugin.video.test", desired_state="enabled")
-        self.assertEqual(be.enable_calls, [])
+        self.assertEqual(be.set_enabled_calls, [])
 
     def test_result_enabled_after_enable(self):
         poll_info = _make_info("plugin.video.test", enabled=False)
@@ -1178,17 +1193,23 @@ class TestDesiredStateEnable(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestDesiredStateDisable — enable_addon NOT called for disabled desired state
+# TestDesiredStateDisable — set_addon_enabled(False) called when poll returns enabled
 # ---------------------------------------------------------------------------
 
 class TestDesiredStateDisable(unittest.TestCase):
-    """install() with desired_state='disabled' never calls enable_addon."""
+    """install() with desired_state='disabled' calls set_addon_enabled(False) when poll returns enabled."""
 
-    def test_enable_addon_not_called_when_desired_disabled(self):
+    def test_set_enabled_false_called_when_poll_returns_enabled(self):
+        poll_info = _make_info("plugin.video.test", enabled=True)
+        be = FakeAddonBackend(poll_result=poll_info)
+        AddonManager(be).install("plugin.video.test", desired_state="disabled")
+        self.assertEqual(be.set_enabled_calls, [("plugin.video.test", False)])
+
+    def test_set_enabled_not_called_when_poll_returns_disabled(self):
         poll_info = _make_info("plugin.video.test", enabled=False)
         be = FakeAddonBackend(poll_result=poll_info)
         AddonManager(be).install("plugin.video.test", desired_state="disabled")
-        self.assertEqual(be.enable_calls, [])
+        self.assertEqual(be.set_enabled_calls, [])
 
     def test_result_enabled_false_when_desired_disabled(self):
         poll_info = _make_info("plugin.video.test", enabled=False)
@@ -1204,30 +1225,33 @@ class TestDesiredStateDisable(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestEnableAddonFails — FAILED when enable_addon raises
+# TestSetAddonEnabledFails — FAILED when set_addon_enabled raises
 # ---------------------------------------------------------------------------
 
-class TestEnableAddonFails(unittest.TestCase):
-    """install() returns FAILED when enable_addon raises AddonInstallError."""
+class TestSetAddonEnabledFails(unittest.TestCase):
+    """install() returns FAILED when set_addon_enabled raises AddonInstallError."""
 
-    def _run(self):
-        poll_info = _make_info("plugin.video.test", enabled=False)
+    def _run(self, desired_state="enabled", poll_enabled=False):
+        poll_info = _make_info("plugin.video.test", enabled=poll_enabled)
         be = FakeAddonBackend(
             poll_result=poll_info,
-            enable_error=AddonInstallError("SetAddonEnabled rejected"),
+            set_enabled_error=AddonInstallError("SetAddonEnabled rejected"),
         )
-        return AddonManager(be).install("plugin.video.test", desired_state="enabled")
+        return AddonManager(be).install("plugin.video.test", desired_state=desired_state)
 
-    def test_status_failed(self):
-        self.assertEqual(self._run().status, AddonStatus.FAILED)
+    def test_status_failed_on_enable(self):
+        self.assertEqual(self._run(desired_state="enabled", poll_enabled=False).status, AddonStatus.FAILED)
 
-    def test_message_mentions_enable(self):
-        self.assertIn("enable", self._run().message.lower())
+    def test_status_failed_on_disable(self):
+        self.assertEqual(self._run(desired_state="disabled", poll_enabled=True).status, AddonStatus.FAILED)
 
-    def test_enabled_none_on_enable_fail(self):
+    def test_message_mentions_state_change(self):
+        self.assertIn("state", self._run().message.lower())
+
+    def test_enabled_none_on_fail(self):
         self.assertIsNone(self._run().enabled)
 
-    def test_version_none_on_enable_fail(self):
+    def test_version_none_on_fail(self):
         self.assertIsNone(self._run().version)
 
 
@@ -1385,6 +1409,158 @@ class TestRepoResolution(unittest.TestCase):
         }):
             with self.assertRaises(AddonInstallError):
                 be._resolve_package_url("plugin.video.test")
+
+
+# ---------------------------------------------------------------------------
+# TestSafeRedirectHandler — redirect security
+# ---------------------------------------------------------------------------
+
+class TestSafeRedirectHandler(unittest.TestCase):
+    """_SafeRedirectHandler rejects disallowed schemes and credentials on redirect."""
+
+    def _handler(self):
+        return _SafeRedirectHandler()
+
+    def _fake_req(self, url):
+        return urllib.request.Request(url)
+
+    def test_http_redirect_accepted(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        result = h.redirect_request(req, None, 302, "Found", {}, "http://example.com/other")
+        self.assertIsNotNone(result)
+
+    def test_https_redirect_accepted(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        result = h.redirect_request(req, None, 302, "Found", {}, "https://example.com/other")
+        self.assertIsNotNone(result)
+
+    def test_file_redirect_rejected(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        with self.assertRaises(AddonInstallError):
+            h.redirect_request(req, None, 302, "Found", {}, "file:///etc/passwd")
+
+    def test_ftp_redirect_rejected(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        with self.assertRaises(AddonInstallError):
+            h.redirect_request(req, None, 302, "Found", {}, "ftp://example.com/file")
+
+    def test_credentials_in_redirect_rejected(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        with self.assertRaises(AddonInstallError):
+            h.redirect_request(req, None, 302, "Found", {}, "http://user:pass@example.com/")
+
+    def test_malformed_scheme_rejected(self):
+        h = self._handler()
+        req = self._fake_req("http://example.com/")
+        with self.assertRaises(AddonInstallError):
+            h.redirect_request(req, None, 302, "Found", {}, "javascript:alert(1)")
+
+
+# ---------------------------------------------------------------------------
+# TestDesiredStateValidation — invalid desired_state rejected before any backend call
+# ---------------------------------------------------------------------------
+
+class TestDesiredStateValidation(unittest.TestCase):
+    """install() with invalid desired_state returns FAILED before touching any backend."""
+
+    def test_custom_rejected(self):
+        be = FakeAddonBackend()
+        result = AddonManager(be).install("a.b", desired_state="custom")
+        self.assertEqual(result.status, AddonStatus.FAILED)
+
+    def test_arbitrary_string_rejected(self):
+        be = FakeAddonBackend()
+        result = AddonManager(be).install("a.b", desired_state="ENABLED")
+        self.assertEqual(result.status, AddonStatus.FAILED)
+
+    def test_no_invoke_on_invalid_state(self):
+        be = FakeAddonBackend()
+        AddonManager(be).install("a.b", desired_state="custom")
+        self.assertEqual(be.invoke_calls, [])
+
+    def test_no_details_on_invalid_state(self):
+        be = FakeAddonBackend()
+        AddonManager(be).install("a.b", desired_state="custom")
+        self.assertEqual(be.details_calls, [])
+
+    def test_enabled_accepted(self):
+        be = FakeAddonBackend(poll_result=_make_info())
+        result = AddonManager(be).install("a.b", desired_state="enabled")
+        self.assertNotEqual(result.status, AddonStatus.FAILED)
+
+    def test_disabled_accepted(self):
+        be = FakeAddonBackend(poll_result=_make_info())
+        result = AddonManager(be).install("a.b", desired_state="disabled")
+        self.assertNotEqual(result.status, AddonStatus.FAILED)
+
+    def test_invalid_state_preserved_in_result(self):
+        be = FakeAddonBackend()
+        result = AddonManager(be).install("a.b", desired_state="custom")
+        self.assertEqual(result.desired_state, "custom")
+
+
+# ---------------------------------------------------------------------------
+# TestStateFinalizationSymmetry — 8 symmetric finalization cases
+# ---------------------------------------------------------------------------
+
+class TestStateFinalizationSymmetry(unittest.TestCase):
+    """Symmetric desired_state finalization: set_addon_enabled called only when state differs."""
+
+    def _install(self, desired_state, poll_enabled, set_enabled_error=None):
+        poll_info = _make_info("plugin.video.test", enabled=poll_enabled)
+        be = FakeAddonBackend(
+            poll_result=poll_info,
+            set_enabled_error=set_enabled_error,
+        )
+        result = AddonManager(be).install("plugin.video.test", desired_state=desired_state)
+        return result, be
+
+    def test_desired_enabled_poll_disabled_calls_set_enabled_true(self):
+        _, be = self._install("enabled", poll_enabled=False)
+        self.assertEqual(be.set_enabled_calls, [("plugin.video.test", True)])
+
+    def test_desired_enabled_poll_enabled_no_set_call(self):
+        _, be = self._install("enabled", poll_enabled=True)
+        self.assertEqual(be.set_enabled_calls, [])
+
+    def test_desired_disabled_poll_disabled_no_set_call(self):
+        _, be = self._install("disabled", poll_enabled=False)
+        self.assertEqual(be.set_enabled_calls, [])
+
+    def test_desired_disabled_poll_enabled_calls_set_enabled_false(self):
+        _, be = self._install("disabled", poll_enabled=True)
+        self.assertEqual(be.set_enabled_calls, [("plugin.video.test", False)])
+
+    def test_state_change_failure_returns_failed(self):
+        result, _ = self._install(
+            "enabled", poll_enabled=False,
+            set_enabled_error=AddonInstallError("rejected"),
+        )
+        self.assertEqual(result.status, AddonStatus.FAILED)
+
+    def test_state_change_failure_enabled_is_none(self):
+        result, _ = self._install(
+            "enabled", poll_enabled=False,
+            set_enabled_error=AddonInstallError("rejected"),
+        )
+        self.assertIsNone(result.enabled)
+
+    def test_invalid_desired_state_returns_failed_no_mutation(self):
+        be = FakeAddonBackend(poll_result=_make_info())
+        result = AddonManager(be).install("plugin.video.test", desired_state="custom")
+        self.assertEqual(result.status, AddonStatus.FAILED)
+        self.assertEqual(be.invoke_calls, [])
+
+    def test_valid_states_accepted(self):
+        for state in ("enabled", "disabled"):
+            be = FakeAddonBackend(poll_result=_make_info("plugin.video.test"))
+            result = AddonManager(be).install("plugin.video.test", desired_state=state)
+            self.assertIn(result.status, (AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED))
 
 
 if __name__ == "__main__":
