@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-014-correction",
-  "reason": "BM-014-correction complete: closure root-scope check. 1129/1129 tests. 19/19 live. BM-015 not started.",
-  "last_commit": "903e78a",
-  "matrix_sha": "984debe",
+  "task": "BM-014-merge",
+  "reason": "BM-014 merged to matrix (984debe→bc0be68). 1129/1129 tests. 19/19 live. BM-015 not started.",
+  "last_commit": "bc0be68",
+  "matrix_sha": "bc0be68",
   "next_agent": "human",
-  "updated_at": "2026-09-18T18:45:00Z"
+  "updated_at": "2026-09-18T19:00:00Z"
 }

@@ -1,31 +1,17 @@
 # Current Task
 
-## BM-014 — Post-Operation State Validation
+## Idle — BM-014 merged, awaiting BM-015
 
-**Agent**: Claude (claude-sonnet-4-6, effort max)
-**Branch**: `agent/claude`
-**Status**: IN PROGRESS — implementation complete; live validation pending
+**Agent**: none
+**Branch**: n/a
+**Status**: idle
 
-### Goal
+### Last completed
 
-Implement a deterministic, read-only post-operation validator that answers:
-"Does observable Kodi state match the resolved desired state?"
+BM-014 (post-operation state validation) merged to `matrix` = `bc0be68`.
+BM-014-correction (closure root-scope check) included in merge.
+1129/1129 unit tests. 19/19 live validate-post-operations.
 
-The validator MUST NOT repair, install, enable, disable, remove, download,
-configure, restart, or edit any Kodi state. Read-only only.
+### Next
 
-### Deliverables
-
-- `resources/lib/validator.py` — ValidationStatus, ValidationDomain,
-  ValidationCheck, ValidationReport, validate_build_state(), ValidationError
-- `tests/test_validator.py` — comprehensive unit tests (72 tests)
-- `tools/kodi_test.py` — add validate-post-operations command (19-step)
-- `docs/TESTING.md` — update table, add validate-post-operations section
-
-### Constraints
-
-- Do NOT start BM-015
-- Work only on agent/claude
-- Do not touch matrix or agent/codex
-- BM-014 validator is STRICTLY READ-ONLY: no xbmc imports, no filesystem writes,
-  no network calls, no shell, no mutation backend
+BM-015 — planned by supervisor. Not started.
