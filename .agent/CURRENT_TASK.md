@@ -1,17 +1,20 @@
 # Current Task
 
-## Idle — BM-014 merged, awaiting BM-015
+## Idle — BM-015 complete, awaiting supervisor review
 
 **Agent**: none
-**Branch**: n/a
+**Branch**: `agent/claude`
 **Status**: idle
 
 ### Last completed
 
-BM-014 (post-operation state validation) merged to `matrix` = `bc0be68`.
-BM-014-correction (closure root-scope check) included in merge.
-1129/1129 unit tests. 19/19 live validate-post-operations.
+BM-015 (prototype configuration deployment) complete on `agent/claude`.
+Not merged to `matrix` — supervisor review gate.
+
+- 1346/1346 unit tests (was 1129)
+- 24/24 live `validate-config` (Kodi 21.1, macOS, disposable profile)
+- Commits: `69d5984`, `52a08b9`, `762b36b`, plus the completion record
 
 ### Next
 
-BM-015 — planned by supervisor. Not started.
+BM-016 — Research Red Light configuration portability. **Not started.**

@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-014-merge",
-  "reason": "BM-014 merged to matrix (984debe→bc0be68). 1129/1129 tests. 19/19 live. BM-015 not started.",
-  "last_commit": "bc0be68",
+  "task": "BM-015",
+  "reason": "BM-015 configuration deployment prototype complete on agent/claude. 1346/1346 tests. 24/24 live validate-config. Awaiting supervisor review/merge. BM-016 not started.",
+  "last_commit": "762b36b",
   "matrix_sha": "bc0be68",
   "next_agent": "human",
-  "updated_at": "2026-09-18T19:00:00Z"
+  "updated_at": "2026-09-18T19:15:00Z"
 }
