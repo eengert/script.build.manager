@@ -380,9 +380,8 @@ def _parse_requirements(xml_bytes: bytes) -> List[DependencyRequirement]:
     - There is no <requires> element
     - <requires> has no <import> children
 
-    Deduplicates import entries by addon_id (first occurrence wins when
-    duplicates exist within the same addon.xml file; use _max_version_requirement
-    for cross-path consolidation).
+    Deduplicates import entries by addon_id: strongest min_version wins;
+    required beats optional. See _extract_requirements for full rules.
 
     Does not raise on malformed input — returns what can be parsed.
     For a strict variant that raises on malformed XML, use _parse_requirements_strict.
@@ -404,7 +403,7 @@ def _parse_requirements_strict(xml_bytes: bytes) -> List[DependencyRequirement]:
       - Empty bytes / no <requires> element  → [] (valid: no deps declared)
       - Non-empty but unparseable XML        → _MetadataParseError (metadata broken)
 
-    Deduplicates by addon_id (first occurrence wins within one addon.xml).
+    Deduplicates by addon_id: strongest min_version wins; required beats optional.
     """
     if not xml_bytes:
         return []
@@ -416,33 +415,48 @@ def _parse_requirements_strict(xml_bytes: bytes) -> List[DependencyRequirement]:
 
 
 def _extract_requirements(root_el: ET.Element) -> List[DependencyRequirement]:
-    """Extract DependencyRequirement list from a parsed addon.xml Element."""
+    """Extract DependencyRequirement list from a parsed addon.xml Element.
+
+    Deduplication rules when the same addon_id appears more than once:
+    - Required beats optional: if any occurrence is required, the result is required.
+    - Strongest min_version wins: effective min = max across all occurrences,
+      using _max_version_requirement() (order-independent).
+    - Order of entries in the output matches first-seen addon_id order.
+    """
     requires_el = root_el.find("requires")
     if requires_el is None:
         return []
 
-    reqs: List[DependencyRequirement] = []
-    seen_ids: set = set()
+    entries: Dict[str, DependencyRequirement] = {}
 
     for import_el in requires_el.findall("import"):
         dep_id = (import_el.get("addon") or "").strip()
         if not dep_id:
             continue
-        if dep_id in seen_ids:
-            continue
-        seen_ids.add(dep_id)
 
         min_version = (import_el.get("version") or "").strip()
         optional_str = (import_el.get("optional") or "false").lower().strip()
         optional = optional_str == "true"
 
-        reqs.append(DependencyRequirement(
-            addon_id=dep_id,
-            min_version=min_version,
-            optional=optional,
-        ))
+        if dep_id not in entries:
+            entries[dep_id] = DependencyRequirement(
+                addon_id=dep_id,
+                min_version=min_version,
+                optional=optional,
+            )
+        else:
+            existing = entries[dep_id]
+            # Required beats optional: only optional if every occurrence is optional
+            new_optional = existing.optional and optional
+            # Strongest minimum version wins (order-independent)
+            new_min = _max_version_requirement(existing.min_version, min_version)
+            entries[dep_id] = DependencyRequirement(
+                addon_id=dep_id,
+                min_version=new_min,
+                optional=new_optional,
+            )
 
-    return reqs
+    return list(entries.values())
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +796,36 @@ class DependencyResolver:
                 xml_bytes = None
 
             if xml_bytes is None:
-                continue  # root not installed or not accessible
+                # Cannot read addon.xml. Determine why before deciding what to do:
+                # - root genuinely not installed → skip (no METADATA_ERROR)
+                # - root IS installed but xml unreadable → METADATA_ERROR
+                # - infrastructure failure querying root state → METADATA_ERROR
+                try:
+                    root_details = self._backend.get_addon_details(root_id)
+                except Exception:
+                    result_map[root_id] = DependencyNode(
+                        addon_id=root_id,
+                        required_by=(),
+                        status=DependencyStatus.METADATA_ERROR,
+                        installed_version=None,
+                        installed_enabled=None,
+                        min_version_required="",
+                        optional=False,
+                    )
+                    continue
+                if root_details is not None:
+                    # Root is installed but its addon.xml is absent or unreadable
+                    result_map[root_id] = DependencyNode(
+                        addon_id=root_id,
+                        required_by=(),
+                        status=DependencyStatus.METADATA_ERROR,
+                        installed_version=root_details.version or "",
+                        installed_enabled=root_details.enabled,
+                        min_version_required="",
+                        optional=False,
+                    )
+                # else: root is genuinely not installed → skip
+                continue
 
             try:
                 reqs = _parse_requirements_strict(xml_bytes)
@@ -982,9 +1025,14 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
     def get_addon_details(self, addon_id: str):
         """Query Addons.GetAddonDetails.
 
-        Returns None if add-on is genuinely not installed (JSONRPC error code
-        -32602 / -32500 / "Not Found"). Raises DependencyError on infrastructure
-        failure (JSON decode error, Kodi unreachable, malformed response).
+        Returns None ONLY when Kodi responds with JSON-RPC error code -32602
+        (Invalid params), which is the exact response Kodi 21 generates for an
+        add-on that is not installed. All other error responses raise
+        DependencyError so infrastructure failures are not misclassified as
+        "addon not installed".
+
+        Raises DependencyError on JSON decode failure, Kodi unreachable,
+        malformed response, or any JSON-RPC error other than -32602.
         """
         import json  # noqa: PLC0415
         xbmc = self._xbmc()
@@ -1003,8 +1051,20 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
             ) from exc
 
         if "error" in resp:
-            # JSONRPC "Unknown method" or "Not Found" → genuinely absent
-            return None
+            error_obj = resp["error"]
+            if not isinstance(error_obj, dict):
+                raise DependencyError(
+                    f"Addons.GetAddonDetails({addon_id!r}) malformed error in response: {resp!r}"
+                )
+            error_code = error_obj.get("code")
+            if error_code == -32602:
+                # Kodi 21: Invalid params (-32602) is the exact response when the
+                # add-on is not installed. Return None to signal "genuinely absent".
+                return None
+            raise DependencyError(
+                f"Addons.GetAddonDetails({addon_id!r}) JSON-RPC error {error_code}: "
+                f"{error_obj.get('message', '(no message)')}"
+            )
 
         result_val = resp.get("result")
         if not isinstance(result_val, dict):

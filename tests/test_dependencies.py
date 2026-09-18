@@ -37,6 +37,8 @@ import unittest
 from typing import Dict, List, Optional, Set, Tuple
 
 from resources.lib.addons import AddonInstallResult, AddonStatus, InstalledAddonInfo
+import json
+
 from resources.lib.dependencies import (
     DependencyAction,
     DependencyActionKind,
@@ -48,6 +50,7 @@ from resources.lib.dependencies import (
     DependencyResolver,
     DependencyResult,
     DependencyStatus,
+    KodiRuntimeDependencyBackend,
     _is_system_dependency,
     _max_version_requirement,
     _parse_requirements,
@@ -326,11 +329,11 @@ class TestParseRequirements(unittest.TestCase):
         reqs = _parse_requirements(xml)
         self.assertEqual([r.addon_id for r in reqs], ["a", "b", "c"])
 
-    def test_duplicate_addon_id_first_wins(self) -> None:
+    def test_duplicate_addon_id_strongest_version_wins(self) -> None:
         xml = _xml("root", requires=_imp("dep", "1.0") + _imp("dep", "2.0"))
         reqs = _parse_requirements(xml)
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].min_version, "1.0")
+        self.assertEqual(reqs[0].min_version, "2.0")
 
     def test_import_without_addon_attr_skipped(self) -> None:
         xml = b'<addon id="root"><requires><import version="1.0.0"/></requires></addon>'
@@ -1211,6 +1214,194 @@ class TestMetadataError(unittest.TestCase):
         crash_nodes = [n for n in closure.nodes if n.addon_id == "crash.dep"]
         self.assertEqual(len(crash_nodes), 1)
         self.assertEqual(crash_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate-import consolidation within one addon.xml (BM-012-D Issue 1)
+# ---------------------------------------------------------------------------
+
+class TestExtractRequirementsDedup(unittest.TestCase):
+    """Verify that duplicate addon_id entries within one addon.xml are consolidated
+    using strongest-min-version and required-beats-optional semantics.
+    """
+
+    def test_required_lower_then_required_higher_strongest_wins(self) -> None:
+        xml = _xml("root", requires=_imp("dep.x", "1.0.0") + _imp("dep.x", "2.0.0"))
+        reqs = _parse_requirements(xml)
+        self.assertEqual(len(reqs), 1)
+        self.assertFalse(reqs[0].optional)
+        self.assertEqual(reqs[0].min_version, "2.0.0")
+
+    def test_required_higher_then_required_lower_same_result(self) -> None:
+        xml = _xml("root", requires=_imp("dep.x", "2.0.0") + _imp("dep.x", "1.0.0"))
+        reqs = _parse_requirements(xml)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].min_version, "2.0.0")
+
+    def test_optional_then_required_required_wins(self) -> None:
+        xml = _xml("root", requires=_imp("dep.x", "1.0.0", optional="true") + _imp("dep.x", "1.5.0"))
+        reqs = _parse_requirements(xml)
+        self.assertEqual(len(reqs), 1)
+        self.assertFalse(reqs[0].optional)
+        self.assertEqual(reqs[0].min_version, "1.5.0")
+
+    def test_required_then_optional_required_wins(self) -> None:
+        xml = _xml("root", requires=_imp("dep.x", "1.0.0") + _imp("dep.x", "1.5.0", optional="true"))
+        reqs = _parse_requirements(xml)
+        self.assertEqual(len(reqs), 1)
+        self.assertFalse(reqs[0].optional)
+
+    def test_duplicate_optional_stays_optional_strongest_version(self) -> None:
+        xml = _xml("root", requires=_imp("dep.x", "1.0.0", optional="true") + _imp("dep.x", "2.0.0", optional="true"))
+        reqs = _parse_requirements(xml)
+        self.assertEqual(len(reqs), 1)
+        self.assertTrue(reqs[0].optional)
+        self.assertEqual(reqs[0].min_version, "2.0.0")
+
+
+# ---------------------------------------------------------------------------
+# KodiRuntimeDependencyBackend.get_addon_details error classification
+# (BM-012-D Issue 2)
+# ---------------------------------------------------------------------------
+
+class _MockedXbmcBackend(KodiRuntimeDependencyBackend):
+    """Subclass of production backend with a controllable fake xbmc module."""
+
+    def __init__(self, response_json: str) -> None:
+        self._response_json = response_json
+
+    def _xbmc(self):  # type: ignore[override]
+        response = self._response_json
+
+        class _FakeXbmc:
+            def executeJSONRPC(self, _req: str) -> str:
+                return response
+
+        return _FakeXbmc()
+
+
+def _jsonrpc_ok(addon_id: str) -> str:
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "result": {"addon": {"addonid": addon_id, "enabled": True, "version": "1.0.0"}},
+        "id": 1,
+    })
+
+
+def _jsonrpc_error(code: int, message: str = "Error") -> str:
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "error": {"code": code, "message": message},
+        "id": 1,
+    })
+
+
+class TestKodiRuntimeGetAddonDetails(unittest.TestCase):
+    """Verify that only JSON-RPC error -32602 (Invalid params) is treated as
+    'addon not installed'. All other errors must raise DependencyError.
+    """
+
+    def test_absent_addon_error_32602_returns_none(self) -> None:
+        """Kodi 21: -32602 Invalid params = addon not installed → None."""
+        backend = _MockedXbmcBackend(_jsonrpc_error(-32602, "Invalid params."))
+        result = backend.get_addon_details("not.installed.addon")
+        self.assertIsNone(result)
+
+    def test_internal_error_32603_raises_dependency_error(self) -> None:
+        """JSON-RPC -32603 (Internal error) is an infra failure, not 'absent'."""
+        backend = _MockedXbmcBackend(_jsonrpc_error(-32603, "Internal error."))
+        with self.assertRaises(DependencyError):
+            backend.get_addon_details("some.addon")
+
+    def test_server_error_raises_dependency_error(self) -> None:
+        """JSON-RPC server-error range (-32099 to -32000) → DependencyError."""
+        backend = _MockedXbmcBackend(_jsonrpc_error(-32000, "Server error."))
+        with self.assertRaises(DependencyError):
+            backend.get_addon_details("some.addon")
+
+    def test_malformed_error_object_raises_dependency_error(self) -> None:
+        """error field is not a dict → DependencyError (malformed response)."""
+        bad = json.dumps({"jsonrpc": "2.0", "error": "string-not-dict", "id": 1})
+        backend = _MockedXbmcBackend(bad)
+        with self.assertRaises(DependencyError):
+            backend.get_addon_details("some.addon")
+
+    def test_malformed_result_missing_addon_field_is_absent(self) -> None:
+        """result dict without 'addon' key → None (treated as absent)."""
+        resp = json.dumps({"jsonrpc": "2.0", "result": {}, "id": 1})
+        backend = _MockedXbmcBackend(resp)
+        result = backend.get_addon_details("some.addon")
+        self.assertIsNone(result)
+
+    def test_success_response_returns_info(self) -> None:
+        """Normal successful response → InstalledAddonInfo."""
+        backend = _MockedXbmcBackend(_jsonrpc_ok("my.addon"))
+        result = backend.get_addon_details("my.addon")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.addon_id, "my.addon")
+        self.assertTrue(result.enabled)
+
+
+# ---------------------------------------------------------------------------
+# Installed-root with unreadable addon.xml (BM-012-D Issue 3)
+# ---------------------------------------------------------------------------
+
+class TestResolveClosureRootMetadata(unittest.TestCase):
+    """Verify that an installed root add-on with an unreadable addon.xml is
+    classified as METADATA_ERROR rather than silently skipped.
+    """
+
+    def _resolver(self, **kw) -> DependencyResolver:
+        return DependencyResolver(FakeDependencyBackend(**kw))
+
+    def test_installed_root_missing_xml_is_metadata_error(self) -> None:
+        """Root is installed (in `installed`) but not in `addon_xmls` → METADATA_ERROR."""
+        r = self._resolver(installed={"root": _info("root")})  # no addon_xmls entry
+        closure = r.resolve_closure(["root"])
+        root_nodes = [n for n in closure.nodes if n.addon_id == "root"]
+        self.assertEqual(len(root_nodes), 1)
+        self.assertEqual(root_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+    def test_installed_root_malformed_xml_is_metadata_error(self) -> None:
+        """Root is installed with malformed xml → METADATA_ERROR (existing behavior)."""
+        r = self._resolver(
+            installed={"root": _info("root")},
+            addon_xmls={"root": b"<bad xml"},
+        )
+        closure = r.resolve_closure(["root"])
+        root_nodes = [n for n in closure.nodes if n.addon_id == "root"]
+        self.assertEqual(len(root_nodes), 1)
+        self.assertEqual(root_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+    def test_absent_root_no_xml_no_node(self) -> None:
+        """Root not installed and no xml → no METADATA_ERROR node, nodes empty."""
+        r = self._resolver()  # nothing installed, no xmls
+        closure = r.resolve_closure(["absent.root"])
+        self.assertEqual(len(closure.nodes), 0)
+
+    def test_root_infra_failure_on_get_details_is_metadata_error(self) -> None:
+        """get_addon_details raises for the root (infra failure) → METADATA_ERROR."""
+        # Root not in addon_xmls so read_addon_xml returns None, triggering details check
+        r = self._resolver(
+            get_details_errors={"root.infra.fail": DependencyError("JSONRPC down")},
+        )
+        closure = r.resolve_closure(["root.infra.fail"])
+        fail_nodes = [n for n in closure.nodes if n.addon_id == "root.infra.fail"]
+        self.assertEqual(len(fail_nodes), 1)
+        self.assertEqual(fail_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+    def test_good_root_traversed_when_another_root_has_metadata_failure(self) -> None:
+        """A second valid root's deps are still discovered when one root fails."""
+        good_xml = _xml("good.root", requires=_imp("good.dep"))
+        r = self._resolver(
+            installed={"bad.root": _info("bad.root"), "good.dep": _info("good.dep")},
+            addon_xmls={"good.root": good_xml, "good.dep": _xml("good.dep")},
+            # bad.root is installed but has no addon.xml entry → METADATA_ERROR
+        )
+        closure = r.resolve_closure(["bad.root", "good.root"])
+        statuses = {n.addon_id: n.status for n in closure.nodes}
+        self.assertEqual(statuses["bad.root"], DependencyStatus.METADATA_ERROR)
+        self.assertEqual(statuses["good.dep"], DependencyStatus.SATISFIED)
 
 
 if __name__ == "__main__":
