@@ -820,6 +820,93 @@ class TestKodiRuntimeAddonStateBackend(unittest.TestCase):
             with self.assertRaises(AddonStateError):
                 backend.set_addon_enabled("plugin.video.foo", True)
 
+    # ------------------------------------------------------------------
+    # Fail-closed enabled-field validation (BM-013 correction)
+    # ------------------------------------------------------------------
+
+    def _make_mock_xbmc_with_addon(self, enabled_value) -> tuple:
+        """Return (backend, mock_xbmc) configured with a GetAddonDetails response
+        whose 'enabled' field is set to enabled_value."""
+        import json
+        backend = KodiRuntimeAddonStateBackend()
+        mock_xbmc = MagicMock()
+        mock_xbmc.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "addon": {
+                    "addonid": "plugin.video.foo",
+                    "enabled": enabled_value,
+                    "version": "1.0.0",
+                }
+            },
+        })
+        return backend, mock_xbmc
+
+    def test_enabled_true_accepted(self):
+        """enabled=True (bool) → AddonStateInfo returned."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon(True)
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            info = backend.get_addon_details("plugin.video.foo")
+        self.assertIsNotNone(info)
+        self.assertTrue(info.enabled)
+
+    def test_enabled_false_accepted(self):
+        """enabled=False (bool) → AddonStateInfo returned."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon(False)
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            info = backend.get_addon_details("plugin.video.foo")
+        self.assertIsNotNone(info)
+        self.assertFalse(info.enabled)
+
+    def test_enabled_missing_raises(self):
+        """enabled field absent → AddonStateError (fail closed)."""
+        import json
+        backend = KodiRuntimeAddonStateBackend()
+        mock_xbmc = MagicMock()
+        mock_xbmc.executeJSONRPC.return_value = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "addon": {
+                    "addonid": "plugin.video.foo",
+                    "version": "1.0.0",
+                    # "enabled" deliberately omitted
+                }
+            },
+        })
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            with self.assertRaises(AddonStateError):
+                backend.get_addon_details("plugin.video.foo")
+
+    def test_enabled_none_raises(self):
+        """enabled=None → AddonStateError (fail closed)."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon(None)
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            with self.assertRaises(AddonStateError):
+                backend.get_addon_details("plugin.video.foo")
+
+    def test_enabled_int_zero_raises(self):
+        """enabled=0 (int) → AddonStateError; bool subclasses int, but 0 is not bool."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon(0)
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            with self.assertRaises(AddonStateError):
+                backend.get_addon_details("plugin.video.foo")
+
+    def test_enabled_int_one_raises(self):
+        """enabled=1 (int) → AddonStateError; must be an actual bool."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon(1)
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            with self.assertRaises(AddonStateError):
+                backend.get_addon_details("plugin.video.foo")
+
+    def test_enabled_string_false_raises(self):
+        """enabled='false' (str) → AddonStateError (fail closed)."""
+        backend, mock_xbmc = self._make_mock_xbmc_with_addon("false")
+        with patch.object(backend, "_xbmc", return_value=mock_xbmc):
+            with self.assertRaises(AddonStateError):
+                backend.get_addon_details("plugin.video.foo")
+
 
 if __name__ == "__main__":
     unittest.main()

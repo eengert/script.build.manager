@@ -580,10 +580,15 @@ class KodiRuntimeAddonStateBackend(AddonStateBackend):
             )
 
         enabled = addon.get("enabled")
+        if not isinstance(enabled, bool):
+            raise AddonStateError(
+                f"Addons.GetAddonDetails({addon_id!r}) malformed 'enabled' field: "
+                f"{enabled!r} (expected bool)"
+            )
         version = addon.get("version", "")
         return AddonStateInfo(
             addon_id=addon_id,
-            enabled=bool(enabled) if isinstance(enabled, bool) else False,
+            enabled=enabled,
             version=str(version) if version else "",
         )
 
