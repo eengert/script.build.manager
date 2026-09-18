@@ -50,9 +50,38 @@ Key sections for quick reference:
 
 Do not treat any shorter summary as a substitute for the canonical plan.
 
+## Repository Bootstrap Architecture (BM-010 — Supervisor Approved)
+
+**Kodi 21 has no exposed non-interactive ZIP-install API suitable for unattended
+repository bootstrap.** The C++ `CAddonInstaller::InstallFromZip(path)` is
+non-interactive but is not exposed via any builtin or JSON-RPC method. The
+`InstallFromZip` GUI builtin opens a file picker and ignores parameters.
+`UpdateLocalAddons` registers add-ons as `enabled=0` only — it does not complete
+the install.
+
+Therefore Build Manager uses a **constrained bootstrap fallback** for repository
+add-on installation:
+
+1. Validate repository declaration and URL (https/http only, no credentials, no file://)
+2. Download bounded ZIP artifact (50 MB limit, 30s timeout)
+3. Validate ZIP: path traversal rejection, addon.xml presence, addon_id match, `xbmc.addon.repository` extension required
+4. Stage extraction in a controlled temp directory (same filesystem as addons dir)
+5. Fail closed if the final target directory already exists (no blind overwrite)
+6. Atomically rename temp dir into `special://home/addons/{addon_id}`
+7. Trigger Kodi local add-on discovery (`UpdateLocalAddons`)
+8. Explicitly enable via `Addons.SetAddonEnabled` JSON-RPC
+9. Verify via `Addons.GetAddonDetails`: addon_id registered, `enabled=True`
+10. Return `INSTALLED` only after verification passes
+
+**This is not equivalent to Kodi's interactive "Install from zip" workflow.** It is a
+narrowly scoped, unattended fallback for repository bootstrap only (BM-010).
+General add-on installation (BM-011) is a separate, not-yet-implemented task.
+
+---
+
 ## Current State
 
-**BM-009 and BM-010 on agent/claude — awaiting supervisor review and merge**
+**BM-010 merged — project idle, awaiting BM-011 assignment**
 
 | Task | Status | matrix SHA | Notes |
 |---|---|---|---|
@@ -64,10 +93,10 @@ Do not treat any shorter summary as a substitute for the canonical plan.
 | BM-006 Desired-vs-actual diff / planner | Merged | `70504e0` | |
 | BM-007 | Absorbed by BM-006 | — | desired-state model = BM-004; planner = BM-006 |
 | BM-008 | Absorbed by BM-006 | — | reconciliation tests = BM-006 test suite |
-| BM-009 Disposable Kodi harness | On agent/claude | — | pending review |
-| BM-010 Repository detection/install | On agent/claude | — | pending review |
+| BM-009 Disposable Kodi harness | Merged | `fc95e5f` | fast-forwarded with BM-010 |
+| BM-010 Repository detection/install | Merged | `031e405` | bootstrap fallback architecture approved |
 
-**matrix HEAD**: `70504e0` (unchanged)
+**matrix HEAD**: `031e405`
 
 ## Completed Deliverables
 
@@ -264,18 +293,8 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-010-R supervisor architectural review + merge decision** — live validation complete:
-   - 13/13 steps passed; `enabled=True` before and after restart confirmed
-   - Direct-extraction + SetAddonEnabled proven technically viable
-   - Supervisor decision pending on whether this architecture is approved for merge
-   - `resources/lib/repository.py` (BM-010-R corrected)
-   - `tests/test_repository.py` (108 tests, BM-010-R)
-   - `tools/kodi_test.py` (corrected backend + 13-step validation)
-   - `tools/kodi_test.py` harness (BM-009 + validate-repo from BM-010-R)
-   - `tests/test_kodi_harness.py` (74 tests, BM-009)
-   - `docs/TESTING.md`
-
-2. **BM-011** — General add-on detection and installation (distinct from repository bootstrap)
+1. **BM-011** — General add-on detection and installation (distinct from repository bootstrap).
+   BM-010 repository bootstrap is complete and merged; BM-011 is the next unimplemented task.
 
 ## Open Questions (from BM-002)
 

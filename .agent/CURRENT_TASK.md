@@ -1,10 +1,10 @@
 # Current Task
 
-## BM-010-R complete — awaiting live validation and supervisor review
+## Idle — awaiting BM-011 assignment
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: BM-010-R corrected implementation committed; live validation required before supervisor review
+**Status**: BM-010 merged to `matrix` (`031e405`). Bootstrap fallback architecture approved. Project idle.
 
 ### Deliverables (BM-010-R corrected)
 
@@ -49,20 +49,21 @@ Key proofs:
 
 626/626 passing (518 pre-BM-010 + 87 original BM-010 + 21 BM-010-R additions)
 
-### Last Active: BM-010-R — Live Validation Complete
+### Last Completed: BM-010 — Repository Bootstrap (merged `031e405`)
 
-On `agent/claude`; live validation passed (13/13); pending supervisor architectural approval and merge to `matrix`.
-
-The direct-extraction + SetAddonEnabled mechanism is proven technically viable. The supervisor has not yet approved it as the final architecture.
+- Architecture approved: constrained bootstrap fallback (validated ZIP → staged extraction → Kodi scan → API enable → API verify)
+- 626/626 tests on `matrix`
+- Live validation 13/13 passed
+- Restart persistence proven; idempotency proven
 
 ### Next: BM-011
 
-Not started. Scope to be assigned by supervisor (after BM-010-R review/merge).
+Not started. Scope to be assigned by supervisor.
 BM-011: General add-on detection/installation (distinct from repository bootstrap).
 
 ### Prerequisites
 
 - BM-001 through BM-006 merged to `matrix` ✓
 - BM-007, BM-008 absorbed by BM-006 ✓
-- BM-009 on `agent/claude` ✓ (pending merge)
-- BM-010-R on `agent/claude` ✓ (pending supervisor review + merge)
+- BM-009 merged to `matrix` ✓ (fast-forwarded with BM-010)
+- BM-010 merged to `matrix` ✓ (`031e405`)
