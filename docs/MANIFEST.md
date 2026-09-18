@@ -160,6 +160,11 @@ Build Manager only modifies the settings and files explicitly declared in
 left untouched unless explicitly managed. This prevents accidental overwrites of
 device-local state.
 
+The relationship is enforced in both directions (BM-015): a configuration
+package may not target anything outside these declarations, and every declared
+target must be supplied by some selected package. Either violation fails
+preflight before any Kodi state is changed.
+
 ---
 
 ## Top-level fields
@@ -267,7 +272,7 @@ Declares which configuration is owned by this build. Contains no values.
 
 | Sub-field | Notes |
 |---|---|
-| `packages` | Named config packages the engine must apply. |
+| `packages` | Named config packages the engine must apply, in resolved order; later packages override earlier ones. See [`docs/CONFIG_PACKAGES.md`](CONFIG_PACKAGES.md). |
 | `managed_settings` | Which add-on setting keys Build Manager owns. Only listed keys are written. |
 | `managed_files` | Kodi userdata-relative paths Build Manager may overwrite. |
 
@@ -403,9 +408,14 @@ must be rejected.
    defined in v1. A dedicated task should define it before authentication work
    begins.
 
-2. **Config package format**: Configuration packages are named here but their
-   internal format is not yet defined. A dedicated task must specify what a
-   "package" resolves to on disk.
+2. ~~**Config package format**~~ — **Resolved by BM-015.** A package is a
+   directory under `resources/config/packages/<package-id>/` containing a
+   `package.json` descriptor and an optional `files/` tree. See
+   [`docs/CONFIG_PACKAGES.md`](CONFIG_PACKAGES.md) for the descriptor schema,
+   supported setting types, override semantics, ownership rules and the file
+   safety model. Packages may only affect targets declared in
+   `managed_settings` / `managed_files`, and every declared target must be
+   supplied by some selected package.
 
 3. **`bootstrap_url` security**: The engine must decide how to validate
    downloaded repository ZIPs (checksum, signature, or trust-on-first-use).
