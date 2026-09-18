@@ -1,9 +1,10 @@
 {
-  "active_agent": "claude",
-  "status": "awaiting_human",
-  "task": "BM-011-C-final",
-  "reason": "BM-011-C-final complete: 835/835 unit tests, 19/19 live validation steps pass. Redirect security (Issue 1) and desired_state validation/symmetric enforcement (Issue 2) both implemented and live-proven. Commit 500217f on agent/claude. Ready for supervisor review and merge to matrix.",
-  "last_commit": "500217f",
+  "active_agent": "none",
+  "status": "idle",
+  "task": "BM-011-merged",
+  "reason": "BM-011 merged to matrix (031e405→5bc6325, fast-forward, 836/836 tests). Cleanup: deterministic repo order (sorted repo_ids) + corrected desired-state module docs. Next task: BM-012 (dependency closure). NOT started.",
+  "last_commit": "5bc6325",
+  "matrix_sha": "5bc6325",
   "next_agent": "human",
-  "updated_at": "2026-09-18T12:55:00Z"
+  "updated_at": "2026-09-18T13:05:00Z"
 }
