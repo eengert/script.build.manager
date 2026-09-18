@@ -25,6 +25,7 @@ The test suite covers:
 | `test_addon_manager.py` | General add-on installation (BM-011) | 132 |
 | `test_dependencies.py` | Dependency closure discovery/reconciliation (BM-012) | 96 |
 | `test_addon_state.py` | Enable/disable state reconciliation (BM-013) | 66 |
+| `test_validator.py` | Post-operation state validation (BM-014) | 72 |
 
 ## Disposable Kodi harness
 
@@ -123,7 +124,7 @@ run simultaneously without collision.
 | Build Manager (`tools/kodi_test.py`) | 8920 | `bm-test` |
 | Backup Pro (`tools/kodi_test.py`) | 8899 | `kodi-test` |
 | validate-repo HTTP server (127.0.0.1 only) | 8921 | n/a |
-| validate-addon / validate-dependencies / validate-addon-state HTTP server (127.0.0.1 only) | 8922 | n/a |
+| validate-addon / validate-dependencies / validate-addon-state / validate-post-operations HTTP server (127.0.0.1 only) | 8922 | n/a |
 
 ### Add-on install
 
@@ -254,9 +255,46 @@ Unmanaged installed add-ons are never queried or mutated.
 
 Ports: Kodi 8920, HTTP server 8922.
 
-### Out of scope for BM-009 / BM-010 / BM-011 / BM-012 / BM-013
+### validate-post-operations command (BM-014)
 
-- Add-on provisioning from the full planner action plan (BM-014+)
-- Add-on provisioning from the full planner action plan
+`validate-post-operations` runs a 19-step live sequence to prove the
+post-operation state validator works end-to-end, including deliberate drift
+detection and repair:
+
+```
+python3 tools/kodi_test.py validate-post-operations
+```
+
+Two test add-ons are installed from the test repository:
+
+| Add-on | Desired state | Role |
+|--------|---------------|------|
+| `plugin.video.bm014-enabled` | `"enabled"` | Installed enabled; validator reports PASS |
+| `plugin.video.bm014-disabled` | `"disabled"` | Installed enabled, then set disabled; validator reports PASS |
+
+Dependency closure is resolved via `DependencyResolver.resolve_closure()` for
+the enabled add-on. `xbmc.python` is discovered as a SYSTEM node and maps to
+PASS in the DEPENDENCY domain.
+
+Proves:
+1. `validate_build_state()` returns `passed=True` when Kodi state matches
+   desired state (all domains: REPOSITORY, ADDON, DEPENDENCY, SKIN).
+2. Deliberate drift (re-enabling `bm014-disabled` outside the validator) causes
+   `is_valid=False` with a FAIL on `bm014-disabled` in the ADDON domain.
+3. Repairing the drift (disabling again outside the validator) restores
+   `passed=True` on the next call.
+4. The validator makes zero Kodi mutations throughout — it is strictly read-only.
+5. The real Kodi profile is untouched.
+
+The validator itself never calls `Addons.SetAddonEnabled` or any other mutating
+JSON-RPC method. Drift injection and repair both use the harness's
+`_HttpAddonStateBackend.set_addon_enabled()`, which is external to the validator.
+
+Ports: Kodi 8920, HTTP server 8922.
+
+### Out of scope for BM-009 / BM-010 / BM-011 / BM-012 / BM-013 / BM-014
+
+- Add-on provisioning from the full planner action plan (BM-015+)
+- Configuration-state inspection and validation (BM-015)
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
 - Windows or Linux harnesses
