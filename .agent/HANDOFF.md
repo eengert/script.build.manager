@@ -24,7 +24,7 @@ live-validated and documented.
 | `69d5984` | feat(BM-015): configuration package deployment prototype |
 | `52a08b9` | fix(BM-015): write settings through the persisting typed Addon setters |
 | `762b36b` | docs(BM-015): configuration package format reference |
-| `3d61f5e` | chore: record BM-015 complete (1346/1346 tests, 24/24 live) |
+| `b640b5e` | chore: record BM-015 complete (1346/1346 tests, 24/24 live) |
 
 ## Files created / modified
 
