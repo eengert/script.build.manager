@@ -736,17 +736,46 @@ class _HttpRepositoryBackend:
     def install_zip_to_addons(self, addon_id: str, zip_bytes: bytes) -> None:
         if str(PROJECT) not in sys.path:
             sys.path.insert(0, str(PROJECT))
-        from resources.lib.repository import _extract_zip_to_directory
+        from resources.lib.repository import RepositoryInstallError, _extract_zip_to_directory
         target = KODI_ADDONS_DIR / addon_id
         if target.exists():
-            shutil.rmtree(target)
-        _extract_zip_to_directory(zip_bytes, addon_id, target)
+            raise RepositoryInstallError(
+                f"Target directory already exists: {target} (harness: manual cleanup required)"
+            )
+        tmp_dir: Optional[Path] = None
+        try:
+            tmp_dir = Path(tempfile.mkdtemp(dir=KODI_ADDONS_DIR))
+            _extract_zip_to_directory(zip_bytes, addon_id, tmp_dir)
+            has_files = any(p.is_file() for p in tmp_dir.rglob("*"))
+            if not has_files:
+                raise RepositoryInstallError(f"ZIP extraction produced no files for {addon_id!r}")
+            os.rename(str(tmp_dir), str(target))
+            tmp_dir = None
+        except Exception:
+            if tmp_dir is not None and tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
 
     def trigger_addon_scan(self) -> None:
         print("    trigger_addon_scan: restart Kodi to run UpdateLocalAddons")
         stop()
         launch()
         wait_for_ready(timeout=90.0)
+
+    def enable_addon(self, addon_id: str) -> None:
+        _ENABLE_WAIT = 30.0
+        deadline = time.monotonic() + _ENABLE_WAIT
+        while time.monotonic() < deadline:
+            if addon_id in self.get_installed_addon_ids():
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(
+                f"{addon_id!r} not registered in Kodi database after {_ENABLE_WAIT:.0f}s "
+                f"(UpdateLocalAddons may not have run)"
+            )
+        result = jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": True})
+        print(f"    enable_addon({addon_id!r}): SetAddonEnabled → {result!r}")
 
     def poll_addon_installed(
         self,
@@ -758,8 +787,14 @@ class _HttpRepositoryBackend:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if addon_id in self.get_installed_addon_ids():
-                    return True
+                resp = jsonrpc("Addons.GetAddonDetails", {
+                    "addonid": addon_id,
+                    "properties": ["enabled"],
+                })
+                if isinstance(resp, dict):
+                    addon = resp.get("addon", {})
+                    if isinstance(addon, dict) and addon.get("enabled") is True:
+                        return True
             except RuntimeError:
                 pass
             time.sleep(interval)
@@ -784,21 +819,22 @@ class _SingleFileHandler(http.server.BaseHTTPRequestHandler):
 
 
 def validate_repo() -> None:
-    """Live validation of BM-010 repository detection and installation.
+    """Live validation of BM-010 repository detection and installation (corrected).
 
-    Sequence (12 steps):
+    Sequence (13 steps):
      1  Reset disposable harness
      2  Install Build Manager
      3  Configure web server
      4  Launch Kodi
      5  Wait for ready
-     6  Create test repository ZIP
-     7  Start localhost HTTP server (127.0.0.1 only)
-     8  Verify repository NOT yet installed
-     9  Call RepositoryManager.install()
-    10  Verify result status = INSTALLED
-    11  Verify is_installed() now returns True
+     6  Create ZIP + start HTTP server + verify NOT installed
+     7  Install repository via corrected mechanism
+     8  Verify result.status = INSTALLED and is_installed() = True
+     9  Restart disposable Kodi + wait for ready
+    10  Verify repository still installed and enabled after restart
+    11  Install again → verify ALREADY_INSTALLED (no mutation)
     12  Stop Kodi + shut down HTTP server
+    13  Confirm real Kodi profile untouched
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     """
@@ -807,33 +843,35 @@ def validate_repo() -> None:
     from resources.lib.manifest import Repository
     from resources.lib.repository import RepositoryManager, RepositoryStatus
 
-    print("=== Build Manager BM-010 live validation: repository detection/install ===")
+    print("=== Build Manager BM-010-R live validation: repository detection/install ===")
     verify_isolation()
 
-    print("\n[1/12] reset")
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    print("\n[1/13] reset")
     reset()
 
-    print("\n[2/12] install Build Manager")
+    print("\n[2/13] install Build Manager")
     install()
 
-    print("\n[3/12] configure web server")
+    print("\n[3/13] configure web server")
     configure_webserver()
 
-    print("\n[4/12] launch Kodi")
+    print("\n[4/13] launch Kodi")
     launch()
 
-    print("\n[5/12] wait for ready (up to 90s)")
+    print("\n[5/13] wait for ready (up to 90s)")
     try:
         wait_for_ready(timeout=90.0)
     except TimeoutError as exc:
         stop()
         raise RuntimeError(f"Validation failed at step 5: {exc}") from exc
 
-    print("\n[6/12] create test repository ZIP")
+    print("\n[6/13] create ZIP + start HTTP server + verify NOT installed")
     zip_bytes = _make_test_repo_zip()
     print(f"  {_TEST_REPO_ADDON_ID}: {len(zip_bytes)} bytes")
-
-    print("\n[7/12] start localhost HTTP server (127.0.0.1 only)")
 
     class _Handler(_SingleFileHandler):
         _data = zip_bytes  # type: ignore[assignment]
@@ -849,7 +887,6 @@ def validate_repo() -> None:
         mgr = RepositoryManager(backend)
         test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
 
-        print("\n[8/12] verify repository NOT yet installed")
         before = mgr.is_installed(_TEST_REPO_ADDON_ID)
         if before:
             stop()
@@ -858,12 +895,12 @@ def validate_repo() -> None:
             )
         print(f"  is_installed({_TEST_REPO_ADDON_ID!r}) = False ✓")
 
-        print("\n[9/12] install repository")
+        print("\n[7/13] install repository via corrected mechanism")
         result = mgr.install(test_repo)
         print(f"  result.status = {result.status.value!r}")
         print(f"  result.message = {result.message!r}")
 
-        print("\n[10/12] verify result status = INSTALLED")
+        print("\n[8/13] verify result.status = INSTALLED and is_installed() = True")
         if result.status != RepositoryStatus.INSTALLED:
             stop()
             raise RuntimeError(
@@ -871,8 +908,6 @@ def validate_repo() -> None:
                 f"— {result.message}"
             )
         print("  status = INSTALLED ✓")
-
-        print("\n[11/12] verify is_installed() now returns True")
         after = mgr.is_installed(_TEST_REPO_ADDON_ID)
         if not after:
             stop()
@@ -881,15 +916,71 @@ def validate_repo() -> None:
             )
         print(f"  is_installed({_TEST_REPO_ADDON_ID!r}) = True ✓")
 
+        print("\n[9/13] restart disposable Kodi + wait for ready")
+        stop()
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            raise RuntimeError(f"Validation failed at step 9: {exc}") from exc
+        print("  Kodi restarted ✓")
+
+        print("\n[10/13] verify repository still installed and enabled after restart")
+        after_restart = mgr.is_installed(_TEST_REPO_ADDON_ID)
+        if not after_restart:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: {_TEST_REPO_ADDON_ID!r} not present after restart "
+                f"(enabled=1 did not persist)"
+            )
+        print(f"  is_installed({_TEST_REPO_ADDON_ID!r}) = True after restart ✓")
+        try:
+            details_resp = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": _TEST_REPO_ADDON_ID,
+                "properties": ["enabled"],
+            })
+            addon_info = details_resp.get("addon", {}) if isinstance(details_resp, dict) else {}
+            enabled_after_restart = addon_info.get("enabled") is True
+        except RuntimeError:
+            enabled_after_restart = False
+        if not enabled_after_restart:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: {_TEST_REPO_ADDON_ID!r} exists after restart "
+                f"but enabled=False (SetAddonEnabled did not persist)"
+            )
+        print(f"  enabled=True after restart ✓")
+
+        print("\n[11/13] install again → verify ALREADY_INSTALLED (no mutation)")
+        result2 = mgr.install(test_repo)
+        print(f"  result.status = {result2.status.value!r}")
+        if result2.status != RepositoryStatus.ALREADY_INSTALLED:
+            stop()
+            raise RuntimeError(
+                f"Validation failed: second install returned {result2.status.value!r} "
+                f"instead of already_installed"
+            )
+        print("  status = ALREADY_INSTALLED ✓ (no mutation)")
+
     finally:
-        print("\n[12/12] stop Kodi + shut down HTTP server")
+        print("\n[12/13] stop Kodi + shut down HTTP server")
         try:
             stop()
         except RuntimeError:
             pass
         server.shutdown()
 
-    print("\n=== BM-010 validation PASSED ===\n")
+    print("\n[13/13] confirm real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! "
+                f"Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-010-R validation PASSED ===\n")
 
 
 # ---------------------------------------------------------------------------

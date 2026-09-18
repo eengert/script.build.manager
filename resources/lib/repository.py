@@ -4,12 +4,14 @@ Build Manager repository detection and installation (BM-010).
 Public API
 ----------
 RepositoryManager(backend).is_installed(addon_id) -> bool
-    Check whether a repository add-on is currently installed in Kodi.
+    True if addon_id is in Kodi's installed add-on database (enabled or disabled).
+    Used as the idempotency guard: if True, install() returns ALREADY_INSTALLED.
 
 RepositoryManager(backend).install(repository) -> RepositoryInstallResult
-    Install a repository from its manifest bootstrap_url.
+    Bootstrap a repository add-on from its manifest bootstrap_url.
     Returns ALREADY_INSTALLED if already present (no mutation).
-    Returns INSTALLED on success.
+    Returns INSTALLED on success (add-on files extracted, database-registered,
+    and enabled via JSON-RPC).
     Returns FAILED with a message on any error.
 
 KodiRuntimeRepositoryBackend()
@@ -19,7 +21,7 @@ KodiRuntimeRepositoryBackend()
 
 RepositoryBackend
     Abstract backend interface. Subclass and override all methods to build
-    a fake or stub backend for tests.
+    a test fake. All abstract methods raise NotImplementedError by default.
 
 Result types
 ------------
@@ -28,20 +30,47 @@ RepositoryInstallResult(addon_id, status, message)
 
 Errors
 ------
-RepositoryError          -- base class
+RepositoryError           -- base class
 RepositoryValidationError -- invalid declaration or artifact
-RepositoryInstallError   -- download, extraction, or Kodi-side failure
+RepositoryInstallError    -- download, extraction, or Kodi-side failure
 
-Installation mechanism
-----------------------
-Kodi repository bootstrap installs the repository add-on ZIP into
-special://home/addons/{addon_id}/ using Python's zipfile, then calls
-xbmc.executebuiltin("UpdateLocalAddons") to trigger Kodi's addon scanner.
-Installation is verified by polling Addons.GetAddons via xbmc.executeJSONRPC
-until the repository add-on appears or a timeout expires.
+Installation mechanism (BM-010-R, corrected)
+--------------------------------------------
+Kodi 21 (Omega) exposes no supported, officially documented non-interactive
+API for ZIP-based add-on installation. Specifically:
 
-This is the standard Kodi-supported mechanism used by add-ons that need to
-bootstrap repository dependencies. No Kodi databases are edited directly.
+  * xbmc.executebuiltin("InstallFromZip") -- GUI-only; opens a file picker;
+    the underlying C++ CAddonInstaller::InstallFromZip(path) is not accessible
+    via any builtin or JSON-RPC method.
+  * xbmc.executebuiltin("InstallAddon(id)") -- repository-index sourced only;
+    always shows a GUI confirmation dialog.
+  * JSON-RPC Addons.* namespace -- no install methods; only GetAddons,
+    GetAddonDetails, SetAddonEnabled, ExecuteAddon.
+
+The production backend therefore uses a documented fallback bootstrap pattern:
+
+  1. EXTRACT validated ZIP to a temporary directory on the same filesystem
+     as special://home/addons/ (allows atomic os.rename with no copy).
+     Fail closed if the target directory already exists (orphaned files).
+     Clean up the temp directory on any failure.
+
+  2. REGISTER via xbmc.executebuiltin("UpdateLocalAddons"), which calls
+     FindAddons() + SyncInstalled() and inserts the addon into Kodi's
+     installed database table with enabled=0.
+
+  3. ENABLE via JSON-RPC Addons.SetAddonEnabled, which sets enabled=1 in
+     the database. This completes the database state that
+     CAddonInstaller::DoInstall() would set via a GUI install job. The
+     enable call is deferred until UpdateLocalAddons has registered the addon
+     (enable_addon() polls the database before sending SetAddonEnabled).
+
+  4. VERIFY that the addon is enabled via Addons.GetAddonDetails polling.
+
+The principal difference from a GUI install is that the origin field in the
+installed table is not set (an empty origin is also what Kodi's own GUI
+"Install from zip file" produces for manually installed add-ons). For a
+repository add-on, this is acceptable: the repo add-on manages its own
+update source once enabled and does not need an upstream origin to function.
 
 Security policy
 ---------------
@@ -52,10 +81,15 @@ Security policy
 - Download timeout: 30 seconds.
 - Verification timeout: 60 seconds.
 - ZIP entries with absolute paths or .. traversal are rejected before extraction.
-- Extraction target is always inside special://home/addons/{addon_id}.
+- Extraction uses a temporary directory on the same filesystem as the target
+  followed by an atomic os.rename; no partial state is written to the final
+  location.
+- The target addon_id directory must not already exist (fail closed).
+- Extraction containment: every written path is checked to remain inside the
+  temp dir before writing.
 - No shell commands, no database edits, no arbitrary path writes.
 
-Stdlib only — no new runtime dependencies.
+Stdlib only -- no new runtime dependencies.
 """
 
 from __future__ import annotations
@@ -65,6 +99,7 @@ import io
 import json
 import os
 import shutil
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -122,6 +157,7 @@ _MAX_ARTIFACT_BYTES: int = 50 * 1024 * 1024  # 50 MB
 _DOWNLOAD_TIMEOUT: float = 30.0             # seconds
 _VERIFY_TIMEOUT: float = 60.0              # seconds
 _VERIFY_INTERVAL: float = 1.0             # seconds
+_ENABLE_WAIT_TIMEOUT: float = 30.0        # max wait for UpdateLocalAddons to register
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +172,11 @@ class RepositoryBackend:
     """
 
     def get_installed_addon_ids(self) -> FrozenSet[str]:
-        """Return the frozenset of currently installed Kodi add-on IDs."""
+        """Return the frozenset of add-on IDs currently in Kodi's installed database.
+
+        Includes both enabled and disabled add-ons. This is the set used by
+        is_installed() for the idempotency guard.
+        """
         raise NotImplementedError
 
     def download_artifact(
@@ -150,11 +190,31 @@ class RepositoryBackend:
         raise NotImplementedError
 
     def install_zip_to_addons(self, addon_id: str, zip_bytes: bytes) -> None:
-        """Extract the repository ZIP into the Kodi addons directory."""
+        """Extract the repository ZIP into the Kodi addons directory.
+
+        Must fail with RepositoryInstallError if the target directory already
+        exists (fail closed -- do not overwrite or remove existing files).
+        Must use a temporary staging directory and perform an atomic rename
+        so partial state is never written to the final location.
+        Must clean up the temporary directory on any failure.
+        """
         raise NotImplementedError
 
     def trigger_addon_scan(self) -> None:
-        """Signal Kodi to re-scan the addons directory."""
+        """Signal Kodi to re-scan the addons directory.
+
+        After this call, the add-on should appear in Kodi's installed database
+        (as disabled), ready for enable_addon() to be called.
+        """
+        raise NotImplementedError
+
+    def enable_addon(self, addon_id: str) -> None:
+        """Enable an add-on by ID.
+
+        Waits for the add-on to appear in the installed database (since
+        trigger_addon_scan may operate asynchronously), then issues the enable
+        request. Raises RepositoryInstallError on failure or timeout.
+        """
         raise NotImplementedError
 
     def poll_addon_installed(
@@ -164,7 +224,11 @@ class RepositoryBackend:
         timeout: float = _VERIFY_TIMEOUT,
         interval: float = _VERIFY_INTERVAL,
     ) -> bool:
-        """Poll until addon_id appears installed or timeout expires."""
+        """Poll until addon_id is installed AND enabled, or timeout expires.
+
+        Returns True only when the add-on is confirmed enabled in Kodi.
+        Returns False on timeout. Raises RepositoryInstallError on hard failure.
+        """
         raise NotImplementedError
 
 
@@ -195,7 +259,7 @@ def _validate_url_policy(url: str, *, context: str = "URL") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Redirect handler — validates scheme on every redirect before following
+# Redirect handler -- validates scheme on every redirect before following
 # ---------------------------------------------------------------------------
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -278,22 +342,18 @@ def _validate_zip_entries(names: list) -> None:
         parts = [p for p in normalized.split("/") if p]
         if not parts:
             continue
-        # Absolute Unix path
         if normalized.startswith("/"):
             raise RepositoryValidationError(
                 f"ZIP contains absolute path: {name!r}"
             )
-        # Windows absolute path (e.g. C:/, //server)
         if parts[0].endswith(":"):
             raise RepositoryValidationError(
                 f"ZIP contains absolute path: {name!r}"
             )
-        # Parent-directory traversal
         if ".." in parts:
             raise RepositoryValidationError(
                 f"ZIP contains path traversal: {name!r}"
             )
-        # Null bytes
         if "\x00" in name:
             raise RepositoryValidationError(
                 f"ZIP entry name contains null byte: {name!r}"
@@ -315,7 +375,7 @@ def validate_repository_zip(zip_bytes: bytes, expected_addon_id: str) -> None:
     Raises RepositoryValidationError if:
     - Not a valid ZIP file
     - Contains path traversal or absolute paths
-    - No addon.xml found at depth ≤ 2
+    - No addon.xml found at depth <= 2
     - addon.xml declares a different add-on ID
     - addon.xml does not declare xbmc.addon.repository extension
     """
@@ -335,7 +395,7 @@ def validate_repository_zip(zip_bytes: bytes, expected_addon_id: str) -> None:
     addon_xml_path = _find_addon_xml(names)
     if addon_xml_path is None:
         raise RepositoryValidationError(
-            f"ZIP does not contain addon.xml at depth ≤ 2 (entries: {len(names)})"
+            f"ZIP does not contain addon.xml at depth <= 2 (entries: {len(names)})"
         )
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -364,7 +424,7 @@ def validate_repository_zip(zip_bytes: bytes, expected_addon_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ZIP extraction helper (path-safe; used by KodiRuntimeRepositoryBackend)
+# ZIP extraction helper (path-safe; used by install_zip_to_addons)
 # ---------------------------------------------------------------------------
 
 def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> None:
@@ -399,7 +459,6 @@ def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> 
             dest = target / rel
             dest_resolved = dest.resolve()
 
-            # Final containment check before write
             try:
                 dest_resolved.relative_to(target_resolved)
             except ValueError:
@@ -432,19 +491,21 @@ class RepositoryManager:
         self._backend = backend
 
     def is_installed(self, addon_id: str) -> bool:
-        """True if the add-on is currently reported installed by Kodi."""
+        """True if the add-on is in Kodi's installed database (enabled or disabled)."""
         return addon_id in self._backend.get_installed_addon_ids()
 
     def install(self, repository: Repository) -> RepositoryInstallResult:
-        """Install a repository from its manifest bootstrap_url.
+        """Bootstrap a repository add-on from its manifest bootstrap_url.
 
-        Returns ALREADY_INSTALLED (no mutation) if already present.
-        Returns INSTALLED on success.
-        Returns FAILED with a message describing the failure.
+        Returns ALREADY_INSTALLED (no mutation) if already present in
+        Kodi's installed database.
+        Returns INSTALLED on success: files extracted, database-registered,
+        and enabled via JSON-RPC.
+        Returns FAILED with a descriptive message on any error.
         """
         addon_id = repository.addon_id
 
-        # Detection: already installed? No mutation.
+        # Detection: already in Kodi's database? No mutation.
         if self.is_installed(addon_id):
             return RepositoryInstallResult(
                 addon_id=addon_id,
@@ -469,7 +530,7 @@ class RepositoryManager:
                 message=f"Download failed: {exc}",
             )
 
-        # Validate
+        # Validate artifact before touching the filesystem
         try:
             validate_repository_zip(zip_bytes, addon_id)
         except RepositoryValidationError as exc:
@@ -479,7 +540,7 @@ class RepositoryManager:
                 message=f"Artifact rejected: {exc}",
             )
 
-        # Install + trigger scan + verify
+        # Extract to staging temp dir, then atomically rename into addons dir
         try:
             self._backend.install_zip_to_addons(addon_id, zip_bytes)
         except RepositoryError as exc:
@@ -489,6 +550,7 @@ class RepositoryManager:
                 message=f"Installation failed: {exc}",
             )
 
+        # Signal Kodi to scan and register the newly added files (lands as disabled)
         try:
             self._backend.trigger_addon_scan()
         except RepositoryError as exc:
@@ -498,8 +560,20 @@ class RepositoryManager:
                 message=f"Addon scan failed: {exc}",
             )
 
+        # Enable the add-on via JSON-RPC (UpdateLocalAddons lands it as disabled;
+        # SetAddonEnabled completes the database state a GUI install would set)
         try:
-            installed = self._backend.poll_addon_installed(addon_id)
+            self._backend.enable_addon(addon_id)
+        except RepositoryError as exc:
+            return RepositoryInstallResult(
+                addon_id=addon_id,
+                status=RepositoryStatus.FAILED,
+                message=f"Enable failed: {exc}",
+            )
+
+        # Verify the add-on is now enabled (INSTALLED requires enabled+functional)
+        try:
+            confirmed = self._backend.poll_addon_installed(addon_id)
         except RepositoryError as exc:
             return RepositoryInstallResult(
                 addon_id=addon_id,
@@ -507,12 +581,12 @@ class RepositoryManager:
                 message=f"Verification failed: {exc}",
             )
 
-        if not installed:
+        if not confirmed:
             return RepositoryInstallResult(
                 addon_id=addon_id,
                 status=RepositoryStatus.FAILED,
                 message=(
-                    f"{addon_id!r} was not detected after installation "
+                    f"{addon_id!r} was not confirmed enabled after installation "
                     f"(verification timeout)"
                 ),
             )
@@ -520,12 +594,12 @@ class RepositoryManager:
         return RepositoryInstallResult(
             addon_id=addon_id,
             status=RepositoryStatus.INSTALLED,
-            message=f"{addon_id!r} installed successfully",
+            message=f"{addon_id!r} installed and enabled successfully",
         )
 
 
 # ---------------------------------------------------------------------------
-# Production backend — Kodi runtime (xbmc / xbmcvfs)
+# Production backend -- Kodi runtime (xbmc / xbmcvfs)
 # ---------------------------------------------------------------------------
 
 class KodiRuntimeRepositoryBackend(RepositoryBackend):
@@ -555,6 +629,7 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
             ) from exc
 
     def get_installed_addon_ids(self) -> FrozenSet[str]:
+        """Return all add-on IDs in Kodi's installed database (enabled or disabled)."""
         xbmc = self._xbmc()
         req = json.dumps({
             "jsonrpc": "2.0",
@@ -583,12 +658,18 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
         return _download_artifact(url, max_bytes=max_bytes, timeout=timeout)
 
     def install_zip_to_addons(self, addon_id: str, zip_bytes: bytes) -> None:
+        """Extract ZIP via temp dir, then atomically rename into the addons dir.
+
+        Fails closed if the target directory already exists (orphaned files from
+        a previous failed install). Never removes an existing target directory.
+        Cleans up the temporary directory on any failure.
+        """
         xbmcvfs = self._xbmcvfs()
         addons_dir_raw = xbmcvfs.translatePath("special://home/addons")
         addons_dir = Path(addons_dir_raw)
         target = addons_dir / addon_id
 
-        # Safety: confirm target is inside addons_dir
+        # Safety: confirm addon_id doesn't escape addons_dir
         try:
             target.resolve().relative_to(addons_dir.resolve())
         except ValueError:
@@ -596,14 +677,89 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
                 f"Safety: installation target {target} is outside addons directory"
             )
 
+        # Fail closed if target already exists -- do not overwrite or remove
         if target.exists():
-            shutil.rmtree(target)
+            raise RepositoryInstallError(
+                f"Target directory already exists: {target} "
+                f"(Kodi did not report {addon_id!r} as installed but files are present; "
+                f"manual cleanup required)"
+            )
 
-        _extract_zip_to_directory(zip_bytes, addon_id, target)
+        # Stage in a temp dir on the same filesystem for atomic rename.
+        # mkdtemp(dir=addons_dir) guarantees same filesystem as target.
+        tmp_dir: Optional[Path] = None
+        try:
+            tmp_dir = Path(tempfile.mkdtemp(dir=addons_dir))
+            _extract_zip_to_directory(zip_bytes, addon_id, tmp_dir)
+
+            # Verify extraction produced at least one file
+            has_files = any(p.is_file() for p in tmp_dir.rglob("*"))
+            if not has_files:
+                raise RepositoryInstallError(
+                    f"ZIP extraction produced no files for {addon_id!r}"
+                )
+
+            # Atomic rename: on POSIX this succeeds or fails atomically when
+            # src and dst are on the same filesystem. dst must not exist (checked above).
+            os.rename(str(tmp_dir), str(target))
+            tmp_dir = None  # ownership transferred; don't cleanup
+
+        except RepositoryError:
+            raise
+        except Exception as exc:
+            raise RepositoryInstallError(f"Extraction failed: {exc}") from exc
+        finally:
+            if tmp_dir is not None and tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def trigger_addon_scan(self) -> None:
+        """Run UpdateLocalAddons to register newly extracted files in Kodi's database.
+
+        After this call, the add-on will appear in the installed database as
+        disabled (enabled=0). enable_addon() must follow to make it functional.
+        """
         xbmc = self._xbmc()
         xbmc.executebuiltin("UpdateLocalAddons")
+
+    def enable_addon(self, addon_id: str) -> None:
+        """Wait for addon registration, then enable via Addons.SetAddonEnabled.
+
+        UpdateLocalAddons completes asynchronously; this method polls
+        get_installed_addon_ids() until the addon appears before calling
+        SetAddonEnabled. Raises RepositoryInstallError if the addon does not
+        appear within _ENABLE_WAIT_TIMEOUT seconds, or if SetAddonEnabled fails.
+        """
+        xbmc = self._xbmc()
+
+        # Wait for UpdateLocalAddons to register the addon (as disabled)
+        deadline = time.monotonic() + _ENABLE_WAIT_TIMEOUT
+        while time.monotonic() < deadline:
+            if addon_id in self.get_installed_addon_ids():
+                break
+            time.sleep(0.5)
+        else:
+            raise RepositoryInstallError(
+                f"{addon_id!r} not registered in Kodi database after UpdateLocalAddons "
+                f"(waited {_ENABLE_WAIT_TIMEOUT:.0f}s)"
+            )
+
+        req = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "Addons.SetAddonEnabled",
+            "params": {"addonid": addon_id, "enabled": True},
+            "id": 1,
+        })
+        try:
+            resp = json.loads(xbmc.executeJSONRPC(req))
+        except (json.JSONDecodeError, Exception) as exc:
+            raise RepositoryInstallError(
+                f"Addons.SetAddonEnabled({addon_id!r}) failed: {exc}"
+            ) from exc
+
+        if "error" in resp:
+            raise RepositoryInstallError(
+                f"Addons.SetAddonEnabled({addon_id!r}) returned error: {resp['error']}"
+            )
 
     def poll_addon_installed(
         self,
@@ -612,12 +768,26 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
         timeout: float = _VERIFY_TIMEOUT,
         interval: float = _VERIFY_INTERVAL,
     ) -> bool:
+        """Poll until the add-on is confirmed enabled, or timeout expires.
+
+        Uses Addons.GetAddonDetails to check the enabled property directly.
+        Returns True only when enabled=True is confirmed. Returns False on timeout.
+        """
+        xbmc = self._xbmc()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if addon_id in self.get_installed_addon_ids():
+                req = json.dumps({
+                    "jsonrpc": "2.0",
+                    "method": "Addons.GetAddonDetails",
+                    "params": {"addonid": addon_id, "properties": ["enabled"]},
+                    "id": 1,
+                })
+                resp = json.loads(xbmc.executeJSONRPC(req))
+                addon = resp.get("result", {}).get("addon", {})
+                if isinstance(addon, dict) and addon.get("enabled") is True:
                     return True
-            except RepositoryInstallError:
+            except (RepositoryInstallError, json.JSONDecodeError):
                 pass
             time.sleep(interval)
         return False
