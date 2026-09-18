@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-012-C",
-  "reason": "BM-012-C complete: three correctness corrections + 26 new tests (958/958) + 18/18 live validate-dependencies. Ready to merge or start BM-013.",
-  "last_commit": "ef8f570",
-  "matrix_sha": "5bc6325",
+  "task": "BM-012-merge",
+  "reason": "BM-012-merge complete: fast-forward matrix 5bc6325→3683b9a. 974/974 tests. BM-013 not started.",
+  "last_commit": "3683b9a",
+  "matrix_sha": "3683b9a",
   "next_agent": "human",
-  "updated_at": "2026-09-18T13:57:00Z"
+  "updated_at": "2026-09-18T16:35:00Z"
 }
