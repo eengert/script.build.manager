@@ -1,13 +1,32 @@
-# Agent Handoff — BM-013 Complete
+# Agent Handoff — BM-013 + Correction Complete
 
 **Date**: 2026-09-18
 **Agent**: Claude (claude-sonnet-4-6, effort max)
-**Branch**: `agent/claude` @ `b2a955f`
-**Status**: BM-013 complete. 1040/1040 tests. 16/16 live. BM-014 not started.
+**Branch**: `agent/claude` @ `cbd3f4a`
+**Status**: BM-013 + fail-closed correction complete. 1047/1047 tests. 16/16 live. BM-014 not started.
 
 ---
 
 ## What Was Done This Session
+
+### BM-013-correction — Fail-closed `enabled` field validation
+
+**Commit**: `cbd3f4a`
+
+`KodiRuntimeAddonStateBackend.get_addon_details()` now requires `enabled` to be
+an actual Python `bool`. Any other value (missing, None, int 0/1, str, list,
+object) raises `AddonStateError`. Previously non-bool values were coerced to
+`False`, which could cause a malformed Kodi response to be mistaken for a
+disabled add-on and trigger an incorrect enable operation.
+
+Rule: `isinstance(enabled, bool)` — rejects 0/1 because `bool` subclasses `int`
+but `isinstance(0, bool)` is `False`.
+
+7 new tests added (1047/1047 total). No live rerun needed: fix only tightens the
+malformed-response path; the normal Kodi path (enabled=True/False) is unchanged
+and already proven in BM-013 live validation.
+
+---
 
 ### BM-013 — Enable/Disable State Reconciliation
 

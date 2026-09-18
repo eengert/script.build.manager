@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-013",
-  "reason": "BM-013 complete: addon_state.py + 66 unit tests (1040/1040) + 16/16 live validate-addon-state. Commit b2a955f on agent/claude. BM-014 not started.",
-  "last_commit": "b2a955f",
+  "task": "BM-013-correction",
+  "reason": "BM-013-correction complete: fail-closed enabled-field validation + 7 new tests (1047/1047). Commit cbd3f4a on agent/claude. BM-014 not started.",
+  "last_commit": "cbd3f4a",
   "matrix_sha": "3683b9a",
   "next_agent": "human",
-  "updated_at": "2026-09-18T17:15:00Z"
+  "updated_at": "2026-09-18T17:50:00Z"
 }
