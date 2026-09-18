@@ -1,9 +1,9 @@
 {
   "active_agent": "claude",
-  "status": "idle",
-  "task": "BM-010-merge",
-  "reason": "BM-010 merged to matrix (031e405). 626/626 tests. Bootstrap fallback architecture approved. Project idle awaiting BM-011 assignment.",
-  "last_commit": "031e405",
+  "status": "in_progress",
+  "task": "BM-011",
+  "reason": "BM-011 unit tests pass (758/758); live validation fails at step 10 (InstallAddon poll timeout — repo not indexed). See HANDOFF.md.",
+  "last_commit": "pending",
   "next_agent": "claude",
-  "updated_at": "2026-09-18T00:36:00Z"
+  "updated_at": "2026-09-18T01:20:00Z"
 }

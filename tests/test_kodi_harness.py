@@ -699,6 +699,170 @@ class TestConstants(unittest.TestCase):
         self.assertIn("default.py", harness.ADDON_INCLUDE)
         self.assertIn("resources", harness.ADDON_INCLUDE)
 
+    def test_bm011_addon_server_port_distinct(self):
+        self.assertNotEqual(harness._ADDON_SERVER_PORT, harness.WEBSERVER_PORT)
+        self.assertNotEqual(harness._ADDON_SERVER_PORT, harness._REPO_SERVER_PORT)
+
+    def test_bm011_test_addon_id(self):
+        self.assertEqual(harness._BM011_TEST_ADDON_ID, "script.module.build-manager-test")
+
+    def test_harness_trigger_addon_id(self):
+        self.assertIn("harness", harness._HARNESS_TRIGGER_ADDON_ID)
+
+
+# ---------------------------------------------------------------------------
+# BM-011 content builders
+# ---------------------------------------------------------------------------
+
+class TestBm011ContentBuilders(unittest.TestCase):
+    """_make_bm011_test_addon_zip, _make_bm011_addons_xml, _make_bm011_repo_zip."""
+
+    def test_test_addon_zip_is_valid_zip(self):
+        import zipfile, io
+        data = harness._make_bm011_test_addon_zip()
+        self.assertTrue(zipfile.is_zipfile(io.BytesIO(data)))
+
+    def test_test_addon_zip_contains_addon_xml(self):
+        import zipfile, io
+        data = harness._make_bm011_test_addon_zip()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+        self.assertTrue(any("addon.xml" in n for n in names))
+
+    def test_test_addon_zip_declares_correct_id(self):
+        import zipfile, io
+        data = harness._make_bm011_test_addon_zip()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._BM011_TEST_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn(harness._BM011_TEST_ADDON_ID, xml)
+
+    def test_test_addon_zip_has_no_path_traversal(self):
+        import zipfile, io
+        data = harness._make_bm011_test_addon_zip()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for name in zf.namelist():
+                self.assertNotIn("..", name)
+
+    def test_addons_xml_is_valid_utf8(self):
+        xml = harness._make_bm011_addons_xml()
+        self.assertIsInstance(xml, bytes)
+        xml.decode("utf-8")  # must not raise
+
+    def test_addons_xml_contains_test_addon_id(self):
+        xml = harness._make_bm011_addons_xml()
+        self.assertIn(harness._BM011_TEST_ADDON_ID.encode(), xml)
+
+    def test_addons_xml_starts_with_xml_decl(self):
+        xml = harness._make_bm011_addons_xml()
+        self.assertTrue(xml.startswith(b"<?xml"))
+
+    def test_repo_zip_is_valid_zip(self):
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        self.assertTrue(zipfile.is_zipfile(io.BytesIO(data)))
+
+    def test_repo_zip_contains_info_url(self):
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn("127.0.0.1:8922", xml)
+        self.assertIn("addons.xml", xml)
+
+    def test_repo_zip_contains_datadir_url(self):
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn("datadir", xml)
+
+    def test_repo_zip_declares_repository_extension(self):
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn("xbmc.addon.repository", xml)
+
+    def test_repo_zip_port_is_embedded(self):
+        import zipfile, io
+        for port in [8922, 9999]:
+            data = harness._make_bm011_repo_zip(port)
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+            self.assertIn(f"127.0.0.1:{port}", xml)
+
+
+# ---------------------------------------------------------------------------
+# _MultiFileHandler
+# ---------------------------------------------------------------------------
+
+class TestMultiFileHandler(unittest.TestCase):
+    """_MultiFileHandler serves files by path and 404s for unknown paths."""
+
+    def _make_handler(self, files):
+        import io as _io
+        from http.server import BaseHTTPRequestHandler
+        wbuf = _io.BytesIO()
+
+        class _H(harness._MultiFileHandler):
+            _files = files
+
+            def __init__(self):
+                pass  # skip real __init__
+
+            def send_response(self, code):
+                self._resp_code = code
+
+            def send_header(self, k, v):
+                pass
+
+            def end_headers(self):
+                pass
+
+            @property
+            def wfile(self):
+                return wbuf
+
+        return _H(), wbuf
+
+    def test_returns_200_for_known_path(self):
+        h, _ = self._make_handler({"/test.zip": b"DATA"})
+        h.path = "/test.zip"
+        h.do_GET()
+        self.assertEqual(h._resp_code, 200)
+
+    def test_returns_404_for_unknown_path(self):
+        h, _ = self._make_handler({"/test.zip": b"DATA"})
+        h.path = "/not-found.zip"
+        h.do_GET()
+        self.assertEqual(h._resp_code, 404)
+
+    def test_writes_correct_content(self):
+        payload = b"HELLO_KODI_ZIP"
+        h, wbuf = self._make_handler({"/repo.zip": payload})
+        h.path = "/repo.zip"
+        h.do_GET()
+        self.assertIn(payload, wbuf.getvalue())
+
+
+# ---------------------------------------------------------------------------
+# BM-011 CLI route
+# ---------------------------------------------------------------------------
+
+class TestValidateAddonCliRoute(unittest.TestCase):
+    """CLI routes validate-addon to validate_addon()."""
+
+    def test_validate_addon_routes(self):
+        called = {}
+
+        def fake_validate_addon():
+            called["yes"] = True
+
+        with patch.object(harness, "validate_addon", side_effect=fake_validate_addon):
+            rc = harness.main(["validate-addon"])
+        self.assertEqual(rc, 0)
+        self.assertIn("yes", called)
+
 
 if __name__ == "__main__":
     unittest.main()

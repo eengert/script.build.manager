@@ -27,12 +27,14 @@ Commands
   status          Print current harness state (pid, paths, running/stopped)
   validate        Full live validation sequence (BM-009)
   validate-repo   BM-010 live validation: repository detection and installation
+  validate-addon  BM-011 live validation: general add-on installation
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import http.server
 import io
 import json
@@ -984,6 +986,542 @@ def validate_repo() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Add-on installation validation support (BM-011)
+# ---------------------------------------------------------------------------
+
+_ADDON_SERVER_PORT = 8922           # distinct from Kodi (8920) and BM-010 repo (8921)
+_BM011_TEST_ADDON_ID = "script.module.build-manager-test"
+_BM011_TEST_ADDON_VERSION = "1.0.0"
+_HARNESS_TRIGGER_ADDON_ID = "script.build-manager-harness-trigger"
+_HARNESS_TRIGGER_VERSION = "1.0.0"
+
+
+def _make_bm011_test_addon_zip() -> bytes:
+    """Build a minimal valid test add-on ZIP for BM-011 live validation.
+
+    Creates script.module.build-manager-test as an xbmc.python.module add-on.
+    The ZIP contains only addon.xml and lib/__init__.py — no execution required.
+    """
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM011_TEST_ADDON_ID}"'
+        f' name="Build Manager Test Module"'
+        f' version="{_BM011_TEST_ADDON_VERSION}"'
+        f' provider-name="Build Manager">'
+        '<extension point="xbmc.python.module" library="lib"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Disposable test module for BM-011 validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM011_TEST_ADDON_ID}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM011_TEST_ADDON_ID}/lib/__init__.py", b"")
+    return buf.getvalue()
+
+
+def _make_bm011_addons_xml() -> bytes:
+    """Build the addons.xml repository index listing the test add-on."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<addons>\n'
+        f'  <addon id="{_BM011_TEST_ADDON_ID}"'
+        f' name="Build Manager Test Module"'
+        f' version="{_BM011_TEST_ADDON_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Disposable test module for BM-011 validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        '</addons>\n'
+    ).encode("utf-8")
+
+
+def _make_bm011_repo_zip(server_port: int) -> bytes:
+    """Build the test repository ZIP for BM-011, with info/datadir URLs pointing to localhost.
+
+    The repository addon.xml includes <info>, <datadir>, and <checksum> elements
+    so Kodi can fetch the add-on index and download the test add-on ZIP.
+    The server must be running at server_port before Kodi tries to scan this repo.
+    """
+    base_url = f"http://127.0.0.1:{server_port}"
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_TEST_REPO_ADDON_ID}"'
+        ' name="Build Manager Test Repo"'
+        ' version="2.0.0"'
+        ' provider-name="Build Manager">'
+        f'<extension point="xbmc.addon.repository" name="Build Manager Test">'
+        f'<info compressed="false">{base_url}/addons.xml</info>'
+        f'<datadir zip="false">{base_url}/</datadir>'
+        f'<checksum>{base_url}/addons.xml.md5</checksum>'
+        '</extension>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Disposable test repository for BM-011 validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_TEST_REPO_ADDON_ID}/addon.xml", addon_xml.encode("utf-8"))
+    return buf.getvalue()
+
+
+def _install_harness_trigger_script() -> None:
+    """Write the harness trigger script directly into the disposable addons dir.
+
+    This tiny script addon is harness-only — it is never installed in production.
+    It accepts an add-on ID as sys.argv[2] and calls xbmc.executebuiltin
+    ("InstallAddon(addon_id)"). The harness invokes it via Addons.ExecuteAddon
+    to trigger Kodi's normal repository-backed install flow.
+
+    The trigger is written before Kodi starts. After Kodi launches (or restarts
+    via trigger_addon_scan), it registers the script via UpdateLocalAddons/
+    SyncInstalled, making it available for Addons.ExecuteAddon calls.
+    """
+    verify_isolation()
+    target = KODI_ADDONS_DIR / _HARNESS_TRIGGER_ADDON_ID
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_HARNESS_TRIGGER_ADDON_ID}"'
+        ' name="Build Manager Harness Trigger"'
+        f' version="{_HARNESS_TRIGGER_VERSION}"'
+        ' provider-name="Build Manager">'
+        '<extension point="xbmc.python.script" library="default.py"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Harness-only trigger for BM-011 live validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    (target / "addon.xml").write_text(addon_xml, encoding="utf-8")
+
+    # Supports two commands via sys.argv[2]:
+    #   "update_repos" → UpdateAddonRepos (force repo scan after enabling a repo)
+    #   "<addon_id>"   → InstallAddon(<addon_id>) (production KodiRuntime path)
+    trigger_py = (
+        "import sys\n"
+        "import xbmc\n"
+        "param = sys.argv[2] if len(sys.argv) > 2 else ''\n"
+        "if param == 'update_repos':\n"
+        "    xbmc.executebuiltin('UpdateAddonRepos')\n"
+        "elif param:\n"
+        "    xbmc.executebuiltin('InstallAddon(' + param + ')')\n"
+    )
+    (target / "default.py").write_text(trigger_py, encoding="utf-8")
+    print(f"  harness trigger script written to {target}")
+
+
+class _MultiFileHandler(http.server.BaseHTTPRequestHandler):
+    """Serve multiple static files by path. Binds only to 127.0.0.1.
+
+    Class-level _files dict maps URL path → bytes. Paths not in the dict
+    return 404. Content-Type is inferred from the path extension.
+    """
+
+    _files: Dict[str, bytes] = {}
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = self.path.split("?")[0]
+        data = self._files.get(path)
+        if data is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        if path.endswith(".xml") or path.endswith(".md5"):
+            content_type = "application/xml"
+        else:
+            content_type = "application/zip"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, fmt, *args) -> None:  # suppress request logging
+        pass
+
+
+class _HttpAddonBackend:
+    """Add-on backend for BM-011 live validation. Uses HTTP JSON-RPC.
+
+    invoke_install() triggers Kodi's InstallAddon builtin via the harness
+    trigger script (Addons.ExecuteAddon). This is equivalent to what
+    KodiRuntimeAddonBackend.invoke_install() does from inside Kodi.
+    """
+
+    def get_addon_details(self, addon_id: str) -> Optional["InstalledAddonInfo"]:
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+        from resources.lib.addons import InstalledAddonInfo
+        try:
+            resp = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id,
+                "properties": ["enabled", "version"],
+            })
+            if not isinstance(resp, dict):
+                return None
+            addon = resp.get("addon", {})
+            if not isinstance(addon, dict) or addon.get("addonid") != addon_id:
+                return None
+            return InstalledAddonInfo(
+                addon_id=addon_id,
+                enabled=bool(addon.get("enabled", False)),
+                version=str(addon.get("version", "")),
+            )
+        except RuntimeError:
+            return None
+
+    def invoke_install(self, addon_id: str) -> None:
+        """Invoke InstallAddon via the harness trigger script + Addons.ExecuteAddon.
+
+        The trigger script calls xbmc.executebuiltin("InstallAddon(addon_id)"),
+        which is the production KodiRuntimeAddonBackend.invoke_install path.
+        This proves Kodi itself handles the download, extraction, and registration.
+        """
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+        from resources.lib.addons import AddonInstallError
+        try:
+            jsonrpc("Addons.ExecuteAddon", {
+                "addonid": _HARNESS_TRIGGER_ADDON_ID,
+                "params": addon_id,
+                "wait": False,
+            })
+        except RuntimeError as exc:
+            raise AddonInstallError(
+                f"Addons.ExecuteAddon(trigger, {addon_id!r}) failed: {exc}"
+            ) from exc
+
+    def poll_addon_installed(
+        self,
+        addon_id: str,
+        *,
+        timeout: float = 120.0,
+        interval: float = 2.0,
+    ) -> Optional["InstalledAddonInfo"]:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            info = self.get_addon_details(addon_id)
+            if info is not None:
+                return info
+            time.sleep(interval)
+        return None
+
+
+def _wait_for_addon_in_repo_index(
+    addon_id: str,
+    timeout: float = 60.0,
+    interval: float = 3.0,
+) -> bool:
+    """Poll until addon_id appears in Kodi's repository index (installed=False).
+
+    Returns True when the add-on is found. Returns False on timeout.
+    The repository must already be installed and Kodi must have scanned it.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = jsonrpc("Addons.GetAddons", {"installed": False})
+            if isinstance(resp, dict):
+                addons = resp.get("addons") or []
+                ids = {
+                    a["addonid"]
+                    for a in addons
+                    if isinstance(a, dict) and "addonid" in a
+                }
+                if addon_id in ids:
+                    return True
+        except (RuntimeError, Exception):  # noqa: BLE001
+            pass
+        time.sleep(interval)
+    return False
+
+
+def validate_addon() -> None:
+    """Live validation of BM-011 general add-on detection and installation.
+
+    Sequence (17 steps):
+     1  Reset disposable harness
+     2  Install Build Manager + harness trigger script
+     3  Configure web server
+     4  Create test content + start HTTP server (127.0.0.1:8922)
+     5  Launch Kodi + wait for ready
+     6  Verify test add-on NOT installed before any action
+     7  Install test repository via BM-010 RepositoryManager.install
+        (includes UpdateLocalAddons restart; trigger script registered)
+     8  Wait for Kodi to index the test repository (fetches addons.xml)
+     9  Verify test add-on still NOT installed (available but not installed)
+    10  Install test add-on via AddonManager.install (Kodi owns the install)
+    11  Verify result.status == INSTALLED
+    12  Verify Addons.GetAddonDetails: installed + enabled
+    13  Restart disposable Kodi + wait for ready
+    14  Verify test add-on still installed and enabled after restart
+    15  Install again → verify ALREADY_INSTALLED (idempotency)
+    16  Stop Kodi + shut down HTTP server
+    17  Confirm real Kodi profile untouched
+
+    CRITICAL PROOF: Kodi itself retrieves and installs the test add-on from
+    the enabled test repository. Build Manager does NOT download or extract
+    the add-on ZIP directly (that is BM-010's repository bootstrap fallback).
+
+    ALL mutation occurs only in the disposable .kodi-test environment.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.addons import AddonManager, AddonStatus
+    from resources.lib.manifest import Repository
+    from resources.lib.repository import RepositoryManager, RepositoryStatus
+
+    print("=== Build Manager BM-011 live validation: general add-on installation ===")
+    verify_isolation()
+
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    print("\n[1/17] reset")
+    reset()
+
+    print("\n[2/17] install Build Manager + harness trigger script")
+    install()
+    _install_harness_trigger_script()
+
+    print("\n[3/17] configure web server")
+    configure_webserver()
+
+    print("\n[4/17] create test content + start HTTP server (127.0.0.1:8922)")
+    addon_zip = _make_bm011_test_addon_zip()
+    addons_xml = _make_bm011_addons_xml()
+    addons_xml_md5 = hashlib.md5(addons_xml).hexdigest().encode("utf-8")
+    repo_zip = _make_bm011_repo_zip(_ADDON_SERVER_PORT)
+    print(f"  test repo ZIP: {len(repo_zip)} bytes")
+    print(f"  addons.xml: {len(addons_xml)} bytes (md5={addons_xml_md5.decode()})")
+    print(f"  test addon ZIP: {len(addon_zip)} bytes")
+
+    addon_zip_path = (
+        f"/{_BM011_TEST_ADDON_ID}/{_BM011_TEST_ADDON_VERSION}"
+        f"/{_BM011_TEST_ADDON_ID}-{_BM011_TEST_ADDON_VERSION}.zip"
+    )
+    server_files = {
+        f"/{_TEST_REPO_ADDON_ID}.zip": repo_zip,
+        "/addons.xml": addons_xml,
+        "/addons.xml.md5": addons_xml_md5,
+        addon_zip_path: addon_zip,
+    }
+
+    class _Handler(_MultiFileHandler):
+        _files = server_files  # type: ignore[assignment]
+
+    server = http.server.HTTPServer(("127.0.0.1", _ADDON_SERVER_PORT), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    repo_url = f"http://127.0.0.1:{_ADDON_SERVER_PORT}/{_TEST_REPO_ADDON_ID}.zip"
+    print(f"  HTTP server started: serving {len(server_files)} paths on port {_ADDON_SERVER_PORT}")
+
+    repo_backend = _HttpRepositoryBackend()
+    addon_backend = _HttpAddonBackend()
+    repo_mgr = RepositoryManager(repo_backend)
+    addon_mgr = AddonManager(addon_backend)
+    test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
+
+    try:
+        print("\n[5/17] launch Kodi + wait for ready (up to 90s)")
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            stop()
+            raise RuntimeError(f"Validation failed at step 5: {exc}") from exc
+
+        print("\n[6/17] verify test add-on NOT installed before any action")
+        if addon_mgr.is_installed(_BM011_TEST_ADDON_ID):
+            stop()
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID!r} already installed before test"
+            )
+        print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = False ✓")
+
+        print("\n[7/17] install test repository via BM-010 RepositoryManager.install")
+        print("  (trigger_addon_scan restarts Kodi; harness trigger script registered)")
+        repo_result = repo_mgr.install(test_repo)
+        print(f"  repo result.status = {repo_result.status.value!r}")
+        if repo_result.status != RepositoryStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: repo install returned {repo_result.status.value!r} "
+                f"— {repo_result.message}"
+            )
+        print(f"  {_TEST_REPO_ADDON_ID!r} installed ✓")
+        # Kodi 21's SyncInstalled registers newly-discovered addons as disabled=0.
+        # Enable the harness trigger script explicitly so Addons.ExecuteAddon accepts it.
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": _HARNESS_TRIGGER_ADDON_ID,
+            "enabled": True,
+        })
+        trigger_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": _HARNESS_TRIGGER_ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(trigger_detail, dict)
+            and isinstance(trigger_detail.get("addon"), dict)
+            and trigger_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(
+                f"Validation failed: could not enable harness trigger "
+                f"{_HARNESS_TRIGGER_ADDON_ID!r}: {trigger_detail!r}"
+            )
+        print(f"  harness trigger {_HARNESS_TRIGGER_ADDON_ID!r} enabled ✓")
+        # Force an immediate repository scan so Kodi indexes the test addon
+        jsonrpc("Addons.ExecuteAddon", {
+            "addonid": _HARNESS_TRIGGER_ADDON_ID,
+            "params": "update_repos",
+            "wait": False,
+        })
+        print("  triggered UpdateAddonRepos via harness ✓")
+
+        print("\n[8/17] wait for Kodi to index test repository (up to 90s)")
+        found = _wait_for_addon_in_repo_index(_BM011_TEST_ADDON_ID, timeout=90.0)
+        if found:
+            print(f"  {_BM011_TEST_ADDON_ID!r} found in Kodi repo index ✓")
+        else:
+            print(
+                f"  WARNING: {_BM011_TEST_ADDON_ID!r} not yet in Kodi repo index "
+                f"after 90s; proceeding (InstallAddon may still succeed)"
+            )
+
+        print("\n[9/17] verify test add-on still NOT installed (available, not installed)")
+        if addon_mgr.is_installed(_BM011_TEST_ADDON_ID):
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID!r} appeared as installed "
+                f"before AddonManager.install was called"
+            )
+        print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = False ✓ (available, not installed)")
+
+        print("\n[10/17] install test add-on via AddonManager.install")
+        print("  (Kodi retrieves and installs from the test repository — BM-011 path)")
+        install_result = addon_mgr.install(_BM011_TEST_ADDON_ID, desired_state="enabled")
+        print(f"  result.status = {install_result.status.value!r}")
+        print(f"  result.enabled = {install_result.enabled!r}")
+        print(f"  result.version = {install_result.version!r}")
+        print(f"  result.message = {install_result.message!r}")
+
+        print("\n[11/17] verify result.status == INSTALLED")
+        if install_result.status != AddonStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: install returned {install_result.status.value!r} "
+                f"— {install_result.message}"
+            )
+        print("  status = INSTALLED ✓")
+
+        print("\n[12/17] verify Addons.GetAddonDetails: installed + enabled")
+        try:
+            details_resp = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": _BM011_TEST_ADDON_ID,
+                "properties": ["enabled", "version"],
+            })
+            addon_info = details_resp.get("addon", {}) if isinstance(details_resp, dict) else {}
+            api_enabled = addon_info.get("enabled") is True
+            api_version = addon_info.get("version", "")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Validation failed: Addons.GetAddonDetails({_BM011_TEST_ADDON_ID!r}) "
+                f"raised: {exc}"
+            ) from exc
+        if not api_enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID!r} installed but enabled=False"
+            )
+        print(f"  enabled=True, version={api_version!r} ✓")
+
+        # Confirm files are present in the addons dir (Kodi extracted them)
+        addon_dir = KODI_ADDONS_DIR / _BM011_TEST_ADDON_ID
+        if not addon_dir.is_dir():
+            raise RuntimeError(
+                f"Validation failed: add-on directory {addon_dir} not found "
+                f"(Kodi did not extract the add-on ZIP)"
+            )
+        addon_xml_path = addon_dir / "addon.xml"
+        if not addon_xml_path.is_file():
+            raise RuntimeError(
+                f"Validation failed: {addon_dir}/addon.xml missing"
+            )
+        print(f"  addon directory present: {addon_dir} ✓")
+        print("  CRITICAL PROOF: files extracted by Kodi (not by Build Manager) ✓")
+
+        print("\n[13/17] restart disposable Kodi + wait for ready")
+        stop()
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            raise RuntimeError(f"Validation failed at step 13: {exc}") from exc
+        print("  Kodi restarted ✓")
+
+        print("\n[14/17] verify test add-on still installed and enabled after restart")
+        after_restart = addon_mgr.is_installed(_BM011_TEST_ADDON_ID)
+        if not after_restart:
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID!r} not present after restart"
+            )
+        try:
+            details2 = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": _BM011_TEST_ADDON_ID,
+                "properties": ["enabled"],
+            })
+            addon_info2 = details2.get("addon", {}) if isinstance(details2, dict) else {}
+            enabled_after = addon_info2.get("enabled") is True
+        except RuntimeError:
+            enabled_after = False
+        if not enabled_after:
+            raise RuntimeError(
+                f"Validation failed: {_BM011_TEST_ADDON_ID!r} present after restart "
+                f"but enabled=False"
+            )
+        print(f"  enabled=True after restart ✓")
+        print(f"  is_installed({_BM011_TEST_ADDON_ID!r}) = True after restart ✓")
+
+        print("\n[15/17] install again → verify ALREADY_INSTALLED (idempotency)")
+        result2 = addon_mgr.install(_BM011_TEST_ADDON_ID, desired_state="enabled")
+        print(f"  result.status = {result2.status.value!r}")
+        if result2.status != AddonStatus.ALREADY_INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: second install returned {result2.status.value!r} "
+                f"instead of already_installed"
+            )
+        print("  status = ALREADY_INSTALLED ✓ (no mutation)")
+
+    finally:
+        print("\n[16/17] stop Kodi + shut down HTTP server")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        server.shutdown()
+
+    print("\n[17/17] confirm real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! "
+                f"Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-011 validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1023,6 +1561,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("status", help="Print current harness state")
     sub.add_parser("validate", help="Run the full live validation sequence")
     sub.add_parser("validate-repo", help="BM-010 live validation: repository detection/install")
+    sub.add_parser("validate-addon", help="BM-011 live validation: general add-on installation")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -1053,6 +1592,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate()
         elif cmd == "validate-repo":
             validate_repo()
+        elif cmd == "validate-addon":
+            validate_addon()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)

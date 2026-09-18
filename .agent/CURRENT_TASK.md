@@ -1,69 +1,49 @@
 # Current Task
 
-## Idle — awaiting BM-011 assignment
+## BM-011 — General Add-on Detection and Installation
 
 **Agent**: Claude
 **Branch**: `agent/claude`
-**Status**: BM-010 merged to `matrix` (`031e405`). Bootstrap fallback architecture approved. Project idle.
+**Status**: In progress — unit tests complete, live validation blocked at step 10.
 
-### Deliverables (BM-010-R corrected)
+### Deliverables (BM-011)
 
-- `resources/lib/repository.py` — repository detection and installation (corrected)
-  - Corrected install mechanism: temp dir → atomic os.rename → UpdateLocalAddons → Addons.SetAddonEnabled
-  - Fail closed if target directory exists (no blind rmtree)
-  - Temp dir cleaned up on extraction failure
-  - `enable_addon()` new abstract backend method; calls Addons.SetAddonEnabled JSON-RPC
-  - `poll_addon_installed()` now verifies enabled=True via Addons.GetAddonDetails
-  - `_ENABLE_WAIT_TIMEOUT = 30.0` constant for UpdateLocalAddons registration wait
-  - RepositoryBackend now has 6 abstract methods (was 5)
-  - All other security/idempotency/download properties from BM-010 unchanged
+- `resources/lib/addons.py` — NEW production module
+  - `AddonManager(backend)` with `is_installed()` and `install()`
+  - `KodiRuntimeAddonBackend` — uses `InstallAddon` builtin (not ZIP download)
+  - `AddonBackend` abstract base (injectable for tests)
+  - Strict addon_id validation: `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$`
+  - Result types: `AddonStatus`, `InstalledAddonInfo`, `AddonInstallResult`
+  - Errors: `AddonError`, `AddonValidationError`, `AddonInstallError`
 
-- `tests/test_repository.py` — 108 BM-010-R unit tests (no real Kodi required)
-  - All original BM-010 tests retained and updated
-  - New: STAGING (temp+rename, existing target fail-closed, cleanup on failure)
-  - New: enable_addon invocation order (after scan, before poll)
-  - New: ALREADY_INSTALLED has no enable call, no scan, no install
-  - New: enable failure → FAILED; poll not called if enable fails
-  - New: poll verifies enabled=True (not just presence)
-  - New: KodiRuntime tests verify SetAddonEnabled called, GetAddonDetails used
+- `tests/test_addon_manager.py` — 113 unit tests, all passing
 
-- `tools/kodi_test.py` — corrected backend + 13-step validate_repo()
-  - `_HttpRepositoryBackend.install_zip_to_addons()`: temp+rename, fail closed on existing target
-  - `_HttpRepositoryBackend.enable_addon()`: polls until registered, then SetAddonEnabled
-  - `_HttpRepositoryBackend.poll_addon_installed()`: Addons.GetAddonDetails + enabled=True
-  - `validate_repo()`: 13 steps (was 12) — added restart persistence (9-10), idempotency (11), real-profile confirmation (13)
+- `tools/kodi_test.py` — BM-011 harness infrastructure
+  - Multi-file HTTP server on port 8922 (repo ZIP, addons.xml, addon ZIP)
+  - Harness trigger script (enabled via `SetAddonEnabled` after restart)
+  - `validate_addon()` — 17-step live validation (partial: steps 1–9 pass, 10 blocks)
+  - `validate-addon` CLI sub-command
 
-### Live Validation (BM-010-R)
-
-**PASSED — 13/13 steps** against Kodi 21.1 macOS, disposable .kodi-test only (2026-09-18).
-
-Key proofs:
-- Step 8: `Addons.GetAddonDetails` → `enabled=true`, `type=xbmc.addon.repository` before restart
-- Step 10: `Addons.GetAddonDetails` → `enabled=true`, `type=xbmc.addon.repository` after restart
-- Step 11: second `mgr.install()` → `ALREADY_INSTALLED`; no download, extraction, scan, or enable
-- Step 13: real profile (`~/Library/Application Support/Kodi`) untouched
-- Repository recognized by `Addons.GetAddons(type=xbmc.addon.repository)` — Kodi sees it as a repository, not a generic add-on
-- No staging/temp artifacts remain in addons directory
+- `tests/test_kodi_harness.py` — 19 new harness tests
 
 ### Test Totals
 
-626/626 passing (518 pre-BM-010 + 87 original BM-010 + 21 BM-010-R additions)
+758/758 passing (626 pre-BM-011 + 113 addon_manager + 19 harness)
 
-### Last Completed: BM-010 — Repository Bootstrap (merged `031e405`)
+### Live Validation Status
 
-- Architecture approved: constrained bootstrap fallback (validated ZIP → staged extraction → Kodi scan → API enable → API verify)
-- 626/626 tests on `matrix`
-- Live validation 13/13 passed
-- Restart persistence proven; idempotency proven
+**BLOCKED at step 10**: `InstallAddon` poll timeout after 120s.
+- Steps 1–9 all pass
+- Trigger script enable fix landed ✓
+- `UpdateAddonRepos` triggered after repo enable ✓
+- HTTP server may not be receiving requests from Kodi (unconfirmed)
+- See `.agent/HANDOFF.md` for full root cause analysis and next steps
 
-### Next: BM-011
+### Immediate Next Step
 
-Not started. Scope to be assigned by supervisor.
-BM-011: General add-on detection/installation (distinct from repository bootstrap).
+Add HTTP logging to `_MultiFileHandler.log_message` to confirm if Kodi hits port 8922.
+Also try changing `<datadir zip="false">` to `<datadir zip="true">` in `_make_bm011_repo_zip()`.
 
-### Prerequisites
+### Prerequisites Met
 
-- BM-001 through BM-006 merged to `matrix` ✓
-- BM-007, BM-008 absorbed by BM-006 ✓
-- BM-009 merged to `matrix` ✓ (fast-forwarded with BM-010)
 - BM-010 merged to `matrix` ✓ (`031e405`)

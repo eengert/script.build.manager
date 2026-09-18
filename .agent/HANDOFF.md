@@ -1,553 +1,207 @@
-# Handoff
+# BM-011 Handoff — 2026-09-18
 
-## Latest — 2026-09-17 BM-009 complete on agent/claude; pending supervisor merge
+## Branch and HEAD
+- Branch: `agent/claude`
+- HEAD after commit: see `AGENT_STATUS.json` `last_commit`
 
-**Deliverables on agent/claude** (not yet on matrix):
-- `tools/__init__.py` — empty package marker
-- `tools/kodi_test.py` — standalone disposable Kodi harness (stdlib only)
-- `tests/test_kodi_harness.py` — 74 BM-009 unit tests
-- `docs/TESTING.md` — harness documentation
-- `.gitignore` — added `.kodi-test/`
-- Agent state files updated
-
-**Tests**: 518/518 passing (444 pre-BM-009 + 74 new)
-
-**Live validation**: All 11 steps PASSED against Kodi 21.1 macOS (2026-09-17):
-- platform=macos, kodi_version=21.1, active_skin=skin.estuary, addon_count=30
-- script.build.manager visible (enabled=False — expected for freshly installed add-on)
-- Real profile untouched ✓
-
-**BM-007/BM-008 absorption**: Both tasks fully covered by prior work.
-- BM-007 desired-state model = BM-004 ResolvedBuild ✓
-- BM-007 operation planner = BM-006 plan_changes() ✓
-- BM-008 reconciliation loop tests = BM-006 test suite ✓
-- No separate implementation needed.
-
-**Usage (BM-009)**: start 5h 8% / wk 52%, end 5h 17% / wk 53%,
-delta +9% / +1%. Model: claude-sonnet-4-6, effort: max.
-
-**Next**: BM-010 (supervisor to assign scope).
-
-**Security note**: No real Kodi profiles or Apple TVs were accessed. The
-disposable harness verified this explicitly in step 11 of live validation.
+## Task
+BM-011: General add-on detection and installation from configured Kodi repositories.
 
 ---
 
-## 2026-09-17 BM-006 merged to matrix; project idle, BM-007 next
+## What Is Complete (unit-tested, committed)
 
-**matrix before**: `6d41279`
-**matrix after**: `70504e0` (fast-forward — no squash, no rebase)
-**Merge type**: Fast-forward via `git push origin 70504e0:refs/heads/matrix`
+### Production module: `resources/lib/addons.py` (NEW)
+- `AddonError`, `AddonValidationError`, `AddonInstallError`
+- `AddonStatus(str, Enum)`: ALREADY_INSTALLED | INSTALLED | FAILED
+- `InstalledAddonInfo(addon_id, enabled, version)` — frozen dataclass
+- `AddonInstallResult(addon_id, status, desired_state, enabled, version, message)` — frozen dataclass
+- `_validate_addon_id(addon_id)` — regex `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$`
+- `AddonBackend` abstract base (3 abstract methods)
+- `AddonManager(backend)` with `is_installed()` and `install()`
+- `KodiRuntimeAddonBackend` — lazy xbmc import; `invoke_install` uses `xbmc.executebuiltin(f"InstallAddon({addon_id})")`
+- Bug guard: `get_addon_details` has `isinstance(result_val, dict)` check for `result: null` responses
 
-**Commits merged** (in order):
-- `0c2bb5a` — chore: update agent state after BM-005 merge to matrix (state only)
-- `1c34024` — chore: record BM-005 live validation results (state only)
-- `7735e7a` — feat(BM-006): implement desired-vs-actual planner
-- `c922e37` — chore: record BM-006 completion in agent state
-- `b686153` — fix(BM-006): cross-category dedup and contradictory-state validation
-- `70504e0` — chore: record BM-006-correction in agent state
+### Unit tests: `tests/test_addon_manager.py` (NEW)
+- 113 tests, all passing
+- `FakeAddonBackend` with configurable installed/error/poll states
+- TestAddonIdValidation, TestIsInstalled, TestInstallAlreadyInstalled, TestInstallHappyPath,
+  TestInstallInvalidId, TestInstallInvocationFailure, TestInstallPollTimeout, TestInstallPollError,
+  TestResultFields, TestDesiredState, TestAddonStatusEnum, TestKodiRuntimeBackend,
+  TestAddonBackendInterface, TestAddonErrorHierarchy
 
-**Tests on matrix**: 444/444 passing (`python3 -m unittest discover tests`)
+### Harness infrastructure: `tools/kodi_test.py` (MODIFIED)
+- `_ADDON_SERVER_PORT = 8922`
+- `_BM011_TEST_ADDON_ID = "script.module.build-manager-test"`
+- `_HARNESS_TRIGGER_ADDON_ID = "script.build-manager-harness-trigger"`
+- `_make_bm011_test_addon_zip()`, `_make_bm011_addons_xml()`, `_make_bm011_repo_zip(port)`
+- `_install_harness_trigger_script()` — writes trigger script to disposable addons dir
+  - Supports two commands via `sys.argv[2]`:
+    - `"update_repos"` → `xbmc.executebuiltin("UpdateAddonRepos")`
+    - `"<addon_id>"` → `xbmc.executebuiltin("InstallAddon(<addon_id>)")`
+- `_MultiFileHandler` — serves repo ZIP, addons.xml, addons.xml.md5, test addon ZIP
+- `_HttpAddonBackend` — live validation backend (get_addon_details, invoke_install, poll)
+- `_wait_for_addon_in_repo_index()` — polls `Addons.GetAddons(installed=False)`
+- `validate_addon()` — 17-step live validation sequence
+- CLI: `validate-addon` sub-command
 
-**Validation checks**:
-- planner.py imports: `__future__`, `dataclasses`, `typing`, `resources.lib.inspector`, `resources.lib.resolver` — no Kodi, no fs/network
-- CONFIGURE current_state: `"unchecked"` confirmed
-- Unmanaged add-ons: never emits ENSURE_ABSENT for unmentioned IDs
-- No real Kodi or device touched
-- `agent/codex` unchanged at `a970e83`
+### Harness tests: `tests/test_kodi_harness.py` (MODIFIED)
+- 19 new tests: TestConstants (3), TestBm011ContentBuilders (12), TestMultiFileHandler (3),
+  TestValidateAddonCliRoute (1)
 
-**Usage (merge task)**: start 5h 95% / wk 50%, end 5h 97% / wk 50%,
-delta +2% / 0%. Model: claude-sonnet-4-6, effort: max.
-
-**BM-007**: not started.
-
-**Smallest next step**: Supervisor assigns BM-007 task prompt. Claude implements.
-
----
-
-## Previous — 2026-09-17 BM-006 complete; pending merge to matrix, BM-007 next
-
-**Commit**: `7735e7a` on `agent/claude`
-
-**Files created**:
-- `resources/lib/planner.py` — desired-vs-actual planner
-- `tests/test_planner.py` — 70 BM-006 tests
-
-**Tests**: 428/428 passing (`python3 -m unittest discover tests`)
-
-**What BM-006 implements**:
-`plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`
-Pure Python, no Kodi imports, no filesystem/network access, no mutation.
-Deterministic ordering: INSTALL_REPOSITORY → INSTALL_ADDON → ENABLE/DISABLE_ADDON
-→ ENSURE_ABSENT → SET_SKIN → CONFIGURE; lexical by addon_id within category.
-Skin dedup: `planned_install_ids` set prevents duplicate INSTALL_ADDON when skin
-add-on appears in both `desired.addons` and `desired.skin`.
-CONFIGURE always `current_state="unchecked"` (BM-005 does not inspect config).
-`PlanningError` raised on duplicate addon_ids in `KodiState`.
-Unmanaged add-ons (in actual but not desired) are never touched.
-
-**Key semantic decisions documented in planner.py docstring**:
-- `desired=disabled, actual=missing` → single INSTALL_ADDON with `desired_state="disabled"`;
-  executor handles install-then-disable.
-- Optional repositories (required=False) → no action planned.
-- Platform profile ID vs runtime platform ID → not compared (different namespaces;
-  mapping not formally specified; deferred to a future task).
-- Config state → always "unchecked"; BM-005 does not inspect managed settings/files.
-
-**Not live-tested** (no Kodi runtime required per task spec). All validation is
-unit tests with injectable backends / hand-built fixture objects.
-
-**Usage**: start 5h 78% / wk 48% (from prior session end), end 5h 90% / wk 49%,
-delta +12% / +1%. Model: claude-sonnet-4-6, effort: max.
-
-**Human gate before BM-007**: Supervisor must merge `agent/claude` → `matrix`
-(or authorize Claude to push). No merge conflicts anticipated (BM-006 adds two
-new files only).
-
-**Smallest next step**: Supervisor merges BM-006 to `matrix`, then assigns BM-007.
+### Total test count: 758/758 passing (was 626 before BM-011)
 
 ---
 
-## Previous — 2026-09-17 BM-005 live validation complete; project idle, BM-006 next
+## What Is Partially Complete
 
-**Validation method**: Disposable Kodi 21.1 (macOS) via script.backup.pro
-kodi_test.py harness. All calls read-only. Real Kodi profile not touched.
+### Live validation: `validate_addon()` — FAILS at step 10
 
-**Validation results**: 9/9 items passed.
+Steps completed in runs:
+- [1/17] reset ✓
+- [2/17] install BM + trigger ✓
+- [3/17] configure ✓
+- [4/17] HTTP server on port 8922 serving 4 paths ✓
+- [5/17] launch + ready ✓
+- [6/17] test addon NOT installed ✓
+- [7/17] repo installed via BM-010 path ✓
+  - `enable_addon('repository.build-manager-test')` ✓
+  - `SetAddonEnabled(harness-trigger)` → enabled ✓
+  - `Addons.ExecuteAddon(trigger, "update_repos")` → triggered UpdateAddonRepos ✓
+- [8/17] WARNING: `script.module.build-manager-test` NOT in repo index after 90s
+- [9/17] test addon still NOT installed ✓
+- [10/17] FAIL: `AddonManager.install()` returns FAILED with poll timeout after 120s
+  - `Addons.ExecuteAddon(trigger, addon_id)` itself succeeds (no error)
+  - `InstallAddon(addon_id)` is called inside Kodi but the addon never appears in DB
 
-| Item | Result | Detail |
-|---|---|---|
-| 1. Platform flags | PASS | `system.platform.osx=True`, all others False; detected platform=`macos` |
-| 2. Kodi version | PASS | `_parse_version_response` → `"21.1"` from `{"major":21,"minor":1,...}` |
-| 3. Active skin | PASS | `Settings.GetSettingValue(lookandfeel.skin)` → `"skin.estuary"` |
-| 4. Addons shape | PASS | `result.addons` present; 29 add-ons; each has `addonid`/`enabled`/`version` |
-| 5a. Parse addon response | PASS | `_parse_addon_response` → 29 entries without error |
-| 5b. Parse addon list | PASS | `_parse_addon_list` → 29 sorted `InstalledAddon` objects |
-| 5c. KodiState | PASS | Constructed and frozen; `platform=macos`, `kodi_version=21.1`, `skin=skin.estuary` |
-| 6. Determinism | PASS | Two successive KodiState snapshots are equal |
-| 7. Read-only proof | PASS | No add-on files added/removed during validation |
-
-**Discovery — platform flags via HTTP JSON-RPC**: `XBMC.GetCondVisibility` does
-not exist in Kodi 21's HTTP JSON-RPC API (returns `-32601 Method not found`).
-The correct HTTP equivalent is `XBMC.GetInfoBooleans(booleans:[...])`. The
-inspector uses `xbmc.getCondVisibility()` in-process — both go through Kodi's
-internal condition evaluator. Validation used `XBMC.GetInfoBooleans` as a proxy.
-
-**Discovery — Addons.GetAddons extra field**: Each add-on entry also includes
-a `"type"` field (e.g. `"kodi.audioencoder"`) not declared in BM-005's expected
-fields. Inspector correctly ignores it — no code change required.
-
-**No code change**: inspector.py and tests unchanged. 358/358 tests still pass.
-
-**Kodi version confirmed**: 21.1 (`20240817-183eb85f10`, stable), macOS.
-
-**Usage (validation task)**: start 5h 75% / wk 47%, end 5h 78% / wk 48%,
-delta +3% / +1%. Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor assigns BM-006 task prompt. Claude implements
-desired-vs-actual diff / planner consuming `ResolvedBuild` (BM-004) and
-`KodiState` (BM-005).
+Steps NOT yet validated: 11–17
 
 ---
 
-## Previous — 2026-09-17 BM-005 merged to matrix; project idle, BM-006 next
+## Root Cause Analysis of Step 10 Failure
 
-**matrix before**: `2ad253f`
-**matrix after**: `6d41279` (fast-forward — no squash, no rebase)
-**Merge type**: Fast-forward via `git push origin 6d41279:refs/heads/matrix`
+**Kodi 21's `SyncInstalled()` registers newly-discovered addons as `enabled=0` (disabled).**
+This was diagnosed and fixed for step 7 (trigger script). The trigger script is now enabled.
 
-**Tests on matrix**: 358/358 passing (`python3 -m unittest discover tests`)
+**The remaining failure**: `InstallAddon(script.module.build-manager-test)` succeeds
+but the addon never appears in Kodi's database after 120s polling. This means either:
 
-**Codex**: untouched at `a970e83`
+1. **The test repository hasn't been indexed** — `UpdateAddonRepos` was triggered
+   but Kodi didn't successfully fetch `addons.xml` from `http://127.0.0.1:8922/addons.xml`.
+   If the repo index is empty, `InstallAddon` silently does nothing.
 
-**BM-006**: not started
+2. **The addons.xml format is wrong** — Kodi can't parse the file and skips the repo.
 
-**Usage (merge task)**: start 5h 67% / wk 46%, end 5h 67% / wk 46%,
-delta ~0% / 0%. Model: claude-sonnet-4-6, effort: max.
+3. **`Addons.GetAddons(installed=False)` doesn't expose repo-indexed addons** in Kodi 21
+   (step 8 WARNING is a symptom; this API may only show local addons).
 
-**Smallest next step**: Supervisor assigns BM-006 task prompt. Claude implements
-desired-vs-actual diff / planner consuming `ResolvedBuild` (BM-004) and
-`KodiState` (BM-005).
-
----
-
-## Previous — 2026-09-17 BM-005 complete; awaiting supervisor review
-
-**Files created**:
-- `resources/lib/inspector.py` — NEW. Kodi state inspector.
-  Public API: `KodiStateInspector(backend=None).inspect() -> KodiState` and
-  `inspect_kodi_state() -> KodiState`.
-  Error: `KodiInspectionError`.
-  Types: `KodiState` (frozen dataclass), `InstalledAddon` (frozen dataclass).
-  Backend: `KodiBackend` (injectable base), `KodiRuntimeBackend` (lazy xbmc).
-  JSON-RPC helpers (testable without xbmc): `_parse_addon_response`,
-  `_parse_version_response`. Add-on normalizer: `_parse_addon_list`.
-  Stdlib only — no new runtime dependencies.
-- `tests/test_kodi_inspector.py` — NEW. 58 BM-005 tests (all passing).
-
-**Tests**: 349/349 passing (`python3 -m unittest discover tests`)
-- 291 prior (BM-001 through BM-004)
-- 58 new BM-005 inspector tests
-
-**What was live-proven**: All 349 tests passing with fake backend. No Kodi
-runtime required; no real Kodi profiles touched.
-
-**Platform mapping** (Kodi condition → BM platform ID):
-- `system.platform.tvos`    → `tvos`
-- `system.platform.android` → `android` (includes Fire TV)
-- `system.platform.osx`     → `macos`
-- `system.platform.ios`     → `ios`
-- `system.platform.windows` → `windows`
-- `system.platform.linux`   → `linux`
-- (none matched)            → `unknown`
-Precedence: tvos > android > macos > ios > windows > linux > unknown.
-
-**JSON-RPC methods used (read-only)**:
-- `Addons.GetAddons` with `installed:true` and properties `[enabled, version]`
-- `Application.GetProperties` with properties `[version]`
-- `xbmc.getSkinDir()` — active skin directory (==addon_id by Kodi convention)
-- `xbmc.getCondVisibility()` — platform condition flags
-
-**No mutating JSON-RPC methods called**. No Kodi state written.
-
-**Add-on ordering**: sorted by addon_id; malformed entries silently skipped.
-
-**Skin detection**: `xbmc.getSkinDir()` returns folder name matching addon_id
-for all standard Kodi skins. Returns "" if result doesn't start with "skin.".
-
-**What was NOT live-proven outside tests**: `KodiRuntimeBackend` methods
-require a live Kodi process. The JSON-RPC parsing helpers are fully tested;
-the xbmc API call paths are not testable outside Kodi.
-
-**Runtime dependencies added**: None.
-
-**BM-006**: not started.
-
-**Usage (this task)**: start 5h 56% / wk 44%, end 5h 63% / wk 45%,
-delta +7% / +1%. Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor reviews BM-005 on `agent/claude`. Merges to
-`matrix`. Claude continues with BM-006 (desired-vs-actual diff / planner).
+4. **The `<datadir>` URL format in repo addon.xml** — the datadir is `http://127.0.0.1:8922/`
+   with `zip="false"`. Kodi might construct the addon download URL differently than expected.
 
 ---
 
-## Previous — 2026-09-17 BM-004 merged to matrix; project idle, BM-005 next
+## Known Unknowns / Design Questions
 
-**matrix before**: `a5d263e`
-**matrix after**: `2ad253f` (fast-forward — no squash, no rebase)
-**Merge type**: Fast-forward via `git push origin 2ad253f:refs/heads/matrix`
+**Q1: Does Kodi actually hit the HTTP server?**
+The `_MultiFileHandler.log_message` is suppressed. There is no evidence Kodi requested
+`/addons.xml` or the addon ZIP from port 8922. Add HTTP server logging to confirm.
 
-**Tests on matrix**: 291/291 passing (`python3 -m unittest discover tests`)
+**Q2: Is `<datadir zip="false">` the correct attribute?**
+Real repos (kodi.tv) use `zip="true"`. With `zip="false"`, Kodi may expect addon
+files directly (not ZIPs) at `{datadir}/{addon_id}/`. Try changing to `zip="true"`.
 
-**Codex**: untouched at `a970e83`
+**Q3: Does `Addons.GetAddons(installed=False)` work in Kodi 21?**
+Step 8 never finds the test addon. This API may return nothing useful. It is not
+critical — if `InstallAddon` works, step 10 will succeed regardless.
 
-**BM-005**: not started
-
-**Usage (merge task)**: start 5h 52% / wk 44%, end 5h 52% / wk 44%,
-delta ~0% / 0%. Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor assigns BM-005 task prompt. Claude implements
-Kodi/platform state inspector per §38 of the canonical plan.
-
----
-
-## Previous — 2026-09-17 BM-004 complete; profile resolver committed
-
-**Files created/changed**:
-- `resources/lib/resolver.py` — NEW. Profile resolver.
-  Public API: `resolve_manifest(manifest, device_profile_id) -> ResolvedBuild`.
-  Error: `ManifestResolutionError` (subclass of `ManifestError`).
-  Output: `ResolvedBuild` (frozen dataclass).
-  Stdlib only — no new runtime dependencies.
-- `tests/test_manifest_resolver.py` — NEW. 78 BM-004 tests (all passing).
-- `docs/MANIFEST.md` — Optional-group deduplication rule added to §Optional groups;
-  open question #5 closed.
-- `.agent/` state files updated.
-
-**Tests**: 291/291 passing (`python3 -m unittest discover tests`)
-- 213 prior (BM-001/BM-002/BM-003)
-- 78 new BM-004 resolver tests
-
-**Layer application order**: base → platform → device → optional groups
-
-**Optional-group de-duplication**: platform.include_optional (listed order), then
-device.include_optional (listed order); duplicate IDs dropped by first occurrence;
-each group applied at most once. Resolves BM-002 open question #5.
-
-**Add-on ordering**: overridden entry retains original position; new entries appended
-in first-seen order.
-
-**Config merge**: packages / managed_files: union, first-seen order, no duplicates.
-Managed settings: per addon_id, keys unioned in first-seen order, addon order is
-first-seen.
-
-**Skin resolution**: deepest explicit layer wins (base → platform → device).
-
-**What was live-proven**: All 291 tests passing. `resolve_manifest` exercised
-against both minimal manifests (via dict) and `eric-main.example.json` (loaded
-from disk). Three device profiles resolved: bonus-room, family-room, shield.
-
-**No Kodi runtime involved**. No real Kodi profiles touched.
-
-**Runtime dependencies added**: None.
-
-**BM-005 status**: Not started.
-
-**Usage (this task)**: start 5h 44% / wk 42%, end 5h 50% / wk 43%,
-delta +6% / +1%. Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor reviews BM-004 on `agent/claude`. Merges to
-`matrix`. Claude continues with BM-005 (Kodi/platform state inspector).
+**Q4: Does `UpdateAddonRepos` complete before step 10 calls `InstallAddon`?**
+`UpdateAddonRepos` is async. We proceed immediately after triggering it. The 120s
+poll may be entirely spent waiting for the repo scan to complete, then `InstallAddon`
+runs too early (before the repo index is populated).
 
 ---
 
-## Previous — 2026-09-17 BM-003 merged to matrix; project idle, BM-004 next
+## Suggested Next Steps (in order)
 
-**matrix before**: `a983df8`
-**matrix after**: `a5d263e` (fast-forward — no squash, no rebase)
-**Merge type**: Fast-forward via `git push origin a5d263e:refs/heads/matrix`
+### Step A: Enable HTTP server logging
+In `_MultiFileHandler.log_message`, temporarily print to stderr to see if Kodi
+is hitting the server. This costs ~1 line of change and diagnoses Q1 definitively:
 
-**Tests on matrix**: 213/213 passing (`python3 -m unittest discover tests`)
+```python
+def log_message(self, fmt, *args) -> None:
+    import sys
+    print(f"  [http] {fmt % args}", file=sys.stderr)
+```
 
-**Codex**: untouched at `a970e83`
+### Step B: Try `zip="true"` in repo addon.xml
+In `_make_bm011_repo_zip()`, change:
+```python
+f'<datadir zip="false">{base_url}/</datadir>'
+```
+to:
+```python
+f'<datadir zip="true">{base_url}/</datadir>'
+```
+(This is more consistent with kodi.tv repos.)
 
-**BM-004**: not started
+### Step C: Wait after UpdateAddonRepos before InstallAddon
+After triggering `update_repos` in step 7, wait 30s before calling `InstallAddon`
+in step 10. This gives the repo scan time to complete. Add `time.sleep(30)` between
+steps 8 and 9, or make step 8 wait for the HTTP server to have received at least
+one request to `/addons.xml`.
 
-**Usage (merge task)**: start 5h 41% / wk 42%, end 5h 42% / wk 42%,
-delta +1% / 0%. Model: claude-sonnet-4-6, effort: max.
+### Step D: Verify HTTP server path match
+The addon ZIP is served at:
+`/{addon_id}/{version}/{addon_id}-{version}.zip`
+e.g. `/script.module.build-manager-test/1.0.0/script.module.build-manager-test-1.0.0.zip`
 
-**Smallest next step**: Supervisor assigns BM-004 task prompt. Claude implements
-profile merge/inheritance logic per merge semantics documented in
-`docs/MANIFEST.md` §Merge semantics.
-
----
-
-## Previous — 2026-09-17 BM-003 complete; manifest loader/validator committed
-
-**Files created/changed**:
-- `resources/lib/manifest.py` — NEW. Production manifest loader and validator.
-  Public API: `load_manifest_file`, `load_manifest_json`, `validate_manifest`.
-  Errors: `ManifestError`, `ManifestParseError`, `ManifestValidationError`.
-  Typed dataclasses: `Manifest`, `BuildInfo`, `AddonEntry`, `Repository`,
-  `SkinEntry`, `ManagedSettingScope`, `ConfigDeclarations`, `ProfileLayer`,
-  `DeviceProfile`, `OptionalGroup`, `PrivateOverlayRef`, `RestartPolicy`.
-  No new runtime dependencies (stdlib only: `json`, `re`, `posixpath`,
-  `urllib.parse`, `dataclasses`).
-- `tests/test_manifest_loader.py` — NEW. 127 BM-003 tests (all passing).
-- `docs/MANIFEST.md` — Updated runtime-validation note to reflect stdlib-only
-  implementation (removed jsonschema recommendation).
-- `.agent/` state files updated.
-
-**Tests**: 181/181 passing (`python3 -m unittest discover tests`)
-- 3 BM-001 import tests
-- 51 BM-002 schema structural tests
-- 127 BM-003 loader/validator tests
-
-**What was live-proven**: All 181 tests passing. `load_manifest_file` used
-against `minimal.json` and `eric-main.example.json` within tests.
-
-**No Kodi runtime involved**. No real Kodi profiles touched.
-
-**Runtime dependencies added**: None.
-
-**BM-003 implementation decisions**:
-- Stdlib-only: no `jsonschema` dependency (per supervisor instruction)
-- Semantic cross-references validated: device_profile.extends must reference
-  existing platform, include_optional references must exist, duplicate IDs
-  rejected at all layers
-- Path safety: rejects absolute, UNC, Windows drive, `..` traversal, null bytes
-- URL policy: `https` (preferred) + `http` (local/dev), embedded credentials rejected
-- Frozen dataclasses for all types except `Manifest` (which contains dict fields)
-
-**Usage (this task)**: start 5h 19% / wk 39%, end 5h 31% / wk 41%,
-delta +12% / +2%. Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor reviews and merges BM-003 to `matrix`.
-Claude continues with BM-004 (profile merge/inheritance logic, semantics
-documented in `docs/MANIFEST.md`).
+Check that Kodi constructs this exact URL. With `zip="false"`, Kodi might use a
+flat path like `/{addon_id}-{version}.zip` instead.
 
 ---
 
-## Previous — 2026-09-17 WF-001 usage-tracking docs merged to matrix
+## What Remains Unimplemented
 
-Integration only. No implementation changes. No BM-003 work started.
-
-**What happened**:
-- `agent/claude` fast-forwarded `matrix` from `89039d6` → `a983df8`
-- Includes `a4c999f` (post-BM-002 merge state) and `a983df8` (WF-001: usage-tracking)
-- `matrix` pushed to origin
-- `agent/claude` agent-state updated: status=idle, last_commit=a983df8
-- `agent/codex` not touched
-- 51/51 tests passing
-
-**Usage (this task)**: start 5h 96% / wk 35%, end 5h 96% / wk 35%, delta ~0%.
-Model: claude-sonnet-4-6, effort: max.
-
-**Smallest next step**: Supervisor assigns BM-003 task prompt. Claude implements
-manifest loader/parser on `agent/claude` per §38 and `docs/MANIFEST.md`.
+- Live validation steps 11–17 (not reached yet)
+- `BUILD_MANAGER_SUPERVISOR_HANDOFF.md` update
+- `docs/TESTING.md` update
 
 ---
 
-## Previous — 2026-09-17 BM-002 merged to matrix; ready for BM-003
+## Tests Run and Results
 
-Integration only. No implementation changes.
+```
+Ran 758 tests in 0.562s
+OK
+```
 
-**What happened**:
-- `agent/claude` fast-forwarded `matrix` from `5442f13` → `89039d6`
-- Includes BM-002 commits: `7bfda71`, `98e93db`, `4ac58c6`, `89039d6`
-- `matrix` pushed to origin
-- `agent/claude` agent-state updated: status=idle, next task=BM-003
-- `agent/codex` not touched (Codex still temporarily unavailable)
-- 51/51 tests passing on `matrix`
-
-**matrix now contains** (key commits):
-- `5442f13` — BM-001 complete (§30 branch-workflow correction)
-- `7bfda71` — BM-002: manifest schema v1
-- `89039d6` — BM-002: require extends on every device profile
-
-**Smallest next step**: Supervisor assigns BM-003 task prompt. Claude implements
-manifest loader/parser on `agent/claude` per §38 and `docs/MANIFEST.md`.
+All unit tests pass. No live validation test has passed (step 10 blocks).
 
 ---
 
-## Previous — 2026-09-17 BM-002 complete; manifest schema v1 defined
+## Real Kodi / Device Safety
 
-Data contract only. No production parser code. No Kodi mutation. No new
-runtime dependencies. BM-001 implementation files unchanged from `799b836`.
-
-**Files created**:
-- `docs/MANIFEST.md` — human-readable schema reference (layering model, merge
-  semantics for BM-004, field-by-field docs, security notes, open questions)
-- `resources/builds/schema-v1.json` — JSON Schema Draft 7
-- `resources/builds/examples/minimal.json` — minimal valid manifest
-- `resources/builds/examples/eric-main.example.json` — realistic example
-- `tests/test_manifest_schema.py` — 47 new structural validation tests
-
-**Tests**: 50/50 passing (`python3 -m unittest discover tests`)
-- 3 BM-001 import tests
-- 8 schema-file structure tests
-- 5 minimal-example tests
-- 18 eric-main example tests
-- 16 invalid-case tests (missing fields, bad states, unknown keys, etc.)
-- 2 BM-001 regression tests
-
-**Key schema decisions**:
-- JSON format, JSON Schema Draft 7 (no added runtime dependency)
-- `schema_version: 1` (integer constant) — format versioning independent of build version
-- Layering: base → platform profile → device profile → optional groups → private overlay
-- Explicit states: `enabled` | `disabled` | `absent`; omitted = inherit (not disabled)
-- `additionalProperties: false` at top level and on all named object types (fail-closed)
-- `private_overlay` is a reference only; no credentials in public manifest
-
-**What was live-proven**: All 50 tests passing with `python3 -m unittest`.
-No Kodi runtime required; no real Kodi profiles touched.
-
-**Smallest next step**: Supervisor review → BM-003 (manifest parser/validator
-in Python, using the schema and merge semantics defined here).
+No real Kodi profile was touched. No Apple TV was touched. All mutation occurred
+in `.kodi-test` (disposable profile). No Kodi process is running at handoff.
 
 ---
 
-## Previous — 2026-09-17 BM-001 merged to matrix; ready for BM-002
+## Model and Effort
 
-Integration only. No implementation changes.
+- Model: `claude-sonnet-4-6`
+- Effort: `max`
 
-**What happened**:
-- `agent/claude` fast-forwarded `matrix` from `a970e83` → `5442f13`
-- `matrix` pushed to origin; all BM-001 work and documentation corrections are
-  now on the integration branch
-- `agent/claude` agent-state updated: status=idle, next task=BM-002
-- `agent/codex` not touched (Codex still temporarily unavailable)
+## Usage at Handoff
 
-**matrix now contains**:
-- Bootstrap (`a970e83`)
-- BM-001 skeleton (`799b836`)
-- Agent-state correction + canonical plan (`1789386`)
-- §30 branch-workflow correction (`5442f13`)
+- 5-hour window: **95% used** (resets ~2026-09-18T04:20 UTC, in ~3h 2m)
+- Weekly (all models): 65% used
 
-**BM-001 implementation files on matrix**: `addon.xml`, `default.py`,
-`resources/lib/`, `resources/settings.xml`, `resources/language/`, `tests/`,
-`changelog.md`, `LICENSE.txt`, `.gitignore`
+## Next Command for Fresh Session
 
-**Smallest next step**: Supervisor assigns BM-002 task prompt. Claude implements
-manifest schema v1 on `agent/claude` per §38 and §7 of the canonical plan.
+```
+python tools/kodi_test.py validate-addon
+```
 
----
-
-## Previous — 2026-09-17 Project plan §30 corrected (branch workflow)
-
-Documentation correction only. No BM-001 implementation files changed.
-
-**What changed**:
-- `BUILD_MANAGER_PROJECT_PLAN.md` §30: replaced incorrect `main`-only branch
-  recommendation with the actual established workflow (`matrix` as protected
-  integration branch; `agent/codex` and `agent/claude` as worktree branches;
-  short-lived task branches optional). No other sections touched.
-
-**BM-001 implementation unchanged**: `git diff 799b836 -- addon.xml default.py
-resources/ tests/ changelog.md LICENSE.txt` produced no output.
-
----
-
-## Previous — 2026-09-17 Agent-state correction; canonical plan confirmed installed
-
-Documentation correction only. No BM-001 implementation files changed.
-
-**What changed in this commit**:
-- `AGENT_STATUS.json`: `next_agent` corrected from `codex` to `claude` (Codex
-  temporarily unavailable; Claude continues development after supervisor review)
-- `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`: rewritten to accurately reference the
-  canonical 51-section `BUILD_MANAGER_PROJECT_PLAN.md`; removed inaccurate
-  reference to a shorter 9-phase plan
-- `HANDOFF.md` (this file): corrected prior entry's claim about the project plan
-
-**BM-001 implementation unchanged**: `addon.xml`, `default.py`, `resources/`,
-`tests/`, `changelog.md`, `LICENSE.txt` are identical to commit `799b836`.
-`git diff 799b836 -- addon.xml default.py resources/ tests/ changelog.md LICENSE.txt`
-produced no output.
-
-**Canonical plan**: `BUILD_MANAGER_PROJECT_PLAN.md` — 51-section
-supervisor-approved document covering project goals, design philosophy, MVP
-scope, architecture, phase plan (§37), initial backlog BM-001–BM-020 (§38),
-and all workflow/agent conventions. It was supplied directly by the supervisor
-and must not be summarized or replaced.
-
-## Previous — 2026-09-17 BM-001 complete; awaiting supervisor review
-
-BM-001 project skeleton committed to `agent/claude` (`799b836`). Codex was
-unavailable during this task; Claude acted as primary agent.
-
-**What was done**:
-- `addon.xml` — v0.1.0, MIT, `xbmc.python 3.0`, all platforms, en_US/en_GB
-- `default.py` — minimal entrypoint, shows "not yet configured" dialog via
-  `utils.getString`; launches safely without Kodi runtime errors
-- `resources/lib/__init__.py` — empty package marker for test importability
-- `resources/lib/build_manager.py` — `BuildManager` stub class (no Kodi
-  imports; importable outside runtime)
-- `resources/lib/utils.py` — `getString()` helper wrapping `xbmcaddon.Addon`
-- `resources/settings.xml` — placeholder settings section
-- `resources/language/resource.language.en_gb/strings.po` — strings 32000
-  (Build Manager), 32001 (General), 32010 (placeholder UI message)
-- `tests/__init__.py`, `tests/test_imports.py` — 3/3 passing
-- `changelog.md`, `LICENSE.txt`, `.gitignore`
-
-**Test results**: 3/3 passing (`python3 -m unittest tests/test_imports.py`)
-
-**Validation**:
-- `addon.xml` and `resources/settings.xml` parse correctly
-- No Kodi runtime imports in tested modules
-- No secrets or machine-specific paths
-- No real Kodi profiles or devices touched
-
-**What was not done**:
-- Provisioning logic (BM-002+)
-- `resources/images/icon.png` (binary asset pending; Kodi shows no icon rather
-  than erroring)
-- Merge to `matrix` (supervisor decision)
-
-**Smallest next step**: Supervisor review of `agent/claude` → `799b836`, then
-merge to `matrix`. Claude continues with BM-002 (manifest schema v1, §38 of
-the canonical plan) after supervisor review.
-
-## Previous — 2026-09-17 Bootstrap complete
-
-*(see git log — bootstrap commit `a970e83` on `matrix`)*
+Then investigate HTTP server hits (Step A above). Most likely fix is either
+enabling server logging to see if Kodi hits port 8922, or changing `zip="false"`
+to `zip="true"` in `_make_bm011_repo_zip()`.
