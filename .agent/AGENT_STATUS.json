@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-011-merged",
-  "reason": "BM-011 merged to matrix (031e405→5bc6325, fast-forward, 836/836 tests). Cleanup: deterministic repo order (sorted repo_ids) + corrected desired-state module docs. Next task: BM-012 (dependency closure). NOT started.",
-  "last_commit": "5bc6325",
+  "task": "BM-012",
+  "reason": "BM-012 complete: resources/lib/dependencies.py + 96 unit tests + harness validate_dependencies() (18-step live sequence). 932/932 tests pass. Live validation not yet run.",
+  "last_commit": "pending",
   "matrix_sha": "5bc6325",
   "next_agent": "human",
-  "updated_at": "2026-09-18T13:05:00Z"
+  "updated_at": "2026-09-18T15:30:00Z"
 }

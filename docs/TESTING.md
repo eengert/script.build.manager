@@ -22,6 +22,8 @@ The test suite covers:
 | `test_planner.py` | Desired-vs-actual planner (BM-006) | 86 |
 | `test_kodi_harness.py` | Disposable Kodi harness (BM-009) | 74 |
 | `test_repository.py` | Repository detection/install (BM-010) | 87 |
+| `test_addon_manager.py` | General add-on installation (BM-011) | 132 |
+| `test_dependencies.py` | Dependency closure discovery/reconciliation (BM-012) | 96 |
 
 ## Disposable Kodi harness
 
@@ -169,9 +171,59 @@ polling, direct filesystem writes for ZIP extraction, and a Kodi restart
 All mutation occurs only in the `.kodi-test` disposable environment. The real
 Kodi profile is never touched.
 
-### Out of scope for BM-009 / BM-010
+### validate-addon command (BM-011)
 
-- General add-on installation (BM-011+)
-- Add-on provisioning from the full planner action plan (BM-011+)
+`validate-addon` runs a 19-step live sequence to prove general add-on
+detection and installation work end-to-end:
+
+```
+python3 tools/kodi_test.py validate-addon
+```
+
+Tests the constrained package-install fallback: resolve ZIP URL from repo
+metadata → download → validate → staged extract → restart → enable. Proves
+both `desired_state='enabled'` and `desired_state='disabled'` paths, restart
+persistence, and ALREADY_INSTALLED idempotency.
+
+Ports: Kodi 8920, HTTP server 8922.
+
+### validate-dependencies command (BM-012)
+
+`validate-dependencies` runs an 18-step live sequence to prove dependency
+closure discovery and reconciliation work end-to-end:
+
+```
+python3 tools/kodi_test.py validate-dependencies
+```
+
+Dependency graph used in the test:
+
+```
+plugin.video.bm012-root
+  ├── script.module.bm012-a   (required, MISSING pre-reconcile)
+  │     └── script.module.bm012-b   (required, discovered in round 2)
+  └── script.module.bm012-optional (optional="true" — never installed)
+```
+
+Proves:
+1. `resolve_closure()` correctly classifies bm012-a as MISSING and
+   bm012-optional as OPTIONAL before any installation.
+2. `reconcile_dependencies()` installs bm012-a (round 1) and then bm012-b
+   (round 2, discovered by reading bm012-a's addon.xml after install).
+3. Optional deps are never installed regardless of availability.
+4. `result.all_required_satisfied = True` after reconciliation.
+5. Kodi API confirms bm012-a and bm012-b are installed + enabled.
+6. bm012-optional is never installed even though its ZIP is served.
+
+Each required dep installation triggers a Kodi restart (stop → launch →
+wait_for_ready) — the harness substitute for `UpdateLocalAddons`.
+Additive-only: no add-on is disabled or removed during reconciliation.
+
+Ports: Kodi 8920, HTTP server 8922.
+
+### Out of scope for BM-009 / BM-010 / BM-011 / BM-012
+
+- BM-013 drift reconciliation for already-installed add-ons
+- Add-on provisioning from the full planner action plan
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
 - Windows or Linux harnesses

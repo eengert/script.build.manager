@@ -1,72 +1,76 @@
-# Agent Handoff — BM-011 Merged to Matrix
+# Agent Handoff — BM-012 Complete
 
 **Date**: 2026-09-18
 **Agent**: Claude (claude-sonnet-4-6, effort max)
-**Branch**: `agent/claude` = `5bc6325` / `matrix` = `5bc6325`
-**Status**: BM-011 complete and merged. Project idle. Next task: BM-012.
+**Branch**: `agent/claude` (ahead of matrix; not yet merged)
+**Status**: BM-012 implementation complete. Unit tests pass. Live validation ready to run.
 
 ---
 
 ## What Was Done This Session
 
-### Cleanup commit: `5bc6325`
+### BM-012 — Dependency closure discovery and reconciliation
 
-Two pre-merge cleanups applied to `agent/claude`, then fast-forward merged to `matrix`.
+**Files created:**
+- `resources/lib/dependencies.py` — production module
+- `tests/test_dependencies.py` — 96 unit tests
 
-**Cleanup 1 — Deterministic repository resolution order**:
-- `_resolve_package_url` now uses `repo_ids = sorted(...)` before iterating
-- "First match wins" resolution is now deterministic regardless of Kodi's
-  return order for installed repositories
-- Added `test_repo_order_is_lexical_regardless_of_kodi_return_order` in
-  `TestRepoResolution`: both orderings of `[repository.alpha, repository.zeta]`
-  yield alpha's datadir URL, confirming alpha always wins lexically
-- Updated `_resolve_package_url` docstring to document the sorted order
-
-**Cleanup 2 — Stale desired-state module documentation**:
-- Updated module docstring (Desired state section) to accurately describe the
-  symmetric finalization logic
-- Updated architecture step 7 from "ENABLE if desired_state=enabled" to
-  "FINALIZE — symmetric state enforcement: if discovered ≠ desired → SetAddonEnabled"
-- Both enabled and disabled paths now documented correctly
-
-### Merge
-
-- `matrix` fast-forwarded from `031e405` → `5bc6325`
-- No squash, no rebase, no history rewrite
-- 836/836 tests confirmed on matrix post-merge
+**Files modified:**
+- `tools/kodi_test.py` — BM-012 add-on ZIP makers, `_HttpDependencyBackend`, `validate_dependencies()` (18-step live sequence), `validate-dependencies` CLI command
+- `docs/TESTING.md` — test table updated (BM-011 + BM-012 rows), `validate-addon` and `validate-dependencies` sections added
+- `.agent/AGENT_STATUS.json` — BM-012 in_progress → complete
+- `.agent/HANDOFF.md` — this file
+- `.agent/USAGE_HISTORY.md` — BM-012 usage row appended
 
 ---
 
-## BM-011 Complete — Architecture Summary
+## Architecture Summary
 
-### Constrained package-install fallback (Option A)
+### `resources/lib/dependencies.py`
 
-Production `KodiRuntimeAddonBackend.invoke_install`:
-1. Enumerate installed+enabled repos (sorted lexically) → check each for addon_id
-2. Fetch `addons.xml` from repo's `<info>` URL → find version
-3. Construct ZIP URL from `<datadir zip="true">` + standard convention
-4. Download ZIP (http/https only, no credentials, 100MB cap, 30s timeout)
-5. Validate ZIP (safe paths, no traversal, addon.xml present, ID/version match)
-6. Staged extract → atomic rename to `special://home/addons/{addon_id}/`
-7. `UpdateLocalAddons` builtin → Kodi discovers new add-on
+**Public API:**
+- `DependencyResolver(backend).resolve_closure(root_addon_ids)` → `DependencyClosure` — pure graph; reads addon.xml, classifies deps, no mutation
+- `DependencyResolver(backend).reconcile_dependencies(root_addon_ids)` → `DependencyResult` — pure graph + iterative install/enable loop (up to `_MAX_RECONCILE_ROUNDS=10`)
+- `KodiRuntimeDependencyBackend()` — production backend (lazy Kodi imports; delegates to `AddonManager(KodiRuntimeAddonBackend())` for install)
+- `DependencyBackend` — abstract base for test fakes
 
-### State finalization (symmetric)
+**Key design decisions:**
 
-After poll: `if info.enabled != desired_enabled: set_addon_enabled(addon_id, desired_enabled)`
-Both "enabled" and "disabled" paths symmetrically enforced and verified.
-Only "enabled" and "disabled" accepted; other values → FAILED before any backend call.
+**System deps**: `xbmc.*` → `SYSTEM`, never installed.
 
-### Security
+**Optional deps**: `<import optional="true">` → `OPTIONAL`, recorded but never installed or traversed. Traverse only required deps.
 
-- Redirect safety: `_SafeRedirectHandler` rejects non-http/https, credentials, bad host
-- `_build_safe_opener()` removes FileHandler (file:// blocked even on redirect)
-- `_validate_url`: http/https only, no credentials, no missing host
-- ZIP: safe paths, no traversal, ID match, version match
+**Cycle detection**: DFS with `visiting` list (current path) + `visited` dict (fully processed). Cycle check precedes visited check so back-edges in a cycle are correctly detected even when the first occurrence is already in `visited`. Cycle nodes recorded with `cycle_path`; DFS continues other branches.
 
-### BM-013 boundary
+**Version semantics**: `installed >= required_min` (tuple int comparison); unparseable → conservative `True`; `VERSION_INSUFFICIENT` nodes are surfaced as unresolved, never upgraded.
 
-BM-011 finalizes state of add-ons it just installed. BM-013 handles drift
-reconciliation for already-installed add-ons.
+**Iterative reconcile**: Each round calls `resolve_closure` + applies installs + enables. `acted_on` set prevents retrying failed add-ons. Stable when no new missing/disabled nodes remain (or max rounds exhausted).
+
+**Additive-only**: `reconcile_dependencies()` never disables or removes any add-on. `set_addon_enabled()` is only called with `enabled=True`.
+
+**Determinism**: roots sorted lexically; sub-deps sorted lexically by addon_id within each add-on; installs within a round sorted lexically.
+
+### Live validation (`validate_dependencies()`, 18 steps)
+
+Dependency graph:
+```
+plugin.video.bm012-root
+  ├── script.module.bm012-a   (required, MISSING pre-reconcile)
+  │     └── script.module.bm012-b   (required, discovered round 2)
+  └── script.module.bm012-optional (optional="true" — never installed)
+```
+
+Reconcile rounds expected:
+- Round 1: A is MISSING → install A (triggers Kodi restart)
+- Round 2: A installed → B is MISSING → install B (triggers Kodi restart)
+- Round 3: all satisfied → stable
+
+Each installation uses `AddonManager(_HttpAddonBackend())` — same constrained package-install fallback as BM-011 production. Read_addon_xml reads from KODI_ADDONS_DIR filesystem (not via xbmcvfs). HTTP server on port 8922.
+
+**Live validation not yet run** — requires running Kodi 21 with the disposable harness. Command:
+```
+python3 tools/kodi_test.py validate-dependencies
+```
 
 ---
 
@@ -74,41 +78,51 @@ reconciliation for already-installed add-ons.
 
 | Branch | SHA | Notes |
 |--------|-----|-------|
-| `matrix` | `5bc6325` | BM-011 merged |
-| `agent/claude` | `5bc6325` | same |
+| `matrix` | `5bc6325` | BM-011 merged (BM-012 not yet merged) |
+| `agent/claude` | `<BM-012 commit>` | BM-012 complete |
 | `agent/codex` | `a970e83` | intentionally stale, unchanged |
 
 ---
 
 ## Test Results
 
-- 836/836 tests on both `agent/claude` and `matrix`
+- 932/932 unit tests pass (836 baseline + 96 new BM-012 tests)
+- Live validation: **not yet run** (requires disposable Kodi 21 environment)
 
 ---
 
 ## What Is NOT Done
 
-- BM-012 not started (dependency closure)
+- Live validation not run (BM-012 is unit-tested but needs live disposable Kodi confirmation)
+- BM-012 not yet merged to `matrix`
+- BM-013 not started
 
 ---
 
-## Risks / Human Decisions Before BM-012
+## Human Decision Required Before Next Step
 
-1. BM-012 will require understanding the full dependency graph of a target add-on.
-   Recommend reviewing Kodi 21's JSON-RPC `Addons.GetDependencies` API availability
-   before BM-012 is scoped.
+None. The supervisor can either:
+1. Run live validation (`python3 tools/kodi_test.py validate-dependencies`) and merge if it passes
+2. Proceed to BM-013 if live validation is deferred
+
+---
+
+## Risks
+
+- **Live validation has two Kodi restarts** during reconciliation (one per required dep installed). Total live validation time ~5-10 minutes.
+- `_HttpDependencyBackend.install_addon()` creates a new `AddonManager(_HttpAddonBackend())` per call. Each call to `invoke_install()` triggers a Kodi restart. This is expected behavior in the harness (same as BM-011).
 
 ---
 
 ## Out of Scope — Noticed
 
-- None.
+- `_HttpAddonBackend._resolve_package_url()` in `tools/kodi_test.py` does not sort `repo_ids` (the BM-011 cleanup sorted this in production `addons.py` but not in the harness copy). Single-repo test isn't affected. Note for BM-013 or future harness work.
 
 ---
 
 ## Usage
 
-Start: 5h 53% / wk 73% (claude-sonnet-4-6, max effort).
-End: 5h 56% / wk 73%.
-Delta: +3% / ~0%.
+Start: 5h 59% / wk 74% (claude-sonnet-4-6, max effort).
+End: 5h 81% / wk 77%.
+Delta: +22% / +3%.
 See USAGE_HISTORY.md for the appended row.

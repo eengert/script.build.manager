@@ -1815,6 +1815,530 @@ def validate_addon() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Dependency closure validation support (BM-012)
+# ---------------------------------------------------------------------------
+
+_BM012_ROOT_ID = "plugin.video.bm012-root"
+_BM012_ROOT_VERSION = "1.0.0"
+_BM012_A_ID = "script.module.bm012-a"
+_BM012_A_VERSION = "1.0.0"
+_BM012_B_ID = "script.module.bm012-b"
+_BM012_B_VERSION = "1.0.0"
+_BM012_OPTIONAL_ID = "script.module.bm012-optional"
+_BM012_OPTIONAL_VERSION = "1.0.0"
+
+
+def _make_bm012_root_zip() -> bytes:
+    """Build the root add-on ZIP for BM-012 live validation.
+
+    plugin.video.bm012-root has a <requires> block with:
+      - script.module.bm012-a  (required) — will be MISSING pre-reconcile
+      - script.module.bm012-optional (optional="true") — never installed
+    bm012-a in turn requires bm012-b, proving iterative closure (two rounds).
+    """
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM012_ROOT_ID}"'
+        f' name="BM-012 Root Plugin"'
+        f' version="{_BM012_ROOT_VERSION}"'
+        f' provider-name="Build Manager">'
+        '<requires>'
+        '<import addon="xbmc.python" version="3.0.0"/>'
+        f'<import addon="{_BM012_A_ID}" version="{_BM012_A_VERSION}"/>'
+        f'<import addon="{_BM012_OPTIONAL_ID}" version="{_BM012_OPTIONAL_VERSION}"'
+        ' optional="true"/>'
+        '</requires>'
+        '<extension point="xbmc.python.pluginsource" library="default.py"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Root add-on for BM-012 dep closure validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM012_ROOT_ID}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM012_ROOT_ID}/default.py", b"")
+    return buf.getvalue()
+
+
+def _make_bm012_a_zip() -> bytes:
+    """Build script.module.bm012-a ZIP. Requires bm012-b (transitive dep)."""
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM012_A_ID}"'
+        f' name="BM-012 Module A"'
+        f' version="{_BM012_A_VERSION}"'
+        f' provider-name="Build Manager">'
+        '<requires>'
+        '<import addon="xbmc.python" version="3.0.0"/>'
+        f'<import addon="{_BM012_B_ID}" version="{_BM012_B_VERSION}"/>'
+        '</requires>'
+        '<extension point="xbmc.python.module" library="lib"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Module A for BM-012 dep closure validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM012_A_ID}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM012_A_ID}/lib/__init__.py", b"")
+    return buf.getvalue()
+
+
+def _make_bm012_b_zip() -> bytes:
+    """Build script.module.bm012-b ZIP. Only requires xbmc.python (SYSTEM)."""
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM012_B_ID}"'
+        f' name="BM-012 Module B"'
+        f' version="{_BM012_B_VERSION}"'
+        f' provider-name="Build Manager">'
+        '<requires>'
+        '<import addon="xbmc.python" version="3.0.0"/>'
+        '</requires>'
+        '<extension point="xbmc.python.module" library="lib"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Module B for BM-012 dep closure validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM012_B_ID}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM012_B_ID}/lib/__init__.py", b"")
+    return buf.getvalue()
+
+
+def _make_bm012_optional_zip() -> bytes:
+    """Build script.module.bm012-optional ZIP. Served but never installed.
+
+    Listed in addons.xml and served by the HTTP server to prove the optional
+    policy: even though the ZIP is available, DependencyResolver never installs
+    add-ons declared with optional="true".
+    """
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM012_OPTIONAL_ID}"'
+        f' name="BM-012 Optional Module"'
+        f' version="{_BM012_OPTIONAL_VERSION}"'
+        f' provider-name="Build Manager">'
+        '<requires>'
+        '<import addon="xbmc.python" version="3.0.0"/>'
+        '</requires>'
+        '<extension point="xbmc.python.module" library="lib"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Optional module for BM-012 dep closure validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM012_OPTIONAL_ID}/addon.xml", addon_xml.encode("utf-8"))
+        zf.writestr(f"{_BM012_OPTIONAL_ID}/lib/__init__.py", b"")
+    return buf.getvalue()
+
+
+def _make_bm012_addons_xml() -> bytes:
+    """Build the addons.xml index listing all four BM-012 test add-ons."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<addons>\n'
+        f'  <addon id="{_BM012_ROOT_ID}"'
+        f' name="BM-012 Root Plugin"'
+        f' version="{_BM012_ROOT_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        f'      <import addon="{_BM012_A_ID}" version="{_BM012_A_VERSION}"/>\n'
+        f'      <import addon="{_BM012_OPTIONAL_ID}" version="{_BM012_OPTIONAL_VERSION}"'
+        ' optional="true"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Root add-on for BM-012 dep closure validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM012_A_ID}"'
+        f' name="BM-012 Module A"'
+        f' version="{_BM012_A_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        f'      <import addon="{_BM012_B_ID}" version="{_BM012_B_VERSION}"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Module A for BM-012 dep closure validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM012_B_ID}"'
+        f' name="BM-012 Module B"'
+        f' version="{_BM012_B_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Module B for BM-012 dep closure validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM012_OPTIONAL_ID}"'
+        f' name="BM-012 Optional Module"'
+        f' version="{_BM012_OPTIONAL_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">Optional module for BM-012 dep closure validation</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        '</addons>\n'
+    ).encode("utf-8")
+
+
+class _HttpDependencyBackend:
+    """DependencyBackend for BM-012 live validation against disposable Kodi.
+
+    Delegates install_addon() to AddonManager(_HttpAddonBackend()) — the same
+    constrained package-install path as KodiRuntimeDependencyBackend.
+    Reads addon.xml from the disposable addons filesystem (KODI_ADDONS_DIR).
+    Uses _HttpAddonBackend.get_addon_details() and set_addon_enabled() for
+    Kodi API calls.
+
+    The only harness-specific differences from production:
+      - invoke_install() restarts Kodi (stop + launch + wait_for_ready) instead
+        of calling UpdateLocalAddons (a Kodi GUI builtin).
+      - read_addon_xml() reads from the filesystem instead of xbmcvfs.File().
+    """
+
+    def __init__(self, addon_backend: "_HttpAddonBackend") -> None:
+        self._addon_backend = addon_backend
+
+    def _ensure_project_in_sys_path(self) -> None:
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+
+    def get_addon_details(self, addon_id: str):
+        return self._addon_backend.get_addon_details(addon_id)
+
+    def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        """Read addon.xml from KODI_ADDONS_DIR/{addon_id}/addon.xml."""
+        path = KODI_ADDONS_DIR / addon_id / "addon.xml"
+        try:
+            return path.read_bytes() if path.exists() else None
+        except OSError:
+            return None
+
+    def install_addon(self, addon_id: str, desired_state: str = "enabled"):
+        """Install via AddonManager(_HttpAddonBackend). Mirrors production."""
+        self._ensure_project_in_sys_path()
+        from resources.lib.addons import AddonManager
+        mgr = AddonManager(self._addon_backend)
+        return mgr.install(addon_id, desired_state=desired_state)
+
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        """Enable/disable via Addons.SetAddonEnabled. Raises DependencyError on failure."""
+        self._ensure_project_in_sys_path()
+        from resources.lib.dependencies import DependencyError
+        try:
+            self._addon_backend.set_addon_enabled(addon_id, enabled)
+        except Exception as exc:
+            raise DependencyError(
+                f"set_addon_enabled({addon_id!r}, {enabled}) failed: {exc}"
+            ) from exc
+
+
+def validate_dependencies() -> None:
+    """Live validation of BM-012 dependency closure discovery and reconciliation.
+
+    Dependency graph:
+      plugin.video.bm012-root
+        └── script.module.bm012-a   (required, MISSING pre-reconcile)
+              └── script.module.bm012-b   (required, MISSING until round 2)
+        └── script.module.bm012-optional (optional="true" — never installed)
+
+    Reconcile rounds:
+      Round 1: root is installed+enabled; A is MISSING → install A (restart)
+      Round 2: A is installed; B is MISSING → install B (restart)
+      Round 3: B is installed → all required satisfied → stable
+
+    Sequence (18 steps):
+      1  Reset disposable harness + install Build Manager + configure web server
+      2  Build BM-012 test ZIPs + addons.xml + repo ZIP; start HTTP server (127.0.0.1:8922)
+      3  Launch Kodi + wait for ready
+      4  Verify pre-conditions: bm012-root, bm012-a, bm012-b, bm012-optional not installed
+      5  Install test repository via BM-010 RepositoryManager.install
+      6  Verify test repository installed + enabled
+      7  Install bm012-root via AddonManager.install (desired_state='enabled')
+      8  Verify bm012-root installed + enabled; addon.xml readable on filesystem
+      9  resolve_closure(['bm012-root']) pre-reconcile — pure read, no mutation
+     10  Verify closure: bm012-a = MISSING, bm012-optional = OPTIONAL
+     11  reconcile_dependencies(['bm012-root']) — installs A (round 1), then B (round 2)
+     12  Verify result.all_required_satisfied = True
+     13  Verify actions include INSTALLED 'script.module.bm012-a'
+     14  Verify actions include INSTALLED 'script.module.bm012-b'
+     15  Verify bm012-optional NOT in INSTALLED actions (optional policy)
+     16  Verify Kodi API: bm012-a installed + enabled (Addons.GetAddonDetails)
+     17  Verify Kodi API: bm012-b installed + enabled (Addons.GetAddonDetails)
+     18  Verify real Kodi profile untouched + stop Kodi + shut down HTTP server
+
+    ALL mutation occurs only in the disposable .kodi-test environment.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.addons import AddonManager, AddonStatus
+    from resources.lib.dependencies import DependencyResolver, DependencyStatus
+    from resources.lib.manifest import Repository
+    from resources.lib.repository import RepositoryManager, RepositoryStatus
+
+    print("=== Build Manager BM-012 live validation: dependency closure ===")
+    verify_isolation()
+
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    print("\n[1/18] reset disposable harness + install Build Manager + configure web server")
+    reset()
+    install(source=PROJECT)
+    configure_webserver()
+
+    print("\n[2/18] build BM-012 test ZIPs + addons.xml + repo ZIP; start HTTP server")
+    root_zip = _make_bm012_root_zip()
+    a_zip = _make_bm012_a_zip()
+    b_zip = _make_bm012_b_zip()
+    optional_zip = _make_bm012_optional_zip()
+    addons_xml = _make_bm012_addons_xml()
+    addons_xml_md5 = hashlib.md5(addons_xml).hexdigest().encode("utf-8")
+    repo_zip = _make_bm011_repo_zip(_ADDON_SERVER_PORT)
+    print(f"  repo ZIP: {len(repo_zip)} bytes")
+    print(f"  addons.xml: {len(addons_xml)} bytes (md5={addons_xml_md5.decode()})")
+    print(f"  bm012-root ZIP: {len(root_zip)} bytes")
+    print(f"  bm012-a ZIP: {len(a_zip)} bytes")
+    print(f"  bm012-b ZIP: {len(b_zip)} bytes")
+    print(f"  bm012-optional ZIP: {len(optional_zip)} bytes")
+
+    def _zip_path(addon_id: str, version: str) -> str:
+        return f"/{addon_id}/{version}/{addon_id}-{version}.zip"
+
+    server_files = {
+        f"/{_TEST_REPO_ADDON_ID}.zip": repo_zip,
+        "/addons.xml": addons_xml,
+        "/addons.xml.md5": addons_xml_md5,
+        _zip_path(_BM012_ROOT_ID, _BM012_ROOT_VERSION): root_zip,
+        _zip_path(_BM012_A_ID, _BM012_A_VERSION): a_zip,
+        _zip_path(_BM012_B_ID, _BM012_B_VERSION): b_zip,
+        _zip_path(_BM012_OPTIONAL_ID, _BM012_OPTIONAL_VERSION): optional_zip,
+    }
+
+    class _Handler(_MultiFileHandler):
+        _files = server_files  # type: ignore[assignment]
+
+    server = http.server.HTTPServer(("127.0.0.1", _ADDON_SERVER_PORT), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    repo_url = f"http://127.0.0.1:{_ADDON_SERVER_PORT}/{_TEST_REPO_ADDON_ID}.zip"
+    print(f"  HTTP server started: serving {len(server_files)} paths on port {_ADDON_SERVER_PORT}")
+
+    addon_backend = _HttpAddonBackend()
+    dep_backend = _HttpDependencyBackend(addon_backend)
+    repo_backend = _HttpRepositoryBackend()
+    addon_mgr = AddonManager(addon_backend)
+    repo_mgr = RepositoryManager(repo_backend)
+    test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
+    resolver = DependencyResolver(dep_backend)
+
+    try:
+        print("\n[3/18] launch Kodi + wait for ready (up to 90s)")
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            stop()
+            raise RuntimeError(f"Validation failed at step 3: {exc}") from exc
+
+        print("\n[4/18] verify pre-conditions: bm012 add-ons not installed")
+        for pre_id in (_BM012_ROOT_ID, _BM012_A_ID, _BM012_B_ID, _BM012_OPTIONAL_ID):
+            if addon_mgr.is_installed(pre_id):
+                stop()
+                raise RuntimeError(
+                    f"Validation failed: {pre_id!r} already installed before test"
+                )
+        print(f"  bm012-root, bm012-a, bm012-b, bm012-optional: all not installed ✓")
+
+        print("\n[5/18] install test repository via BM-010 RepositoryManager.install")
+        repo_result = repo_mgr.install(test_repo)
+        print(f"  repo result.status = {repo_result.status.value!r}")
+        if repo_result.status != RepositoryStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: repo install returned {repo_result.status.value!r} "
+                f"— {repo_result.message}"
+            )
+        print(f"  {_TEST_REPO_ADDON_ID!r} installed ✓")
+
+        print("\n[6/18] verify test repository installed + enabled via Addons.GetAddonDetails")
+        repo_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": _TEST_REPO_ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(repo_detail, dict)
+            and isinstance(repo_detail.get("addon"), dict)
+            and repo_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(
+                f"Validation failed: test repo not enabled after install: {repo_detail!r}"
+            )
+        print(f"  {_TEST_REPO_ADDON_ID!r} enabled=True ✓")
+
+        print("\n[7/18] install bm012-root via AddonManager.install (desired_state='enabled')")
+        print("  (triggers constrained package-install: resolve → download → validate → stage → restart)")
+        root_result = addon_mgr.install(_BM012_ROOT_ID, desired_state="enabled")
+        print(f"  root result.status = {root_result.status.value!r}")
+        if root_result.status not in (AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED):
+            raise RuntimeError(
+                f"Validation failed: bm012-root install returned {root_result.status.value!r} "
+                f"— {root_result.message}"
+            )
+        print(f"  {_BM012_ROOT_ID!r} installed ✓")
+
+        print("\n[8/18] verify bm012-root installed+enabled; addon.xml readable on filesystem")
+        root_details = addon_backend.get_addon_details(_BM012_ROOT_ID)
+        if root_details is None:
+            raise RuntimeError(
+                f"Validation failed: Addons.GetAddonDetails({_BM012_ROOT_ID!r}) returned None"
+            )
+        if not root_details.enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM012_ROOT_ID!r} installed but enabled=False"
+            )
+        print(f"  {_BM012_ROOT_ID!r} enabled=True (v{root_details.version}) ✓")
+        root_xml_bytes = dep_backend.read_addon_xml(_BM012_ROOT_ID)
+        if not root_xml_bytes:
+            raise RuntimeError(
+                f"Validation failed: addon.xml not readable for {_BM012_ROOT_ID!r}"
+            )
+        print(f"  addon.xml readable ({len(root_xml_bytes)} bytes) ✓")
+
+        print("\n[9/18] resolve_closure([bm012-root]) — pure read, no mutation")
+        pre_closure = resolver.resolve_closure([_BM012_ROOT_ID])
+        print(f"  closure nodes: {[(n.addon_id, n.status.value) for n in pre_closure.nodes]}")
+
+        print("\n[10/18] verify closure: bm012-a = MISSING, bm012-optional = OPTIONAL")
+        pre_statuses = {n.addon_id: n.status for n in pre_closure.nodes}
+        if pre_statuses.get(_BM012_A_ID) != DependencyStatus.MISSING:
+            raise RuntimeError(
+                f"Validation failed: expected bm012-a=MISSING, got {pre_statuses.get(_BM012_A_ID)!r}"
+            )
+        print(f"  {_BM012_A_ID!r} = MISSING ✓")
+        opt_statuses = {n.addon_id: n.status for n in pre_closure.optional_skipped}
+        if _BM012_OPTIONAL_ID not in opt_statuses:
+            raise RuntimeError(
+                f"Validation failed: bm012-optional not in optional_skipped; got {pre_statuses!r}"
+            )
+        print(f"  {_BM012_OPTIONAL_ID!r} = OPTIONAL ✓")
+
+        print("\n[11/18] reconcile_dependencies([bm012-root])")
+        print("  (round 1: installs bm012-a + restart; round 2: installs bm012-b + restart)")
+        result = resolver.reconcile_dependencies([_BM012_ROOT_ID])
+        print(f"  all_required_satisfied = {result.all_required_satisfied}")
+        print(f"  actions: {[(a.addon_id, a.kind.value) for a in result.actions]}")
+        print(f"  unresolved: {[n.addon_id for n in result.unresolved]}")
+
+        print("\n[12/18] verify result.all_required_satisfied = True")
+        if not result.all_required_satisfied:
+            raise RuntimeError(
+                f"Validation failed: all_required_satisfied=False; "
+                f"unresolved={[n.addon_id for n in result.unresolved]}"
+            )
+        print("  all_required_satisfied = True ✓")
+
+        print("\n[13/18] verify INSTALLED action for script.module.bm012-a")
+        installed_ids = {
+            a.addon_id for a in result.actions
+            if a.kind.value == "installed"
+        }
+        if _BM012_A_ID not in installed_ids:
+            raise RuntimeError(
+                f"Validation failed: no INSTALLED action for {_BM012_A_ID!r}; "
+                f"installed_ids={installed_ids!r}"
+            )
+        print(f"  {_BM012_A_ID!r} INSTALLED ✓")
+
+        print("\n[14/18] verify INSTALLED action for script.module.bm012-b")
+        if _BM012_B_ID not in installed_ids:
+            raise RuntimeError(
+                f"Validation failed: no INSTALLED action for {_BM012_B_ID!r}; "
+                f"installed_ids={installed_ids!r}"
+            )
+        print(f"  {_BM012_B_ID!r} INSTALLED ✓")
+
+        print("\n[15/18] verify bm012-optional NOT in INSTALLED actions (optional policy)")
+        if _BM012_OPTIONAL_ID in installed_ids:
+            raise RuntimeError(
+                f"Validation failed: {_BM012_OPTIONAL_ID!r} was installed — "
+                "optional deps must never be installed by BM-012"
+            )
+        print(f"  {_BM012_OPTIONAL_ID!r} NOT installed ✓ (optional policy enforced)")
+
+        print("\n[16/18] verify Kodi API: bm012-a installed + enabled")
+        a_details = addon_backend.get_addon_details(_BM012_A_ID)
+        if a_details is None:
+            raise RuntimeError(
+                f"Validation failed: Addons.GetAddonDetails({_BM012_A_ID!r}) returned None"
+            )
+        if not a_details.enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM012_A_ID!r} installed but enabled=False"
+            )
+        print(f"  {_BM012_A_ID!r} enabled=True (v{a_details.version}) ✓")
+
+        print("\n[17/18] verify Kodi API: bm012-b installed + enabled")
+        b_details = addon_backend.get_addon_details(_BM012_B_ID)
+        if b_details is None:
+            raise RuntimeError(
+                f"Validation failed: Addons.GetAddonDetails({_BM012_B_ID!r}) returned None"
+            )
+        if not b_details.enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM012_B_ID!r} installed but enabled=False"
+            )
+        print(f"  {_BM012_B_ID!r} enabled=True (v{b_details.version}) ✓")
+
+    finally:
+        print("\n[18/18] stop Kodi + shut down HTTP server")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        server.shutdown()
+
+    print("\n[18/18] verify real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! "
+                f"Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-012 validation PASSED (18/18) ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1855,6 +2379,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate", help="Run the full live validation sequence")
     sub.add_parser("validate-repo", help="BM-010 live validation: repository detection/install")
     sub.add_parser("validate-addon", help="BM-011 live validation: general add-on installation")
+    sub.add_parser("validate-dependencies", help="BM-012 live validation: dependency closure discovery/reconciliation")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -1887,6 +2412,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_repo()
         elif cmd == "validate-addon":
             validate_addon()
+        elif cmd == "validate-dependencies":
+            validate_dependencies()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
