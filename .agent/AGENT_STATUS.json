@@ -1,9 +1,9 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "task": "BM-010",
-  "reason": "BM-010 complete on agent/claude (13bbce6). 605/605 tests. 12/12 live validation steps passed. Pending supervisor review and merge to matrix.",
-  "last_commit": "13bbce6",
+  "task": "BM-010-R",
+  "reason": "BM-010-R correction complete on agent/claude (c82ea4c). 626/626 tests. Live validation pending (13-step validate-repo). Pending supervisor review and merge to matrix.",
+  "last_commit": "c82ea4c",
   "next_agent": "claude",
-  "updated_at": "2026-09-17T23:58:00Z"
+  "updated_at": "2026-09-18T00:23:00Z"
 }
