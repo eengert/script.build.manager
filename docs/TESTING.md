@@ -24,6 +24,7 @@ The test suite covers:
 | `test_repository.py` | Repository detection/install (BM-010) | 87 |
 | `test_addon_manager.py` | General add-on installation (BM-011) | 132 |
 | `test_dependencies.py` | Dependency closure discovery/reconciliation (BM-012) | 96 |
+| `test_addon_state.py` | Enable/disable state reconciliation (BM-013) | 66 |
 
 ## Disposable Kodi harness
 
@@ -122,6 +123,7 @@ run simultaneously without collision.
 | Build Manager (`tools/kodi_test.py`) | 8920 | `bm-test` |
 | Backup Pro (`tools/kodi_test.py`) | 8899 | `kodi-test` |
 | validate-repo HTTP server (127.0.0.1 only) | 8921 | n/a |
+| validate-addon / validate-dependencies / validate-addon-state HTTP server (127.0.0.1 only) | 8922 | n/a |
 
 ### Add-on install
 
@@ -221,9 +223,40 @@ Additive-only: no add-on is disabled or removed during reconciliation.
 
 Ports: Kodi 8920, HTTP server 8922.
 
-### Out of scope for BM-009 / BM-010 / BM-011 / BM-012
+### validate-addon-state command (BM-013)
 
-- BM-013 drift reconciliation for already-installed add-ons
+`validate-addon-state` runs a 16-step live sequence to prove enable/disable
+state reconciliation works end-to-end against a real Kodi instance:
+
+```
+python3 tools/kodi_test.py validate-addon-state
+```
+
+Three test add-ons are installed from the test repository:
+
+| Add-on | Role |
+|--------|------|
+| `plugin.video.bm013-enabled` | Stays enabled; proves ALREADY_CORRECT |
+| `plugin.video.bm013-disabled` | Starts enabled; reconcile sets it disabled |
+| `script.module.bm013-protected` | Protected dependency; desired=disabled is BLOCKED |
+
+Proves:
+1. `reconcile({disabled:"disabled"})` → DISABLED; Kodi API confirms enabled=False.
+2. Second reconcile → ALREADY_CORRECT (idempotency: no redundant SetAddonEnabled call).
+3. `reconcile({enabled:"enabled", protected:"disabled"}, protected={protected})`
+   → enabled=ALREADY_CORRECT, protected=BLOCKED_REQUIRED_DEPENDENCY; all_correct=False.
+4. Disabled state persists across Kodi restart (restart → verify enabled=False).
+5. Re-enable: `reconcile({enabled:"enabled", disabled:"enabled"})` → enabled=ALREADY_CORRECT,
+   disabled=ENABLED; all_correct=True.
+
+Managed scope: only add-ons explicitly passed to `reconcile()` are touched.
+Unmanaged installed add-ons are never queried or mutated.
+
+Ports: Kodi 8920, HTTP server 8922.
+
+### Out of scope for BM-009 / BM-010 / BM-011 / BM-012 / BM-013
+
+- Add-on provisioning from the full planner action plan (BM-014+)
 - Add-on provisioning from the full planner action plan
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
 - Windows or Linux harnesses

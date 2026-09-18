@@ -2339,6 +2339,518 @@ def validate_dependencies() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BM-013: enable/disable state reconciliation
+# ---------------------------------------------------------------------------
+
+_BM013_ENABLED_ID = "plugin.video.bm013-enabled"
+_BM013_ENABLED_VERSION = "1.0.0"
+_BM013_DISABLED_ID = "plugin.video.bm013-disabled"
+_BM013_DISABLED_VERSION = "1.0.0"
+_BM013_PROTECTED_ID = "script.module.bm013-protected"
+_BM013_PROTECTED_VERSION = "1.0.0"
+
+
+def _make_bm013_enabled_zip() -> bytes:
+    """Build the 'enabled' test add-on ZIP for BM-013 live validation.
+
+    plugin.video.bm013-enabled — no dependencies; installed+enabled throughout.
+    """
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<addon id="{_BM013_ENABLED_ID}"'
+        f' name="BM-013 Enabled Plugin"'
+        f' version="{_BM013_ENABLED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '  <requires>\n'
+        '    <import addon="xbmc.python" version="3.0.0"/>\n'
+        '  </requires>\n'
+        '  <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '  <extension point="xbmc.addon.metadata">\n'
+        '    <summary lang="en_gb">BM-013 enabled-state test plugin</summary>\n'
+        '    <platform>all</platform>\n'
+        '  </extension>\n'
+        '</addon>\n'
+    ).encode("utf-8")
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM013_ENABLED_ID}/addon.xml", addon_xml)
+        zf.writestr(f"{_BM013_ENABLED_ID}/default.py", b"# BM-013 test\n")
+    return buf.getvalue()
+
+
+def _make_bm013_disabled_zip() -> bytes:
+    """Build the 'disabled' test add-on ZIP for BM-013 live validation.
+
+    plugin.video.bm013-disabled — installed+enabled initially; reconcile will
+    set it disabled to prove the DISABLED outcome.
+    """
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<addon id="{_BM013_DISABLED_ID}"'
+        f' name="BM-013 Disabled Plugin"'
+        f' version="{_BM013_DISABLED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '  <requires>\n'
+        '    <import addon="xbmc.python" version="3.0.0"/>\n'
+        '  </requires>\n'
+        '  <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '  <extension point="xbmc.addon.metadata">\n'
+        '    <summary lang="en_gb">BM-013 disabled-state test plugin</summary>\n'
+        '    <platform>all</platform>\n'
+        '  </extension>\n'
+        '</addon>\n'
+    ).encode("utf-8")
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM013_DISABLED_ID}/addon.xml", addon_xml)
+        zf.writestr(f"{_BM013_DISABLED_ID}/default.py", b"# BM-013 test\n")
+    return buf.getvalue()
+
+
+def _make_bm013_protected_zip() -> bytes:
+    """Build the 'protected dependency' test add-on ZIP for BM-013 live validation.
+
+    script.module.bm013-protected — installed+enabled; passed in
+    protected_dependency_ids to prove BLOCKED_REQUIRED_DEPENDENCY.
+    """
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<addon id="{_BM013_PROTECTED_ID}"'
+        f' name="BM-013 Protected Module"'
+        f' version="{_BM013_PROTECTED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '  <requires>\n'
+        '    <import addon="xbmc.python" version="3.0.0"/>\n'
+        '  </requires>\n'
+        '  <extension point="xbmc.python.module" library="lib"/>\n'
+        '  <extension point="xbmc.addon.metadata">\n'
+        '    <summary lang="en_gb">BM-013 protected-dependency test module</summary>\n'
+        '    <platform>all</platform>\n'
+        '  </extension>\n'
+        '</addon>\n'
+    ).encode("utf-8")
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM013_PROTECTED_ID}/addon.xml", addon_xml)
+        zf.writestr(f"{_BM013_PROTECTED_ID}/lib/__init__.py", b"# BM-013 test\n")
+    return buf.getvalue()
+
+
+def _make_bm013_addons_xml() -> bytes:
+    """Build the addons.xml index listing all three BM-013 test add-ons."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<addons>\n'
+        f'  <addon id="{_BM013_ENABLED_ID}"'
+        f' name="BM-013 Enabled Plugin"'
+        f' version="{_BM013_ENABLED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">BM-013 enabled-state test plugin</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM013_DISABLED_ID}"'
+        f' name="BM-013 Disabled Plugin"'
+        f' version="{_BM013_DISABLED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">BM-013 disabled-state test plugin</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        f'  <addon id="{_BM013_PROTECTED_ID}"'
+        f' name="BM-013 Protected Module"'
+        f' version="{_BM013_PROTECTED_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.module" library="lib"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">BM-013 protected-dependency test module</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        '</addons>\n'
+    ).encode("utf-8")
+
+
+class _HttpAddonStateBackend:
+    """AddonStateBackend for BM-013 live validation against disposable Kodi.
+
+    Wraps jsonrpc() HTTP calls. Raises AddonStateError on infrastructure failure
+    (JSON-RPC transport error, Kodi unreachable). Returns None only for JSON-RPC
+    error code -32602 (not installed). All other JSON-RPC error codes raise
+    AddonStateError. This matches the contract of KodiRuntimeAddonStateBackend.
+    """
+
+    def _ensure_project_in_sys_path(self) -> None:
+        if str(PROJECT) not in sys.path:
+            sys.path.insert(0, str(PROJECT))
+
+    def get_addon_details(self, addon_id: str) -> Optional["AddonStateInfo"]:
+        self._ensure_project_in_sys_path()
+        from resources.lib.addon_state import AddonStateError, AddonStateInfo
+        try:
+            resp = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id,
+                "properties": ["enabled", "version"],
+            })
+        except RuntimeError as exc:
+            raise AddonStateError(
+                f"Addons.GetAddonDetails({addon_id!r}) failed: {exc}"
+            ) from exc
+        if not isinstance(resp, dict):
+            raise AddonStateError(
+                f"Addons.GetAddonDetails({addon_id!r}) non-dict result: {resp!r}"
+            )
+        addon = resp.get("addon")
+        if addon is None:
+            return None
+        if not isinstance(addon, dict) or addon.get("addonid") != addon_id:
+            raise AddonStateError(
+                f"Addons.GetAddonDetails({addon_id!r}) unexpected response: {resp!r}"
+            )
+        return AddonStateInfo(
+            addon_id=addon_id,
+            enabled=bool(addon.get("enabled", False)),
+            version=str(addon.get("version", "")),
+        )
+
+    def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
+        self._ensure_project_in_sys_path()
+        from resources.lib.addon_state import AddonStateError
+        try:
+            jsonrpc("Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": enabled})
+        except RuntimeError as exc:
+            raise AddonStateError(
+                f"Addons.SetAddonEnabled({addon_id!r}, {enabled}) failed: {exc}"
+            ) from exc
+        print(f"  [set_addon_enabled] {addon_id!r} enabled={enabled} ✓")
+
+
+def validate_addon_state() -> None:
+    """Live validation of BM-013 enable/disable state reconciliation.
+
+    Three test add-ons (all installed from test repo via AddonManager):
+      plugin.video.bm013-enabled   — stays enabled throughout (ALREADY_CORRECT)
+      plugin.video.bm013-disabled  — starts enabled; reconcile sets it disabled (DISABLED)
+      script.module.bm013-protected — protected dep; desired=disabled is BLOCKED
+
+    Sequence (16 steps):
+      1  Reset disposable harness + install Build Manager + configure web server
+      2  Build BM-013 test ZIPs + addons.xml + repo ZIP; start HTTP server (127.0.0.1:8922)
+      3  Launch Kodi + wait for ready
+      4  Verify pre-conditions: bm013-enabled, bm013-disabled, bm013-protected not installed
+      5  Install test repository via BM-010 RepositoryManager.install
+      6  Install bm013-enabled via AddonManager.install (desired_state='enabled')
+      7  Install bm013-disabled via AddonManager.install (desired_state='enabled')
+      8  Install bm013-protected via AddonManager.install (desired_state='enabled')
+      9  Verify initial Kodi state: all three installed + enabled
+     10  reconcile({disabled:"disabled"}) → DISABLED; verify Kodi API enabled=False
+     11  reconcile({disabled:"disabled"}) again → ALREADY_CORRECT (idempotency)
+     12  reconcile({enabled:"enabled", protected:"disabled"}, protected={protected})
+         → enabled=ALREADY_CORRECT, protected=BLOCKED_REQUIRED_DEPENDENCY
+     13  Verify all_correct=False; both results have expected statuses
+     14  Restart Kodi; verify bm013-disabled still disabled after restart (persistence)
+     15  reconcile({enabled:"enabled", disabled:"enabled"}) → enabled=ALREADY_CORRECT, disabled=ENABLED
+     16  Verify real Kodi profile untouched + stop Kodi + shut down HTTP server
+
+    ALL mutation occurs only in the disposable .kodi-test environment.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.addon_state import AddonStateReconciler, AddonStateStatus
+    from resources.lib.addons import AddonManager, AddonStatus
+    from resources.lib.manifest import Repository
+    from resources.lib.repository import RepositoryManager, RepositoryStatus
+
+    print("=== Build Manager BM-013 live validation: enable/disable reconciliation ===")
+    verify_isolation()
+
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    print("\n[1/16] reset disposable harness + install Build Manager + configure web server")
+    reset()
+    install(source=PROJECT)
+    configure_webserver()
+
+    print("\n[2/16] build BM-013 test ZIPs + addons.xml + repo ZIP; start HTTP server")
+    enabled_zip = _make_bm013_enabled_zip()
+    disabled_zip = _make_bm013_disabled_zip()
+    protected_zip = _make_bm013_protected_zip()
+    addons_xml = _make_bm013_addons_xml()
+    addons_xml_md5 = hashlib.md5(addons_xml).hexdigest().encode("utf-8")
+    repo_zip = _make_bm011_repo_zip(_ADDON_SERVER_PORT)
+    print(f"  repo ZIP: {len(repo_zip)} bytes")
+    print(f"  addons.xml: {len(addons_xml)} bytes (md5={addons_xml_md5.decode()})")
+    print(f"  bm013-enabled ZIP: {len(enabled_zip)} bytes")
+    print(f"  bm013-disabled ZIP: {len(disabled_zip)} bytes")
+    print(f"  bm013-protected ZIP: {len(protected_zip)} bytes")
+
+    def _zip_path(addon_id: str, version: str) -> str:
+        return f"/{addon_id}/{version}/{addon_id}-{version}.zip"
+
+    server_files = {
+        f"/{_TEST_REPO_ADDON_ID}.zip": repo_zip,
+        "/addons.xml": addons_xml,
+        "/addons.xml.md5": addons_xml_md5,
+        _zip_path(_BM013_ENABLED_ID, _BM013_ENABLED_VERSION): enabled_zip,
+        _zip_path(_BM013_DISABLED_ID, _BM013_DISABLED_VERSION): disabled_zip,
+        _zip_path(_BM013_PROTECTED_ID, _BM013_PROTECTED_VERSION): protected_zip,
+    }
+
+    class _Handler(_MultiFileHandler):
+        _files = server_files  # type: ignore[assignment]
+
+    server = http.server.HTTPServer(("127.0.0.1", _ADDON_SERVER_PORT), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    repo_url = f"http://127.0.0.1:{_ADDON_SERVER_PORT}/{_TEST_REPO_ADDON_ID}.zip"
+    print(f"  HTTP server started: serving {len(server_files)} paths on port {_ADDON_SERVER_PORT}")
+
+    addon_backend = _HttpAddonBackend()
+    state_backend = _HttpAddonStateBackend()
+    repo_backend = _HttpRepositoryBackend()
+    addon_mgr = AddonManager(addon_backend)
+    repo_mgr = RepositoryManager(repo_backend)
+    reconciler = AddonStateReconciler(state_backend)
+    test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
+
+    try:
+        print("\n[3/16] launch Kodi + wait for ready (up to 90s)")
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            stop()
+            raise RuntimeError(f"Validation failed at step 3: {exc}") from exc
+
+        print("\n[4/16] verify pre-conditions: bm013 add-ons not installed")
+        for pre_id in (_BM013_ENABLED_ID, _BM013_DISABLED_ID, _BM013_PROTECTED_ID):
+            if addon_mgr.is_installed(pre_id):
+                stop()
+                raise RuntimeError(
+                    f"Validation failed: {pre_id!r} already installed before test"
+                )
+        print("  bm013-enabled, bm013-disabled, bm013-protected: all not installed ✓")
+
+        print("\n[5/16] install test repository via BM-010 RepositoryManager.install")
+        repo_result = repo_mgr.install(test_repo)
+        print(f"  repo result.status = {repo_result.status.value!r}")
+        if repo_result.status != RepositoryStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: repo install returned {repo_result.status.value!r} "
+                f"— {repo_result.message}"
+            )
+        print(f"  {_TEST_REPO_ADDON_ID!r} installed ✓")
+
+        print("\n[6/16] install bm013-enabled via AddonManager.install (desired_state='enabled')")
+        en_result = addon_mgr.install(_BM013_ENABLED_ID, desired_state="enabled")
+        print(f"  bm013-enabled result.status = {en_result.status.value!r}")
+        if en_result.status not in (AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED):
+            raise RuntimeError(
+                f"Validation failed: bm013-enabled install returned {en_result.status.value!r} "
+                f"— {en_result.message}"
+            )
+        print(f"  {_BM013_ENABLED_ID!r} installed ✓")
+
+        print("\n[7/16] install bm013-disabled via AddonManager.install (desired_state='enabled')")
+        dis_result = addon_mgr.install(_BM013_DISABLED_ID, desired_state="enabled")
+        print(f"  bm013-disabled result.status = {dis_result.status.value!r}")
+        if dis_result.status not in (AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED):
+            raise RuntimeError(
+                f"Validation failed: bm013-disabled install returned {dis_result.status.value!r} "
+                f"— {dis_result.message}"
+            )
+        print(f"  {_BM013_DISABLED_ID!r} installed ✓")
+
+        print("\n[8/16] install bm013-protected via AddonManager.install (desired_state='enabled')")
+        prot_result = addon_mgr.install(_BM013_PROTECTED_ID, desired_state="enabled")
+        print(f"  bm013-protected result.status = {prot_result.status.value!r}")
+        if prot_result.status not in (AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED):
+            raise RuntimeError(
+                f"Validation failed: bm013-protected install returned {prot_result.status.value!r} "
+                f"— {prot_result.message}"
+            )
+        print(f"  {_BM013_PROTECTED_ID!r} installed ✓")
+
+        print("\n[9/16] verify initial Kodi state: all three installed + enabled")
+        for chk_id in (_BM013_ENABLED_ID, _BM013_DISABLED_ID, _BM013_PROTECTED_ID):
+            det = state_backend.get_addon_details(chk_id)
+            if det is None:
+                raise RuntimeError(
+                    f"Validation failed: {chk_id!r} not found via GetAddonDetails"
+                )
+            if not det.enabled:
+                raise RuntimeError(
+                    f"Validation failed: {chk_id!r} installed but enabled=False"
+                )
+            print(f"  {chk_id!r} enabled=True (v{det.version}) ✓")
+
+        print(
+            "\n[10/16] reconcile({bm013-disabled:'disabled'}) "
+            "→ DISABLED; verify Kodi API enabled=False"
+        )
+        r10 = reconciler.reconcile({_BM013_DISABLED_ID: "disabled"})
+        r10_dis = r10.results[0]
+        print(f"  bm013-disabled status = {r10_dis.status.value!r}")
+        if r10_dis.status != AddonStateStatus.DISABLED:
+            raise RuntimeError(
+                f"Validation failed: expected DISABLED, got {r10_dis.status.value!r} "
+                f"— {r10_dis.message}"
+            )
+        print(f"  {_BM013_DISABLED_ID!r} status=DISABLED ✓")
+        after_dis = state_backend.get_addon_details(_BM013_DISABLED_ID)
+        if after_dis is None or after_dis.enabled:
+            raise RuntimeError(
+                f"Validation failed: Kodi API shows bm013-disabled enabled after disable; "
+                f"details={after_dis!r}"
+            )
+        print(f"  Kodi API: {_BM013_DISABLED_ID!r} enabled=False ✓")
+
+        print(
+            "\n[11/16] reconcile({bm013-disabled:'disabled'}) again "
+            "→ ALREADY_CORRECT (idempotency)"
+        )
+        r11 = reconciler.reconcile({_BM013_DISABLED_ID: "disabled"})
+        r11_dis = r11.results[0]
+        print(f"  bm013-disabled status = {r11_dis.status.value!r}")
+        if r11_dis.status != AddonStateStatus.ALREADY_CORRECT:
+            raise RuntimeError(
+                f"Validation failed: expected ALREADY_CORRECT, got {r11_dis.status.value!r} "
+                f"— {r11_dis.message}"
+            )
+        print(f"  {_BM013_DISABLED_ID!r} ALREADY_CORRECT ✓ (idempotency confirmed)")
+
+        print(
+            "\n[12/16] reconcile({enabled:'enabled', protected:'disabled'}, "
+            "protected={protected})"
+        )
+        r12 = reconciler.reconcile(
+            {_BM013_ENABLED_ID: "enabled", _BM013_PROTECTED_ID: "disabled"},
+            protected_dependency_ids=frozenset({_BM013_PROTECTED_ID}),
+        )
+        r12_map = {r.addon_id: r for r in r12.results}
+        print(
+            f"  bm013-enabled status = {r12_map[_BM013_ENABLED_ID].status.value!r}"
+        )
+        print(
+            f"  bm013-protected status = {r12_map[_BM013_PROTECTED_ID].status.value!r}"
+        )
+
+        print("\n[13/16] verify all_correct=False; results match expected statuses")
+        if r12.all_correct:
+            raise RuntimeError(
+                "Validation failed: all_correct=True but expected False "
+                "(BLOCKED_REQUIRED_DEPENDENCY should make it False)"
+            )
+        print(f"  all_correct=False ✓")
+
+        if r12_map[_BM013_ENABLED_ID].status != AddonStateStatus.ALREADY_CORRECT:
+            raise RuntimeError(
+                f"Validation failed: bm013-enabled expected ALREADY_CORRECT, "
+                f"got {r12_map[_BM013_ENABLED_ID].status.value!r}"
+            )
+        print(f"  {_BM013_ENABLED_ID!r} ALREADY_CORRECT ✓")
+
+        if r12_map[_BM013_PROTECTED_ID].status != AddonStateStatus.BLOCKED_REQUIRED_DEPENDENCY:
+            raise RuntimeError(
+                f"Validation failed: bm013-protected expected BLOCKED_REQUIRED_DEPENDENCY, "
+                f"got {r12_map[_BM013_PROTECTED_ID].status.value!r}"
+            )
+        print(f"  {_BM013_PROTECTED_ID!r} BLOCKED_REQUIRED_DEPENDENCY ✓")
+
+        print("\n[14/16] restart Kodi; verify bm013-disabled still disabled after restart")
+        restart()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            stop()
+            raise RuntimeError(f"Validation failed at step 14 (restart wait): {exc}") from exc
+        after_restart = state_backend.get_addon_details(_BM013_DISABLED_ID)
+        if after_restart is None:
+            raise RuntimeError(
+                f"Validation failed: {_BM013_DISABLED_ID!r} not found after restart"
+            )
+        if after_restart.enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM013_DISABLED_ID!r} enabled=True after restart "
+                f"— disabled state did not persist"
+            )
+        print(f"  {_BM013_DISABLED_ID!r} enabled=False after restart ✓ (persistence confirmed)")
+
+        print(
+            "\n[15/16] reconcile({enabled:'enabled', disabled:'enabled'}) "
+            "→ enabled=ALREADY_CORRECT, disabled=ENABLED"
+        )
+        r15 = reconciler.reconcile(
+            {_BM013_ENABLED_ID: "enabled", _BM013_DISABLED_ID: "enabled"}
+        )
+        r15_map = {r.addon_id: r for r in r15.results}
+        print(
+            f"  bm013-enabled status = {r15_map[_BM013_ENABLED_ID].status.value!r}"
+        )
+        print(
+            f"  bm013-disabled status = {r15_map[_BM013_DISABLED_ID].status.value!r}"
+        )
+        if r15_map[_BM013_ENABLED_ID].status != AddonStateStatus.ALREADY_CORRECT:
+            raise RuntimeError(
+                f"Validation failed: bm013-enabled expected ALREADY_CORRECT, "
+                f"got {r15_map[_BM013_ENABLED_ID].status.value!r}"
+            )
+        print(f"  {_BM013_ENABLED_ID!r} ALREADY_CORRECT ✓")
+        if r15_map[_BM013_DISABLED_ID].status != AddonStateStatus.ENABLED:
+            raise RuntimeError(
+                f"Validation failed: bm013-disabled expected ENABLED, "
+                f"got {r15_map[_BM013_DISABLED_ID].status.value!r}"
+            )
+        print(f"  {_BM013_DISABLED_ID!r} ENABLED ✓")
+        if not r15.all_correct:
+            raise RuntimeError(
+                "Validation failed: all_correct=False after re-enable; expected True"
+            )
+        print(f"  all_correct=True ✓")
+
+    finally:
+        print("\n[16/16] stop Kodi + shut down HTTP server")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        server.shutdown()
+
+    print("\n[16/16] verify real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! "
+                f"Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-013 validation PASSED (16/16) ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -2380,6 +2892,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-repo", help="BM-010 live validation: repository detection/install")
     sub.add_parser("validate-addon", help="BM-011 live validation: general add-on installation")
     sub.add_parser("validate-dependencies", help="BM-012 live validation: dependency closure discovery/reconciliation")
+    sub.add_parser("validate-addon-state", help="BM-013 live validation: enable/disable state reconciliation")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -2414,6 +2927,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_addon()
         elif cmd == "validate-dependencies":
             validate_dependencies()
+        elif cmd == "validate-addon-state":
+            validate_addon_state()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
