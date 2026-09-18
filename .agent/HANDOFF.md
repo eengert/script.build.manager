@@ -60,7 +60,7 @@ applies and all 5 checks remain PASS.
 | Branch | SHA | Notes |
 |--------|-----|-------|
 | `matrix` | `984debe` | unchanged |
-| `agent/claude` | TBD (commit pending) | BM-014-correction ✓ |
+| `agent/claude` | `903e78a` | BM-014-correction ✓ |
 | `agent/codex` | `a970e83` | intentionally stale, unchanged |
 
 ---
