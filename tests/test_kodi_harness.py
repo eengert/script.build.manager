@@ -791,6 +791,25 @@ class TestBm011ContentBuilders(unittest.TestCase):
                 xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
             self.assertIn(f"127.0.0.1:{port}", xml)
 
+    def test_repo_zip_uses_dir_schema(self):
+        # Kodi 21 dropped the flat <info>/<datadir>/<checksum> format.
+        # The extension must use <dir> elements or Kodi silently ignores the repo.
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn("<dir>", xml)
+
+    def test_repo_zip_datadir_zip_true(self):
+        # zip="true" tells Kodi addon ZIPs are at {datadir}/{id}/{ver}/{id}-{ver}.zip.
+        # zip="false" would tell Kodi to look for unwrapped files, which we don't serve.
+        import zipfile, io
+        data = harness._make_bm011_repo_zip(8922)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read(f"{harness._TEST_REPO_ADDON_ID}/addon.xml").decode("utf-8")
+        self.assertIn('zip="true"', xml)
+        self.assertNotIn('zip="false"', xml)
+
 
 # ---------------------------------------------------------------------------
 # _MultiFileHandler
