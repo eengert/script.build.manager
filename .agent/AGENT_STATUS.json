@@ -2,8 +2,8 @@
   "active_agent": "claude",
   "status": "in_progress",
   "task": "BM-011",
-  "reason": "BM-011 unit tests pass (758/758); live validation fails at step 10 (InstallAddon poll timeout — repo not indexed). See HANDOFF.md.",
-  "last_commit": "pending",
+  "reason": "BM-011 unit tests pass (758/758); live validation fails at step 10 (InstallAddon poll timeout — repo likely not indexed by Kodi). See HANDOFF.md.",
+  "last_commit": "cdcaa2f",
   "next_agent": "claude",
-  "updated_at": "2026-09-18T01:20:00Z"
+  "updated_at": "2026-09-18T01:22:00Z"
 }
