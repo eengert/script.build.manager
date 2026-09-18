@@ -17,9 +17,11 @@ ConfigurationManager(backend)
         ConfigurationBackend. Every operation is verified after it is performed.
 
 KodiRuntimeConfigurationBackend(profile_root="special://profile/")
-    Production backend. Individual add-on settings go through the Kodi 20+
-    typed Settings wrapper (xbmcaddon.Addon(id).getSettings()); managed files
-    are resolved against special:// and replaced atomically.
+    Production backend. Settings are read through the Kodi 20+ typed Settings
+    wrapper (xbmcaddon.Addon(id).getSettings()) and written through the typed
+    Addon setters, which are the ones that actually persist — see the class
+    docstring. Managed files are resolved against special://profile/ and
+    replaced atomically.
 
 default_packages_root() -> str
     Filesystem path of the add-on's embedded package root
@@ -1378,9 +1380,24 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
 
     Settings
     --------
-    Individual add-on settings are read and written through
-    xbmcaddon.Addon(addon_id).getSettings() and its typed accessors
-    (getString/setString, getBool/setBool, getInt/setInt, getNumber/setNumber).
+    Reads use the Kodi 20+ typed Settings wrapper:
+        xbmcaddon.Addon(addon_id).getSettings().getString/getBool/getInt/getNumber
+
+    Writes use the typed Addon setters:
+        xbmcaddon.Addon(addon_id).setSettingString/setSettingBool/
+                                  setSettingInt/setSettingNumber
+
+    Writes deliberately do NOT use the Settings wrapper's setters. In Kodi 21
+    (Omega) those only mutate the in-memory CSetting: SetSettingValue() in
+    xbmc/interfaces/legacy/Settings.cpp calls setting->SetValue() and returns,
+    with no Save(). Values written that way are not persisted and do not
+    survive a restart. The typed Addon setters in
+    xbmc/interfaces/legacy/Addon.cpp call addon->SaveSettings() after updating
+    the value, which is what actually writes the add-on's settings.xml. This
+    was confirmed against the Kodi source and observed directly in the
+    disposable live harness, where Settings-wrapper writes produced no
+    settings.xml at all. Both paths are typed; only one persists.
+
     Per-add-on settings.xml files are never edited directly: Build Manager owns
     selected keys, not the whole generated file.
 
@@ -1442,27 +1459,36 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
 
     # -- settings -----------------------------------------------------------
 
-    def _settings_for(self, addon_id: str):
-        """Open a fresh typed Settings wrapper for addon_id."""
+    #: Typed Addon setter method names. These persist (they call SaveSettings);
+    #: the Settings wrapper's setters do not. See the class docstring.
+    _SETTER_NAMES = {
+        ConfigSettingType.STRING: "setSettingString",
+        ConfigSettingType.BOOL: "setSettingBool",
+        ConfigSettingType.INT: "setSettingInt",
+        ConfigSettingType.NUMBER: "setSettingNumber",
+    }
+
+    def _addon(self, addon_id: str):
+        """Open a fresh Addon handle for addon_id."""
         xbmcaddon = self._xbmcaddon()
         try:
-            addon = xbmcaddon.Addon(addon_id)
+            return xbmcaddon.Addon(addon_id)
         except Exception as exc:  # Kodi raises RuntimeError for unknown add-ons
             raise ConfigAddonUnavailableError(
                 f"add-on {addon_id!r} could not be opened "
                 f"(not installed, or disabled): {exc}"
             ) from exc
-        try:
-            return addon.getSettings()
-        except Exception as exc:
-            raise ConfigBackendError(
-                f"add-on {addon_id!r}: getSettings() failed: {exc}"
-            ) from exc
 
     def get_setting(
         self, addon_id: str, key: str, setting_type: ConfigSettingType
     ) -> object:
-        settings = self._settings_for(addon_id)
+        addon = self._addon(addon_id)
+        try:
+            settings = addon.getSettings()
+        except Exception as exc:
+            raise ConfigBackendError(
+                f"add-on {addon_id!r}: getSettings() failed: {exc}"
+            ) from exc
         getters = {
             ConfigSettingType.STRING: settings.getString,
             ConfigSettingType.BOOL: settings.getBool,
@@ -1479,22 +1505,23 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
     def set_setting(
         self, addon_id: str, key: str, setting_type: ConfigSettingType, value: object
     ) -> None:
-        settings = self._settings_for(addon_id)
-        setters = {
-            ConfigSettingType.STRING: settings.setString,
-            ConfigSettingType.BOOL: settings.setBool,
-            ConfigSettingType.INT: settings.setInt,
-            ConfigSettingType.NUMBER: settings.setNumber,
-        }
+        addon = self._addon(addon_id)
+        setter_name = self._SETTER_NAMES[setting_type]
+        setter = getattr(addon, setter_name, None)
+        if setter is None:
+            raise ConfigBackendError(
+                f"Kodi add-on API does not provide {setter_name}(); cannot "
+                f"persist {addon_id}/{key}"
+            )
         coerced = float(value) if setting_type is ConfigSettingType.NUMBER else value
         try:
-            outcome = setters[setting_type](key, coerced)
+            outcome = setter(key, coerced)
         except Exception as exc:
             raise ConfigBackendError(
                 f"writing {addon_id}/{key} as {setting_type.value} failed: {exc}"
             ) from exc
-        # Kodi's Python Settings setters are documented as returning bool; some
-        # builds return None. Only an explicit False is treated as a failure.
+        # The typed Addon setters return bool; setSettingString historically
+        # returned None in some builds. Only an explicit False is a failure.
         if outcome is False:
             raise ConfigBackendError(
                 f"Kodi rejected the value for {addon_id}/{key} "

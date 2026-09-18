@@ -31,6 +31,7 @@ Commands
   validate-dependencies  BM-012 live validation: dependency closure
   validate-addon-state   BM-013 live validation: enable/disable reconciliation
   validate-post-operations  BM-014 live validation: post-operation state validation
+  validate-config BM-015 live validation: configuration package deployment
 """
 
 from __future__ import annotations
@@ -3393,6 +3394,1145 @@ def validate_post_operations() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BM-015 live validation — configuration package deployment
+# ---------------------------------------------------------------------------
+
+_BM015_TEST_ADDON_ID = "plugin.video.bm015-config"
+_BM015_TEST_ADDON_VERSION = "1.0.0"
+
+_BM015_RUNNER_ADDON_ID = "script.build-manager-harness-config"
+_BM015_RUNNER_VERSION = "1.0.0"
+
+_BM015_PACKAGE_COMMON = "bm015-common"
+_BM015_PACKAGE_DEVICE = "bm015-device"
+
+_BM015_MANAGED_FILE = f"addon_data/{_BM015_TEST_ADDON_ID}/bm015-managed.txt"
+_BM015_UNMANAGED_FILE = f"addon_data/{_BM015_TEST_ADDON_ID}/bm015-unmanaged.txt"
+
+_BM015_JOB_FILE = "bm015-job.json"
+_BM015_RESULT_FILE = "bm015-result.json"
+
+# Synthetic, obviously non-secret values. Public configuration packages must
+# never contain credentials; these fixtures deliberately look like test data.
+_BM015_DEFAULTS = {
+    "bm015.text": "initial-text",
+    "bm015.bool": False,
+    "bm015.int": 1,
+    "bm015.number": 0.5,
+    "bm015.unmanaged": "unmanaged-initial",
+}
+_BM015_COMMON_VALUES = {
+    "bm015.text": "common-layer-text",
+    "bm015.bool": True,
+    "bm015.int": 7,
+    "bm015.number": 0.25,
+}
+_BM015_DEVICE_VALUES = {
+    "bm015.text": "device-layer-text",
+    "bm015.int": 42,
+    "bm015.number": 1.5,
+}
+#: Winning values after common -> device overlay.
+_BM015_EXPECTED = {
+    "bm015.text": "device-layer-text",
+    "bm015.bool": True,
+    "bm015.int": 42,
+    "bm015.number": 1.5,
+}
+_BM015_EXPECTED_PACKAGE = {
+    "bm015.text": _BM015_PACKAGE_DEVICE,
+    "bm015.bool": _BM015_PACKAGE_COMMON,
+    "bm015.int": _BM015_PACKAGE_DEVICE,
+    "bm015.number": _BM015_PACKAGE_DEVICE,
+}
+_BM015_SETTING_TYPES = {
+    "bm015.text": "string",
+    "bm015.bool": "bool",
+    "bm015.int": "int",
+    "bm015.number": "number",
+    "bm015.unmanaged": "string",
+}
+
+_BM015_COMMON_FILE_CONTENT = b"bm015 common-layer managed content\n"
+_BM015_DEVICE_FILE_CONTENT = b"bm015 device-layer managed content\n"
+_BM015_UNMANAGED_CONTENT = b"bm015 unmanaged sibling - must never change\n"
+
+
+def _make_bm015_test_addon_zip() -> bytes:
+    """Build the BM-015 test add-on ZIP with real Kodi setting definitions.
+
+    plugin.video.bm015-config declares five settings covering every supported
+    type plus one deliberately unmanaged control setting:
+
+        bm015.text       string   default 'initial-text'
+        bm015.bool       boolean  default false
+        bm015.int        integer  default 1
+        bm015.number     number   default 0.5
+        bm015.unmanaged  string   default 'unmanaged-initial'  (never managed)
+
+    All values are synthetic. No real credentials or real add-on configuration
+    is used anywhere in this fixture.
+    """
+    buf = io.BytesIO()
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<addon id="{_BM015_TEST_ADDON_ID}"'
+        f' name="BM-015 Config Plugin"'
+        f' version="{_BM015_TEST_ADDON_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '  <requires>\n'
+        '    <import addon="xbmc.python" version="3.0.0"/>\n'
+        '  </requires>\n'
+        '  <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '  <extension point="xbmc.addon.metadata">\n'
+        '    <summary lang="en_gb">BM-015 configuration deployment test plugin</summary>\n'
+        '    <platform>all</platform>\n'
+        '  </extension>\n'
+        '</addon>\n'
+    ).encode("utf-8")
+
+    settings_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<settings version="1">\n'
+        '  <section id="bm015">\n'
+        '    <category id="general" label="30000">\n'
+        '      <group id="1" label="30000">\n'
+        '        <setting id="bm015.text" type="string" label="30001">\n'
+        '          <level>0</level>\n'
+        f'          <default>{_BM015_DEFAULTS["bm015.text"]}</default>\n'
+        '          <control type="edit" format="string"/>\n'
+        '        </setting>\n'
+        '        <setting id="bm015.bool" type="boolean" label="30002">\n'
+        '          <level>0</level>\n'
+        '          <default>false</default>\n'
+        '          <control type="toggle"/>\n'
+        '        </setting>\n'
+        '        <setting id="bm015.int" type="integer" label="30003">\n'
+        '          <level>0</level>\n'
+        f'          <default>{_BM015_DEFAULTS["bm015.int"]}</default>\n'
+        '          <control type="edit" format="integer"/>\n'
+        '        </setting>\n'
+        '        <setting id="bm015.number" type="number" label="30004">\n'
+        '          <level>0</level>\n'
+        f'          <default>{_BM015_DEFAULTS["bm015.number"]}</default>\n'
+        '          <control type="edit" format="number"/>\n'
+        '        </setting>\n'
+        '        <setting id="bm015.unmanaged" type="string" label="30005">\n'
+        '          <level>0</level>\n'
+        f'          <default>{_BM015_DEFAULTS["bm015.unmanaged"]}</default>\n'
+        '          <control type="edit" format="string"/>\n'
+        '        </setting>\n'
+        '      </group>\n'
+        '    </category>\n'
+        '  </section>\n'
+        '</settings>\n'
+    ).encode("utf-8")
+
+    strings_po = (
+        'msgid ""\n'
+        'msgstr ""\n'
+        '"Content-Type: text/plain; charset=UTF-8\\n"\n'
+        '\n'
+        'msgctxt "#30000"\nmsgid "BM-015"\nmsgstr ""\n\n'
+        'msgctxt "#30001"\nmsgid "Text"\nmsgstr ""\n\n'
+        'msgctxt "#30002"\nmsgid "Bool"\nmsgstr ""\n\n'
+        'msgctxt "#30003"\nmsgid "Int"\nmsgstr ""\n\n'
+        'msgctxt "#30004"\nmsgid "Number"\nmsgstr ""\n\n'
+        'msgctxt "#30005"\nmsgid "Unmanaged"\nmsgstr ""\n'
+    ).encode("utf-8")
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{_BM015_TEST_ADDON_ID}/addon.xml", addon_xml)
+        zf.writestr(f"{_BM015_TEST_ADDON_ID}/default.py", b"# BM-015 test\n")
+        zf.writestr(f"{_BM015_TEST_ADDON_ID}/resources/settings.xml", settings_xml)
+        zf.writestr(
+            f"{_BM015_TEST_ADDON_ID}/resources/language/resource.language.en_gb/strings.po",
+            strings_po,
+        )
+    return buf.getvalue()
+
+
+def _make_bm015_addons_xml() -> bytes:
+    """Build the addons.xml index listing the BM-015 test add-on."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<addons>\n'
+        f'  <addon id="{_BM015_TEST_ADDON_ID}"'
+        f' name="BM-015 Config Plugin"'
+        f' version="{_BM015_TEST_ADDON_VERSION}"'
+        f' provider-name="Build Manager">\n'
+        '    <requires>\n'
+        '      <import addon="xbmc.python" version="3.0.0"/>\n'
+        '    </requires>\n'
+        '    <extension point="xbmc.python.pluginsource" library="default.py"/>\n'
+        '    <extension point="xbmc.addon.metadata">\n'
+        '      <summary lang="en_gb">BM-015 configuration deployment test plugin</summary>\n'
+        '      <platform>all</platform>\n'
+        '    </extension>\n'
+        '  </addon>\n'
+        '</addons>\n'
+    ).encode("utf-8")
+
+
+def _bm015_installed_packages_root() -> Path:
+    """Embedded package root inside the DISPOSABLE installed Build Manager copy."""
+    return (
+        KODI_ADDONS_DIR / ADDON_ID / "resources" / "config" / "packages"
+    )
+
+
+def _write_bm015_packages() -> None:
+    """Write the two layered BM-015 test packages into the installed add-on.
+
+    They are written into the disposable profile's copy of Build Manager, at
+    exactly the production embedded location (resources/config/packages), so the
+    live run exercises default_packages_root() the way production will. The
+    project working tree is never modified.
+
+    bm015-common supplies all four managed settings plus the managed file.
+    bm015-device overrides three settings and the managed file, leaving
+    bm015.bool owned by the common layer. This proves live overlay precedence.
+    """
+    verify_isolation()
+    root = _bm015_installed_packages_root()
+    if not root.is_dir():
+        raise RuntimeError(
+            f"expected embedded package root at {root}; is resources/config/"
+            f"packages present in the project and copied by install()?"
+        )
+
+    common_dir = root / _BM015_PACKAGE_COMMON
+    device_dir = root / _BM015_PACKAGE_DEVICE
+    for directory in (common_dir, device_dir):
+        if directory.exists():
+            shutil.rmtree(directory)
+        (directory / "files").mkdir(parents=True)
+
+    common_descriptor = {
+        "schema_version": 1,
+        "id": _BM015_PACKAGE_COMMON,
+        "settings": [
+            {
+                "addon_id": _BM015_TEST_ADDON_ID,
+                "key": key,
+                "type": _BM015_SETTING_TYPES[key],
+                "value": value,
+            }
+            for key, value in _BM015_COMMON_VALUES.items()
+        ],
+        "files": [{
+            "source": "files/bm015-managed.txt",
+            "destination": _BM015_MANAGED_FILE,
+        }],
+    }
+    device_descriptor = {
+        "schema_version": 1,
+        "id": _BM015_PACKAGE_DEVICE,
+        "settings": [
+            {
+                "addon_id": _BM015_TEST_ADDON_ID,
+                "key": key,
+                "type": _BM015_SETTING_TYPES[key],
+                "value": value,
+            }
+            for key, value in _BM015_DEVICE_VALUES.items()
+        ],
+        "files": [{
+            "source": "files/bm015-managed.txt",
+            "destination": _BM015_MANAGED_FILE,
+        }],
+    }
+
+    (common_dir / "package.json").write_text(
+        json.dumps(common_descriptor, indent=2), encoding="utf-8"
+    )
+    (device_dir / "package.json").write_text(
+        json.dumps(device_descriptor, indent=2), encoding="utf-8"
+    )
+    (common_dir / "files" / "bm015-managed.txt").write_bytes(
+        _BM015_COMMON_FILE_CONTENT
+    )
+    (device_dir / "files" / "bm015-managed.txt").write_bytes(
+        _BM015_DEVICE_FILE_CONTENT
+    )
+    print(f"  wrote {_BM015_PACKAGE_COMMON!r} and {_BM015_PACKAGE_DEVICE!r} to {root}")
+
+
+def _install_bm015_config_runner() -> None:
+    """Write the disposable BM-015 configuration runner into the test profile.
+
+    Kodi's typed add-on Settings API (xbmcaddon.Addon(id).getSettings()) is an
+    in-process API with no JSON-RPC equivalent, so BM-015 cannot be live-proven
+    from outside Kodi. This tiny script add-on runs INSIDE the disposable Kodi
+    and drives the real production code path:
+
+        ConfigPackageLoader(default_packages_root()).resolve(declarations)
+        ConfigurationManager(KodiRuntimeConfigurationBackend()).apply(effective)
+
+    It contains no configuration logic of its own — it only marshals a job file
+    into the production API and serializes the production result back out.
+
+    This runner is harness-only. It is written directly into .kodi-test and is
+    never part of the shipped add-on; the production add-on carries no test
+    execution hook of any kind.
+    """
+    verify_isolation()
+    target = KODI_ADDONS_DIR / _BM015_RUNNER_ADDON_ID
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+
+    addon_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<addon id="{_BM015_RUNNER_ADDON_ID}"'
+        ' name="Build Manager Harness Config Runner"'
+        f' version="{_BM015_RUNNER_VERSION}"'
+        ' provider-name="Build Manager">'
+        '<extension point="xbmc.python.script" library="default.py"/>'
+        '<extension point="xbmc.addon.metadata">'
+        '<summary lang="en_gb">Harness-only runner for BM-015 live validation</summary>'
+        '<platform>all</platform>'
+        '</extension>'
+        '</addon>'
+    )
+    (target / "addon.xml").write_text(addon_xml, encoding="utf-8")
+
+    runner_py = '''"""Harness-only BM-015 runner. Executes production configuration code."""
+import json
+import os
+import sys
+import traceback
+
+import xbmcvfs
+
+PROFILE = xbmcvfs.translatePath("special://profile/")
+JOB_PATH = os.path.join(PROFILE, "%(job)s")
+RESULT_PATH = os.path.join(PROFILE, "%(result)s")
+
+
+def _load_production_modules(addon_root):
+    # Drop any previously imported copy so each invocation imports fresh from
+    # the installed Build Manager add-on.
+    for name in [m for m in list(sys.modules)
+                 if m == "resources" or m.startswith("resources.")]:
+        del sys.modules[name]
+    if addon_root in sys.path:
+        sys.path.remove(addon_root)
+    sys.path.insert(0, addon_root)
+    import resources.lib.config as config
+    import resources.lib.manifest as manifest
+    return config, manifest
+
+
+def _declarations(manifest, job):
+    return manifest.ConfigDeclarations(
+        packages=tuple(job.get("packages", [])),
+        managed_settings=tuple(
+            manifest.ManagedSettingScope(
+                addon_id=scope["addon_id"], keys=tuple(scope["keys"])
+            )
+            for scope in job.get("managed_settings", [])
+        ),
+        managed_files=tuple(job.get("managed_files", [])),
+    )
+
+
+def _operation(result):
+    return {
+        "kind": result.kind.value,
+        "target": result.target,
+        "addon_id": result.addon_id,
+        "key": result.key,
+        "destination": result.destination,
+        "package_id": result.package_id,
+        "status": result.status.value,
+        "expected_identity": result.expected_identity,
+        "previous_identity": result.previous_identity,
+        "detail": result.detail,
+    }
+
+
+def _run_apply(config, manifest, job):
+    loader = config.ConfigPackageLoader(config.default_packages_root())
+    effective = loader.resolve(_declarations(manifest, job))
+    manager = config.ConfigurationManager(
+        config.KodiRuntimeConfigurationBackend()
+    )
+    applied = manager.apply(effective)
+    state = applied.validation_state
+    return {
+        "packages_root": loader.packages_root,
+        "packages": list(effective.packages),
+        "operations": [_operation(r) for r in applied.results],
+        "all_applied": applied.all_applied,
+        "changed": [r.target for r in applied.changed],
+        "unchanged": [r.target for r in applied.unchanged],
+        "failed": [r.target for r in applied.failed],
+        "validation_state": {
+            "setting_targets": [list(t) for t in state.setting_targets],
+            "file_targets": list(state.file_targets),
+            "verified_settings": [list(t) for t in state.verified_settings],
+            "verified_files": list(state.verified_files),
+            "is_fully_verified": state.is_fully_verified,
+        },
+    }
+
+
+def _run_observe(config, job):
+    """Read raw typed values through the production Kodi runtime backend."""
+    backend = config.KodiRuntimeConfigurationBackend()
+    observed = {}
+    for probe in job.get("observe", []):
+        setting_type = config.ConfigSettingType(probe["type"])
+        try:
+            value = backend.get_setting(
+                probe["addon_id"], probe["key"], setting_type
+            )
+            observed[probe["key"]] = {"ok": True, "value": value}
+        except Exception as exc:
+            observed[probe["key"]] = {"ok": False, "error": str(exc)}
+    return {"observed": observed}
+
+
+def main():
+    payload = {"ok": False}
+    nonce = ""
+    try:
+        with open(JOB_PATH, "r") as handle:
+            job = json.load(handle)
+        nonce = job.get("nonce", "")
+        addon_root = xbmcvfs.translatePath(job["addon_root"])
+        config, manifest = _load_production_modules(addon_root)
+        if job.get("mode") == "observe":
+            payload = _run_observe(config, job)
+        else:
+            payload = _run_apply(config, manifest, job)
+        payload["ok"] = True
+    except Exception as exc:
+        payload = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    payload["nonce"] = nonce
+    with open(RESULT_PATH, "w") as handle:
+        json.dump(payload, handle)
+
+
+main()
+''' % {"job": _BM015_JOB_FILE, "result": _BM015_RESULT_FILE}
+    (target / "default.py").write_text(runner_py, encoding="utf-8")
+    print(f"  BM-015 config runner written to {target}")
+
+
+def _bm015_run_job(job: Dict[str, Any], *, timeout: float = 90.0) -> Dict[str, Any]:
+    """Execute one job inside the disposable Kodi and return the parsed result."""
+    job_path = KODI_USERDATA_DIR / _BM015_JOB_FILE
+    result_path = KODI_USERDATA_DIR / _BM015_RESULT_FILE
+
+    payload = dict(job)
+    payload.setdefault("addon_root", f"special://home/addons/{ADDON_ID}")
+    payload["nonce"] = f"{time.time_ns():x}"
+
+    if result_path.exists():
+        result_path.unlink()
+    job_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    jsonrpc("Addons.ExecuteAddon", {
+        "addonid": _BM015_RUNNER_ADDON_ID,
+        "wait": False,
+    })
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if result_path.exists():
+            try:
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except ValueError:
+                time.sleep(0.2)
+                continue
+            if data.get("nonce") == payload["nonce"]:
+                return data
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"BM-015 runner produced no result within {timeout}s "
+        f"(mode={payload.get('mode', 'apply')})"
+    )
+
+
+def _bm015_declarations(*, managed_keys=None, packages=None, managed_files=None):
+    """Build the job fragment describing manifest-declared configuration."""
+    keys = list(_BM015_EXPECTED) if managed_keys is None else list(managed_keys)
+    return {
+        "packages": list(
+            packages if packages is not None
+            else [_BM015_PACKAGE_COMMON, _BM015_PACKAGE_DEVICE]
+        ),
+        "managed_settings": [{"addon_id": _BM015_TEST_ADDON_ID, "keys": keys}],
+        "managed_files": list(
+            managed_files if managed_files is not None else [_BM015_MANAGED_FILE]
+        ),
+    }
+
+
+def _bm015_apply(**kwargs) -> Dict[str, Any]:
+    job = _bm015_declarations(**kwargs)
+    job["mode"] = "apply"
+    return _bm015_run_job(job)
+
+
+def _bm015_observe(keys=None) -> Dict[str, Any]:
+    probes = list(_BM015_SETTING_TYPES) if keys is None else list(keys)
+    result = _bm015_run_job({
+        "mode": "observe",
+        "observe": [
+            {
+                "addon_id": _BM015_TEST_ADDON_ID,
+                "key": key,
+                "type": _BM015_SETTING_TYPES[key],
+            }
+            for key in probes
+        ],
+    })
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"BM-015 observe failed: {result.get('error_type')}: "
+            f"{result.get('error')}"
+        )
+    values = {}
+    for key, entry in result["observed"].items():
+        if not entry.get("ok"):
+            raise RuntimeError(
+                f"BM-015 observe could not read {key!r}: {entry.get('error')}"
+            )
+        values[key] = entry["value"]
+    return values
+
+
+def _bm015_assert_values(observed: Dict[str, Any], expected: Dict[str, Any]) -> None:
+    """Compare observed typed values against expectations, number-aware."""
+    for key, want in expected.items():
+        got = observed[key]
+        if isinstance(want, float) or isinstance(got, float):
+            same = f"{float(got):.6g}" == f"{float(want):.6g}"
+        elif isinstance(want, bool) or isinstance(got, bool):
+            same = bool(got) is bool(want)
+        else:
+            same = got == want
+        if not same:
+            raise RuntimeError(
+                f"Validation failed: setting {key!r} is {got!r}, expected {want!r}"
+            )
+
+
+def _bm015_managed_path() -> Path:
+    return KODI_USERDATA_DIR / Path(*_BM015_MANAGED_FILE.split("/"))
+
+
+def _bm015_unmanaged_path() -> Path:
+    return KODI_USERDATA_DIR / Path(*_BM015_UNMANAGED_FILE.split("/"))
+
+
+def _bm015_drift_setting_on_disk(key: str, value: str) -> None:
+    """Externally rewrite a managed setting in the add-on's settings.xml.
+
+    Performed with Kodi STOPPED so the edit is a genuine external change rather
+    than one Kodi could overwrite from memory.
+    """
+    import xml.etree.ElementTree as ET
+    path = KODI_USERDATA_DIR / "addon_data" / _BM015_TEST_ADDON_ID / "settings.xml"
+    if not path.is_file():
+        raise RuntimeError(f"expected Kodi-written settings at {path}")
+    tree = ET.parse(str(path))
+    root = tree.getroot()
+    for element in root.iter("setting"):
+        if element.get("id") == key:
+            element.text = value
+            tree.write(str(path), encoding="UTF-8", xml_declaration=True)
+            return
+    raise RuntimeError(f"setting {key!r} not present in {path}")
+
+
+def _bm015_read_setting_on_disk(key: str) -> Optional[str]:
+    import xml.etree.ElementTree as ET
+    path = KODI_USERDATA_DIR / "addon_data" / _BM015_TEST_ADDON_ID / "settings.xml"
+    if not path.is_file():
+        return None
+    for element in ET.parse(str(path)).getroot().iter("setting"):
+        if element.get("id") == key:
+            return element.text
+    return None
+
+
+def validate_config() -> None:
+    """Live validation of BM-015 configuration package deployment.
+
+    Exercises the REAL production path end to end. Kodi's typed add-on Settings
+    API is in-process only, so the production ConfigPackageLoader,
+    ConfigurationManager and KodiRuntimeConfigurationBackend are executed inside
+    the disposable Kodi through a harness-only runner script add-on. Nothing is
+    simulated: settings go through xbmcaddon.Addon(id).getSettings() and managed
+    files are resolved through xbmcvfs.translatePath('special://profile/').
+
+    Test add-on: plugin.video.bm015-config, installed from the disposable test
+    repository, declaring one setting of each supported type plus one
+    deliberately unmanaged setting.
+
+    Packages (written into the disposable copy of Build Manager at the
+    production embedded location resources/config/packages):
+      bm015-common  — all four managed settings + managed file
+      bm015-device  — overrides text/int/number + managed file
+    bm015.bool therefore stays owned by the common layer, proving live overlay.
+
+    Sequence (24 steps):
+       1  Reset disposable harness + install Build Manager + configure web server
+       2  Write BM-015 packages into the installed add-on's embedded package root
+       3  Build test add-on ZIP + addons.xml + repo ZIP; start HTTP server (8922)
+       4  Install harness trigger + BM-015 config runner into the disposable profile
+       5  Launch Kodi + wait for ready
+       6  Install test repository via RepositoryManager.install
+       7  Enable harness add-ons; trigger a repository scan
+       8  Install plugin.video.bm015-config via AddonManager.install; verify enabled
+       9  Establish initial state: unmanaged sibling file present, managed file absent
+      10  Observe baseline typed values through the production Kodi backend
+      11  Apply BM-015 through the production path, in-process, inside Kodi
+      12  Verify the apply result: operation count, statuses, overlay winners
+      13  Verify typed setting values through the production Kodi backend
+      14  Verify managed file exact byte content on disk
+      15  Verify the unmanaged setting is untouched
+      16  Verify the unmanaged sibling file is untouched
+      17  Apply the identical configuration again -> zero mutations (idempotency)
+      18  Feed BM-015's validation_state to BM-014 -> CONFIGURATION domain PASS
+      19  Drift a managed setting externally (Kodi stopped, settings.xml edited)
+      20  Drift the managed file externally
+      21  Preflight proof: an ownership-violating job fails with zero mutations
+      22  Reapply the correct configuration -> both drifts repaired and verified
+      23  Restart Kodi -> verify persistence; a third apply makes zero mutations
+      24  Stop Kodi + shut down HTTP server; verify the real Kodi profile untouched
+
+    ALL mutation occurs only inside .kodi-test. The real Kodi profile is never
+    read, written, or modified.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.addons import AddonManager, AddonStatus
+    from resources.lib.config import ConfigurationValidationState
+    from resources.lib.dependencies import DependencyResolver
+    from resources.lib.inspector import KodiStateInspector
+    from resources.lib.manifest import (
+        AddonEntry,
+        BuildInfo,
+        ConfigDeclarations,
+        ManagedSettingScope,
+        Repository,
+        SkinEntry,
+    )
+    from resources.lib.repository import RepositoryManager, RepositoryStatus
+    from resources.lib.resolver import ResolvedBuild
+    from resources.lib.validator import (
+        ValidationDomain,
+        ValidationStatus,
+        validate_build_state,
+    )
+
+    print("=== Build Manager BM-015 live validation: configuration deployment ===")
+    verify_isolation()
+
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    print("\n[1/24] reset disposable harness + install Build Manager + configure web server")
+    reset()
+    install(source=PROJECT)
+    configure_webserver()
+
+    print("\n[2/24] write BM-015 packages into the installed embedded package root")
+    _write_bm015_packages()
+
+    print("\n[3/24] build BM-015 test add-on ZIP + addons.xml + repo ZIP; start HTTP server")
+    test_addon_zip = _make_bm015_test_addon_zip()
+    addons_xml = _make_bm015_addons_xml()
+    addons_xml_md5 = hashlib.md5(addons_xml).hexdigest().encode("utf-8")
+    repo_zip = _make_bm011_repo_zip(_ADDON_SERVER_PORT)
+    server_files = {
+        f"/{_TEST_REPO_ADDON_ID}.zip": repo_zip,
+        "/addons.xml": addons_xml,
+        "/addons.xml.md5": addons_xml_md5,
+        (
+            f"/{_BM015_TEST_ADDON_ID}/{_BM015_TEST_ADDON_VERSION}/"
+            f"{_BM015_TEST_ADDON_ID}-{_BM015_TEST_ADDON_VERSION}.zip"
+        ): test_addon_zip,
+    }
+
+    class _Handler(_MultiFileHandler):
+        _files = server_files  # type: ignore[assignment]
+
+    server = http.server.HTTPServer(("127.0.0.1", _ADDON_SERVER_PORT), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    repo_url = f"http://127.0.0.1:{_ADDON_SERVER_PORT}/{_TEST_REPO_ADDON_ID}.zip"
+    print(f"  serving {len(server_files)} paths on 127.0.0.1:{_ADDON_SERVER_PORT}")
+
+    print("\n[4/24] install harness trigger + BM-015 config runner")
+    _install_harness_trigger_script()
+    _install_bm015_config_runner()
+
+    addon_backend = _HttpAddonBackend()
+    addon_mgr = AddonManager(addon_backend)
+    repo_mgr = RepositoryManager(_HttpRepositoryBackend())
+    inspector = KodiStateInspector(backend=_HttpKodiStateBackend())
+    dep_resolver = DependencyResolver(_HttpDependencyBackend(addon_backend))
+    test_repo = Repository(addon_id=_TEST_REPO_ADDON_ID, bootstrap_url=repo_url)
+
+    managed_path = _bm015_managed_path()
+    unmanaged_path = _bm015_unmanaged_path()
+
+    try:
+        print("\n[5/24] launch Kodi + wait for ready (up to 90s)")
+        launch()
+        try:
+            wait_for_ready(timeout=90.0)
+        except TimeoutError as exc:
+            stop()
+            raise RuntimeError(f"Validation failed at step 5: {exc}") from exc
+
+        print("\n[6/24] install test repository via RepositoryManager.install")
+        repo_result = repo_mgr.install(test_repo)
+        if repo_result.status != RepositoryStatus.INSTALLED:
+            raise RuntimeError(
+                f"Validation failed: repo install status="
+                f"{repo_result.status.value!r}: {repo_result.message}"
+            )
+        print(f"  repository {_TEST_REPO_ADDON_ID!r} installed ✓")
+
+        print("\n[7/24] enable harness add-ons; trigger repository scan")
+        for harness_id in (_HARNESS_TRIGGER_ADDON_ID, _BM015_RUNNER_ADDON_ID):
+            jsonrpc("Addons.SetAddonEnabled",
+                    {"addonid": harness_id, "enabled": True})
+            detail = jsonrpc("Addons.GetAddonDetails",
+                             {"addonid": harness_id, "properties": ["enabled"]})
+            if not (
+                isinstance(detail, dict)
+                and isinstance(detail.get("addon"), dict)
+                and detail["addon"].get("enabled") is True
+            ):
+                raise RuntimeError(
+                    f"Validation failed: could not enable {harness_id!r}: {detail!r}"
+                )
+            print(f"  {harness_id!r} enabled ✓")
+        jsonrpc("Addons.ExecuteAddon", {
+            "addonid": _HARNESS_TRIGGER_ADDON_ID,
+            "params": "update_repos",
+            "wait": False,
+        })
+        _wait_for_addon_in_repo_index(_BM015_TEST_ADDON_ID, timeout=90.0)
+
+        print(f"\n[8/24] install {_BM015_TEST_ADDON_ID!r} via AddonManager.install")
+        install_result = addon_mgr.install(
+            _BM015_TEST_ADDON_ID, desired_state="enabled"
+        )
+        if install_result.status not in (
+            AddonStatus.INSTALLED, AddonStatus.ALREADY_INSTALLED
+        ):
+            raise RuntimeError(
+                f"Validation failed: {_BM015_TEST_ADDON_ID!r} install status="
+                f"{install_result.status.value!r}: {install_result.message}"
+            )
+        details = addon_backend.get_addon_details(_BM015_TEST_ADDON_ID)
+        if details is None or not details.enabled:
+            raise RuntimeError(
+                f"Validation failed: {_BM015_TEST_ADDON_ID!r} not enabled "
+                f"after install"
+            )
+        print(f"  {_BM015_TEST_ADDON_ID!r} installed+enabled (v{details.version}) ✓")
+
+        print("\n[9/24] establish initial state (unmanaged sibling present, managed absent)")
+        unmanaged_path.parent.mkdir(parents=True, exist_ok=True)
+        unmanaged_path.write_bytes(_BM015_UNMANAGED_CONTENT)
+        if managed_path.exists():
+            managed_path.unlink()
+        print(f"  unmanaged sibling written: {unmanaged_path.name} ✓")
+        print(f"  managed file absent: {managed_path.name} ✓")
+
+        print("\n[10/24] observe baseline typed values through the production backend")
+        baseline = _bm015_observe()
+        _bm015_assert_values(baseline, _BM015_DEFAULTS)
+        for key in sorted(_BM015_DEFAULTS):
+            print(f"  {key} = {baseline[key]!r} (add-on default) ✓")
+        for key, expected in _BM015_EXPECTED.items():
+            if baseline[key] == expected:
+                raise RuntimeError(
+                    f"Validation failed: {key!r} already equals the package value "
+                    f"before deployment; drift repair could not be proven"
+                )
+        print("  every managed setting differs from its package value ✓")
+
+        print("\n[11/24] apply BM-015 through the production path inside Kodi")
+        applied = _bm015_apply()
+        if not applied.get("ok"):
+            raise RuntimeError(
+                f"Validation failed: apply raised "
+                f"{applied.get('error_type')}: {applied.get('error')}\n"
+                f"{applied.get('traceback', '')}"
+            )
+        print(f"  packages_root = {applied['packages_root']!r}")
+        print(f"  packages applied = {applied['packages']}")
+        if applied["packages"] != [_BM015_PACKAGE_COMMON, _BM015_PACKAGE_DEVICE]:
+            raise RuntimeError(
+                f"Validation failed: unexpected package order {applied['packages']}"
+            )
+        expected_root = str(
+            _bm015_installed_packages_root().resolve()
+        )
+        if os.path.realpath(applied["packages_root"]) != os.path.realpath(expected_root):
+            raise RuntimeError(
+                f"Validation failed: default_packages_root() resolved to "
+                f"{applied['packages_root']!r}, expected {expected_root!r}"
+            )
+        print("  default_packages_root() resolved to the installed add-on ✓")
+
+        print("\n[12/24] verify apply result: statuses and overlay winners")
+        if not applied["all_applied"]:
+            raise RuntimeError(
+                f"Validation failed: operations failed: {applied['failed']}"
+            )
+        operations = {op["target"]: op for op in applied["operations"]}
+        if len(operations) != 5:
+            raise RuntimeError(
+                f"Validation failed: expected 5 operations, got {len(operations)}: "
+                f"{sorted(operations)}"
+            )
+        for key, package_id in _BM015_EXPECTED_PACKAGE.items():
+            target = f"{_BM015_TEST_ADDON_ID}/{key}"
+            op = operations[target]
+            if op["status"] != "updated":
+                raise RuntimeError(
+                    f"Validation failed: {target} status={op['status']!r}, "
+                    f"expected 'updated'"
+                )
+            if op["package_id"] != package_id:
+                raise RuntimeError(
+                    f"Validation failed: {target} winning package was "
+                    f"{op['package_id']!r}, expected {package_id!r}"
+                )
+            print(f"  {target} updated by {package_id!r} ✓")
+        file_op = operations[_BM015_MANAGED_FILE]
+        if file_op["status"] != "created":
+            raise RuntimeError(
+                f"Validation failed: managed file status={file_op['status']!r}, "
+                f"expected 'created'"
+            )
+        if file_op["package_id"] != _BM015_PACKAGE_DEVICE:
+            raise RuntimeError(
+                f"Validation failed: managed file supplied by "
+                f"{file_op['package_id']!r}, expected {_BM015_PACKAGE_DEVICE!r}"
+            )
+        print(f"  {_BM015_MANAGED_FILE} created by {_BM015_PACKAGE_DEVICE!r} ✓")
+        for op in applied["operations"]:
+            for value in (_BM015_EXPECTED["bm015.text"],
+                          _BM015_COMMON_VALUES["bm015.text"]):
+                if value in json.dumps(op):
+                    raise RuntimeError(
+                        f"Validation failed: raw setting value leaked into the "
+                        f"operation result for {op['target']}"
+                    )
+        print("  no raw setting value appears in any operation result ✓")
+
+        print("\n[13/24] verify typed setting values through the production backend")
+        observed = _bm015_observe()
+        _bm015_assert_values(observed, _BM015_EXPECTED)
+        for key in sorted(_BM015_EXPECTED):
+            print(f"  {key} = {observed[key]!r} ✓")
+
+        print("\n[14/24] verify managed file exact byte content")
+        if not managed_path.is_file():
+            raise RuntimeError(f"Validation failed: {managed_path} was not created")
+        content = managed_path.read_bytes()
+        if content != _BM015_DEVICE_FILE_CONTENT:
+            raise RuntimeError(
+                f"Validation failed: managed file content is {content!r}, "
+                f"expected the device-layer content"
+            )
+        print(f"  {managed_path.name} matches the device-layer content exactly ✓")
+
+        print("\n[15/24] verify the unmanaged setting is untouched")
+        if observed["bm015.unmanaged"] != _BM015_DEFAULTS["bm015.unmanaged"]:
+            raise RuntimeError(
+                f"Validation failed: unmanaged setting changed to "
+                f"{observed['bm015.unmanaged']!r}"
+            )
+        print(f"  bm015.unmanaged = {observed['bm015.unmanaged']!r} (unchanged) ✓")
+
+        print("\n[16/24] verify the unmanaged sibling file is untouched")
+        if unmanaged_path.read_bytes() != _BM015_UNMANAGED_CONTENT:
+            raise RuntimeError(
+                f"Validation failed: unmanaged sibling {unmanaged_path} changed"
+            )
+        siblings = sorted(p.name for p in managed_path.parent.iterdir())
+        print(f"  {unmanaged_path.name} unchanged ✓")
+        print(f"  addon_data contents: {siblings}")
+
+        print("\n[17/24] apply identical configuration again → zero mutations")
+        again = _bm015_apply()
+        if not again.get("ok"):
+            raise RuntimeError(
+                f"Validation failed: second apply raised "
+                f"{again.get('error_type')}: {again.get('error')}"
+            )
+        if again["changed"]:
+            raise RuntimeError(
+                f"Validation failed: idempotency violated, second apply changed "
+                f"{again['changed']}"
+            )
+        if len(again["unchanged"]) != 5:
+            raise RuntimeError(
+                f"Validation failed: expected 5 ALREADY_CORRECT results, got "
+                f"{len(again['unchanged'])}"
+            )
+        print("  5/5 operations ALREADY_CORRECT, 0 mutations ✓")
+
+        print("\n[18/24] feed BM-015 validation_state to BM-014 validate_build_state")
+        snapshot = again["validation_state"]
+        if not snapshot["is_fully_verified"]:
+            raise RuntimeError(
+                f"Validation failed: snapshot not fully verified: {snapshot}"
+            )
+        state = ConfigurationValidationState(
+            setting_targets=tuple(
+                tuple(t) for t in snapshot["setting_targets"]
+            ),
+            file_targets=tuple(snapshot["file_targets"]),
+            verified_settings=tuple(
+                tuple(t) for t in snapshot["verified_settings"]
+            ),
+            verified_files=tuple(snapshot["verified_files"]),
+        )
+        actual = inspector.inspect()
+        desired = ResolvedBuild(
+            build=BuildInfo(id="bm015-test", version="1.0.0",
+                            name="BM-015 Test Build"),
+            engine_min_version="1.0.0",
+            platform_profile_id=actual.platform,
+            device_profile_id="disposable-kodi-test",
+            repositories=(
+                Repository(addon_id=_TEST_REPO_ADDON_ID,
+                           bootstrap_url=repo_url, required=True),
+            ),
+            addons=(AddonEntry(addon_id=_BM015_TEST_ADDON_ID, state="enabled"),),
+            skin=SkinEntry(addon_id=actual.active_skin),
+            config=ConfigDeclarations(
+                packages=(_BM015_PACKAGE_COMMON, _BM015_PACKAGE_DEVICE),
+                managed_settings=(
+                    ManagedSettingScope(
+                        addon_id=_BM015_TEST_ADDON_ID,
+                        keys=tuple(_BM015_EXPECTED),
+                    ),
+                ),
+                managed_files=(_BM015_MANAGED_FILE,),
+            ),
+            optional_groups_applied=(),
+            restart_policy=None,
+            private_overlay=None,
+        )
+        closure = dep_resolver.resolve_closure([_BM015_TEST_ADDON_ID])
+        without_state = validate_build_state(desired, actual, closure)
+        config_unchecked = [
+            c for c in without_state.checks
+            if c.domain == ValidationDomain.CONFIGURATION
+        ]
+        if (len(config_unchecked) != 1
+                or config_unchecked[0].status != ValidationStatus.NOT_CHECKED):
+            raise RuntimeError(
+                "Validation failed: without a snapshot the CONFIGURATION domain "
+                "must be NOT_CHECKED"
+            )
+        print("  without snapshot: CONFIGURATION = NOT_CHECKED ✓")
+
+        report = validate_build_state(
+            desired, actual, closure, configuration_state=state
+        )
+        config_checks = [
+            c for c in report.checks
+            if c.domain == ValidationDomain.CONFIGURATION
+        ]
+        if len(config_checks) != 5 or not all(
+            c.status == ValidationStatus.PASS for c in config_checks
+        ):
+            detail = "\n".join(
+                f"    [{c.status.value}] {c.subject}: {c.reason}"
+                for c in config_checks
+            )
+            raise RuntimeError(
+                f"Validation failed: expected 5 PASS configuration checks:\n{detail}"
+            )
+        if not report.passed:
+            detail = "\n".join(
+                f"    [{c.status.value}] {c.domain.value} {c.subject}: {c.reason}"
+                for c in report.failures + report.not_checked
+            )
+            raise RuntimeError(
+                f"Validation failed: report not passed:\n{detail}"
+            )
+        print(f"  with snapshot: 5/5 CONFIGURATION checks PASS, report.passed=True ✓")
+
+        partial = ConfigurationValidationState(
+            setting_targets=state.setting_targets[:1],
+            verified_settings=state.verified_settings[:1],
+        )
+        partial_report = validate_build_state(
+            desired, actual, closure, configuration_state=partial
+        )
+        partial_checks = [
+            c for c in partial_report.checks
+            if c.domain == ValidationDomain.CONFIGURATION
+        ]
+        if (len(partial_checks) != 1
+                or partial_checks[0].status != ValidationStatus.NOT_CHECKED):
+            raise RuntimeError(
+                "Validation failed: a partial snapshot must yield NOT_CHECKED"
+            )
+        print("  partial snapshot: CONFIGURATION = NOT_CHECKED (scope mismatch) ✓")
+
+        print("\n[19/24] drift a managed setting externally (Kodi stopped)")
+        stop()
+        _bm015_drift_setting_on_disk("bm015.text", "externally-drifted")
+        on_disk = _bm015_read_setting_on_disk("bm015.text")
+        if on_disk != "externally-drifted":
+            raise RuntimeError(
+                f"Validation failed: external drift not written, settings.xml "
+                f"holds {on_disk!r}"
+            )
+        print(f"  settings.xml bm015.text = {on_disk!r} (external drift) ✓")
+        launch()
+        wait_for_ready(timeout=90.0)
+        drifted = _bm015_observe(["bm015.text"])
+        if drifted["bm015.text"] != "externally-drifted":
+            raise RuntimeError(
+                f"Validation failed: Kodi reports {drifted['bm015.text']!r} after "
+                f"external drift"
+            )
+        print(f"  Kodi reports bm015.text = {drifted['bm015.text']!r} ✓")
+
+        print("\n[20/24] drift the managed file externally")
+        managed_path.write_bytes(b"externally drifted managed content\n")
+        print(f"  {managed_path.name} overwritten outside Build Manager ✓")
+
+        print("\n[21/24] preflight proof: ownership violation causes zero mutations")
+        bad = _bm015_apply(managed_keys=["bm015.text", "bm015.bool", "bm015.number"])
+        if bad.get("ok"):
+            raise RuntimeError(
+                "Validation failed: an ownership-violating job was accepted"
+            )
+        if bad.get("error_type") != "ConfigOwnershipError":
+            raise RuntimeError(
+                f"Validation failed: expected ConfigOwnershipError, got "
+                f"{bad.get('error_type')}: {bad.get('error')}"
+            )
+        print(f"  ConfigOwnershipError: {bad['error']}")
+        still_drifted = _bm015_observe(["bm015.text"])
+        if still_drifted["bm015.text"] != "externally-drifted":
+            raise RuntimeError(
+                "Validation failed: a failed preflight mutated a setting"
+            )
+        if managed_path.read_bytes() != b"externally drifted managed content\n":
+            raise RuntimeError(
+                "Validation failed: a failed preflight mutated the managed file"
+            )
+        print("  drifted setting and drifted file both untouched ✓")
+
+        print("\n[22/24] reapply correct configuration → both drifts repaired")
+        repaired = _bm015_apply()
+        if not repaired.get("ok"):
+            raise RuntimeError(
+                f"Validation failed: repair apply raised "
+                f"{repaired.get('error_type')}: {repaired.get('error')}"
+            )
+        repaired_ops = {op["target"]: op for op in repaired["operations"]}
+        text_target = f"{_BM015_TEST_ADDON_ID}/bm015.text"
+        if repaired_ops[text_target]["status"] != "updated":
+            raise RuntimeError(
+                f"Validation failed: drifted setting status="
+                f"{repaired_ops[text_target]['status']!r}, expected 'updated'"
+            )
+        if repaired_ops[_BM015_MANAGED_FILE]["status"] != "updated":
+            raise RuntimeError(
+                f"Validation failed: drifted file status="
+                f"{repaired_ops[_BM015_MANAGED_FILE]['status']!r}, expected 'updated'"
+            )
+        if sorted(repaired["changed"]) != sorted([text_target, _BM015_MANAGED_FILE]):
+            raise RuntimeError(
+                f"Validation failed: expected exactly the two drifted targets to "
+                f"change, got {repaired['changed']}"
+            )
+        print(f"  {text_target} repaired (UPDATED) ✓")
+        print(f"  {_BM015_MANAGED_FILE} repaired (UPDATED) ✓")
+        print("  the three undrifted targets stayed ALREADY_CORRECT ✓")
+        after_repair = _bm015_observe()
+        _bm015_assert_values(after_repair, _BM015_EXPECTED)
+        if managed_path.read_bytes() != _BM015_DEVICE_FILE_CONTENT:
+            raise RuntimeError("Validation failed: managed file not repaired")
+        if after_repair["bm015.unmanaged"] != _BM015_DEFAULTS["bm015.unmanaged"]:
+            raise RuntimeError(
+                "Validation failed: unmanaged setting changed during repair"
+            )
+        if unmanaged_path.read_bytes() != _BM015_UNMANAGED_CONTENT:
+            raise RuntimeError(
+                "Validation failed: unmanaged sibling changed during repair"
+            )
+        print("  values, file content, and both unmanaged targets verified ✓")
+
+        print("\n[23/24] restart Kodi → verify persistence and a zero-mutation apply")
+        restart()
+        wait_for_ready(timeout=90.0)
+        persisted = _bm015_observe()
+        _bm015_assert_values(persisted, _BM015_EXPECTED)
+        if persisted["bm015.unmanaged"] != _BM015_DEFAULTS["bm015.unmanaged"]:
+            raise RuntimeError(
+                "Validation failed: unmanaged setting changed across restart"
+            )
+        if managed_path.read_bytes() != _BM015_DEVICE_FILE_CONTENT:
+            raise RuntimeError(
+                "Validation failed: managed file did not persist across restart"
+            )
+        if unmanaged_path.read_bytes() != _BM015_UNMANAGED_CONTENT:
+            raise RuntimeError(
+                "Validation failed: unmanaged sibling changed across restart"
+            )
+        print("  all four managed settings persisted across restart ✓")
+        print("  managed file content persisted across restart ✓")
+        print("  both unmanaged targets unchanged across restart ✓")
+        third = _bm015_apply()
+        if not third.get("ok") or third["changed"]:
+            raise RuntimeError(
+                f"Validation failed: post-restart apply changed "
+                f"{third.get('changed')} (expected none)"
+            )
+        print("  post-restart apply: 0 mutations ✓")
+
+    finally:
+        print("\n[24/24] stop Kodi + shut down HTTP server")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        server.shutdown()
+
+    print("\n[24/24] verify real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! "
+                f"Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-015 validation PASSED (24/24) ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -3436,6 +4576,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-dependencies", help="BM-012 live validation: dependency closure discovery/reconciliation")
     sub.add_parser("validate-addon-state", help="BM-013 live validation: enable/disable state reconciliation")
     sub.add_parser("validate-post-operations", help="BM-014 live validation: post-operation state validation")
+    sub.add_parser("validate-config", help="BM-015 live validation: configuration package deployment")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -3474,6 +4615,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_addon_state()
         elif cmd == "validate-post-operations":
             validate_post_operations()
+        elif cmd == "validate-config":
+            validate_config()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -1661,6 +1661,233 @@ class TestKodiRuntimeBackendFilesystem(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Kodi runtime backend — setting API selection (stubbed xbmcaddon)
+# ---------------------------------------------------------------------------
+
+class _StubSettings:
+    """Stand-in for Kodi's xbmcaddon.Settings wrapper."""
+
+    def __init__(self, addon):
+        self._addon = addon
+
+    def _get(self, kind, key):
+        self._addon.record.append(("getSettings." + kind, key))
+        if key not in self._addon.values:
+            raise RuntimeError(f"Invalid setting type for {key}")
+        return self._addon.values[key]
+
+    def getString(self, key):
+        return self._get("getString", key)
+
+    def getBool(self, key):
+        return self._get("getBool", key)
+
+    def getInt(self, key):
+        return self._get("getInt", key)
+
+    def getNumber(self, key):
+        return self._get("getNumber", key)
+
+    # Present, but must never be used for writes: in Kodi 21 these do not
+    # persist. Any call fails the test that pins the API choice.
+    def _forbidden(self, key, value):
+        self._addon.record.append(("FORBIDDEN-settings-setter", key))
+        return True
+
+    setString = setBool = setInt = setNumber = _forbidden
+
+
+class _StubAddon:
+    """Stand-in for xbmcaddon.Addon sharing state across handles."""
+
+    registry = {}
+
+    def __init__(self, addon_id):
+        if addon_id not in self.registry:
+            raise RuntimeError(f"Unknown addon id: {addon_id}")
+        state = self.registry[addon_id]
+        self.values = state["values"]
+        self.record = state["record"]
+        self.fail_setters = state["fail_setters"]
+
+    def getSettings(self):
+        return _StubSettings(self)
+
+    def _set(self, kind, key, value):
+        self.record.append((kind, key, value))
+        if self.fail_setters:
+            return False
+        self.values[key] = value
+        return True
+
+    def setSettingString(self, key, value):
+        return self._set("setSettingString", key, value)
+
+    def setSettingBool(self, key, value):
+        return self._set("setSettingBool", key, value)
+
+    def setSettingInt(self, key, value):
+        return self._set("setSettingInt", key, value)
+
+    def setSettingNumber(self, key, value):
+        return self._set("setSettingNumber", key, value)
+
+
+class TestKodiRuntimeBackendSettings(unittest.TestCase):
+    """Pin the exact Kodi API the production backend uses for settings.
+
+    Kodi 21's Settings-wrapper setters only mutate the in-memory CSetting and
+    never call Save(), so values written through them do not persist. The
+    backend must read through getSettings() and write through the typed Addon
+    setters, which call SaveSettings(). The stub fails loudly if a write ever
+    goes through the wrapper.
+    """
+
+    def setUp(self):
+        import sys
+        import types
+        _StubAddon.registry = {
+            "plugin.video.example": {
+                "values": {
+                    "text": "old", "flag": False, "count": 1, "ratio": 0.5,
+                },
+                "record": [],
+                "fail_setters": False,
+            },
+        }
+        module = types.ModuleType("xbmcaddon")
+        module.Addon = _StubAddon
+        self._saved = sys.modules.get("xbmcaddon")
+        sys.modules["xbmcaddon"] = module
+        self.addCleanup(self._restore)
+        self.backend = KodiRuntimeConfigurationBackend()
+
+    def _restore(self):
+        import sys
+        if self._saved is None:
+            sys.modules.pop("xbmcaddon", None)
+        else:
+            sys.modules["xbmcaddon"] = self._saved
+
+    @property
+    def record(self):
+        return _StubAddon.registry["plugin.video.example"]["record"]
+
+    def test_reads_use_the_settings_wrapper(self):
+        value = self.backend.get_setting(
+            "plugin.video.example", "text", ConfigSettingType.STRING
+        )
+        self.assertEqual(value, "old")
+        self.assertEqual(self.record, [("getSettings.getString", "text")])
+
+    def test_each_type_reads_through_its_typed_getter(self):
+        for key, setting_type, getter in (
+            ("text", ConfigSettingType.STRING, "getString"),
+            ("flag", ConfigSettingType.BOOL, "getBool"),
+            ("count", ConfigSettingType.INT, "getInt"),
+            ("ratio", ConfigSettingType.NUMBER, "getNumber"),
+        ):
+            self.record.clear()
+            self.backend.get_setting("plugin.video.example", key, setting_type)
+            self.assertEqual(self.record, [("getSettings." + getter, key)])
+
+    def test_writes_use_the_persisting_typed_addon_setters(self):
+        for key, setting_type, value, setter in (
+            ("text", ConfigSettingType.STRING, "new", "setSettingString"),
+            ("flag", ConfigSettingType.BOOL, True, "setSettingBool"),
+            ("count", ConfigSettingType.INT, 7, "setSettingInt"),
+            ("ratio", ConfigSettingType.NUMBER, 1.5, "setSettingNumber"),
+        ):
+            self.record.clear()
+            self.backend.set_setting(
+                "plugin.video.example", key, setting_type, value
+            )
+            self.assertEqual(len(self.record), 1)
+            self.assertEqual(self.record[0][0], setter)
+            self.assertEqual(self.record[0][1], key)
+
+    def test_no_write_ever_goes_through_the_settings_wrapper(self):
+        for key, setting_type, value in (
+            ("text", ConfigSettingType.STRING, "new"),
+            ("flag", ConfigSettingType.BOOL, True),
+            ("count", ConfigSettingType.INT, 7),
+            ("ratio", ConfigSettingType.NUMBER, 1.5),
+        ):
+            self.backend.set_setting(
+                "plugin.video.example", key, setting_type, value
+            )
+        forbidden = [e for e in self.record if e[0].startswith("FORBIDDEN")]
+        self.assertEqual(forbidden, [])
+
+    def test_number_is_passed_as_float(self):
+        self.backend.set_setting(
+            "plugin.video.example", "ratio", ConfigSettingType.NUMBER, 2
+        )
+        self.assertIsInstance(self.record[0][2], float)
+
+    def test_write_then_read_round_trip(self):
+        self.backend.set_setting(
+            "plugin.video.example", "text", ConfigSettingType.STRING, "new"
+        )
+        self.assertEqual(
+            self.backend.get_setting(
+                "plugin.video.example", "text", ConfigSettingType.STRING
+            ),
+            "new",
+        )
+
+    def test_unknown_addon_raises_addon_unavailable(self):
+        with self.assertRaises(ConfigAddonUnavailableError):
+            self.backend.get_setting(
+                "plugin.video.absent", "text", ConfigSettingType.STRING
+            )
+
+    def test_unknown_key_raises_backend_error(self):
+        with self.assertRaises(ConfigBackendError) as ctx:
+            self.backend.get_setting(
+                "plugin.video.example", "absent", ConfigSettingType.STRING
+            )
+        self.assertNotIsInstance(ctx.exception, ConfigAddonUnavailableError)
+
+    def test_setter_returning_false_is_a_failure(self):
+        _StubAddon.registry["plugin.video.example"]["fail_setters"] = True
+        with self.assertRaises(ConfigBackendError):
+            self.backend.set_setting(
+                "plugin.video.example", "text", ConfigSettingType.STRING, "new"
+            )
+
+    def test_missing_setter_method_fails_closed(self):
+        class NoSetters(_StubAddon):
+            setSettingString = None
+
+        import sys
+        sys.modules["xbmcaddon"].Addon = NoSetters
+        self.addCleanup(
+            setattr, sys.modules["xbmcaddon"], "Addon", _StubAddon
+        )
+        with self.assertRaises(ConfigBackendError) as ctx:
+            self.backend.set_setting(
+                "plugin.video.example", "text", ConfigSettingType.STRING, "new"
+            )
+        self.assertIn("setSettingString", str(ctx.exception))
+
+    def test_manager_drives_the_real_backend_end_to_end(self):
+        manager = ConfigurationManager(self.backend)
+        effective = EffectiveConfiguration(settings=(
+            setting(addon_id="plugin.video.example", key="text",
+                    setting_type=ConfigSettingType.STRING, value="new"),
+            setting(addon_id="plugin.video.example", key="count",
+                    setting_type=ConfigSettingType.INT, value=7),
+        ))
+        first = manager.apply(effective)
+        self.assertTrue(first.all_applied)
+        self.assertEqual(len(first.changed), 2)
+        second = manager.apply(effective)
+        self.assertEqual(second.changed, ())
+        self.assertEqual(len(second.unchanged), 2)
+
+
+# ---------------------------------------------------------------------------
 # Batch behaviour, ordering, idempotency
 # ---------------------------------------------------------------------------
 
