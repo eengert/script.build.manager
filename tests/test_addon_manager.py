@@ -1394,6 +1394,90 @@ class TestRepoResolution(unittest.TestCase):
             url, version = be._resolve_package_url("plugin.video.test")
         self.assertIn("plugin.video.test", url)
 
+    def test_repo_order_is_lexical_regardless_of_kodi_return_order(self):
+        """Repos are iterated in sorted order, not Kodi return order.
+
+        Both repos contain the addon. "repository.alpha" sorts before
+        "repository.zeta" lexically, so alpha's datadir URL must always appear
+        in the resolved package URL regardless of what order Kodi returns them.
+        """
+        # Give each repo a distinct datadir URL so we can tell which one won.
+        def _make_addon_xml_for_repo(info_url, datadir_url):
+            return (
+                '<?xml version="1.0"?>'
+                '<addon id="repository.test" version="1.0">'
+                '<extension point="xbmc.addon.repository" name="Test Repo">'
+                f'<dir><info compressed="false">{info_url}</info>'
+                f'<checksum>{info_url}.md5</checksum>'
+                f'<datadir zip="true">{datadir_url}</datadir></dir>'
+                '</extension>'
+                '</addon>'
+            ).encode()
+
+        addons_xml = _make_addons_xml("plugin.video.test", "1.0.0")
+
+        alpha_datadir = "http://127.0.0.1:8922/alpha"
+        zeta_datadir = "http://127.0.0.1:8922/zeta"
+        alpha_addon_xml = _make_addon_xml_for_repo(
+            "http://127.0.0.1:8922/addons.xml", alpha_datadir
+        )
+        zeta_addon_xml = _make_addon_xml_for_repo(
+            "http://127.0.0.1:8922/addons.xml", zeta_datadir
+        )
+
+        for kodi_order in (
+            ["repository.zeta", "repository.alpha"],
+            ["repository.alpha", "repository.zeta"],
+        ):
+            be, xbmc_mock, xbmcaddon_m, xbmcvfs_m, _ = self._backend_with_mocks(
+                repo_ids=kodi_order,
+                enabled_repos={"repository.alpha", "repository.zeta"},
+                addon_xml_bytes=b"",
+                addons_xml_bytes=addons_xml,
+            )
+
+            # xbmcvfs.File returns different addon.xml content per repo_id.
+            # Track which repo_id was most recently queried via GetAddonDetails
+            # and return the matching addon.xml content for that file open.
+            repo_id_sequence = []
+            original_execute_se = xbmc_mock.executeJSONRPC.side_effect
+
+            def recording_execute(req_str, _orig=original_execute_se):
+                req = json.loads(req_str)
+                if req["method"] == "Addons.GetAddonDetails":
+                    repo_id_sequence.append(req["params"]["addonid"])
+                return _orig(req_str)
+
+            xbmc_mock.executeJSONRPC.side_effect = recording_execute
+
+            # File.read returns alpha or zeta addon.xml based on last GetAddonDetails call
+            def make_file_read(_seq=repo_id_sequence, _alpha=alpha_addon_xml, _zeta=zeta_addon_xml):
+                fake_file = MagicMock()
+                def _read():
+                    last = _seq[-1] if _seq else ""
+                    xml = _alpha if "alpha" in last else _zeta
+                    return xml.decode("utf-8")
+                fake_file.read.side_effect = _read
+                return fake_file
+
+            xbmcvfs_m.File.side_effect = lambda path: make_file_read()
+
+            with patch.dict("sys.modules", {
+                "xbmcaddon": xbmcaddon_m, "xbmcvfs": xbmcvfs_m,
+            }), patch("resources.lib.addons._fetch_bytes", return_value=addons_xml):
+                url, _ = be._resolve_package_url("plugin.video.test")
+
+            # "repository.alpha" sorts before "repository.zeta", so alpha's
+            # datadir must appear in the resolved URL in both Kodi orderings.
+            self.assertIn(
+                "alpha", url,
+                f"Expected alpha datadir in URL (kodi_order={kodi_order}), got {url!r}"
+            )
+            self.assertNotIn(
+                "zeta", url,
+                f"zeta datadir must not appear in URL (kodi_order={kodi_order}), got {url!r}"
+            )
+
     def test_no_repos_raises(self):
         be = KodiRuntimeAddonBackend()
         xbmc_mock = MagicMock()

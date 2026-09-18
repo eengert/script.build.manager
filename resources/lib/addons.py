@@ -50,7 +50,8 @@ unattended provisioning:
   4. STAGE      — extract to a temporary staging directory
   5. RENAME     — atomic rename staging/{addon_id}/ → addons/{addon_id}/
   6. DISCOVER   — trigger Kodi to register the new add-on (UpdateLocalAddons)
-  7. ENABLE     — if desired_state="enabled", call SetAddonEnabled via JSON-RPC
+  7. FINALIZE   — symmetric state enforcement: if discovered state ≠ desired,
+                   call SetAddonEnabled(desired_enabled) via JSON-RPC
   8. VERIFY     — confirm Kodi reports the add-on with the expected state
 
 This is NOT equivalent to Kodi's interactive InstallAddon workflow:
@@ -91,11 +92,21 @@ ZIP validation
 Desired state
 -------------
 install(addon_id, desired_state="enabled"):
-  Installs and enables the add-on. SetAddonEnabled is called after Kodi
-  registers the add-on (which SyncInstalled registers as disabled by default).
+  Installs and enables the add-on. After Kodi registers it (which SyncInstalled
+  records as disabled=0 by default in Kodi 21), the finalization step compares
+  the discovered state to the desired state. If disabled, SetAddonEnabled(True)
+  is called and the result is verified.
 
 install(addon_id, desired_state="disabled"):
-  Installs but leaves the add-on disabled. SetAddonEnabled is NOT called.
+  Installs and leaves the add-on disabled. If Kodi registers the new add-on
+  as disabled (the usual SyncInstalled default), no state change is made.
+  If Kodi registers it as enabled, SetAddonEnabled(False) is called and
+  the result is verified.
+
+Both cases use the same symmetric finalization logic:
+  if discovered_enabled != desired_enabled → SetAddonEnabled(desired_enabled)
+Only "enabled" and "disabled" are accepted; any other value returns FAILED
+before any backend mutation.
 
 This is installation finalization, not general enable/disable reconciliation.
 BM-013 handles drift for already-installed add-ons.
@@ -760,6 +771,8 @@ class KodiRuntimeAddonBackend(AddonBackend):
 
         Enumerates repositories via JSON-RPC, reads each repo's addon.xml via
         xbmcvfs, fetches its addons.xml, and returns the first match.
+        Repositories are iterated in lexical order of their addon ID so that
+        resolution is deterministic regardless of Kodi return order.
         Raises AddonInstallError if addon_id is not found in any enabled repo.
         """
         xbmc = self._xbmc()
@@ -789,11 +802,11 @@ class KodiRuntimeAddonBackend(AddonBackend):
             )
 
         addons_list = repos_resp["result"].get("addons") or []
-        repo_ids = [
+        repo_ids = sorted(
             a["addonid"]
             for a in addons_list
             if isinstance(a, dict) and "addonid" in a
-        ]
+        )
 
         if not repo_ids:
             raise AddonInstallError(
