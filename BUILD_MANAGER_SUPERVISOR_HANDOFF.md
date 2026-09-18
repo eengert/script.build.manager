@@ -197,7 +197,14 @@ Temp dir cleaned up on any extraction failure. Poll verifies `enabled=True` via
   `validate_repo()`: 13 steps (added: restart persistence at step 9-10, idempotency
   at step 11, real-profile confirmation at step 13).
 
-Live validation: pending (context constraints; unit tests 626/626 passing).
+Live validation (Kodi 21.1 macOS, 2026-09-18): **13/13 steps passed**.
+- `repository.build-manager-test` (392-byte ZIP) installed via temp+rename mechanism
+- Before restart: `Addons.GetAddonDetails` → `enabled=true`, `type=xbmc.addon.repository`
+- After restart: `Addons.GetAddonDetails` → `enabled=true`, `type=xbmc.addon.repository`
+- `Addons.GetAddons(type=xbmc.addon.repository)` lists the add-on — Kodi recognizes it as a repository, not a generic add-on
+- Second `mgr.install()` call → `ALREADY_INSTALLED` (no download, extraction, scan, or enable)
+- No staging/temp artifacts remain in addons directory
+- Real profile (`~/Library/Application Support/Kodi`) untouched
 
 ### BM-006 (on agent/claude `7735e7a` — pending merge)
 - `resources/lib/planner.py` — desired-vs-actual planner.
@@ -225,7 +232,7 @@ Live validation: pending (context constraints; unit tests 626/626 passing).
 `python3 -m unittest discover tests` — **626/626 passing** (outside Kodi runtime)
 
 Live validation (BM-009): **11/11 steps passed** against Kodi 21.1 macOS (2026-09-17)
-Live validation (BM-010-R): **pending** (unit tests 626/626; live validation not yet run)
+Live validation (BM-010-R): **13/13 steps passed** against Kodi 21.1 macOS (2026-09-18)
 
 ## Schema Summary
 
@@ -257,9 +264,10 @@ Key constraints:
 
 ## Next Recommended Tasks
 
-1. **BM-010-R live validation + supervisor review + merge** — corrected implementation on agent/claude:
-   - Run `python3 tools/kodi_test.py validate-repo` against disposable Kodi 21.1 (13 steps)
-   - Verify restart persistence (step 10) and idempotency (step 11)
+1. **BM-010-R supervisor architectural review + merge decision** — live validation complete:
+   - 13/13 steps passed; `enabled=True` before and after restart confirmed
+   - Direct-extraction + SetAddonEnabled proven technically viable
+   - Supervisor decision pending on whether this architecture is approved for merge
    - `resources/lib/repository.py` (BM-010-R corrected)
    - `tests/test_repository.py` (108 tests, BM-010-R)
    - `tools/kodi_test.py` (corrected backend + 13-step validation)
