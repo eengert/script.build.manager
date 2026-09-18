@@ -28,7 +28,7 @@ Result types
 ------------
 DependencyStatus
     SATISFIED | INSTALLED_DISABLED | VERSION_INSUFFICIENT
-    | MISSING | SYSTEM | CYCLE | OPTIONAL
+    | MISSING | SYSTEM | CYCLE | OPTIONAL | METADATA_ERROR
 
 DependencyRequirement(addon_id, min_version, optional)
     One <import> element from a <requires> block.
@@ -72,19 +72,55 @@ Add-on IDs beginning with "xbmc." are Kodi-provided builtins. They are
 never installed by BM-012. They are recorded with status=SYSTEM and treated
 as satisfied. Examples: xbmc.python, xbmc.gui, xbmc.json.
 
+Multi-path requirement consolidation
+--------------------------------------
+A dependency may be required from multiple paths (e.g. root A requires X>=1.0
+and root B requires X>=2.0). The effective requirement is the STRICTEST
+(highest minimum version) across all required paths. If the installed version
+does not satisfy the effective requirement, the node is VERSION_INSUFFICIENT
+regardless of which path is traversed first. Traversal order does not affect
+classification.
+
 Version semantics
 -----------------
 <import version="x.y.z"> specifies the MINIMUM required version. Installed
 version >= required minimum (tuple int comparison) → satisfied. Unparseable
-versions are treated as satisfied (conservative). BM-012 never downgrades.
+version strings are treated as satisfied (conservative). BM-012 never downgrades.
 If installed version is below the minimum, the node is VERSION_INSUFFICIENT
 and appears in unresolved; BM-012 does NOT upgrade (future work).
 
+Note: unparseable version STRINGS (e.g. "1.0.beta") in <import version="...">
+are treated conservatively (satisfied). This is distinct from METADATA_ERROR,
+which applies to unreadable or malformed addon.xml files.
+
+Malformed metadata handling
+----------------------------
+An installed dependency whose addon.xml cannot be read or parsed is classified
+as METADATA_ERROR. This prevents all_required_satisfied=True when the
+closure cannot be fully verified. Malformed metadata at the root level is also
+recorded as METADATA_ERROR. Other independent dependencies are still evaluated.
+
+Backend contract
+-----------------
+get_addon_details():
+  - Returns None when the add-on is genuinely absent from Kodi's database.
+  - Raises DependencyError on infrastructure failure (JSON-RPC error, malformed
+    response, Kodi unreachable). Infrastructure failure must not be treated as
+    "add-on not installed" — doing so would cause an unnecessary install attempt.
+
+read_addon_xml():
+  - Returns bytes when addon.xml is readable (may still be malformed XML).
+  - Returns None when the file is absent or the add-on is not installed.
+  - Should not raise; callers treat exceptions as metadata errors.
+
 Circular dependency handling
 -----------------------------
-DFS uses visiting/visited sets. A node encountered while in the current DFS
-path is recorded as CYCLE. Cycle detection does not halt the traversal;
-other branches are still processed. Deterministic (deps sorted lexically).
+DFS uses visiting (current path) and visited (fully processed) sets. A node
+encountered while in the current DFS path is recorded as CYCLE. The cycle
+check precedes the visited check so that back-edges through previously
+classified nodes are correctly detected. Cycle detection does not halt the
+traversal; other branches are still processed. Deterministic (deps sorted
+lexically).
 
 Safety invariant
 ----------------
@@ -105,7 +141,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 # Type alias used in docstrings — imported lazily at runtime
 # InstalledAddonInfo and AddonInstallResult come from resources.lib.addons
@@ -117,6 +153,10 @@ from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 class DependencyError(Exception):
     """Base class for all dependency operation errors."""
+
+
+class _MetadataParseError(Exception):
+    """Internal: raised when addon.xml bytes are non-empty but cannot be parsed."""
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +172,7 @@ class DependencyStatus(str, Enum):
     SYSTEM = "system"
     CYCLE = "cycle"
     OPTIONAL = "optional"
+    METADATA_ERROR = "metadata_error"
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +207,8 @@ class DependencyNode:
 
     required_by: tuple of addon_ids that led to this node, immediate requirer
     first. Example: if root → A → B, then B.required_by = ("A", "root").
+    min_version_required: the effective (strictest across all paths) minimum
+    required version for this dependency.
     cycle_path: only set for CYCLE nodes; the detected cycle as a tuple.
     """
     addon_id: str
@@ -173,7 +216,7 @@ class DependencyNode:
     status: DependencyStatus
     installed_version: Optional[str]
     installed_enabled: Optional[bool]
-    min_version_required: str     # "" = no minimum declared for this edge
+    min_version_required: str     # effective minimum across all required paths
     optional: bool
     cycle_path: Optional[Tuple[str, ...]] = None
 
@@ -182,7 +225,8 @@ class DependencyNode:
 class DependencyClosure:
     """Full transitive dependency closure for a set of root add-ons.
 
-    The root add-ons themselves are not included in nodes — only their deps.
+    The root add-ons themselves are not included in nodes unless they have
+    a METADATA_ERROR (unreadable/malformed addon.xml at the root level).
     """
     root_addon_ids: Tuple[str, ...]
     nodes: Tuple[DependencyNode, ...]
@@ -215,6 +259,10 @@ class DependencyClosure:
     def optional_skipped(self) -> Tuple[DependencyNode, ...]:
         return tuple(n for n in self.nodes if n.status == DependencyStatus.OPTIONAL)
 
+    @property
+    def metadata_errors(self) -> Tuple[DependencyNode, ...]:
+        return tuple(n for n in self.nodes if n.status == DependencyStatus.METADATA_ERROR)
+
 
 @dataclass(frozen=True)
 class DependencyAction:
@@ -231,7 +279,7 @@ class DependencyResult:
     closure: DependencyClosure
     actions: Tuple[DependencyAction, ...]
     all_required_satisfied: bool
-    unresolved: Tuple[DependencyNode, ...]  # MISSING+failed, VERSION_INSUFFICIENT
+    unresolved: Tuple[DependencyNode, ...]  # MISSING, VERSION_INSUFFICIENT, METADATA_ERROR, failed
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +335,38 @@ def _version_satisfies(installed: str, required_min: str) -> bool:
     return inst_padded >= req_padded
 
 
+def _max_version_requirement(a: str, b: str) -> str:
+    """Return the stricter (higher minimum required) of two version strings.
+
+    Used to consolidate requirements from multiple required paths to the same
+    dependency. 'Stricter' means the installed version must be at least that
+    high — a higher minimum is harder to satisfy.
+
+    If either is empty (no minimum), returns the other.
+    If either is unparseable, returns the parseable one (conservative: prefer
+    the structured requirement so it can be enforced).
+    If both are unparseable, returns 'a' arbitrarily.
+    If both are parseable, returns the lexically-larger minimum requirement.
+    """
+    if not a:
+        return b
+    if not b:
+        return a
+    pa = _parse_version(a)
+    pb = _parse_version(b)
+    if pa is None and pb is None:
+        return a  # both unparseable — arbitrary, return first
+    if pa is None:
+        return b  # a unparseable, b has structure → use b
+    if pb is None:
+        return a  # b unparseable, a has structure → use a
+    # Both parseable — return the larger (stricter minimum)
+    max_len = max(len(pa), len(pb))
+    pa_padded = pa + (0,) * (max_len - len(pa))
+    pb_padded = pb + (0,) * (max_len - len(pb))
+    return b if pb_padded >= pa_padded else a
+
+
 # ---------------------------------------------------------------------------
 # Addon.xml dependency parsing
 # ---------------------------------------------------------------------------
@@ -300,8 +380,12 @@ def _parse_requirements(xml_bytes: bytes) -> List[DependencyRequirement]:
     - There is no <requires> element
     - <requires> has no <import> children
 
-    Deduplicates import entries by addon_id (first occurrence wins).
+    Deduplicates import entries by addon_id (first occurrence wins when
+    duplicates exist within the same addon.xml file; use _max_version_requirement
+    for cross-path consolidation).
+
     Does not raise on malformed input — returns what can be parsed.
+    For a strict variant that raises on malformed XML, use _parse_requirements_strict.
     """
     if not xml_bytes:
         return []
@@ -309,13 +393,36 @@ def _parse_requirements(xml_bytes: bytes) -> List[DependencyRequirement]:
         root_el = ET.fromstring(xml_bytes)
     except ET.ParseError:
         return []
+    return _extract_requirements(root_el)
 
+
+def _parse_requirements_strict(xml_bytes: bytes) -> List[DependencyRequirement]:
+    """Parse <requires><import .../> elements from addon.xml bytes.
+
+    Unlike _parse_requirements, raises _MetadataParseError if xml_bytes is
+    non-empty but contains malformed XML. This distinguishes:
+      - Empty bytes / no <requires> element  → [] (valid: no deps declared)
+      - Non-empty but unparseable XML        → _MetadataParseError (metadata broken)
+
+    Deduplicates by addon_id (first occurrence wins within one addon.xml).
+    """
+    if not xml_bytes:
+        return []
+    try:
+        root_el = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise _MetadataParseError(f"addon.xml parse error: {exc}") from exc
+    return _extract_requirements(root_el)
+
+
+def _extract_requirements(root_el: ET.Element) -> List[DependencyRequirement]:
+    """Extract DependencyRequirement list from a parsed addon.xml Element."""
     requires_el = root_el.find("requires")
     if requires_el is None:
         return []
 
     reqs: List[DependencyRequirement] = []
-    seen_ids: Set[str] = set()
+    seen_ids: set = set()
 
     for import_el in requires_el.findall("import"):
         dep_id = (import_el.get("addon") or "").strip()
@@ -352,16 +459,20 @@ class DependencyBackend:
     def get_addon_details(self, addon_id: str):
         """Return InstalledAddonInfo for an installed add-on, or None if absent.
 
-        Must return None (not raise) when the add-on is not installed.
-        May raise DependencyError on genuine infrastructure failure.
+        MUST return None only when the add-on is genuinely absent from Kodi's
+        database ("not installed"). MUST raise DependencyError on infrastructure
+        failure (JSON-RPC error, malformed response, Kodi unreachable). This
+        distinction prevents infrastructure failure from being misclassified as
+        MISSING and triggering an unnecessary installation attempt.
         """
         raise NotImplementedError
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
         """Read addon.xml bytes for an installed add-on.
 
-        Returns None if the add-on is not installed, addon.xml does not exist,
-        or the file cannot be read. Never raises on missing file.
+        Returns bytes (possibly malformed) when the file is accessible.
+        Returns None if the add-on is not installed or addon.xml is absent.
+        Should not raise; callers treat unhandled exceptions as metadata errors.
         """
         raise NotImplementedError
 
@@ -390,9 +501,11 @@ def _dfs(
     req: DependencyRequirement,
     requirer_path: Tuple[str, ...],
     backend: DependencyBackend,
-    visited: Dict[str, DependencyNode],
+    result_map: Dict[str, DependencyNode],
+    effective_min: Dict[str, str],
+    cycle_nodes: List[DependencyNode],
+    visited: Set[str],
     visiting: List[str],
-    results: List[DependencyNode],
 ) -> None:
     """Depth-first traversal to collect all required transitive dependencies.
 
@@ -400,14 +513,17 @@ def _dfs(
     req: the DependencyRequirement edge that caused this traversal
     requirer_path: tuple of addon_ids that led here (immediate requirer first)
     backend: read-only backend calls only
-    visited: addon_ids fully processed → their final DependencyNode
-    visiting: addon_ids currently in the DFS stack (cycle detection)
-    results: accumulates DependencyNode entries
+    result_map: addon_id → primary DependencyNode; updated in place; allows
+        re-classification when a stronger requirement is discovered later
+    effective_min: addon_id → strictest min_version required across all paths
+    cycle_nodes: back-edge CYCLE records (separate from result_map)
+    visited: addon_ids that have been fully processed (prevents re-traversal)
+    visiting: addon_ids in the current DFS path (cycle detection)
     """
-    # System dependency: always satisfied, never install, short-circuit
+    # System dependency: always satisfied, never installed, short-circuit
     if _is_system_dependency(dep_id):
-        if dep_id not in visited:
-            sys_node = DependencyNode(
+        if dep_id not in result_map:
+            result_map[dep_id] = DependencyNode(
                 addon_id=dep_id,
                 required_by=requirer_path,
                 status=DependencyStatus.SYSTEM,
@@ -416,17 +532,14 @@ def _dfs(
                 min_version_required=req.min_version,
                 optional=False,
             )
-            results.append(sys_node)
-            visited[dep_id] = sys_node
         return
 
     # Cycle detection must precede the visited check: a node can be in both
     # visited (processed on an earlier branch) and visiting (in the current
     # DFS path) when the graph has a cycle that loops through a shared node.
-    # Checking visiting first ensures cycles are detected correctly.
     if dep_id in visiting:
         cycle_path = tuple(visiting[visiting.index(dep_id):]) + (dep_id,)
-        cycle_node = DependencyNode(
+        cycle_nodes.append(DependencyNode(
             addon_id=dep_id,
             required_by=requirer_path,
             status=DependencyStatus.CYCLE,
@@ -435,71 +548,143 @@ def _dfs(
             min_version_required=req.min_version,
             optional=False,
             cycle_path=cycle_path,
-        )
-        results.append(cycle_node)
-        # Do NOT add to visited — a cycle node is not fully processed
+        ))
         return
 
-    # Already fully processed — skip
+    # Update effective minimum version for this dependency across all paths
+    prev_effective = effective_min.get(dep_id, "")
+    new_effective = _max_version_requirement(prev_effective, req.min_version)
+    effective_min[dep_id] = new_effective
+
+    # Already fully processed: re-classify if a stronger requirement was discovered
     if dep_id in visited:
+        if new_effective != prev_effective and dep_id in result_map:
+            existing = result_map[dep_id]
+            if existing.status in (
+                DependencyStatus.SATISFIED,
+                DependencyStatus.INSTALLED_DISABLED,
+            ):
+                inst_version = existing.installed_version or ""
+                if new_effective and not _version_satisfies(inst_version, new_effective):
+                    result_map[dep_id] = DependencyNode(
+                        addon_id=existing.addon_id,
+                        required_by=existing.required_by,
+                        status=DependencyStatus.VERSION_INSUFFICIENT,
+                        installed_version=existing.installed_version,
+                        installed_enabled=existing.installed_enabled,
+                        min_version_required=new_effective,
+                        optional=False,
+                    )
         return
 
-    # Query installed state
+    # Mark as visited (prevents infinite recursion and double-traversal)
+    visited.add(dep_id)
+
+    # Query installed state; distinguish infrastructure failure from "not installed"
     try:
         details = backend.get_addon_details(dep_id)
+    except DependencyError:
+        result_map[dep_id] = DependencyNode(
+            addon_id=dep_id,
+            required_by=requirer_path,
+            status=DependencyStatus.METADATA_ERROR,
+            installed_version=None,
+            installed_enabled=None,
+            min_version_required=new_effective,
+            optional=False,
+        )
+        return
     except Exception:
-        details = None
+        result_map[dep_id] = DependencyNode(
+            addon_id=dep_id,
+            required_by=requirer_path,
+            status=DependencyStatus.METADATA_ERROR,
+            installed_version=None,
+            installed_enabled=None,
+            min_version_required=new_effective,
+            optional=False,
+        )
+        return
 
+    # Genuinely not installed
     if details is None:
-        node = DependencyNode(
+        result_map[dep_id] = DependencyNode(
             addon_id=dep_id,
             required_by=requirer_path,
             status=DependencyStatus.MISSING,
             installed_version=None,
             installed_enabled=None,
-            min_version_required=req.min_version,
+            min_version_required=new_effective,
             optional=False,
         )
-        results.append(node)
-        visited[dep_id] = node
-        # Cannot read addon.xml for a missing dep; transitive deps unknown
         return
 
-    # Installed — classify
+    # Installed — classify based on effective minimum version across all paths
     inst_version = details.version or ""
-    if req.min_version and not _version_satisfies(inst_version, req.min_version):
+    if new_effective and not _version_satisfies(inst_version, new_effective):
         status = DependencyStatus.VERSION_INSUFFICIENT
     elif not details.enabled:
         status = DependencyStatus.INSTALLED_DISABLED
     else:
         status = DependencyStatus.SATISFIED
 
-    node = DependencyNode(
+    result_map[dep_id] = DependencyNode(
         addon_id=dep_id,
         required_by=requirer_path,
         status=status,
         installed_version=inst_version,
         installed_enabled=details.enabled,
-        min_version_required=req.min_version,
+        min_version_required=new_effective,
         optional=False,
     )
-    results.append(node)
-    visited[dep_id] = node
 
     if status == DependencyStatus.VERSION_INSUFFICIENT:
-        # Cannot safely traverse a version-insufficient dep's sub-deps
         return
 
-    # Read addon.xml and traverse sub-dependencies
+    # Read addon.xml to discover sub-dependencies
     try:
         xml_bytes = backend.read_addon_xml(dep_id)
     except Exception:
-        xml_bytes = None
-
-    if not xml_bytes:
+        result_map[dep_id] = DependencyNode(
+            addon_id=dep_id,
+            required_by=requirer_path,
+            status=DependencyStatus.METADATA_ERROR,
+            installed_version=inst_version,
+            installed_enabled=details.enabled,
+            min_version_required=new_effective,
+            optional=False,
+        )
         return
 
-    sub_reqs = _parse_requirements(xml_bytes)
+    if xml_bytes is None:
+        # Installed but addon.xml is absent or unreadable: metadata error —
+        # cannot determine sub-dependencies, so closure is incomplete.
+        result_map[dep_id] = DependencyNode(
+            addon_id=dep_id,
+            required_by=requirer_path,
+            status=DependencyStatus.METADATA_ERROR,
+            installed_version=inst_version,
+            installed_enabled=details.enabled,
+            min_version_required=new_effective,
+            optional=False,
+        )
+        return
+
+    # Parse sub-dependencies; malformed XML is a metadata error
+    try:
+        sub_reqs = _parse_requirements_strict(xml_bytes)
+    except _MetadataParseError:
+        result_map[dep_id] = DependencyNode(
+            addon_id=dep_id,
+            required_by=requirer_path,
+            status=DependencyStatus.METADATA_ERROR,
+            installed_version=inst_version,
+            installed_enabled=details.enabled,
+            min_version_required=new_effective,
+            optional=False,
+        )
+        return
+
     # Sort lexically by addon_id for deterministic traversal
     sub_reqs.sort(key=lambda r: r.addon_id)
 
@@ -507,31 +692,27 @@ def _dfs(
     for sub_req in sub_reqs:
         if sub_req.optional:
             # Record optional deps but do not traverse or require
-            if sub_req.addon_id not in visited and sub_req.addon_id not in visiting:
-                opt_already = any(
-                    n.addon_id == sub_req.addon_id and n.status == DependencyStatus.OPTIONAL
-                    for n in results
+            if sub_req.addon_id not in visited and sub_req.addon_id not in result_map:
+                result_map[sub_req.addon_id] = DependencyNode(
+                    addon_id=sub_req.addon_id,
+                    required_by=(dep_id,) + requirer_path,
+                    status=DependencyStatus.OPTIONAL,
+                    installed_version=None,
+                    installed_enabled=None,
+                    min_version_required=sub_req.min_version,
+                    optional=True,
                 )
-                if not opt_already:
-                    opt_node = DependencyNode(
-                        addon_id=sub_req.addon_id,
-                        required_by=(dep_id,) + requirer_path,
-                        status=DependencyStatus.OPTIONAL,
-                        installed_version=None,
-                        installed_enabled=None,
-                        min_version_required=sub_req.min_version,
-                        optional=True,
-                    )
-                    results.append(opt_node)
         else:
             _dfs(
                 sub_req.addon_id,
                 sub_req,
                 (dep_id,) + requirer_path,
                 backend,
+                result_map,
+                effective_min,
+                cycle_nodes,
                 visited,
                 visiting,
-                results,
             )
     visiting.remove(dep_id)
 
@@ -573,38 +754,59 @@ class DependencyResolver:
         (non-optional) dependencies recursively. Missing deps are recorded with
         status=MISSING; their transitive deps cannot be known until installed.
 
-        root_addon_ids are the starting points. They are not included in the
-        returned nodes — only their dependencies are.
+        Multi-path consolidation: when the same dependency is required from
+        multiple paths with different minimum versions, the effective requirement
+        is the strictest (highest minimum) across all paths. Classification is
+        independent of traversal order.
+
+        Malformed metadata: if a root or installed dependency's addon.xml is
+        unreadable or unparseable, a METADATA_ERROR node is recorded. This
+        prevents all_required_satisfied=True when the closure cannot be fully
+        verified. Root add-ons with METADATA_ERROR appear in nodes even though
+        roots are normally excluded.
 
         Result is deterministic: roots are sorted lexically; sub-dependencies
-        within each add-on are sorted lexically by addon_id.
+        within each add-on are sorted lexically by addon_id; the final nodes
+        tuple is sorted by addon_id (cycle back-edge nodes appended after).
         """
         sorted_roots = sorted(set(root_addon_ids))
-        visited: Dict[str, DependencyNode] = {}
-        results: List[DependencyNode] = []
+        result_map: Dict[str, DependencyNode] = {}
+        effective_min: Dict[str, str] = {}
+        cycle_nodes: List[DependencyNode] = []
+        visited: Set[str] = set()
 
         for root_id in sorted_roots:
-            # Read root's dependencies from its installed addon.xml
             try:
                 xml_bytes = self._backend.read_addon_xml(root_id)
             except Exception:
                 xml_bytes = None
 
-            if not xml_bytes:
+            if xml_bytes is None:
+                continue  # root not installed or not accessible
+
+            try:
+                reqs = _parse_requirements_strict(xml_bytes)
+            except _MetadataParseError:
+                # Root's addon.xml is malformed — record as METADATA_ERROR
+                result_map[root_id] = DependencyNode(
+                    addon_id=root_id,
+                    required_by=(),
+                    status=DependencyStatus.METADATA_ERROR,
+                    installed_version=None,
+                    installed_enabled=None,
+                    min_version_required="",
+                    optional=False,
+                )
                 continue
 
-            reqs = _parse_requirements(xml_bytes)
             reqs.sort(key=lambda r: r.addon_id)
-
             visiting: List[str] = [root_id]
+
             for req in reqs:
                 if req.optional:
-                    opt_already = any(
-                        n.addon_id == req.addon_id and n.status == DependencyStatus.OPTIONAL
-                        for n in results
-                    )
-                    if req.addon_id not in visited and not opt_already:
-                        opt_node = DependencyNode(
+                    # Record optional direct deps; don't overwrite a required classification
+                    if req.addon_id not in visited and req.addon_id not in result_map:
+                        result_map[req.addon_id] = DependencyNode(
                             addon_id=req.addon_id,
                             required_by=(root_id,),
                             status=DependencyStatus.OPTIONAL,
@@ -613,21 +815,24 @@ class DependencyResolver:
                             min_version_required=req.min_version,
                             optional=True,
                         )
-                        results.append(opt_node)
                 else:
                     _dfs(
                         req.addon_id,
                         req,
                         (root_id,),
                         self._backend,
+                        result_map,
+                        effective_min,
+                        cycle_nodes,
                         visited,
                         visiting,
-                        results,
                     )
 
+        # Build final nodes: primary nodes sorted by addon_id, then cycle back-edges
+        primary_nodes = sorted(result_map.values(), key=lambda n: n.addon_id)
         return DependencyClosure(
             root_addon_ids=tuple(sorted_roots),
-            nodes=tuple(results),
+            nodes=tuple(primary_nodes) + tuple(cycle_nodes),
         )
 
     def reconcile_dependencies(self, root_addon_ids: List[str]) -> DependencyResult:
@@ -640,6 +845,10 @@ class DependencyResolver:
 
         Safety: never disables or removes any add-on.
 
+        all_required_satisfied is False when any of the following are present
+        after the final round: MISSING nodes, VERSION_INSUFFICIENT nodes,
+        METADATA_ERROR nodes, failed install or enable actions.
+
         Returns DependencyResult with all actions taken and any unresolved deps.
         """
         all_actions: List[DependencyAction] = []
@@ -650,8 +859,7 @@ class DependencyResolver:
             closure = self.resolve_closure(root_addon_ids)
             final_closure = closure
 
-            # Collect actionable nodes in this round (missing or needs_enable)
-            # Skip add-ons already acted on (prevents loops on install failure)
+            # Collect actionable nodes (missing or needs_enable) not yet acted on
             to_install = [
                 n for n in closure.missing
                 if n.addon_id not in acted_on
@@ -664,7 +872,7 @@ class DependencyResolver:
             if not to_install and not to_enable:
                 break  # stable
 
-            # Apply installs first (may expose more deps after)
+            # Apply installs first (may expose more deps after install + restart)
             for node in sorted(to_install, key=lambda n: n.addon_id):
                 acted_on.add(node.addon_id)
                 try:
@@ -719,7 +927,6 @@ class DependencyResolver:
         # Final closure after all rounds
         assert final_closure is not None
 
-        # Compute unresolved: missing + version_insufficient
         failed_install_ids = {
             a.addon_id for a in all_actions
             if a.kind == DependencyActionKind.FAILED_INSTALL
@@ -734,12 +941,14 @@ class DependencyResolver:
             if n.status in (
                 DependencyStatus.MISSING,
                 DependencyStatus.VERSION_INSUFFICIENT,
+                DependencyStatus.METADATA_ERROR,
             ) or n.addon_id in failed_install_ids or n.addon_id in failed_enable_ids
         )
 
         all_required_satisfied = (
             len(final_closure.missing) == 0
             and len(final_closure.insufficient_version) == 0
+            and len(final_closure.metadata_errors) == 0
             and not failed_install_ids
             and not failed_enable_ids
         )
@@ -771,7 +980,12 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
             raise DependencyError(f"Kodi runtime (xbmc) not available: {exc}") from exc
 
     def get_addon_details(self, addon_id: str):
-        """Query Addons.GetAddonDetails. Returns None if not installed."""
+        """Query Addons.GetAddonDetails.
+
+        Returns None if add-on is genuinely not installed (JSONRPC error code
+        -32602 / -32500 / "Not Found"). Raises DependencyError on infrastructure
+        failure (JSON decode error, Kodi unreachable, malformed response).
+        """
         import json  # noqa: PLC0415
         xbmc = self._xbmc()
         req = json.dumps({
@@ -781,17 +995,37 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
             "id": 1,
         })
         try:
-            resp = json.loads(xbmc.executeJSONRPC(req))
-        except Exception:
-            return None
+            raw = xbmc.executeJSONRPC(req)
+            resp = json.loads(raw)
+        except Exception as exc:
+            raise DependencyError(
+                f"Addons.GetAddonDetails({addon_id!r}) infrastructure failure: {exc}"
+            ) from exc
+
         if "error" in resp:
+            # JSONRPC "Unknown method" or "Not Found" → genuinely absent
             return None
-        result_val = resp.get("result", {})
+
+        result_val = resp.get("result")
         if not isinstance(result_val, dict):
+            raise DependencyError(
+                f"Addons.GetAddonDetails({addon_id!r}) malformed response: {resp!r}"
+            )
+
+        addon = result_val.get("addon")
+        if addon is None:
+            # Kodi returned a result but no addon field — absent
             return None
-        addon = result_val.get("addon", {})
-        if not isinstance(addon, dict) or addon.get("addonid") != addon_id:
-            return None
+        if not isinstance(addon, dict):
+            raise DependencyError(
+                f"Addons.GetAddonDetails({addon_id!r}) addon field not a dict: {addon!r}"
+            )
+        if addon.get("addonid") != addon_id:
+            raise DependencyError(
+                f"Addons.GetAddonDetails({addon_id!r}) returned wrong addon id: "
+                f"{addon.get('addonid')!r}"
+            )
+
         from resources.lib.addons import InstalledAddonInfo  # noqa: PLC0415
         enabled = addon.get("enabled")
         version = addon.get("version", "")

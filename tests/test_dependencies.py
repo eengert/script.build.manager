@@ -1,18 +1,25 @@
 """
-Unit tests for resources/lib/dependencies.py (BM-012).
+Unit tests for resources/lib/dependencies.py (BM-012 + BM-012-C corrections).
 
 Baseline: 836 tests (end of BM-011).
-This file adds tests for dependency closure discovery and reconciliation.
+This file adds tests for dependency closure discovery and reconciliation,
+and for three correctness corrections applied in BM-012-C:
+  1. Multi-path strongest minimum-version consolidation
+  2. Malformed metadata fails closed (METADATA_ERROR, not silent empty-list)
+  3. Backend infrastructure failure raises DependencyError, not MISSING
 
 Test structure:
-  TestIsSystemDependency       — _is_system_dependency()
-  TestParseVersion             — _parse_version()
-  TestVersionSatisfies         — _version_satisfies()
-  TestParseRequirements        — _parse_requirements()
-  TestDependencyStatusEnum     — DependencyStatus values
-  TestDependencyClosureProps   — DependencyClosure property accessors
-  TestResolveClosure           — DependencyResolver.resolve_closure()
-  TestReconcileDependencies    — DependencyResolver.reconcile_dependencies()
+  TestIsSystemDependency         — _is_system_dependency()
+  TestParseVersion               — _parse_version()
+  TestVersionSatisfies           — _version_satisfies()
+  TestMaxVersionRequirement      — _max_version_requirement() (BM-012-C)
+  TestParseRequirements          — _parse_requirements()
+  TestDependencyStatusEnum       — DependencyStatus values
+  TestDependencyClosureProps     — DependencyClosure property accessors
+  TestResolveClosure             — DependencyResolver.resolve_closure()
+  TestResolveClosureMultiPath    — multi-path consolidation (BM-012-C Issue 1)
+  TestMetadataError              — METADATA_ERROR status (BM-012-C Issues 2 & 3)
+  TestReconcileDependencies      — DependencyResolver.reconcile_dependencies()
 
 FakeDependencyBackend: in-memory backend for all tests requiring a resolver.
   - installed: Dict[str, InstalledAddonInfo] — known installed add-ons
@@ -22,6 +29,8 @@ FakeDependencyBackend: in-memory backend for all tests requiring a resolver.
   - install_side_effects: Dict[str, InstalledAddonInfo] — info added to
     installed after a successful install (simulates Kodi discovering new add-on)
   - set_enabled_calls: List[Tuple[str, bool]] — recorded calls
+  - get_details_errors: Dict[str, Exception] — raises on get_addon_details
+    to simulate infrastructure failure (DependencyError or otherwise)
 """
 
 import unittest
@@ -40,6 +49,7 @@ from resources.lib.dependencies import (
     DependencyResult,
     DependencyStatus,
     _is_system_dependency,
+    _max_version_requirement,
     _parse_requirements,
     _parse_version,
     _version_satisfies,
@@ -109,6 +119,7 @@ class FakeDependencyBackend(DependencyBackend):
         canned_install_results: Optional[Dict[str, AddonInstallResult]] = None,
         enable_errors: Optional[Set[str]] = None,
         install_side_effects: Optional[Dict[str, InstalledAddonInfo]] = None,
+        get_details_errors: Optional[Dict[str, Exception]] = None,
     ) -> None:
         self.installed: Dict[str, InstalledAddonInfo] = dict(installed or {})
         self.addon_xmls: Dict[str, bytes] = dict(addon_xmls or {})
@@ -119,10 +130,13 @@ class FakeDependencyBackend(DependencyBackend):
         self.install_side_effects: Dict[str, InstalledAddonInfo] = dict(
             install_side_effects or {}
         )
+        self.get_details_errors: Dict[str, Exception] = dict(get_details_errors or {})
         self.set_enabled_calls: List[Tuple[str, bool]] = []
         self.install_calls: List[str] = []
 
     def get_addon_details(self, addon_id: str) -> Optional[InstalledAddonInfo]:
+        if addon_id in self.get_details_errors:
+            raise self.get_details_errors[addon_id]
         return self.installed.get(addon_id)
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
@@ -360,6 +374,9 @@ class TestDependencyStatusEnum(unittest.TestCase):
     def test_optional_value(self) -> None:
         self.assertEqual(DependencyStatus.OPTIONAL, "optional")
 
+    def test_metadata_error_value(self) -> None:
+        self.assertEqual(DependencyStatus.METADATA_ERROR, "metadata_error")
+
 
 # ---------------------------------------------------------------------------
 # DependencyClosure property accessors
@@ -419,6 +436,14 @@ class TestDependencyClosureProps(unittest.TestCase):
     def test_optional_skipped_property(self) -> None:
         ids = [n.addon_id for n in self.closure.optional_skipped]
         self.assertEqual(ids, ["g"])
+
+    def test_metadata_errors_property(self) -> None:
+        closure = DependencyClosure(
+            root_addon_ids=("root",),
+            nodes=(_node("x", DependencyStatus.METADATA_ERROR),),
+        )
+        ids = [n.addon_id for n in closure.metadata_errors]
+        self.assertEqual(ids, ["x"])
 
     def test_empty_closure(self) -> None:
         empty = DependencyClosure(root_addon_ids=("root",), nodes=())
@@ -905,6 +930,287 @@ class TestReconcileDependencies(unittest.TestCase):
         result = r.reconcile_dependencies(["root"])
         installed_ids = [a.addon_id for a in result.actions if a.kind == DependencyActionKind.INSTALLED]
         self.assertEqual(installed_ids, ["a.dep", "z.dep"])
+
+
+# ---------------------------------------------------------------------------
+# _max_version_requirement (BM-012-C Issue 1)
+# ---------------------------------------------------------------------------
+
+class TestMaxVersionRequirement(unittest.TestCase):
+    def test_empty_a_returns_b(self) -> None:
+        self.assertEqual(_max_version_requirement("", "2.0.0"), "2.0.0")
+
+    def test_empty_b_returns_a(self) -> None:
+        self.assertEqual(_max_version_requirement("1.0.0", ""), "1.0.0")
+
+    def test_both_empty_returns_empty(self) -> None:
+        self.assertEqual(_max_version_requirement("", ""), "")
+
+    def test_higher_b_wins(self) -> None:
+        self.assertEqual(_max_version_requirement("1.0.0", "2.0.0"), "2.0.0")
+
+    def test_higher_a_wins(self) -> None:
+        self.assertEqual(_max_version_requirement("3.0.0", "2.0.0"), "3.0.0")
+
+    def test_equal_versions_returns_one(self) -> None:
+        result = _max_version_requirement("1.5.0", "1.5.0")
+        self.assertEqual(result, "1.5.0")
+
+    def test_unparseable_a_returns_b(self) -> None:
+        # "abc" can't be parsed; "1.0" is parseable — prefer parseable
+        self.assertEqual(_max_version_requirement("abc", "1.0.0"), "1.0.0")
+
+    def test_unparseable_b_returns_a(self) -> None:
+        self.assertEqual(_max_version_requirement("1.0.0", "xyz"), "1.0.0")
+
+    def test_short_tuple_padded_correctly(self) -> None:
+        # "1.0" = (1,0,0) padded vs "1.0.1" = (1,0,1) → "1.0.1" is stricter
+        self.assertEqual(_max_version_requirement("1.0", "1.0.1"), "1.0.1")
+
+    def test_commutative_result_same(self) -> None:
+        a = _max_version_requirement("1.2.3", "4.5.6")
+        b = _max_version_requirement("4.5.6", "1.2.3")
+        self.assertEqual(a, b)
+
+
+# ---------------------------------------------------------------------------
+# Multi-path requirement consolidation (BM-012-C Issue 1)
+# ---------------------------------------------------------------------------
+
+class TestResolveClosureMultiPath(unittest.TestCase):
+    """Verify that the effective requirement is the STRONGEST across all required
+    paths, regardless of traversal order.
+    """
+    def _resolver(self, **kw) -> DependencyResolver:
+        return DependencyResolver(FakeDependencyBackend(**kw))
+
+    def test_two_roots_stronger_version_makes_dep_insufficient(self) -> None:
+        """Root A requires X>=1.0; root B requires X>=2.0; X installed at 1.5.
+
+        Effective requirement = max(1.0, 2.0) = 2.0; 1.5 < 2.0 → VERSION_INSUFFICIENT.
+        """
+        root_a_xml = _xml("root.a", requires=_imp("x.dep", "1.0.0"))
+        root_b_xml = _xml("root.b", requires=_imp("x.dep", "2.0.0"))
+        x_xml = _xml("x.dep", "1.5.0")
+        r = self._resolver(
+            installed={"x.dep": _info("x.dep", version="1.5.0")},
+            addon_xmls={"root.a": root_a_xml, "root.b": root_b_xml, "x.dep": x_xml},
+        )
+        closure = r.resolve_closure(["root.a", "root.b"])
+        x_nodes = [n for n in closure.nodes if n.addon_id == "x.dep"]
+        self.assertEqual(len(x_nodes), 1)
+        self.assertEqual(x_nodes[0].status, DependencyStatus.VERSION_INSUFFICIENT)
+        self.assertEqual(x_nodes[0].min_version_required, "2.0.0")
+
+    def test_two_roots_result_order_independent(self) -> None:
+        """Reversed root order produces the same classification (deterministic)."""
+        root_a_xml = _xml("root.a", requires=_imp("x.dep", "1.0.0"))
+        root_b_xml = _xml("root.b", requires=_imp("x.dep", "2.0.0"))
+        x_xml = _xml("x.dep", "1.5.0")
+        # Pass roots in reverse lexical order to force reversed traversal
+        r = self._resolver(
+            installed={"x.dep": _info("x.dep", version="1.5.0")},
+            addon_xmls={"root.a": root_a_xml, "root.b": root_b_xml, "x.dep": x_xml},
+        )
+        # resolve_closure sorts roots lexically, so order of the list argument
+        # should not matter; verify by checking that root.b comes before root.a
+        # would normally be processed but result is the same.
+        closure1 = r.resolve_closure(["root.a", "root.b"])
+        closure2 = r.resolve_closure(["root.b", "root.a"])
+        status1 = {n.addon_id: n.status for n in closure1.nodes}
+        status2 = {n.addon_id: n.status for n in closure2.nodes}
+        self.assertEqual(status1, status2)
+        self.assertEqual(status1["x.dep"], DependencyStatus.VERSION_INSUFFICIENT)
+
+    def test_two_transitive_paths_stronger_wins(self) -> None:
+        """Root requires A and B; A requires X>=1.0; B requires X>=2.0; X=1.5.
+
+        Both A and B are required transitive deps. The effective requirement on
+        X is max(1.0, 2.0) = 2.0; X should be VERSION_INSUFFICIENT.
+        """
+        root_xml = _xml("root", requires=_imp("a.dep") + _imp("b.dep"))
+        a_xml = _xml("a.dep", requires=_imp("x.dep", "1.0.0"))
+        b_xml = _xml("b.dep", requires=_imp("x.dep", "2.0.0"))
+        x_xml = _xml("x.dep", "1.5.0")
+        r = self._resolver(
+            installed={
+                "a.dep": _info("a.dep"),
+                "b.dep": _info("b.dep"),
+                "x.dep": _info("x.dep", version="1.5.0"),
+            },
+            addon_xmls={
+                "root": root_xml,
+                "a.dep": a_xml,
+                "b.dep": b_xml,
+                "x.dep": x_xml,
+            },
+        )
+        closure = r.resolve_closure(["root"])
+        x_nodes = [n for n in closure.nodes if n.addon_id == "x.dep"]
+        self.assertEqual(len(x_nodes), 1)
+        self.assertEqual(x_nodes[0].status, DependencyStatus.VERSION_INSUFFICIENT)
+
+    def test_identical_requirements_produce_single_node(self) -> None:
+        """Same dep required from two paths with identical versions → one node."""
+        root_a_xml = _xml("root.a", requires=_imp("x.dep", "1.0.0"))
+        root_b_xml = _xml("root.b", requires=_imp("x.dep", "1.0.0"))
+        x_xml = _xml("x.dep", "2.0.0")
+        r = self._resolver(
+            installed={"x.dep": _info("x.dep", version="2.0.0")},
+            addon_xmls={"root.a": root_a_xml, "root.b": root_b_xml, "x.dep": x_xml},
+        )
+        closure = r.resolve_closure(["root.a", "root.b"])
+        x_nodes = [n for n in closure.nodes if n.addon_id == "x.dep"]
+        self.assertEqual(len(x_nodes), 1)
+        self.assertEqual(x_nodes[0].status, DependencyStatus.SATISFIED)
+
+    def test_optional_path_does_not_suppress_required_traversal(self) -> None:
+        """Root A requires X (required); root B requires X (optional).
+
+        Required semantics win: X must be traversed and classified correctly,
+        not left as OPTIONAL because B saw it first (roots sorted lexically:
+        root.a < root.b, so required path comes first here; the test also
+        covers the reverse direction via the optional-not-overriding-required
+        invariant in the result_map logic).
+        """
+        root_a_xml = _xml("root.a", requires=_imp("x.dep", "1.0.0"))
+        root_b_xml = _xml("root.b", requires=_imp("x.dep", optional="true"))
+        x_xml = _xml("x.dep")
+        r = self._resolver(
+            installed={"x.dep": _info("x.dep")},
+            addon_xmls={"root.a": root_a_xml, "root.b": root_b_xml, "x.dep": x_xml},
+        )
+        closure = r.resolve_closure(["root.a", "root.b"])
+        x_nodes = [n for n in closure.nodes if n.addon_id == "x.dep"]
+        self.assertEqual(len(x_nodes), 1)
+        # Required status wins over optional
+        self.assertEqual(x_nodes[0].status, DependencyStatus.SATISFIED)
+        self.assertFalse(x_nodes[0].optional)
+
+
+# ---------------------------------------------------------------------------
+# METADATA_ERROR (BM-012-C Issues 2 and 3)
+# ---------------------------------------------------------------------------
+
+class TestMetadataError(unittest.TestCase):
+    """Verify that malformed addon.xml and backend failures are classified as
+    METADATA_ERROR rather than silently treated as 'no dependencies'.
+    """
+    def _resolver(self, **kw) -> DependencyResolver:
+        return DependencyResolver(FakeDependencyBackend(**kw))
+
+    def test_malformed_root_xml_produces_metadata_error_node(self) -> None:
+        """Root with malformed addon.xml → METADATA_ERROR node for root."""
+        r = self._resolver(addon_xmls={"root": b"<this is not valid xml"})
+        closure = r.resolve_closure(["root"])
+        meta_nodes = [n for n in closure.nodes if n.status == DependencyStatus.METADATA_ERROR]
+        self.assertGreater(len(meta_nodes), 0)
+        root_meta = [n for n in meta_nodes if n.addon_id == "root"]
+        self.assertEqual(len(root_meta), 1)
+
+    def test_malformed_root_xml_prevents_all_required_satisfied(self) -> None:
+        """Malformed root addon.xml → all_required_satisfied=False."""
+        r = self._resolver(addon_xmls={"root": b"<not xml>"})
+        result = r.reconcile_dependencies(["root"])
+        self.assertFalse(result.all_required_satisfied)
+
+    def test_malformed_transitive_dep_xml_produces_metadata_error(self) -> None:
+        """Installed transitive dep with malformed addon.xml → METADATA_ERROR."""
+        root_xml = _xml("root", requires=_imp("bad.dep"))
+        r = self._resolver(
+            installed={"bad.dep": _info("bad.dep")},
+            addon_xmls={"root": root_xml, "bad.dep": b"<corrupted xml"},
+        )
+        closure = r.resolve_closure(["root"])
+        bad_nodes = [n for n in closure.nodes if n.addon_id == "bad.dep"]
+        self.assertEqual(len(bad_nodes), 1)
+        self.assertEqual(bad_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+    def test_installed_dep_with_none_xml_produces_metadata_error(self) -> None:
+        """Installed dep whose addon.xml is absent (None from read_addon_xml)
+        → METADATA_ERROR, not 'no dependencies'.
+        """
+        root_xml = _xml("root", requires=_imp("no.xml.dep"))
+        # dep is installed but NOT in addon_xmls → read_addon_xml returns None
+        r = self._resolver(
+            installed={"no.xml.dep": _info("no.xml.dep")},
+            addon_xmls={"root": root_xml},
+        )
+        closure = r.resolve_closure(["root"])
+        dep_nodes = [n for n in closure.nodes if n.addon_id == "no.xml.dep"]
+        self.assertEqual(len(dep_nodes), 1)
+        self.assertEqual(dep_nodes[0].status, DependencyStatus.METADATA_ERROR)
+
+    def test_get_addon_details_dependency_error_is_metadata_error_not_missing(self) -> None:
+        """DependencyError from get_addon_details → METADATA_ERROR, not MISSING.
+
+        Infrastructure failure must not trigger an install attempt.
+        """
+        root_xml = _xml("root", requires=_imp("infra.fail.dep"))
+        r = self._resolver(
+            addon_xmls={"root": root_xml},
+            get_details_errors={"infra.fail.dep": DependencyError("JSON-RPC timeout")},
+        )
+        closure = r.resolve_closure(["root"])
+        fail_nodes = [n for n in closure.nodes if n.addon_id == "infra.fail.dep"]
+        self.assertEqual(len(fail_nodes), 1)
+        self.assertEqual(fail_nodes[0].status, DependencyStatus.METADATA_ERROR)
+        # Must NOT be classified as MISSING (which would trigger install)
+        self.assertNotEqual(fail_nodes[0].status, DependencyStatus.MISSING)
+
+    def test_metadata_error_makes_all_required_satisfied_false(self) -> None:
+        """METADATA_ERROR in the closure → all_required_satisfied=False."""
+        root_xml = _xml("root", requires=_imp("bad.dep"))
+        r = self._resolver(
+            installed={"bad.dep": _info("bad.dep")},
+            addon_xmls={"root": root_xml, "bad.dep": b"<<CORRUPT>>"},
+        )
+        result = r.reconcile_dependencies(["root"])
+        self.assertFalse(result.all_required_satisfied)
+
+    def test_metadata_error_dep_in_unresolved(self) -> None:
+        """METADATA_ERROR dep appears in result.unresolved."""
+        root_xml = _xml("root", requires=_imp("bad.dep"))
+        r = self._resolver(
+            installed={"bad.dep": _info("bad.dep")},
+            addon_xmls={"root": root_xml, "bad.dep": b"<broken"},
+        )
+        result = r.reconcile_dependencies(["root"])
+        unresolved_ids = {n.addon_id for n in result.unresolved}
+        self.assertIn("bad.dep", unresolved_ids)
+
+    def test_other_deps_still_classified_alongside_metadata_error(self) -> None:
+        """Independent good deps produce correct diagnostics even when one dep
+        has a METADATA_ERROR.
+        """
+        root_xml = _xml("root", requires=_imp("bad.dep") + _imp("good.dep"))
+        r = self._resolver(
+            installed={
+                "bad.dep": _info("bad.dep"),
+                "good.dep": _info("good.dep"),
+            },
+            addon_xmls={
+                "root": root_xml,
+                "bad.dep": b"<this is not xml",
+                "good.dep": _xml("good.dep"),
+            },
+        )
+        closure = r.resolve_closure(["root"])
+        statuses = {n.addon_id: n.status for n in closure.nodes}
+        self.assertEqual(statuses["bad.dep"], DependencyStatus.METADATA_ERROR)
+        self.assertEqual(statuses["good.dep"], DependencyStatus.SATISFIED)
+
+    def test_get_details_generic_exception_is_metadata_error(self) -> None:
+        """Non-DependencyError from get_addon_details → METADATA_ERROR (not MISSING)."""
+        root_xml = _xml("root", requires=_imp("crash.dep"))
+        r = self._resolver(
+            addon_xmls={"root": root_xml},
+            get_details_errors={"crash.dep": RuntimeError("unexpected crash")},
+        )
+        closure = r.resolve_closure(["root"])
+        crash_nodes = [n for n in closure.nodes if n.addon_id == "crash.dep"]
+        self.assertEqual(len(crash_nodes), 1)
+        self.assertEqual(crash_nodes[0].status, DependencyStatus.METADATA_ERROR)
 
 
 if __name__ == "__main__":
