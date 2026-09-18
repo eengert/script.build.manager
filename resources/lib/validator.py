@@ -453,20 +453,43 @@ def _validate_dependencies(
     closure: Optional[DependencyClosure],
 ) -> list:
     """Validate the dependency closure if provided; emit NOT_CHECKED if not."""
+    # Expected roots: only desired managed add-ons with state "enabled".
+    # Disabled, absent, and unmanaged add-ons are excluded.
+    expected_roots = frozenset(
+        entry.addon_id for entry in desired.addons if entry.state == "enabled"
+    )
+
+    if not expected_roots:
+        # No enabled managed add-ons → dependency validation is not applicable.
+        return []
+
     if closure is None:
-        # Only emit NOT_CHECKED if there are managed addons that could have deps.
-        if not desired.addons:
-            return []
         return [ValidationCheck(
             domain=ValidationDomain.DEPENDENCY,
             subject="dependency_domain",
             status=ValidationStatus.NOT_CHECKED,
-            expected="all required dependencies satisfied",
-            actual_state="not inspected",
+            expected=f"closure roots: {sorted(expected_roots)}",
+            actual_state="no closure supplied",
             reason=(
                 "Dependency closure was not supplied; dependency validation "
-                "requires a BM-012 DependencyClosure passed by the caller. "
-                "Configuration-management validation deferred."
+                "requires a BM-012 DependencyClosure rooted at: "
+                f"{sorted(expected_roots)}"
+            ),
+        )]
+
+    # Closure supplied: verify root scope matches exactly.
+    supplied_roots = frozenset(closure.root_addon_ids)
+    if supplied_roots != expected_roots:
+        return [ValidationCheck(
+            domain=ValidationDomain.DEPENDENCY,
+            subject="dependency_domain",
+            status=ValidationStatus.NOT_CHECKED,
+            expected=f"closure roots: {sorted(expected_roots)}",
+            actual_state=f"closure roots: {sorted(supplied_roots)}",
+            reason=(
+                "Dependency closure root_addon_ids do not match expected enabled "
+                f"managed add-ons; expected: {sorted(expected_roots)}, "
+                f"supplied: {sorted(supplied_roots)}"
             ),
         )]
 

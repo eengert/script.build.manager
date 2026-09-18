@@ -449,32 +449,32 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertEqual(len(dep_checks), 0)
 
     def test_satisfied_dep_pass(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(_node("script.module.dep", DependencyStatus.SATISFIED))
         report = validate_build_state(desired, actual, closure)
         dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
         self.assertEqual(dep_checks[0].status, ValidationStatus.PASS)
 
     def test_system_dep_pass(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(_node("xbmc.python", DependencyStatus.SYSTEM))
         report = validate_build_state(desired, actual, closure)
         dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
         self.assertEqual(dep_checks[0].status, ValidationStatus.PASS)
 
     def test_optional_dep_no_check(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(_node("script.module.opt", DependencyStatus.OPTIONAL, optional=True))
         report = validate_build_state(desired, actual, closure)
         dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
         self.assertEqual(len(dep_checks), 0)
 
     def test_missing_dep_fail(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="script.module.absent",
             required_by=("plugin.video.root",),
@@ -490,8 +490,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertFalse(report.is_valid)
 
     def test_version_insufficient_dep_fail(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="script.module.old",
             required_by=("plugin.video.root",),
@@ -508,8 +508,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertIn("2.0.0", dep_checks[0].reason)
 
     def test_metadata_error_dep_fail(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="script.module.broken",
             required_by=("plugin.video.root",),
@@ -524,8 +524,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertEqual(dep_checks[0].status, ValidationStatus.FAIL)
 
     def test_installed_disabled_dep_fail(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(_node(
             "script.module.disabled",
             DependencyStatus.INSTALLED_DISABLED,
@@ -538,8 +538,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertIn("disabled", dep_checks[0].actual_state)
 
     def test_cycle_dep_warning(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="plugin.video.cycler",
             required_by=("plugin.video.root",),
@@ -556,8 +556,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertIn("cycle", dep_checks[0].actual_state)
 
     def test_cycle_without_cycle_path_still_warning(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="plugin.video.cycler",
             required_by=(),
@@ -573,8 +573,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertEqual(dep_checks[0].status, ValidationStatus.WARNING)
 
     def test_dep_nodes_sorted_lexically(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(
             _node("script.module.zzz", DependencyStatus.SATISFIED),
             _node("script.module.aaa", DependencyStatus.SATISFIED),
@@ -586,8 +586,8 @@ class TestDependencyValidation(unittest.TestCase):
         self.assertEqual(subjects, sorted(subjects))
 
     def test_closure_with_required_by_in_reason(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="script.module.missing-dep",
             required_by=("plugin.video.root",),
@@ -733,7 +733,10 @@ class TestDomainOrdering(unittest.TestCase):
             addons=[_installed(repo_id), _installed(addon_id), _installed(skin_id)],
             active_skin=skin_id,
         )
-        closure = _closure(_node("script.module.dep", DependencyStatus.SATISFIED))
+        closure = DependencyClosure(
+            root_addon_ids=(addon_id,),
+            nodes=(_node("script.module.dep", DependencyStatus.SATISFIED),),
+        )
         report = validate_build_state(desired, actual, closure)
 
         domain_sequence = [c.domain for c in report.checks]
@@ -773,8 +776,8 @@ class TestDomainOrdering(unittest.TestCase):
         self.assertEqual(subjects, sorted(subjects))
 
     def test_within_dependency_domain_lexical(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(
             _node("z.module", DependencyStatus.SATISFIED),
             _node("a.module", DependencyStatus.SATISFIED),
@@ -839,9 +842,9 @@ class TestAggregateSemantics(unittest.TestCase):
             _installed("repository.r"),
             _installed("plugin.video.x"),
         ])
-        # Empty closure (non-None) suppresses NOT_CHECKED for the dep domain.
-        empty_closure = DependencyClosure(root_addon_ids=(), nodes=())
-        report = validate_build_state(desired, actual, empty_closure)
+        # Closure rooted at the enabled add-on; no dep nodes → dep domain complete.
+        closure = DependencyClosure(root_addon_ids=("plugin.video.x",), nodes=())
+        report = validate_build_state(desired, actual, closure)
         self.assertTrue(report.is_valid)
         self.assertTrue(report.is_complete)
         self.assertTrue(report.passed)
@@ -851,9 +854,9 @@ class TestAggregateSemantics(unittest.TestCase):
             addons=(AddonEntry(addon_id="plugin.video.x", state="enabled"),),
         )
         actual = _state(addons=[_installed("plugin.video.x", enabled=False)])
-        # Empty closure (non-None) so the only NOT_CHECKED source is excluded.
-        empty_closure = DependencyClosure(root_addon_ids=(), nodes=())
-        report = validate_build_state(desired, actual, empty_closure)
+        # Closure rooted at the enabled add-on; no dep nodes → dep domain complete.
+        closure = DependencyClosure(root_addon_ids=("plugin.video.x",), nodes=())
+        report = validate_build_state(desired, actual, closure)
         self.assertFalse(report.is_valid)
         self.assertFalse(report.passed)
         self.assertTrue(report.is_complete)
@@ -868,8 +871,8 @@ class TestAggregateSemantics(unittest.TestCase):
         self.assertFalse(report.passed)
 
     def test_warning_alone_allows_passed(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         closure = _closure(DependencyNode(
             addon_id="plugin.video.cycle",
             required_by=(),
@@ -895,8 +898,8 @@ class TestAggregateSemantics(unittest.TestCase):
         self.assertTrue(report.passed)
 
     def test_fail_and_warning_invalid_not_complete(self):
-        desired = _resolved()
-        actual = _state()
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.root", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.root")])
         # FAIL from missing dep + WARNING from cycle
         closure = _closure(
             DependencyNode(
@@ -925,6 +928,136 @@ class TestAggregateSemantics(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertEqual(len(report.failures), 1)
         self.assertEqual(len(report.warnings), 1)
+
+
+# ---------------------------------------------------------------------------
+# TestDependencyClosureRootScope
+# ---------------------------------------------------------------------------
+
+class TestDependencyClosureRootScope(unittest.TestCase):
+    """Closure root_addon_ids must exactly match enabled managed add-ons."""
+
+    def test_enabled_addon_no_closure_emits_not_checked(self):
+        """CASE 2: enabled desired add-on + closure=None → NOT_CHECKED."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.a", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.a")])
+        report = validate_build_state(desired, actual, dependency_closure=None)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 1)
+        self.assertEqual(dep_checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertFalse(report.is_complete)
+
+    def test_enabled_addon_empty_closure_emits_not_checked(self):
+        """CASE 4: enabled desired + closure with no roots → NOT_CHECKED (scope mismatch)."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.a", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.a")])
+        empty_closure = DependencyClosure(root_addon_ids=(), nodes=())
+        report = validate_build_state(desired, actual, empty_closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 1)
+        self.assertEqual(dep_checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertFalse(report.is_complete)
+
+    def test_enabled_addon_wrong_root_emits_not_checked(self):
+        """CASE 4: enabled add-on A + closure rooted at unrelated B → NOT_CHECKED."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.a", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.a")])
+        wrong_closure = DependencyClosure(root_addon_ids=("plugin.video.b",), nodes=())
+        report = validate_build_state(desired, actual, wrong_closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 1)
+        self.assertEqual(dep_checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_two_enabled_addons_partial_closure_emits_not_checked(self):
+        """CASE 4: enabled roots A+B, closure only covers A → NOT_CHECKED."""
+        desired = _resolved(addons=(
+            AddonEntry(addon_id="plugin.video.a", state="enabled"),
+            AddonEntry(addon_id="plugin.video.b", state="enabled"),
+        ))
+        actual = _state(addons=[_installed("plugin.video.a"), _installed("plugin.video.b")])
+        partial_closure = DependencyClosure(root_addon_ids=("plugin.video.a",), nodes=())
+        report = validate_build_state(desired, actual, partial_closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 1)
+        self.assertEqual(dep_checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_two_enabled_addons_reversed_roots_accepted(self):
+        """CASE 3: enabled roots A+B, closure roots B+A (reversed order) → validates normally."""
+        desired = _resolved(addons=(
+            AddonEntry(addon_id="plugin.video.a", state="enabled"),
+            AddonEntry(addon_id="plugin.video.b", state="enabled"),
+        ))
+        actual = _state(addons=[_installed("plugin.video.a"), _installed("plugin.video.b")])
+        # Root order in closure is reversed relative to expected; should still match.
+        closure = DependencyClosure(
+            root_addon_ids=("plugin.video.b", "plugin.video.a"),
+            nodes=(),
+        )
+        report = validate_build_state(desired, actual, closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        # Roots match (set equality); no nodes → no dep checks at all (dep domain complete).
+        self.assertEqual(len(dep_checks), 0)
+        self.assertTrue(report.is_complete)
+
+    def test_matching_roots_zero_nodes_dep_domain_complete(self):
+        """CASE 3: closure roots match enabled add-on, zero dep nodes → dep domain complete."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.a", state="enabled"),))
+        actual = _state(addons=[_installed("plugin.video.a")])
+        closure = DependencyClosure(root_addon_ids=("plugin.video.a",), nodes=())
+        report = validate_build_state(desired, actual, closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 0)
+        self.assertTrue(report.is_complete)
+
+    def test_disabled_only_desired_no_dep_check(self):
+        """CASE 1: only disabled desired add-on → dep validation not applicable; no NOT_CHECKED."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.d", state="disabled"),))
+        actual = _state(addons=[_installed("plugin.video.d", enabled=False)])
+        report = validate_build_state(desired, actual, dependency_closure=None)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 0)
+
+    def test_absent_only_desired_no_dep_check(self):
+        """CASE 1: only absent desired add-on → dep validation not applicable; no NOT_CHECKED."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.gone", state="absent"),))
+        actual = _state()
+        report = validate_build_state(desired, actual, dependency_closure=None)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 0)
+
+    def test_mixed_enabled_disabled_only_enabled_required_in_roots(self):
+        """CASE 3: enabled + disabled desired; closure rooted only at enabled ID → validates."""
+        enabled_id = "plugin.video.enabled"
+        disabled_id = "plugin.video.disabled"
+        desired = _resolved(addons=(
+            AddonEntry(addon_id=enabled_id, state="enabled"),
+            AddonEntry(addon_id=disabled_id, state="disabled"),
+        ))
+        actual = _state(addons=[
+            _installed(enabled_id, enabled=True),
+            _installed(disabled_id, enabled=False),
+        ])
+        # Only the enabled add-on must be in roots; disabled is excluded from expected_roots.
+        closure = DependencyClosure(root_addon_ids=(enabled_id,), nodes=())
+        report = validate_build_state(desired, actual, closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 0)
+        self.assertTrue(report.is_complete)
+
+    def test_unmanaged_actual_addons_do_not_affect_expected_roots(self):
+        """Unmanaged installed add-ons are never included in expected_roots."""
+        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.managed", state="enabled"),))
+        actual = _state(addons=[
+            _installed("plugin.video.managed"),
+            _installed("plugin.video.unmanaged"),
+            _installed("script.module.external"),
+        ])
+        # Closure rooted only at the managed add-on; unmanaged add-ons must not appear.
+        closure = DependencyClosure(root_addon_ids=("plugin.video.managed",), nodes=())
+        report = validate_build_state(desired, actual, closure)
+        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
+        self.assertEqual(len(dep_checks), 0)
+        self.assertTrue(report.is_complete)
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +1096,10 @@ class TestFullScenario(unittest.TestCase):
             ],
             active_skin=skin_id,
         )
-        closure = _closure(_node(dep_id, DependencyStatus.SATISFIED))
+        closure = DependencyClosure(
+            root_addon_ids=(enabled_id,),
+            nodes=(_node(dep_id, DependencyStatus.SATISFIED),),
+        )
         report = validate_build_state(desired, actual, closure)
         self.assertTrue(report.passed)
         self.assertEqual(len(report.failures), 0)
@@ -984,15 +1120,15 @@ class TestFullScenario(unittest.TestCase):
         """After repairing drift, validate_build_state returns passed=True."""
         addon_id = "plugin.video.drifted"
         desired = _resolved(addons=(AddonEntry(addon_id=addon_id, state="enabled"),))
-        # Use a non-None empty closure so no NOT_CHECKED is emitted.
-        empty_closure = DependencyClosure(root_addon_ids=(), nodes=())
+        # Closure rooted at the enabled add-on; no dep nodes → dep domain complete.
+        closure = DependencyClosure(root_addon_ids=(addon_id,), nodes=())
         # Drifted state
         drifted_actual = _state(addons=[_installed(addon_id, enabled=False)])
-        drifted_report = validate_build_state(desired, drifted_actual, empty_closure)
+        drifted_report = validate_build_state(desired, drifted_actual, closure)
         self.assertFalse(drifted_report.is_valid)
         # Repaired state
         repaired_actual = _state(addons=[_installed(addon_id, enabled=True)])
-        repaired_report = validate_build_state(desired, repaired_actual, empty_closure)
+        repaired_report = validate_build_state(desired, repaired_actual, closure)
         self.assertTrue(repaired_report.passed)
 
     def test_validator_does_not_mutate_kodi_state(self):

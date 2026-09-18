@@ -1,103 +1,57 @@
-# Agent Handoff — BM-014 Complete
+# Agent Handoff — BM-014-correction Complete
 
 **Date**: 2026-09-18
 **Agent**: Claude (claude-sonnet-4-6, effort max)
-**Branch**: `agent/claude` @ `588f829`
-**Status**: BM-014 complete. 1119/1119 tests. 19/19 live. BM-015 not started.
+**Branch**: `agent/claude`
+**Status**: BM-014-correction complete. 1129/1129 tests. 19/19 live. BM-015 not started.
 
 ---
 
 ## What Was Done This Session
 
-### BM-014 — Post-Operation State Validator
+### BM-014-correction — Closure Root-Scope Check
 
-Implemented `resources/lib/validator.py` — a deterministic, read-only validator
-that answers "does observable Kodi state match the resolved desired Build Manager
-state?"
+Applied a narrow correctness fix to `_validate_dependencies()` in
+`resources/lib/validator.py`.
 
-**Public API:**
-```python
-validate_build_state(
-    desired: ResolvedBuild,
-    actual: KodiState,
-    dependency_closure: Optional[DependencyClosure] = None,
-) -> ValidationReport
-```
+**Problem**: The previous implementation accepted any non-None
+`DependencyClosure` as complete, even when its `root_addon_ids` was empty or
+covered unrelated add-ons. Three tests worked around this with
+`DependencyClosure(root_addon_ids=(), nodes=())`, which was incorrect.
 
----
+**Fix**:
 
-## Architecture
-
-### Types
-
-| Type | Role |
-|------|------|
-| `ValidationStatus` | `PASS`, `FAIL`, `WARNING`, `NOT_CHECKED` |
-| `ValidationDomain` | `REPOSITORY`, `ADDON`, `DEPENDENCY`, `SKIN`, `CONFIGURATION` |
-| `ValidationCheck` | Per-check result: domain, subject, status, expected, actual_state, reason |
-| `ValidationReport` | Aggregate: checks tuple + is_valid, is_complete, passed, passes, failures, warnings, not_checked |
-| `ValidationError` | Raised on malformed input (e.g. duplicate addon_ids in KodiState) |
-
-### Validation domains (in output order)
-
-**REPOSITORY** — `required=True` repos only:
-- installed+enabled → PASS; missing → FAIL; disabled → FAIL
-- `required=False` repos: no check emitted
-
-**ADDON** — each `desired.addons` entry:
-- `"enabled"`: installed+enabled=PASS, disabled or missing=FAIL
-- `"disabled"`: installed+disabled=PASS, enabled or missing=FAIL
-- `"absent"`: not installed=PASS, installed (any)=FAIL
-- Unknown state → FAIL; unmanaged add-ons → silently ignored
-
-**DEPENDENCY** — `DependencyClosure` nodes (lexical order):
-- SATISFIED, SYSTEM → PASS; OPTIONAL → skipped (no check)
-- MISSING, VERSION_INSUFFICIENT, METADATA_ERROR, INSTALLED_DISABLED → FAIL
-- CYCLE → WARNING (reason includes cycle path)
-- No closure + non-empty desired.addons → single NOT_CHECKED
-
-**SKIN** — `desired.skin` if non-None:
-- installed+active → PASS; installed but wrong active → FAIL; not installed → FAIL
-- desired.skin=None → no check
-
-**CONFIGURATION** — `desired.config` if non-None:
-- Emits NOT_CHECKED (BM-015 deferred)
-- desired.config=None → no check
-
-### Aggregate semantics
-
-```
-is_valid    = no FAIL checks
-is_complete = no NOT_CHECKED checks
-passed      = is_valid AND is_complete
-```
-
-WARNING alone does not prevent `passed=True`.
-
-### Read-only guarantee
-
-The module has no xbmc imports, no filesystem writes, no network calls, no
-shell execution, no mutation backend. Operates on immutable snapshots only.
-
-### Determinism
-
-Domain order: REPOSITORY → ADDON → DEPENDENCY → SKIN → CONFIGURATION.
-Within each domain: lexical by subject/addon_id.
+1. Compute `expected_roots = frozenset(entry.addon_id for entry in desired.addons
+   if entry.state == "enabled")`.
+2. If `expected_roots` is empty → return [] (CASE 1: dep validation not applicable).
+3. If `closure is None` → emit one `NOT_CHECKED` (CASE 2).
+4. If `set(closure.root_addon_ids) != expected_roots` → emit one `NOT_CHECKED`
+   describing the scope mismatch (CASE 4: wrong/empty roots).
+5. Otherwise → validate nodes normally (CASE 3).
+6. Removed "Configuration-management validation deferred." from the dep
+   `NOT_CHECKED` reason string (that sentence belongs only in CONFIGURATION domain).
 
 ---
 
-## Files
+## Files Modified
 
-| File | Status | Notes |
-|------|--------|-------|
-| `resources/lib/validator.py` | new | main BM-014 module |
-| `tests/test_validator.py` | new | 72 unit tests |
-| `tools/kodi_test.py` | modified | BM-014 constants, ZIPs, addons.xml, _HttpKodiStateBackend, validate_post_operations() 19-step |
-| `docs/TESTING.md` | modified | new test row + validate-post-operations section |
-| `.agent/CURRENT_TASK.md` | modified | updated to BM-014 |
-| `.agent/USAGE_HISTORY.md` | modified | BM-014 row appended |
+| File | Change |
+|------|--------|
+| `resources/lib/validator.py` | `_validate_dependencies` rewritten with root-scope check |
+| `tests/test_validator.py` | 11 node tests updated (added enabled addon + matching closure); 3 empty-closure workarounds replaced; 10 new tests in `TestDependencyClosureRootScope` (82 validator tests total) |
+| `docs/TESTING.md` | test_validator.py count updated 72 → 82 |
+| `.agent/USAGE_HISTORY.md` | BM-014-correction row appended |
 
-All changes committed as `588f829` and pushed to `agent/claude`.
+---
+
+## Test Results
+
+- **Unit tests**: 1129/1129 pass (1047 pre-BM-014 + 82 validator tests)
+- **Live validation (BM-014)**: 19/19 passed (Kodi 21.1 macOS, disposable .kodi-test)
+
+Live sequence unchanged — the live closure is rooted at `plugin.video.bm014-enabled`
+which is exactly the one enabled managed add-on in desired, so CASE 3 (roots match)
+applies and all 5 checks remain PASS.
 
 ---
 
@@ -105,40 +59,9 @@ All changes committed as `588f829` and pushed to `agent/claude`.
 
 | Branch | SHA | Notes |
 |--------|-----|-------|
-| `matrix` | `984debe` | BM-013 merged; unchanged |
-| `agent/claude` | `588f829` | BM-014 complete ✓ |
+| `matrix` | `984debe` | unchanged |
+| `agent/claude` | TBD (commit pending) | BM-014-correction ✓ |
 | `agent/codex` | `a970e83` | intentionally stale, unchanged |
-
----
-
-## Test Results
-
-- **Unit tests**: 1119/1119 pass (1047 pre-BM-014 + 72 new)
-- **Live validation (BM-014)**: 19/19 passed (Kodi 21.1 macOS, disposable .kodi-test)
-
-### Live sequence proven
-
-| Step | Result |
-|------|--------|
-| 1. Reset + install + configure | ✓ |
-| 2. Build ZIPs + start HTTP server | ✓ |
-| 3. Launch + wait for ready | ✓ |
-| 4. Pre-conditions (not installed) | ✓ |
-| 5. Install test repo | ✓ |
-| 6. Repo enabled=True verified | ✓ |
-| 7. bm014-enabled installed+enabled | ✓ |
-| 8. bm014-disabled installed then set disabled | ✓ |
-| 9. KodiState inspected (33 addons, skin.estuary) | ✓ |
-| 10. Dependency closure resolved (xbmc.python→SYSTEM) | ✓ |
-| 11. ResolvedBuild constructed | ✓ |
-| 12. validate_build_state → PASS (5 PASS, 0 FAIL) | ✓ |
-| 13. Drift injected (bm014-disabled→enabled) | ✓ |
-| 14. KodiState re-inspected (drift reflected) | ✓ |
-| 15. validate_build_state → FAIL on bm014-disabled | ✓ |
-| 16. Drift repaired (bm014-disabled→disabled) | ✓ |
-| 17. KodiState re-inspected (repair reflected) | ✓ |
-| 18. validate_build_state → PASS (repaired) | ✓ |
-| 19. Stop + real profile untouched | ✓ |
 
 ---
 
@@ -150,30 +73,30 @@ All changes committed as `588f829` and pushed to `agent/claude`.
 
 ## Human Decision Required Before Next Step
 
-None. Supervisor can proceed to BM-015 planning.
+None. Supervisor may proceed to merge BM-014 + BM-014-correction to matrix,
+then plan BM-015.
 
 ---
 
 ## Risks
 
-None. BM-014 is purely read-only. No Kodi state is mutated by the validator.
+None. Correction is narrowly scoped to `_validate_dependencies`. All other
+domains unaffected. Read-only guarantee unchanged.
 
 ---
 
 ## Out of Scope — Noticed
 
-(Carried from prior handoffs)
-- `_HttpAddonBackend._resolve_package_url()` does not sort `repo_ids`. Single-repo
-  test is unaffected. Note for future harness work.
-- `_HttpAddonStateBackend.get_addon_details()` raises `AddonStateError` for ALL
-  `RuntimeError` from `jsonrpc()`, including -32602. Not an issue in validate_addon_state()
-  or validate_post_operations() (only installed add-ons queried). Note for future harness work.
+(Carried from BM-014 handoff)
+- `_HttpAddonBackend._resolve_package_url()` does not sort `repo_ids`.
+- `_HttpAddonStateBackend.get_addon_details()` raises `AddonStateError` for
+  all `RuntimeError` from `jsonrpc()`, including -32602.
 
 ---
 
 ## Usage
 
-Start: 5h 46% / wk 87% (claude-sonnet-4-6, max effort).
-End: 5h 46% / wk 87%.
+Start: 5h 55% / wk 88% (claude-sonnet-4-6, max effort).
+End: 5h 55% / wk 88%.
 Delta: ~0% / 0%.
 See USAGE_HISTORY.md for the appended row.

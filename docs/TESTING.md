@@ -25,7 +25,7 @@ The test suite covers:
 | `test_addon_manager.py` | General add-on installation (BM-011) | 132 |
 | `test_dependencies.py` | Dependency closure discovery/reconciliation (BM-012) | 96 |
 | `test_addon_state.py` | Enable/disable state reconciliation (BM-013) | 66 |
-| `test_validator.py` | Post-operation state validation (BM-014) | 72 |
+| `test_validator.py` | Post-operation state validation (BM-014) | 82 |
 
 ## Disposable Kodi harness
 
