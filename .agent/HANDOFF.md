@@ -1,26 +1,80 @@
-# Agent Handoff — BM-011-C Complete
+# Agent Handoff — BM-011-C-final Complete
 
 **Date**: 2026-09-18
 **Agent**: Claude (claude-sonnet-4-6, effort max)
 **Branch**: `agent/claude`
-**Status**: BM-011-C correction complete. Awaiting supervisor review + merge to matrix.
+**Status**: BM-011-C-final corrections complete. Awaiting supervisor review + merge to matrix.
 
 ---
 
 ## What Was Done
 
-BM-011-C implements the supervisor-mandated correction: production now uses the
-constrained package-install fallback algorithm (Option A), not InstallAddon.
-Live validation proves the production code path, not a harness workaround.
+Two supervisor-mandated corrections applied to BM-011-C:
 
 ### Commit
 
-- `0eb8133` — BM-011-C: production direct package install (this session)
+- `500217f` — BM-011-C-final: redirect security + desired_state validation/enforcement
 
-### Previous commits (now superseded)
+### Previous commits (still valid)
 
-- `08fd2de` — BM-011 validation fixes (now incorrect re: production mechanism)
-- `cdcaa2f` — BM-011 production module (InstallAddon approach — REPLACED)
+- `0eb8133` — BM-011-C: production direct package install (Option A)
+- `c991dc4` — chore: record BM-011-C completion
+
+---
+
+## Issue 1 — Redirect Security (FIXED)
+
+`_fetch_bytes()` previously used bare `urllib.request.urlopen()` which follows
+redirects without validation. Fixed:
+
+- Added `_SafeRedirectHandler(urllib.request.HTTPRedirectHandler)` to `addons.py`
+  mirroring the BM-010 pattern exactly; raises `AddonInstallError` on:
+  - non-http/https scheme (file://, ftp://, etc.)
+  - embedded credentials (user:pass@host)
+  - missing/invalid host
+- Added `_build_safe_opener()` removing `FileHandler` (prevents file:// even on redirect)
+- `_fetch_bytes` now uses `opener.open()` with `except AddonInstallError: raise`
+  before `except Exception` to prevent re-wrapping
+- urllib imports moved to top level
+
+---
+
+## Issue 2 — desired_state Validation and Enforcement (FIXED)
+
+### Validation
+`AddonManager.install()` now validates `desired_state in {"enabled", "disabled"}`
+at the very top of the method, before addon_id validation or any backend call.
+Any other value returns FAILED immediately with `desired_state` preserved in the result.
+
+### Symmetric enforcement
+Replaced asymmetric `if desired_state == "enabled" and not info.enabled: enable_addon()`
+with symmetric: `if info.enabled != desired_enabled: set_addon_enabled(addon_id, desired_enabled)`.
+
+All four cases handled correctly:
+- desired enabled + discovered disabled → `set_addon_enabled(True)` → verify
+- desired enabled + discovered enabled → no call
+- desired disabled + discovered disabled → no call
+- desired disabled + discovered enabled → `set_addon_enabled(False)` → verify
+
+### API rename
+`enable_addon(addon_id)` → `set_addon_enabled(addon_id, enabled: bool)` throughout:
+- `AddonBackend` abstract base (addons.py)
+- `KodiRuntimeAddonBackend` (addons.py)
+- `FakeAddonBackend` (tests) — `enable_calls` → `set_enabled_calls: List[tuple]`,
+  `enable_error` → `set_enabled_error`
+- `_HttpAddonBackend` (kodi_test.py) — AddonBackend side only
+
+**NOT renamed**: `_HttpRepositoryBackend.enable_addon` and
+`KodiRuntimeRepositoryBackend.enable_addon` in kodi_test.py/repository.py —
+those implement `RepositoryBackend` (BM-010) which is a separate interface.
+
+---
+
+## BM-013 Boundary (documented)
+
+BM-011 is responsible only for finalizing the enabled state of an add-on it
+just installed. BM-013 handles drift reconciliation for already-installed
+add-ons. The docstring in `install()` now makes this explicit.
 
 ---
 
@@ -28,56 +82,20 @@ Live validation proves the production code path, not a harness workaround.
 
 | File | Change |
 |------|--------|
-| `resources/lib/addons.py` | Major rewrite — Option A algorithm replaces InstallAddon |
-| `tests/test_addon_manager.py` | Updated FakeAddonBackend + 51 new tests |
-| `tools/kodi_test.py` | `_HttpAddonBackend` rewritten to mirror production |
-
----
-
-## Architecture (BM-011-C — Option A)
-
-### Production `KodiRuntimeAddonBackend.invoke_install` (new):
-1. `_resolve_package_url(addon_id)` — enumerates installed+enabled repos via
-   `Addons.GetAddons` JSON-RPC; reads each repo's `addon.xml` via xbmcvfs;
-   fetches `addons.xml` from `<info>` URL; finds addon_id + version;
-   constructs ZIP URL from `<datadir zip="true">/{id}/{ver}/{id}-{ver}.zip`
-2. `_fetch_bytes(url, max_bytes)` — secure HTTP download (http/https only, no
-   credentials, bounded to `_MAX_ADDON_ZIP_BYTES = 100 MB`)
-3. `_validate_addon_zip(data, addon_id, expected_version)` — checks: valid ZIP,
-   no absolute paths, no traversal (..), `{addon_id}/addon.xml` present,
-   ID and version match
-4. `_staged_install(zip_data, addon_id, addons_dir)` — extracts to temp staging
-   dir, atomically renames `staging/{addon_id}/` → `addons_dir/{addon_id}/`,
-   cleans staging on any failure
-5. `xbmc.executebuiltin("UpdateLocalAddons")` — triggers Kodi to discover new addon
-
-### Harness `_HttpAddonBackend.invoke_install` (mirrors production):
-- Same helpers: `_resolve_package_url` (JSON-RPC + filesystem + `_fetch_bytes`),
-  `_fetch_bytes`, `_validate_addon_zip`, `_staged_install`
-- Harness difference: restart Kodi instead of `UpdateLocalAddons` (builtin
-  unavailable outside Kodi)
-
-### `AddonManager.install` (updated):
-- After `poll_addon_installed`, checks `desired_state`:
-  - `"enabled"` + not enabled → calls `backend.enable_addon(addon_id)`, verifies
-  - `"disabled"` → leaves as-is (SyncInstalled Kodi 21 default: enabled=0)
-- Returns INSTALLED with observed final state
-
-### New shared helpers (pure Python, importable by both):
-- `_validate_url` — http/https only, no embedded credentials, no file://
-- `_fetch_bytes` — bounded download, 30s timeout
-- `_validate_addon_zip` — ZIP structure + ID/version validation
-- `_staged_install` — atomic extract + rename, cleanup on failure
+| `resources/lib/addons.py` | Redirect handler + safe opener; desired_state validation; symmetric set_addon_enabled |
+| `tests/test_addon_manager.py` | 24 new tests; FakeAddonBackend renamed; existing tests updated |
+| `tools/kodi_test.py` | _HttpAddonBackend.set_addon_enabled; addon B; 19-step validation |
 
 ---
 
 ## Test Results
 
-- **Unit tests**: 811/811 pass
-  - 51 new tests: `TestValidateUrl`, `TestValidateAddonZip`, `TestStagedInstall`,
-    `TestDesiredStateEnable`, `TestDesiredStateDisable`, `TestEnableAddonFails`,
-    `TestRepoResolution`, updated `TestKodiRuntimeBackend`
-- **Live validation**: 17/17 pass
+- **Unit tests**: 835/835 pass
+  - New tests: TestSafeRedirectHandler (6), TestDesiredStateValidation (7),
+    TestStateFinalizationSymmetry (8), TestSetAddonEnabledFails (5),
+    updated TestKodiRuntimeBackend (+1), updated TestAddonBackendInterface
+  - Baseline: 811/811 (BM-011-C) + 24 new = 835
+- **Live validation**: 19/19 pass
 
 ---
 
@@ -90,62 +108,33 @@ Live validation proves the production code path, not a harness workaround.
 | 3 | Configure web server | ✓ |
 | 4 | Create test content + start HTTP server | ✓ |
 | 5 | Launch Kodi + wait for ready | ✓ |
-| 6 | Verify test add-on NOT installed before action | ✓ |
-| 7 | Install test repo via BM-010 + enable trigger | ✓ |
+| 6 | Verify addon A NOT installed before action | ✓ |
+| 7 | Install test repo via BM-010 | ✓ |
 | 8 | Wait for Kodi to index test repo | ✓ |
-| 9 | Verify test add-on still NOT installed | ✓ |
-| 10 | **Production algorithm**: resolve metadata → download → validate → stage → restart | ✓ |
+| 9 | Verify addon A still NOT installed | ✓ |
+| 10 | Install addon A desired_state='enabled' → INSTALLED | ✓ |
 | 11 | Verify result.status == INSTALLED | ✓ |
-| 12 | Verify GetAddonDetails: enabled=True, version=1.0.0, files present | ✓ |
-| 13 | Restart Kodi (restart #3) | ✓ |
-| 14 | Verify still installed + enabled after restart | ✓ |
-| 15 | Install again → ALREADY_INSTALLED (idempotency) | ✓ |
-| 16 | Stop Kodi + HTTP server | ✓ |
-| 17 | Confirm real Kodi profile untouched | ✓ |
+| 12 | Verify GetAddonDetails: addon A enabled=True, version=1.0.0 | ✓ |
+| **13** | **Install addon B desired_state='disabled' → INSTALLED** | **✓** |
+| **14** | **Verify GetAddonDetails: addon B enabled=False** | **✓** |
+| 15 | Restart Kodi | ✓ |
+| 16 | Verify addon A enabled=True + addon B enabled=False after restart | ✓ |
+| 17 | Install both again → ALREADY_INSTALLED (idempotency) | ✓ |
+| 18 | Stop Kodi + HTTP server | ✓ |
+| 19 | Confirm real Kodi profile untouched | ✓ |
 
-### HTTP server log evidence (from step 10):
+### HTTP server log evidence (step 10 and 13):
 
 ```
 [http:8922] "GET /addons.xml HTTP/1.1" 200 -
 [http:8922] "GET /script.module.build-manager-test/1.0.0/script.module.build-manager-test-1.0.0.zip HTTP/1.1" 200 -
+[http:8922] "GET /addons.xml HTTP/1.1" 200 -
+[http:8922] "GET /script.module.build-manager-test-b/1.0.0/script.module.build-manager-test-b-1.0.0.zip HTTP/1.1" 200 -
 ```
 
-Build Manager's algorithm fetched the repository index (`addons.xml`) to resolve
-the package URL, then fetched the addon ZIP. Both requests originated from
-`_HttpAddonBackend._resolve_package_url` and `invoke_install`, which use the
-same `_fetch_bytes` helper as production.
-
----
-
-## Final Report (Supervisor's 18 Items)
-
-1. **Architecture decision**: Option A (constrained package-install fallback). No
-   unattended normal addon install API exists in Kodi 21.
-2. **`_resolve_package_url`**: Implemented in production (xbmc/xbmcvfs/xbmcaddon)
-   and mirrored in harness (JSON-RPC + filesystem). First repo match wins.
-3. **Download security** (`_fetch_bytes`): http/https only, no credentials, 100 MB cap,
-   30s timeout. `_validate_url` enforces scheme + no-credentials.
-4. **ZIP validation** (`_validate_addon_zip`): safe paths, no traversal, no absolute
-   paths, addon.xml present, ID match, version match.
-5. **Staged install** (`_staged_install`): temp dir, extract, atomic rename. Cleanup on failure.
-6. **Install target**: fail closed if `addons_dir/{addon_id}` already exists.
-7. **Kodi discovery**: `UpdateLocalAddons` builtin (production); Kodi restart (harness).
-8. **`enable_addon`**: abstract on `AddonBackend`; implemented in production (JSON-RPC)
-   and harness (JSON-RPC).
-9. **`desired_state` handling**: `AddonManager.install` calls `enable_addon` when
-   `desired_state="enabled"` and poll returns enabled=False. Verifies after enable.
-10. **`desired_state="disabled"`**: leaves addon in SyncInstalled default (enabled=0).
-11. **Verification**: `get_addon_details` after `enable_addon` confirms final state.
-12. **Idempotency**: ALREADY_INSTALLED if `get_addon_details` returns non-None before install.
-13. **Module docstring**: Updated to accurately describe the algorithm, security model,
-    and distinction from BM-010 and BM-013.
-14. **`FakeAddonBackend`**: updated with `enable_addon`, `enable_error`, `enable_calls`.
-    `poll_addon_installed` registers poll result in `_installed` for post-enable verify.
-15. **Test coverage**: 51 new tests across all new code paths.
-16. **Live validation**: 17/17, HTTP evidence of repo metadata fetch + ZIP download.
-17. **Shared helpers**: `_validate_url`, `_fetch_bytes`, `_validate_addon_zip`,
-    `_staged_install` are pure Python in `addons.py`, imported by harness.
-18. **No BM-012 work**: dependency closure deferred per task scope.
+Both addon A (enabled path) and addon B (disabled path) fetched from local server.
+Step 13 proves `set_addon_enabled(False)` was called when Kodi discovered the addon
+as enabled (Kodi 21 SyncInstalled default).
 
 ---
 
@@ -158,16 +147,11 @@ same `_fetch_bytes` helper as production.
 
 ## Risks / Human Decisions Before Next Step
 
-1. **Supervisor merge review**: All three files changed significantly. The old
-   `KodiRuntimeAddonBackend.invoke_install` (InstallAddon builtin) is gone;
-   the new implementation uses the full Option A algorithm.
-2. **`UpdateLocalAddons` timing**: In production (inside Kodi), `UpdateLocalAddons`
-   is asynchronous. `poll_addon_installed` must wait long enough for FindAddons
-   to complete. The existing `_INSTALL_TIMEOUT = 120.0s` should be adequate.
-3. **Kodi 21 `UpdateLocalAddons` vs restart**: The harness uses restart because
-   `UpdateLocalAddons` is a Kodi builtin (only callable from inside the Kodi
-   Python runtime). In production, `executebuiltin("UpdateLocalAddons")` is
-   correct and doesn't require restart.
+1. **Supervisor merge review**: Three files changed. Redirect handler and
+   desired_state logic are the two targeted corrections from the supervisor brief.
+2. **RepositoryBackend.enable_addon unchanged**: The BM-010 interface uses
+   `enable_addon(addon_id)` (no `enabled` parameter). That interface was NOT
+   renamed — it is correct as-is. The rename applies only to `AddonBackend`.
 
 ---
 
@@ -179,7 +163,7 @@ same `_fetch_bytes` helper as production.
 
 ## Usage
 
-Start: 5h 37% / wk 70% (claude-sonnet-4-6, max effort).
-End: 5h 37% / wk 70% (plan window did not advance measurably).
-Delta: ~0% / ~0% (very low-cost session — implementation was well-scoped).
+Start: 5h 52% / wk 72% (claude-sonnet-4-6, max effort).
+End: 5h 52% / wk 72% (plan window did not advance measurably).
+Delta: ~0% / ~0% (very low-cost session — well-scoped correction).
 See USAGE_HISTORY.md for the appended row.
