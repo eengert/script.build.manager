@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-012-merge",
-  "reason": "BM-012-merge complete: fast-forward matrix 5bc6325→3683b9a. 974/974 tests. BM-013 not started.",
-  "last_commit": "3683b9a",
+  "task": "BM-013",
+  "reason": "BM-013 complete: addon_state.py + 66 unit tests (1040/1040) + 16/16 live validate-addon-state. Commit b2a955f on agent/claude. BM-014 not started.",
+  "last_commit": "b2a955f",
   "matrix_sha": "3683b9a",
   "next_agent": "human",
-  "updated_at": "2026-09-18T16:35:00Z"
+  "updated_at": "2026-09-18T17:15:00Z"
 }
