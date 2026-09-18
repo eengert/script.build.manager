@@ -1,88 +1,29 @@
-# Agent Handoff — BM-013 + Correction Complete
+# Agent Handoff — BM-013-merge Complete
 
 **Date**: 2026-09-18
 **Agent**: Claude (claude-sonnet-4-6, effort max)
-**Branch**: `agent/claude` @ `cbd3f4a`
-**Status**: BM-013 + fail-closed correction complete. 1047/1047 tests. 16/16 live. BM-014 not started.
+**Branch**: `agent/claude` @ `984debe`
+**Status**: BM-013-merge complete. `matrix` fast-forwarded to `984debe`. 1047/1047 tests.
 
 ---
 
 ## What Was Done This Session
 
-### BM-013-correction — Fail-closed `enabled` field validation
+### BM-013-merge — Fast-forward `matrix` through approved BM-013 history
 
-**Commit**: `cbd3f4a`
+**Method**: `git push origin agent/claude:matrix` (worktree-safe; `matrix` is
+checked out in the main worktree at `/Users/eengert/Documents/Kodi/script.build.manager`
+and cannot be switched in this worktree).
 
-`KodiRuntimeAddonStateBackend.get_addon_details()` now requires `enabled` to be
-an actual Python `bool`. Any other value (missing, None, int 0/1, str, list,
-object) raises `AddonStateError`. Previously non-bool values were coerced to
-`False`, which could cause a malformed Kodi response to be mistaken for a
-disabled add-on and trigger an incorrect enable operation.
+**Merge type**: fast-forward only. No squash, no rebase, no history rewrite.
 
-Rule: `isinstance(enabled, bool)` — rejects 0/1 because `bool` subclasses `int`
-but `isinstance(0, bool)` is `False`.
+**Commits merged** (5, all from `agent/claude`):
+1. `b2a955f` feat(BM-013): enable/disable state reconciliation for managed add-ons
+2. `6089b19` chore: record BM-013 complete (1040/1040 tests, 16/16 live)
+3. `cbd3f4a` fix(BM-013): fail-closed enabled-field validation in KodiRuntimeAddonStateBackend
+4. `984debe` chore: record BM-013-correction complete (1047/1047 tests)
 
-7 new tests added (1047/1047 total). No live rerun needed: fix only tightens the
-malformed-response path; the normal Kodi path (enabled=True/False) is unchanged
-and already proven in BM-013 live validation.
-
----
-
-### BM-013 — Enable/Disable State Reconciliation
-
-Implemented `AddonStateReconciler(backend).reconcile(desired_states,
-protected_dependency_ids)` — the production primitive that makes the enabled
-state of explicitly managed installed add-ons match desired state.
-
-**Files created/modified** (commit `b2a955f`):
-
-| File | Status | Description |
-|------|--------|-------------|
-| `resources/lib/addon_state.py` | **new** | Main module: AddonStateReconciler, AddonStateBackend, KodiRuntimeAddonStateBackend, all types/errors |
-| `tests/test_addon_state.py` | **new** | 66 unit tests (11 classes) |
-| `tools/kodi_test.py` | modified | _HttpAddonStateBackend, 3 test ZIP helpers, validate_addon_state() 16-step, validate-addon-state command |
-| `docs/TESTING.md` | modified | New row, port table, validate-addon-state section |
-
----
-
-## Architecture
-
-`AddonStateReconciler` is the pure-logic core; all Kodi communication is
-injected via `AddonStateBackend`. Production uses `KodiRuntimeAddonStateBackend`
-(lazy xbmc import); tests use `FakeAddonStateBackend`.
-
-**Per-addon reconcile logic (lexical order; one failure ≠ stop)**:
-1. Validate addon_id (regex `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$`) → FAILED
-2. Validate desired_state ∈ {"enabled","disabled"} → FAILED
-3. `addon_id.startswith("xbmc.")` → BLOCKED_SYSTEM, no backend call
-4. `not desired_enabled AND addon_id in protected` → BLOCKED_REQUIRED_DEPENDENCY
-   (checked BEFORE current-state read; fires even when already disabled — conflict report)
-5. `get_addon_details()` → FAILED on AddonStateError, MISSING if None
-6. `current.enabled == desired_enabled` → ALREADY_CORRECT, no mutation
-7. `set_addon_enabled()` → FAILED on AddonStateError
-8. `get_addon_details()` (verify) → FAILED on error/None/mismatch
-9. Return ENABLED or DISABLED
-
-**`all_correct`**: True only when all results ∈ {ALREADY_CORRECT, ENABLED, DISABLED}.
-
----
-
-## Test Results
-
-- **Unit tests**: 1040/1040 pass (`python3 -m unittest discover tests`)
-  - Baseline: 974; BM-013 added: 66 (11 test classes)
-- **Live validation**: 16/16 passed
-
-### Live validation outcomes proven
-
-| Step | Outcome | Proof |
-|------|---------|-------|
-| 10 | DISABLED | enabled→disabled mutation; Kodi API enabled=False ✓ |
-| 11 | ALREADY_CORRECT | Second reconcile; no SetAddonEnabled call ✓ |
-| 12-13 | BLOCKED_REQUIRED_DEPENDENCY | protected dep desired disabled; blocked ✓ |
-| 14 | persistence | disabled state survives Kodi restart ✓ |
-| 15 | ENABLED | disabled→enabled re-enable; all_correct=True ✓ |
-| 16 | isolation | real profile mtime unchanged ✓ |
+(Note: `be1ed65` was the BM-012-merge tracking commit already on matrix from the prior task; the 4 listed above are the net new BM-013 commits.)
 
 ---
 
@@ -90,54 +31,72 @@ injected via `AddonStateBackend`. Production uses `KodiRuntimeAddonStateBackend`
 
 | Branch | SHA | Notes |
 |--------|-----|-------|
-| `agent/claude` | `b2a955f` | BM-013 complete ✓ |
-| `matrix` | `3683b9a` | BM-012 merged; BM-013 not yet merged |
+| `matrix` | `984debe` | BM-013 merged ✓ |
+| `agent/claude` | `984debe` | same tip |
 | `agent/codex` | `a970e83` | intentionally stale, unchanged |
+
+---
+
+## BM-013 Summary (on matrix)
+
+- `resources/lib/addon_state.py` — AddonStateReconciler, AddonStateBackend,
+  KodiRuntimeAddonStateBackend, all status/result/info types
+- `tests/test_addon_state.py` — 73 unit tests (66 original + 7 correction)
+- `tools/kodi_test.py` — _HttpAddonStateBackend, validate_addon_state() 16-step,
+  validate-addon-state command
+- `docs/TESTING.md` — updated table, port table, validate-addon-state section
+
+**Architecture invariants**:
+- Managed scope only — unmanaged installed add-ons never queried/mutated
+- `enabled` field must be an actual Python `bool`; malformed → AddonStateError
+- Protected required dependencies cannot be disabled
+- `xbmc.*` system add-ons unconditionally blocked
+- Post-mutation verification re-reads Kodi state; mismatch → FAILED
+- Idempotency: current == desired → ALREADY_CORRECT, no backend call
+- Missing add-ons → MISSING; no installation attempted
+
+---
+
+## Test Results
+
+- **Unit tests**: 1047/1047 pass
+- **Live validation (BM-013)**: 16/16 passed (Kodi 21.1 macOS, disposable .kodi-test)
 
 ---
 
 ## What Is NOT Done
 
-- BM-013 merge to `matrix` — pending supervisor approval
-- BM-014 not started (explicitly out of scope for this task)
+- BM-014 not started
 
 ---
 
 ## Human Decision Required Before Next Step
 
-**Supervisor review required** before merging BM-013 to `matrix`.
-
-Merge prerequisites (same as prior tasks):
-1. Supervisor reviews commit `b2a955f` on `agent/claude`
-2. Supervisor confirms no additional corrections required
-3. Human-gated merge task (BM-013-merge) authorized
+None. Supervisor can proceed to BM-014 planning.
 
 ---
 
 ## Risks
 
-None. All changes are isolated to new files plus additive extensions to
-`kodi_test.py` and `docs/TESTING.md`. No existing production modules modified.
-Backend interface is injectable; production `xbmc` import is lazy (no Kodi
-required for unit tests or import).
+None. Merge was fast-forward; no history was altered. All prior tests still pass.
 
 ---
 
 ## Out of Scope — Noticed
 
-- `_HttpAddonStateBackend.get_addon_details()` in `tools/kodi_test.py` raises
-  `AddonStateError` for ALL `RuntimeError` from `jsonrpc()`, including JSON-RPC
-  -32602 (not-installed). The production backend returns `None` for -32602.
-  This is a known harness simplification: the harness only queries installed
-  add-ons in `validate_addon_state()`, so the distinction doesn't matter for
-  the live tests. The MISSING path is tested exclusively via unit tests with
-  FakeAddonStateBackend. Note for future harness work if needed.
+(Carried from prior handoffs)
+- `_HttpAddonBackend._resolve_package_url()` in `tools/kodi_test.py` does not
+  sort `repo_ids`. Single-repo test isn't affected. Note for future harness work.
+- `_HttpAddonStateBackend.get_addon_details()` raises `AddonStateError` for ALL
+  `RuntimeError` from `jsonrpc()`, including -32602. In the harness this doesn't
+  matter (only installed add-ons are queried in validate_addon_state()). Note for
+  future harness work if needed.
 
 ---
 
 ## Usage
 
-Start: 5h 28% / wk 84% (claude-sonnet-4-6, max effort).
-End: 5h 28% / wk 84%.
-Delta: ~0% / 0% (validation is runtime-only; no AI calls during live run).
+Start: 5h 31% / wk 84% (claude-sonnet-4-6, max effort).
+End: 5h 31% / wk 84%.
+Delta: ~0% / 0%.
 See USAGE_HISTORY.md for the appended row.

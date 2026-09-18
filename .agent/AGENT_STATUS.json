@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-013-correction",
-  "reason": "BM-013-correction complete: fail-closed enabled-field validation + 7 new tests (1047/1047). Commit cbd3f4a on agent/claude. BM-014 not started.",
-  "last_commit": "cbd3f4a",
-  "matrix_sha": "3683b9a",
+  "task": "BM-013-merge",
+  "reason": "BM-013-merge complete: fast-forward matrix 3683b9a→984debe. 1047/1047 tests. BM-014 not started.",
+  "last_commit": "984debe",
+  "matrix_sha": "984debe",
   "next_agent": "human",
-  "updated_at": "2026-09-18T17:50:00Z"
+  "updated_at": "2026-09-18T17:58:00Z"
 }
