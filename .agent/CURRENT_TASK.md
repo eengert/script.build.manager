@@ -1,27 +1,33 @@
 # Current Task
 
-## BM-018C — AF3 configuration portability inventory merged
+## BM-018D — typed skin-setting configuration integrated
 
-**Status**: Complete, supervisor-approved, and merged on `matrix`; awaiting the
-next supervisor assignment.
+**Status**: Complete, supervisor-approved, and integrated on `matrix`;
+`matrix` is neutral and awaits the next supervisor assignment.
 
-Integration commits:
+Integrated substantive commits:
 
-- `b782bbd` — `fix: eliminate planner invalid escape warning`
-- `23796e2` — `docs(BM-018C): inventory AF3 portable configuration`
+- `28a6fd4` — `feat(BM-018D): add typed skin configuration support`
+- `5a3cc9a` — `fix(BM-018D): resolve AF3 disposable live gate`
 
-The AF3 `3.2.19` portability inventory is complete: 280 observed skin
-settings were classified as portable, generated, device-specific/private, or
-unknown. The initial future `af3-common` specification uses only reviewed
-typed bool/string targets, has zero whole-file targets, defers menu/widget
-source from common, excludes generated/runtime state, and defers private/auth
-state to BM-017.
+BM-018D generic typed skin-setting support is complete. The disposable AF3
+live gate passed 17/17 and the full suite passed 1438/1438. The disposable
+environment must install, enable, and verify the complete AF3 dependency
+closure, with no dependency broken. AF3's first-run generated-state
+initialization caused the original transient fallback; the harness performs
+that generated-runtime bootstrap only inside `.kodi-test`, then validates the
+actual BM-018A Estuary -> AF3 confirmation/activation path. Completely
+pristine first-ever AF3 provisioning is not overstated as proven.
 
-- Full suite: 1412/1412 passing.
+AF3 key normalization and non-boolean string-setter return handling are
+implemented in the skin backend/runtime adaptation. AF3-specific mutual
+exclusion policy remains isolated from the generic backend.
+
+- Focused BM-018D tests: 765/765 passing.
+- Full suite: 1438/1438 passing.
 - `git diff --check`: passing.
-- Real Kodi profile remained read-only; no live Kodi mutation occurred.
+- Real Kodi profile remained read-only; no Apple TV access occurred.
 - No production `af3-common` package was created.
-- BM-017 was not started.
-- BM-018D was not started.
+- BM-018E, BM-017, BM-019, and BM-020 were not started.
 
 Next task awaits supervisor assignment.
