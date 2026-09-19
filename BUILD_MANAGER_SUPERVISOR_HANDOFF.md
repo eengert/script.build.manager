@@ -13,7 +13,7 @@ See §32–33 of `BUILD_MANAGER_PROJECT_PLAN.md` for maintenance discipline.
 | Addon ID | `script.build.manager` |
 | Repository | `eengert/script.build.manager` |
 | Integration branch | `matrix` (protected) |
-| Agent branches | `agent/codex`, `agent/claude` |
+| Agent branches | `agent/codex`, `agent/claude`, `agent/chatgpt` |
 | Active agent | Claude (Codex temporarily unavailable) |
 
 ## Target Platforms
@@ -316,7 +316,10 @@ Usage tracking is **enabled where reliable data is available**.
   observations.
 - **Never fabricate usage data.** Missing readings are recorded as `unknown` or
   `unavailable`. An absent measurement is acceptable; an invented one is not.
-- Available sources, as of 2026-09-17:
+- Available sources, as of 2026-09-19:
+  - **ChatGPT Local** — no reliable allowance metric is exposed to the local
+    MCP bridge; record usage as `unavailable` unless ChatGPT itself exposes an
+    actual reliable session allowance. This fallback must not use Work mode.
   - **Claude** — Claude Code reports plan limit windows (5-hour, weekly) and
     the session's model/effort. Documented in `CLAUDE.md`.
   - **Codex** — no usage/quota source exists. Codex rows record
@@ -336,13 +339,18 @@ baseline exists)*
 |---|---|
 | `agent/codex` | `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex` |
 | `agent/claude` | `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude` |
+| `agent/chatgpt` | `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-chatgpt` |
 
 ## Agent Workflow
 
 See §22–31 of `BUILD_MANAGER_PROJECT_PLAN.md` for full workflow guidance.
 
-Normal implementation work happens on `agent/codex` or `agent/claude`.
-Supervisor reviews and merges to `matrix`.
+Normal implementation work happens on `agent/codex`, `agent/claude`, or
+`agent/chatgpt`. Supervisor reviews and merges to `matrix`.
+
+ChatGPT Local is the normal-ChatGPT fallback coding path. It uses a custom MCP
+app plus OpenAI Secure MCP Tunnel and the dedicated ChatGPT worktree; it must
+not use ChatGPT Work mode. See `CHATGPT.md` and `docs/CHATGPT_LOCAL.md`.
 
 ## History
 
