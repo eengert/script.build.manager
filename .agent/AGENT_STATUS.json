@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "ready",
-  "reason": null,
-  "last_commit": "63e0731",
+  "status": "blocked",
+  "task": "BM-018D",
+  "reason": "Implementation and unit validation complete; disposable AF3 activation repeatedly falls back to Estuary after Kodi's keep/revert cycle, so full live BM-018D deployment is not claimed.",
+  "last_commit": "0260ef8",
   "matrix_sha": "bd78cc29a8aa572cc43f393d94a470e4912f3d32",
   "next_agent": null,
-  "updated_at": "2026-09-19T21:29:07Z"
+  "updated_at": "2026-09-19T22:10:28Z"
 }

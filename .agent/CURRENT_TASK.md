@@ -1,39 +1,37 @@
 # Current Task
 
-## Ready for supervisor assignment
+## BM-018D — typed skin-setting configuration support
 
-**Agent**: Antigravity
-**Branch**: `agent/antigravity`
-**Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-antigravity`
-**Status**: idle
+**Agent**: Codex (Luna / High)
+**Branch**: `agent/codex`
+**Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`
+**Status**: Implementation complete; live AF3 gate blocked by the disposable
+Kodi/AF3 activation environment.
 
-The worker is synchronized with `origin/matrix` at `bd78cc2` and ready for
-the next supervisor-assigned task. Do not start BM-018D automatically.
+Implemented in `0260ef8` (`feat(BM-018D): add typed skin configuration support`):
 
----
+- explicit `addon` / `skin` target namespaces in manifest and package schemas;
+- backward-compatible omitted target defaulting to `addon`;
+- target-kind-aware identity, overlay, ownership, resolver, validator, and
+  validation snapshots;
+- dedicated active-skin bool/string backend using Kodi skin-setting JSON-RPC;
+- AF3 mutually-exclusive `EnableIcons` / `EnableIconText` policy;
+- focused tests and disposable `validate-skin-config` harness;
+- BM-018C portability and testing documentation updates.
 
-## BM-018C — AF3 configuration portability inventory merged
+Validation:
 
-**Status**: Complete, supervisor-approved, and merged on `matrix`; awaiting the
-next supervisor assignment.
+- focused BM-018D/skin/configuration tests: 722 passing;
+- full suite: 1,436/1,436 passing;
+- `git diff --check`: passing;
+- real Kodi profile: read-only and unchanged.
 
-Integration commits:
+Live boundary:
 
-- `b782bbd` — `fix: eliminate planner invalid escape warning`
-- `23796e2` — `docs(BM-018C): inventory AF3 portable configuration`
-
-The AF3 `3.2.19` portability inventory is complete: 280 observed skin
-settings were classified as portable, generated, device-specific/private, or
-unknown. The initial future `af3-common` specification uses only reviewed
-typed bool/string targets, has zero whole-file targets, defers menu/widget
-source from common, excludes generated/runtime state, and defers private/auth
-state to BM-017.
-
-- Full suite: 1412/1412 passing.
-- `git diff --check`: passing.
-- Real Kodi profile remained read-only; no live Kodi mutation occurred.
-- No production `af3-common` package was created.
-- BM-017 was not started.
-- BM-018D was not started.
-
-Next task awaits supervisor assignment.
+- The disposable harness copied installed AF3 `3.2.19` plus available declared
+  dependencies and reached BM-018A confirmation handling.
+- AF3 loaded transiently, then Kodi repeatedly reloaded it and fell back to
+  Estuary; the harness therefore stopped before typed deployment and does not
+  claim a live BM-018D pass.
+- No production `af3-common` package was created; BM-017, BM-018E, BM-019, and
+  BM-020 were not started.
