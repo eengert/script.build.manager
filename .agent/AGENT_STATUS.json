@@ -1,10 +1,10 @@
 {
-  "active_agent": "codex",
+  "active_agent": "antigravity",
   "status": "idle",
   "task": "ready",
   "reason": null,
-  "last_commit": "e8c15b8",
+  "last_commit": "7fa5550",
   "matrix_sha": "bd78cc29a8aa572cc43f393d94a470e4912f3d32",
   "next_agent": null,
-  "updated_at": "2026-09-19T20:08:37Z"
+  "updated_at": "2026-09-19T21:28:16Z"
 }
