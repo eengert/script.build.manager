@@ -455,14 +455,17 @@ Ports: Kodi 8920, HTTP server 8922.
 
 `validate-skin-config` is a disposable macOS integration harness for the typed
 skin-target path. It copies the installed AF3 add-on and its available declared
-dependencies into `.kodi-test`; it never copies Eric's real profile, skin
+dependencies transitively into `.kodi-test`, then verifies and enables every
+non-built-in closure node before activation; it never copies Eric's real profile, skin
 settings, generated state, or authentication data. The only profile seed is a
-synthetic AF3 first-run marker required to keep AF3's own first-run reload from
-confounding the activation test.
+synthetic AF3 first-run marker. The harness also allows AF3 3.2.19 and
+`script.skinvariables` to generate their disposable runtime state once; that
+first-run reload otherwise races Kodi's keep/revert transaction. The actual
+BM-018A gate starts from Estuary after this warm-up.
 
 The runner executes the production modules inside Kodi because Kodi's typed
 skin-setting API is not exposed as an external JSON-RPC deployment API. The
-sequence proves, when the local AF3/Kodi combination keeps the skin active:
+sequence proves on the local AF3/Kodi combination:
 
 1. Estuary starts in the disposable profile.
 2. BM-018A activates AF3 through the confirmation-dialog lifecycle and checks
@@ -474,6 +477,12 @@ sequence proves, when the local AF3/Kodi combination keeps the skin active:
    ownership preflight zero-mutation behavior are checked.
 5. A wrong-active-skin attempt is rejected before any skin-setting mutation.
 6. Kodi is stopped and the real profile's mtime is checked unchanged.
+
+The closure check records installed, enabled, broken, and version status for
+AF3 plus every transitive dependency. The adapter also handles Kodi's mixed
+skin-setting key namespace: canonical AF3 `HomeSwitcher.*` identifiers fall
+back to their lowercase stored IDs only when Kodi returns invalid parameters;
+mixed-case IDs that Kodi accepts remain unchanged.
 
 The command requires `/Applications/Kodi.app`, uses Kodi JSON-RPC port 8920,
 and can require local-process/network permission in a sandboxed environment.

@@ -438,10 +438,27 @@ class KodiRuntimeSkinSettingsBackend:
                 f"requested skin {addon_id!r} is not active; Kodi reports {active!r}"
             )
 
+    def _setting_rpc(self, method: str, key: str, **params):
+        """Call Kodi with AF3's canonical key, then its stored lowercase form.
+
+        Kodi 21 preserves mixed-case IDs for some skin settings but stores
+        AF3's ``HomeSwitcher.*`` IDs lowercase. An invalid-params response is
+        the runtime's signal that the lowercase spelling is required; other
+        errors remain failures and are not hidden.
+        """
+        request = {"setting": key, **params}
+        try:
+            return self._rpc(method, request)
+        except SkinError as exc:
+            lower = key.lower()
+            if lower == key or "-32602" not in str(exc):
+                raise
+            return self._rpc(method, {"setting": lower, **params})
+
     def get_setting(self, addon_id: str, key: str, setting_type) -> object:
         kind = self._setting_type_name(setting_type)
         self._require_active(addon_id)
-        result = self._rpc("Settings.GetSkinSettingValue", {"setting": key})
+        result = self._setting_rpc("Settings.GetSkinSettingValue", key)
         if not isinstance(result, dict) or "value" not in result:
             raise SkinError(
                 f"Settings.GetSkinSettingValue returned malformed result: {result!r}"
@@ -464,11 +481,15 @@ class KodiRuntimeSkinSettingsBackend:
         if kind == "string" and not isinstance(value, str):
             raise SkinError("skin string targets require a string value")
         self._require_active(addon_id)
-        result = self._rpc(
-            "Settings.SetSkinSettingValue",
-            {"setting": key, "value": value},
+        result = self._setting_rpc(
+            "Settings.SetSkinSettingValue", key, value=value,
         )
-        if result is not True:
+        successful = (
+            result is True
+            or result == "OK"
+            or (kind == "string" and result == value)
+        )
+        if not successful:
             raise SkinError(
                 "Settings.SetSkinSettingValue returned a non-success result: "
                 f"{result!r}"

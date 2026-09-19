@@ -162,6 +162,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
+from resources.lib.af3 import AF3PolicyError, validate_skin_settings
 from resources.lib.manifest import ConfigDeclarations, SettingTargetKind
 
 
@@ -821,7 +822,10 @@ class ConfigPackageLoader:
         packages = [self.load_package(pid) for pid in ordered_ids]
 
         settings_map, files_map = _overlay(packages)
-        _validate_skin_policy(settings_map)
+        try:
+            validate_skin_settings(settings_map)
+        except AF3PolicyError as exc:
+            raise ConfigPackageError(str(exc)) from exc
         _validate_ownership(config, settings_map, files_map)
 
         return EffectiveConfiguration(
@@ -1147,28 +1151,6 @@ def _overlay(
         for config_file in package.files:
             files_map[config_file.destination] = config_file
     return settings_map, files_map
-
-
-def _validate_skin_policy(
-    settings_map: Dict[Tuple[str, str, str], ConfigSetting],
-) -> None:
-    """Reject the one AF3 contradiction proven by the BM-018C source review."""
-    af3_id = "skin.arctic.fuse.3"
-    icons = settings_map.get((ConfigTargetKind.SKIN.value, af3_id,
-                              "HomeSwitcher.EnableIcons"))
-    icon_text = settings_map.get((ConfigTargetKind.SKIN.value, af3_id,
-                                  "HomeSwitcher.EnableIconText"))
-    if (
-        icons is not None
-        and icon_text is not None
-        and icons.value is True
-        and icon_text.value is True
-    ):
-        raise ConfigPackageError(
-            "AF3 skin settings HomeSwitcher.EnableIcons and "
-            "HomeSwitcher.EnableIconText are mutually exclusive; both "
-            "cannot be true"
-        )
 
 
 def _validate_ownership(
