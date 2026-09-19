@@ -22,6 +22,12 @@ validate_build_state(
     configuration_state:  Optional BM-015 ConfigurationValidationState snapshot.
                           If None and desired.config is present, a NOT_CHECKED
                           result is emitted.
+    effective_configuration:
+                          Optional BM-015 EffectiveConfiguration the snapshot is
+                          expected to describe. Required alongside
+                          configuration_state; it is an immutable expected
+                          snapshot. The validator never resolves or reads
+                          package files itself.
 
 ValidationReport
     report.checks         — all ValidationCheck results, deterministic order
@@ -111,21 +117,32 @@ silently ignored; they never produce FAIL results.
 
 BM-015 integration (Option A)
 -----------------------------
-BM-014 remains read-only and never inspects live configuration itself. BM-015
-produces an immutable ConfigurationValidationState snapshot describing exactly
-which managed targets it resolved and which of them it verified after applying
-them. Passing that snapshot lets BM-014 report the CONFIGURATION domain:
+BM-014 remains read-only and never inspects live configuration itself. It
+receives two immutable artifacts from BM-015: the EffectiveConfiguration that
+was applied, and a ConfigurationValidationState snapshot of what was verified.
+The validator never resolves packages or reads package files.
 
-  desired.config is None                      → no CONFIGURATION checks
-  desired.config present, snapshot None       → NOT_CHECKED (unchanged)
-  snapshot scope == declared managed scope    → PASS/FAIL per declared target
-  snapshot empty / partial / unrelated        → NOT_CHECKED (scope mismatch)
+Scope alone is NOT sufficient evidence. A package whose desired value changes
+keeps exactly the same managed scope, so a stale snapshot from an earlier
+resolution would otherwise appear to validate the current configuration.
+EffectiveConfiguration.identity therefore fingerprints the desired content —
+ordered package selection, and per target the setting type and desired value
+digest or file content digest — and the snapshot is bound to that identity.
 
-Scope comparison is by set equality over declared (addon_id, key) setting
-targets and declared managed file destinations, mirroring the dependency-root
-scope discipline above. A successful BM-015 apply() never by itself makes
-BM-014 claim configuration is validated: the snapshot must cover exactly the
-resolved managed scope, and every target in it must have been verified.
+  desired.config is None                    → no CONFIGURATION checks
+  state or effective_configuration missing  → NOT_CHECKED
+  effective packages != desired.config      → NOT_CHECKED
+  effective scope != declared managed scope → NOT_CHECKED
+  snapshot scope != effective scope         → NOT_CHECKED
+  snapshot identity != effective identity   → NOT_CHECKED (stale artifact)
+  all four gates pass                       → PASS/FAIL per declared target
+
+An identity mismatch is NOT_CHECKED rather than FAIL: the supplied artifact is
+stale or unrelated, which is not evidence of current Kodi drift.
+
+Scope comparison is by set equality, mirroring the dependency-root scope
+discipline above. A successful BM-015 apply() never by itself makes BM-014
+claim configuration is validated.
 
 Stdlib only — no new runtime dependencies.
 """
@@ -136,7 +153,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
-from resources.lib.config import ConfigurationValidationState
+from resources.lib.config import (
+    ConfigurationValidationState,
+    EffectiveConfiguration,
+)
 from resources.lib.dependencies import DependencyClosure, DependencyStatus
 from resources.lib.inspector import InstalledAddon, KodiState
 from resources.lib.resolver import ResolvedBuild
@@ -262,6 +282,7 @@ def validate_build_state(
     actual: KodiState,
     dependency_closure: Optional[DependencyClosure] = None,
     configuration_state: Optional[ConfigurationValidationState] = None,
+    effective_configuration: Optional[EffectiveConfiguration] = None,
 ) -> ValidationReport:
     """Validate observable Kodi state against a resolved desired Build Manager state.
 
@@ -288,7 +309,9 @@ def validate_build_state(
     checks.extend(_validate_addons(desired, actual_map))
     checks.extend(_validate_dependencies(desired, dependency_closure))
     checks.extend(_validate_skin(desired, actual, actual_map))
-    checks.extend(_validate_configuration(desired, configuration_state))
+    checks.extend(_validate_configuration(
+        desired, configuration_state, effective_configuration
+    ))
 
     return ValidationReport(checks=tuple(checks))
 
@@ -649,44 +672,72 @@ def _validate_skin(
 def _validate_configuration(
     desired: ResolvedBuild,
     configuration_state: Optional[ConfigurationValidationState],
+    effective_configuration: Optional[EffectiveConfiguration],
 ) -> list:
-    """Validate the configuration domain against an optional BM-015 snapshot.
+    """Validate the configuration domain against BM-015 artifacts.
 
-    Four cases, mirroring the dependency-root scope discipline:
+    Requires BOTH the EffectiveConfiguration that was applied and the
+    ConfigurationValidationState snapshot of what was verified. Four gates must
+    pass before any PASS/FAIL is emitted; any gate failure is NOT_CHECKED,
+    never FAIL, because a missing or stale artifact is not evidence of drift.
 
-    1. desired.config is None
-       Configuration validation is not applicable; no checks are emitted.
-    2. desired.config present, configuration_state is None
-       NOT_CHECKED — nothing inspected configuration state.
-    3. desired.config present, snapshot scope exactly matches the declared
-       managed scope
-       One PASS/FAIL check per declared target (or a single domain PASS when
-       the manifest declares no managed targets).
-    4. desired.config present, snapshot scope is empty, partial or unrelated
-       NOT_CHECKED — a snapshot from a different resolution can never be
-       reported as a complete configuration validation.
+      1. the effective package selection corresponds to desired.config.packages
+      2. the effective target scope equals the declared managed scope
+      3. the snapshot scope equals the effective scope
+      4. the snapshot identity equals the effective identity
 
-    Scope comparison is by set equality, so ordering is irrelevant. This
-    function never mutates anything; it reads an immutable snapshot the caller
-    obtained from BM-015.
+    Gate 4 is what scope comparison alone cannot do: a package whose desired
+    value changed keeps the same scope, so without it a stale snapshot would
+    produce a false PASS.
+
+    This function never mutates anything and never reads package files; it
+    compares immutable snapshots supplied by the caller.
     """
     config = desired.config
     if config is None:
         return []
 
-    if configuration_state is None:
+    def not_checked(expected: str, actual_state: str, reason: str) -> list:
         return [ValidationCheck(
             domain=ValidationDomain.CONFIGURATION,
             subject="configuration_domain",
             status=ValidationStatus.NOT_CHECKED,
-            expected="managed configuration matches deployed state",
-            actual_state="not inspected",
-            reason=(
-                "No configuration validation state was supplied. Run BM-015 "
-                "configuration deployment and pass its validation_state to "
-                "validate_build_state() to validate this domain."
-            ),
+            expected=expected,
+            actual_state=actual_state,
+            reason=reason,
         )]
+
+    if configuration_state is None or effective_configuration is None:
+        missing = []
+        if effective_configuration is None:
+            missing.append("effective_configuration")
+        if configuration_state is None:
+            missing.append("configuration_state")
+        return not_checked(
+            "managed configuration matches deployed state",
+            "not inspected",
+            f"No configuration validation artifacts were supplied "
+            f"({', '.join(missing)} missing). Run BM-015 configuration "
+            f"deployment and pass both its resolved EffectiveConfiguration and "
+            f"its validation_state to validate this domain.",
+        )
+
+    # Gate 1 — the effective configuration must describe THIS build's packages.
+    declared_packages: list = []
+    seen_packages: set = set()
+    for package_id in config.packages:
+        if package_id not in seen_packages:
+            seen_packages.add(package_id)
+            declared_packages.append(package_id)
+    if tuple(declared_packages) != tuple(effective_configuration.packages):
+        return not_checked(
+            f"effective configuration for packages {tuple(declared_packages)!r}",
+            f"effective configuration for packages "
+            f"{tuple(effective_configuration.packages)!r}",
+            "The supplied EffectiveConfiguration was not resolved from this "
+            "build's config.packages, so it cannot describe this build's "
+            "managed configuration.",
+        )
 
     declared_settings = {
         (scope.addon_id, key)
@@ -695,29 +746,49 @@ def _validate_configuration(
     }
     declared_files = set(config.managed_files)
 
+    effective_settings = {
+        (s.addon_id, s.key) for s in effective_configuration.settings
+    }
+    effective_files = {f.destination for f in effective_configuration.files}
+
+    # Gate 2 — effective scope must equal the manifest-declared managed scope.
+    if effective_settings != declared_settings or effective_files != declared_files:
+        return not_checked(
+            f"effective scope covering {len(declared_settings)} managed "
+            f"setting(s) and {len(declared_files)} managed file(s)",
+            f"effective scope covering {len(effective_settings)} setting(s) "
+            f"and {len(effective_files)} file(s)",
+            "The supplied EffectiveConfiguration does not cover exactly the "
+            "manifest-declared managed scope.",
+        )
+
     snapshot_settings = set(configuration_state.setting_targets)
     snapshot_files = set(configuration_state.file_targets)
 
-    if snapshot_settings != declared_settings or snapshot_files != declared_files:
-        return [ValidationCheck(
-            domain=ValidationDomain.CONFIGURATION,
-            subject="configuration_domain",
-            status=ValidationStatus.NOT_CHECKED,
-            expected=(
-                f"snapshot covering {len(declared_settings)} managed setting(s) "
-                f"and {len(declared_files)} managed file(s)"
-            ),
-            actual_state=(
-                f"snapshot covering {len(snapshot_settings)} setting(s) "
-                f"and {len(snapshot_files)} file(s)"
-            ),
-            reason=(
-                "Configuration validation state does not cover exactly the "
-                "manifest-declared managed scope. A partial or unrelated "
-                "snapshot is never reported as a complete configuration "
-                "validation."
-            ),
-        )]
+    # Gate 3 — snapshot scope must equal effective scope.
+    if snapshot_settings != effective_settings or snapshot_files != effective_files:
+        return not_checked(
+            f"snapshot covering {len(effective_settings)} managed setting(s) "
+            f"and {len(effective_files)} managed file(s)",
+            f"snapshot covering {len(snapshot_settings)} setting(s) "
+            f"and {len(snapshot_files)} file(s)",
+            "Configuration validation state does not cover exactly the "
+            "resolved managed scope. A partial or unrelated snapshot is never "
+            "reported as a complete configuration validation.",
+        )
+
+    # Gate 4 — snapshot must be bound to THIS effective configuration.
+    if configuration_state.effective_identity != effective_configuration.identity:
+        return not_checked(
+            f"snapshot of effective configuration "
+            f"{effective_configuration.identity}",
+            f"snapshot of effective configuration "
+            f"{configuration_state.effective_identity or '(none)'}",
+            "Configuration validation state was produced from a different "
+            "effective configuration — the managed scope matches but the "
+            "desired content does not. The artifact is stale or unrelated, "
+            "which is not evidence of current drift.",
+        )
 
     if not declared_settings and not declared_files:
         return [ValidationCheck(
@@ -738,55 +809,31 @@ def _validate_configuration(
     checks = []
     for addon_id, key in sorted(declared_settings):
         subject = f"{addon_id}/{key}"
-        if (addon_id, key) in verified_settings:
-            checks.append(ValidationCheck(
-                domain=ValidationDomain.CONFIGURATION,
-                subject=subject,
-                status=ValidationStatus.PASS,
-                expected="managed setting matches the desired value",
-                actual_state="verified after deployment",
-                reason=(
-                    f"Managed setting {subject} was verified against its "
-                    f"desired value"
-                ),
-            ))
-        else:
-            checks.append(ValidationCheck(
-                domain=ValidationDomain.CONFIGURATION,
-                subject=subject,
-                status=ValidationStatus.FAIL,
-                expected="managed setting matches the desired value",
-                actual_state="not verified",
-                reason=(
-                    f"Managed setting {subject} was not verified against its "
-                    f"desired value"
-                ),
-            ))
+        verified = (addon_id, key) in verified_settings
+        checks.append(ValidationCheck(
+            domain=ValidationDomain.CONFIGURATION,
+            subject=subject,
+            status=ValidationStatus.PASS if verified else ValidationStatus.FAIL,
+            expected="managed setting matches the desired value",
+            actual_state="verified after deployment" if verified else "not verified",
+            reason=(
+                f"Managed setting {subject} was "
+                f"{'' if verified else 'not '}verified against its desired value"
+            ),
+        ))
 
     for destination in sorted(declared_files):
-        if destination in verified_files:
-            checks.append(ValidationCheck(
-                domain=ValidationDomain.CONFIGURATION,
-                subject=destination,
-                status=ValidationStatus.PASS,
-                expected="managed file matches the desired content",
-                actual_state="verified after deployment",
-                reason=(
-                    f"Managed file {destination!r} was verified against its "
-                    f"desired content"
-                ),
-            ))
-        else:
-            checks.append(ValidationCheck(
-                domain=ValidationDomain.CONFIGURATION,
-                subject=destination,
-                status=ValidationStatus.FAIL,
-                expected="managed file matches the desired content",
-                actual_state="not verified",
-                reason=(
-                    f"Managed file {destination!r} was not verified against its "
-                    f"desired content"
-                ),
-            ))
+        verified = destination in verified_files
+        checks.append(ValidationCheck(
+            domain=ValidationDomain.CONFIGURATION,
+            subject=destination,
+            status=ValidationStatus.PASS if verified else ValidationStatus.FAIL,
+            expected="managed file matches the desired content",
+            actual_state="verified after deployment" if verified else "not verified",
+            reason=(
+                f"Managed file {destination!r} was "
+                f"{'' if verified else 'not '}verified against its desired content"
+            ),
+        ))
 
     return checks

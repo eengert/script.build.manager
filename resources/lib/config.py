@@ -17,11 +17,11 @@ ConfigurationManager(backend)
         ConfigurationBackend. Every operation is verified after it is performed.
 
 KodiRuntimeConfigurationBackend(profile_root="special://profile/")
-    Production backend. Settings are read through the Kodi 20+ typed Settings
-    wrapper (xbmcaddon.Addon(id).getSettings()) and written through the typed
-    Addon setters, which are the ones that actually persist — see the class
-    docstring. Managed files are resolved against special://profile/ and
-    replaced atomically.
+    Production backend. Settings are read and written through the Kodi 20+
+    typed Settings wrapper, xbmcaddon.Addon(id).getSettings(), with the owning
+    Addon deliberately kept alive across the call — see the class docstring.
+    Managed files are resolved against special://profile/ and replaced
+    atomically via a securely created same-directory temporary file.
 
 default_packages_root() -> str
     Filesystem path of the add-on's embedded package root
@@ -156,6 +156,7 @@ import math
 import os
 import posixpath
 import re
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
@@ -251,8 +252,10 @@ _SCHEMA_VERSION = 1
 #: Significant digits Kodi preserves when serializing a number setting.
 NUMBER_SIGNIFICANT_DIGITS = 6
 
-#: Suffix used for the staged temporary file during an atomic file replace.
-_TMP_SUFFIX = ".bm-config-tmp"
+#: Prefix for the securely created staging file used during atomic replace.
+#: The full name is chosen by tempfile.mkstemp(), never predictable.
+_TMP_PREFIX = ".bm-config-"
+_TMP_SUFFIX = ".tmp"
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +328,42 @@ class EffectiveConfiguration:
         """True when there is nothing to apply."""
         return not self.settings and not self.files
 
+    @property
+    def identity(self) -> str:
+        """Deterministic SHA-256 fingerprint of the desired configuration.
+
+        Covers the ordered package selection and, per target, the full desired
+        content identity — not merely the target scope. Two resolutions with
+        the same managed scope but a different desired value, setting type,
+        file content, package order or winning package produce different
+        identities.
+
+        This is what lets BM-014 tell "verified against the configuration I am
+        being shown" from "verified against some earlier configuration with the
+        same scope". Raw values never appear: settings contribute their
+        type-tagged digest and files their content digest.
+        """
+        lines = [
+            f"schema:{_SCHEMA_VERSION}",
+            "packages:" + ",".join(self.packages),
+        ]
+        for item in sorted(self.settings, key=lambda s: (s.addon_id, s.key)):
+            lines.append("setting:" + "\x1f".join((
+                item.addon_id,
+                item.key,
+                item.setting_type.value,
+                _setting_identity(item.setting_type, item.value),
+                item.package_id,
+            )))
+        for item in sorted(self.files, key=lambda f: f.destination):
+            lines.append("file:" + "\x1f".join((
+                item.destination,
+                _content_identity(item.content),
+                item.package_id,
+            )))
+        digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+        return f"sha256:{digest}"
+
 
 @dataclass(frozen=True)
 class ConfigOperationResult:
@@ -366,9 +405,16 @@ class ConfigurationValidationState:
     resolved managed scope that was applied; the verified_* tuples are the
     subset whose post-operation verification succeeded.
 
-    BM-014 compares the target scope against the manifest's declared scope and
-    refuses to report configuration as validated unless they match exactly.
+    effective_identity binds the snapshot to the exact EffectiveConfiguration
+    that produced it. Target scope alone is not sufficient evidence: a package
+    whose desired value changed keeps the same scope, so a stale snapshot would
+    otherwise appear to validate the new configuration.
+
+    BM-014 requires BOTH an exact scope match against the manifest's declared
+    scope AND an exact identity match against the EffectiveConfiguration it is
+    given before it reports configuration as validated.
     """
+    effective_identity: str = ""
     setting_targets: Tuple[Tuple[str, str], ...] = ()
     file_targets: Tuple[str, ...] = ()
     verified_settings: Tuple[Tuple[str, str], ...] = ()
@@ -400,8 +446,12 @@ class ConfigApplyResult:
     results is in deterministic order: all settings (sorted by addon_id, key)
     followed by all files (sorted by destination). Exactly one result is
     produced per effective target.
+
+    effective_identity is the identity of the EffectiveConfiguration that was
+    applied, carried through so validation_state can bind to it.
     """
     results: Tuple[ConfigOperationResult, ...] = ()
+    effective_identity: str = ""
 
     @property
     def settings(self) -> Tuple[ConfigOperationResult, ...]:
@@ -448,6 +498,7 @@ class ConfigApplyResult:
         settings = self.settings
         files = self.files
         return ConfigurationValidationState(
+            effective_identity=self.effective_identity,
             setting_targets=tuple(sorted((r.addon_id, r.key) for r in settings)),
             file_targets=tuple(sorted(r.destination for r in files)),
             verified_settings=tuple(sorted(
@@ -784,12 +835,21 @@ class ConfigPackageLoader:
             )
 
         descriptor_path = os.path.join(package_dir, _DESCRIPTOR_NAME)
-        if not os.path.isfile(descriptor_path):
+        # The descriptor obeys the same trust boundary as package source
+        # assets: it must be a real regular file inside the package directory,
+        # never a symlink escaping it.
+        resolved_descriptor = os.path.realpath(descriptor_path)
+        if not _is_within(resolved_descriptor, package_dir):
+            raise ConfigPackageError(
+                f"package {pkg_id!r}: {_DESCRIPTOR_NAME} escapes the package "
+                f"directory"
+            )
+        if not os.path.isfile(resolved_descriptor):
             raise ConfigPackageError(
                 f"package {pkg_id!r} has no {_DESCRIPTOR_NAME}"
             )
         try:
-            with open(descriptor_path, "r", encoding="utf-8") as handle:
+            with open(resolved_descriptor, "r", encoding="utf-8") as handle:
                 text = handle.read()
         except OSError as exc:
             raise ConfigPackageError(
@@ -1204,7 +1264,10 @@ class ConfigurationManager:
             results.append(self._apply_setting(setting))
         for config_file in effective.files:
             results.append(self._apply_file(config_file))
-        return ConfigApplyResult(results=tuple(results))
+        return ConfigApplyResult(
+            results=tuple(results),
+            effective_identity=effective.identity,
+        )
 
     # -- settings -----------------------------------------------------------
 
@@ -1380,30 +1443,44 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
 
     Settings
     --------
-    Reads use the Kodi 20+ typed Settings wrapper:
-        xbmcaddon.Addon(addon_id).getSettings().getString/getBool/getInt/getNumber
+    Both reads and writes use the Kodi 20+ typed Settings wrapper, which is the
+    current recommended API:
 
-    Writes use the typed Addon setters:
-        xbmcaddon.Addon(addon_id).setSettingString/setSettingBool/
-                                  setSettingInt/setSettingNumber
+        addon = xbmcaddon.Addon(addon_id)
+        settings = addon.getSettings()
+        settings.getString(key) / settings.setString(key, value)   # etc.
 
-    Writes deliberately do NOT use the Settings wrapper's setters. In Kodi 21
-    (Omega) those only mutate the in-memory CSetting: SetSettingValue() in
-    xbmc/interfaces/legacy/Settings.cpp calls setting->SetValue() and returns,
-    with no Save(). Values written that way are not persisted and do not
-    survive a restart. The typed Addon setters in
-    xbmc/interfaces/legacy/Addon.cpp call addon->SaveSettings() after updating
-    the value, which is what actually writes the add-on's settings.xml. This
-    was confirmed against the Kodi source and observed directly in the
-    disposable live harness, where Settings-wrapper writes produced no
-    settings.xml at all. Both paths are typed; only one persists.
+    The deprecated Addon.setSettingString/setSettingBool/setSettingInt/
+    setSettingNumber (deprecated since Kodi 20) are deliberately NOT used.
+
+    ADDON LIFETIME IS LOAD-BEARING
+    ------------------------------
+    The Addon object must stay referenced for as long as the Settings wrapper
+    derived from it is used. Kodi's CAddonSettings reaches its owning add-on
+    through a WEAK reference, so once the Addon is released the wrapper can
+    still serve in-memory reads and accept writes while Save() is no longer
+    able to reach its owner. The result is a silent persistence failure: the
+    setter does not raise, in-memory state changes, no settings.xml appears,
+    a fresh handle does not see the value, and a restart loses it.
+
+    A helper of the shape
+
+        def _settings_for(addon_id):          # WRONG
+            addon = xbmcaddon.Addon(addon_id)
+            return addon.getSettings()        # addon dies here
+
+    reproduces exactly that failure, and an earlier revision of this module did
+    so. Settings.setBool/setInt/setNumber/setString in
+    xbmc/interfaces/legacy/Settings.cpp DO call settings->Save(); the wrapper
+    is not at fault. That is why _open_addon() returns the Addon and every
+    accessor keeps it bound in its own frame.
 
     Per-add-on settings.xml files are never edited directly: Build Manager owns
     selected keys, not the whole generated file.
 
-    A fresh Addon handle is opened for every call so that post-write
-    verification reads through Kodi's own accessor rather than a handle cached
-    across the write.
+    A fresh Addon handle is opened for every call, so post-write verification
+    always reads through a new Addon/Settings pair rather than the handle that
+    performed the write.
 
     Managed files
     -------------
@@ -1412,12 +1489,27 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
     OS path. After translation and symlink resolution, a destination that is
     not strictly inside the profile root is refused.
 
+    Symlink policy
+    --------------
+    A managed destination names that exact filesystem path, never an alias to
+    another file. No path component beneath the profile root may be a symlink —
+    not a parent directory, not the destination itself. If any existing
+    component is a symlink the operation fails closed, whether the link points
+    outside the profile or at a different file inside it. Following an
+    in-profile symlink would let a declared managed path redirect writes to an
+    undeclared file, which would break the ownership model.
+
     Atomic replacement strategy
     ---------------------------
-    Desired bytes are written to a sibling temporary file in the destination's
-    own directory and then moved into place with os.replace(), which overwrites
-    atomically on both POSIX and Windows. Because the staged file is always a
-    sibling, no cross-filesystem move occurs.
+    Desired bytes are written to a securely created temporary file in the
+    destination's own directory via tempfile.mkstemp(), which creates the file
+    with O_CREAT|O_EXCL and mode 0600. The staging name is unique and
+    unpredictable, so a pre-existing symlink cannot capture the write before
+    the swap. The file is written, flushed, fsync'ed and closed, then moved
+    into place with os.replace(), which overwrites atomically on both POSIX and
+    Windows. Because the staging file is always a sibling of the destination,
+    no cross-filesystem move occurs. The staging file is removed on every
+    failure path.
 
     xbmcvfs.rename() is deliberately not used for the swap: Kodi documents it
     as unable to move between filesystems on all platforms, and CFile::Rename
@@ -1459,17 +1551,29 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
 
     # -- settings -----------------------------------------------------------
 
-    #: Typed Addon setter method names. These persist (they call SaveSettings);
-    #: the Settings wrapper's setters do not. See the class docstring.
+    #: Settings-wrapper getter names, by setting type.
+    _GETTER_NAMES = {
+        ConfigSettingType.STRING: "getString",
+        ConfigSettingType.BOOL: "getBool",
+        ConfigSettingType.INT: "getInt",
+        ConfigSettingType.NUMBER: "getNumber",
+    }
+    #: Settings-wrapper setter names, by setting type. The deprecated
+    #: Addon.setSettingString/Bool/Int/Number are deliberately never used.
     _SETTER_NAMES = {
-        ConfigSettingType.STRING: "setSettingString",
-        ConfigSettingType.BOOL: "setSettingBool",
-        ConfigSettingType.INT: "setSettingInt",
-        ConfigSettingType.NUMBER: "setSettingNumber",
+        ConfigSettingType.STRING: "setString",
+        ConfigSettingType.BOOL: "setBool",
+        ConfigSettingType.INT: "setInt",
+        ConfigSettingType.NUMBER: "setNumber",
     }
 
-    def _addon(self, addon_id: str):
-        """Open a fresh Addon handle for addon_id."""
+    def _open_addon(self, addon_id: str):
+        """Open a fresh Addon handle for addon_id.
+
+        The caller MUST keep the returned object referenced for as long as the
+        Settings wrapper derived from it is used — see the class docstring.
+        This method therefore returns the Addon, never a Settings wrapper.
+        """
         xbmcaddon = self._xbmcaddon()
         try:
             return xbmcaddon.Addon(addon_id)
@@ -1479,54 +1583,60 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
                 f"(not installed, or disabled): {exc}"
             ) from exc
 
-    def get_setting(
-        self, addon_id: str, key: str, setting_type: ConfigSettingType
-    ) -> object:
-        addon = self._addon(addon_id)
+    @staticmethod
+    def _settings_of(addon, addon_id: str):
+        """Return the typed Settings wrapper for an already-open Addon."""
         try:
-            settings = addon.getSettings()
+            return addon.getSettings()
         except Exception as exc:
             raise ConfigBackendError(
                 f"add-on {addon_id!r}: getSettings() failed: {exc}"
             ) from exc
-        getters = {
-            ConfigSettingType.STRING: settings.getString,
-            ConfigSettingType.BOOL: settings.getBool,
-            ConfigSettingType.INT: settings.getInt,
-            ConfigSettingType.NUMBER: settings.getNumber,
-        }
+
+    def get_setting(
+        self, addon_id: str, key: str, setting_type: ConfigSettingType
+    ) -> object:
+        # `addon` stays bound in this frame for the whole call: the Settings
+        # wrapper must never outlive its owning Addon.
+        addon = self._open_addon(addon_id)
+        settings = self._settings_of(addon, addon_id)
         try:
-            return getters[setting_type](key)
+            value = getattr(settings, self._GETTER_NAMES[setting_type])(key)
         except Exception as exc:
             raise ConfigBackendError(
                 f"reading {addon_id}/{key} as {setting_type.value} failed: {exc}"
             ) from exc
+        # Explicitly keep the owning Addon alive until after the wrapper call.
+        del addon
+        return value
 
     def set_setting(
         self, addon_id: str, key: str, setting_type: ConfigSettingType, value: object
     ) -> None:
-        addon = self._addon(addon_id)
-        setter_name = self._SETTER_NAMES[setting_type]
-        setter = getattr(addon, setter_name, None)
-        if setter is None:
-            raise ConfigBackendError(
-                f"Kodi add-on API does not provide {setter_name}(); cannot "
-                f"persist {addon_id}/{key}"
-            )
+        # `addon` stays bound in this frame across the setter call. Kodi's
+        # CAddonSettings reaches its owning add-on through a WEAK reference,
+        # so Save() cannot persist anything once the Addon has been released.
+        addon = self._open_addon(addon_id)
+        settings = self._settings_of(addon, addon_id)
         coerced = float(value) if setting_type is ConfigSettingType.NUMBER else value
         try:
-            outcome = setter(key, coerced)
+            outcome = getattr(settings, self._SETTER_NAMES[setting_type])(
+                key, coerced
+            )
         except Exception as exc:
             raise ConfigBackendError(
                 f"writing {addon_id}/{key} as {setting_type.value} failed: {exc}"
             ) from exc
-        # The typed Addon setters return bool; setSettingString historically
-        # returned None in some builds. Only an explicit False is a failure.
+        # Kodi's Settings setters return None (void) and raise on type errors.
+        # Only an explicit False — from any other implementation — is a failure.
         if outcome is False:
             raise ConfigBackendError(
                 f"Kodi rejected the value for {addon_id}/{key} "
                 f"({setting_type.value})"
             )
+        # Explicitly keep the owning Addon alive until after the setter and its
+        # internal Save(). The caller still re-reads through a fresh handle.
+        del addon
 
     # -- managed files ------------------------------------------------------
 
@@ -1556,19 +1666,46 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
         return self._translated_root
 
     def _resolve(self, destination: str) -> str:
-        """Translate and contain a profile-relative destination path."""
+        """Translate and contain a profile-relative destination path.
+
+        Containment is lexical against the already-realpath'ed profile root,
+        plus an explicit refusal of any existing symlink component. Resolving
+        symlinks instead would silently accept an in-profile alias pointing at
+        an undeclared file.
+        """
         try:
             relative = _normalize_relative_path(destination, label="destination")
         except ConfigPackageError as exc:
             raise ConfigBackendError(str(exc)) from exc
         root = self._profile_path()
-        target = os.path.realpath(os.path.join(root, *relative.split("/")))
+        components = relative.split("/")
+        target = os.path.normpath(os.path.join(root, *components))
         if not _is_within(target, root):
             raise ConfigBackendError(
                 f"destination {destination!r} resolves outside the Kodi profile "
                 f"root and will not be written"
             )
+        self._reject_symlink_components(root, components, destination)
         return target
+
+    @staticmethod
+    def _reject_symlink_components(
+        root: str, components: List[str], destination: str
+    ) -> None:
+        """Fail closed if any existing component beneath root is a symlink.
+
+        Checked with lstat semantics, so a symlink is detected whether it
+        points outside the profile, at a different file inside it, or nowhere.
+        """
+        current = root
+        for component in components:
+            current = os.path.join(current, component)
+            if os.path.islink(current):
+                raise ConfigBackendError(
+                    f"destination {destination!r} traverses a symlink at "
+                    f"{component!r}; a managed path must name that exact file, "
+                    f"not an alias to another one"
+                )
 
     def read_file(self, destination: str) -> Optional[bytes]:
         path = self._resolve(destination)
@@ -1602,26 +1739,35 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
             raise ConfigBackendError(
                 f"could not create parent directory for {destination!r}: {exc}"
             ) from exc
-        if not _is_within(os.path.realpath(parent), root):
+        # makedirs only ever creates real directories, but re-check so a
+        # symlink that appeared meanwhile cannot capture the write.
+        self._reject_symlink_components(
+            root, _normalize_relative_path(
+                destination, label="destination"
+            ).split("/"), destination,
+        )
+        if os.path.realpath(parent) != parent:
             raise ConfigBackendError(
-                f"parent directory of {destination!r} resolves outside the Kodi "
-                f"profile root"
+                f"parent directory of {destination!r} is not a real path"
             )
 
-        staged = path + _TMP_SUFFIX
+        staged = None
         try:
-            with open(staged, "wb") as handle:
+            handle_fd, staged = tempfile.mkstemp(
+                dir=parent, prefix=_TMP_PREFIX, suffix=_TMP_SUFFIX
+            )
+            with os.fdopen(handle_fd, "wb") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(staged, path)
+            staged = None
         except OSError as exc:
-            _remove_quietly(staged)
             raise ConfigBackendError(
                 f"could not write {destination!r}: {exc}"
             ) from exc
         finally:
-            if os.path.exists(staged):
+            if staged is not None:
                 _remove_quietly(staged)
 
 

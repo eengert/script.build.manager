@@ -24,6 +24,7 @@ import os
 import shutil
 import tempfile
 import unittest
+import weakref
 
 from resources.lib.config import (
     ConfigApplyResult,
@@ -722,6 +723,19 @@ class TestPathSafety(PackageFixture):
         self._file_package("files/ok.txt", ".")
         with self.assertRaises(ConfigPackageError):
             self.loader.load_package("common")
+
+    def test_descriptor_symlink_escape_rejected(self):
+        outside = tempfile.mkdtemp(prefix="bm015-outside-")
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        rogue = os.path.join(outside, "rogue.json")
+        with open(rogue, "w", encoding="utf-8") as handle:
+            json.dump({"schema_version": 1, "id": "common"}, handle)
+        package_dir = os.path.join(self.root, "common")
+        os.makedirs(package_dir)
+        os.symlink(rogue, os.path.join(package_dir, "package.json"))
+        with self.assertRaises(ConfigPackageError) as ctx:
+            self.loader.load_package("common")
+        self.assertIn("escapes the package directory", str(ctx.exception))
 
     def test_package_id_cannot_escape_root_via_loader(self):
         with self.assertRaises(ConfigPackageError):
@@ -1623,14 +1637,133 @@ class TestKodiRuntimeBackendFilesystem(unittest.TestCase):
         with self.assertRaises(ConfigBackendError):
             self.backend.write_file("special://home/escape.txt", b"x")
 
-    def test_symlinked_directory_escape_refused(self):
+    # -- symlink policy -----------------------------------------------------
+
+    def _outside_dir(self):
         outside = tempfile.mkdtemp(prefix="bm015-outside-")
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        return outside
+
+    def test_destination_symlink_to_outside_profile_refused(self):
+        outside = self._outside_dir()
+        sentinel = os.path.join(outside, "sentinel.txt")
+        with open(sentinel, "wb") as handle:
+            handle.write(b"outside-sentinel")
+        os.makedirs(os.path.join(self.profile, "addon_data"))
+        os.symlink(sentinel, os.path.join(self.profile, "addon_data", "f.txt"))
+
+        with self.assertRaises(ConfigBackendError) as ctx:
+            self.backend.write_file("addon_data/f.txt", b"attacker")
+        self.assertIn("symlink", str(ctx.exception))
+        with open(sentinel, "rb") as handle:
+            self.assertEqual(handle.read(), b"outside-sentinel")
+
+    def test_destination_symlink_to_different_file_inside_profile_refused(self):
+        directory = os.path.join(self.profile, "addon_data")
+        os.makedirs(directory)
+        other = os.path.join(directory, "unmanaged.txt")
+        with open(other, "wb") as handle:
+            handle.write(b"unmanaged-content")
+        os.symlink(other, os.path.join(directory, "f.txt"))
+
+        with self.assertRaises(ConfigBackendError) as ctx:
+            self.backend.write_file("addon_data/f.txt", b"attacker")
+        self.assertIn("symlink", str(ctx.exception))
+        with open(other, "rb") as handle:
+            self.assertEqual(handle.read(), b"unmanaged-content")
+
+    def test_parent_directory_symlink_inside_profile_refused(self):
+        os.makedirs(os.path.join(self.profile, "addon_data", "real"))
+        os.symlink(
+            os.path.join(self.profile, "addon_data", "real"),
+            os.path.join(self.profile, "addon_data", "link"),
+        )
+        with self.assertRaises(ConfigBackendError) as ctx:
+            self.backend.write_file("addon_data/link/f.txt", b"attacker")
+        self.assertIn("symlink", str(ctx.exception))
+        self.assertEqual(
+            os.listdir(os.path.join(self.profile, "addon_data", "real")), []
+        )
+
+    def test_parent_directory_symlink_outside_profile_refused(self):
+        outside = self._outside_dir()
         os.makedirs(os.path.join(self.profile, "addon_data"))
         os.symlink(outside, os.path.join(self.profile, "addon_data", "link"))
         with self.assertRaises(ConfigBackendError) as ctx:
-            self.backend.write_file("addon_data/link/f.txt", b"x")
-        self.assertIn("outside the Kodi profile root", str(ctx.exception))
+            self.backend.write_file("addon_data/link/f.txt", b"attacker")
+        self.assertIn("symlink", str(ctx.exception))
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_symlinked_destination_is_refused_on_read_too(self):
+        directory = os.path.join(self.profile, "addon_data")
+        os.makedirs(directory)
+        other = os.path.join(directory, "unmanaged.txt")
+        with open(other, "wb") as handle:
+            handle.write(b"unmanaged-content")
+        os.symlink(other, os.path.join(directory, "f.txt"))
+        with self.assertRaises(ConfigBackendError):
+            self.backend.read_file("addon_data/f.txt")
+
+    def test_broken_symlink_destination_refused(self):
+        directory = os.path.join(self.profile, "addon_data")
+        os.makedirs(directory)
+        os.symlink(os.path.join(directory, "nowhere"),
+                   os.path.join(directory, "f.txt"))
+        with self.assertRaises(ConfigBackendError):
+            self.backend.write_file("addon_data/f.txt", b"attacker")
+
+    # -- staging file -------------------------------------------------------
+
+    def test_legacy_predictable_staging_symlink_is_never_followed(self):
+        """A pre-existing '.bm-config-tmp' symlink must not capture the write."""
+        outside = self._outside_dir()
+        sentinel = os.path.join(outside, "sentinel.txt")
+        with open(sentinel, "wb") as handle:
+            handle.write(b"outside-sentinel")
+        directory = os.path.join(self.profile, "addon_data", "x")
+        os.makedirs(directory)
+        legacy = os.path.join(directory, "f.txt.bm-config-tmp")
+        os.symlink(sentinel, legacy)
+
+        self.backend.write_file("addon_data/x/f.txt", b"desired")
+
+        with open(sentinel, "rb") as handle:
+            self.assertEqual(handle.read(), b"outside-sentinel")
+        self.assertEqual(self.backend.read_file("addon_data/x/f.txt"), b"desired")
+        self.assertTrue(os.path.islink(legacy))
+
+    def test_staging_file_name_is_not_predictable(self):
+        self.backend.write_file("addon_data/x/f.txt", b"one")
+        directory = os.path.join(self.profile, "addon_data", "x")
+        self.assertNotIn("f.txt.bm-config-tmp", os.listdir(directory))
+
+    def test_staging_artifact_cleaned_after_success(self):
+        self.backend.write_file("addon_data/x/f.txt", b"one")
+        self.backend.write_file("addon_data/x/f.txt", b"two")
+        directory = os.path.join(self.profile, "addon_data", "x")
+        self.assertEqual(sorted(os.listdir(directory)), ["f.txt"])
+
+    def test_staging_artifact_cleaned_after_failure(self):
+        directory = os.path.join(self.profile, "addon_data", "x")
+        os.makedirs(directory)
+        with open(os.path.join(directory, "f.txt"), "wb") as handle:
+            handle.write(b"original")
+
+        real_replace = os.replace
+
+        def failing_replace(src, dst):
+            raise OSError("simulated replace failure")
+
+        os.replace = failing_replace
+        try:
+            with self.assertRaises(ConfigBackendError):
+                self.backend.write_file("addon_data/x/f.txt", b"new")
+        finally:
+            os.replace = real_replace
+
+        self.assertEqual(sorted(os.listdir(directory)), ["f.txt"])
+        with open(os.path.join(directory, "f.txt"), "rb") as handle:
+            self.assertEqual(handle.read(), b"original")
 
     def test_directory_destination_refused(self):
         os.makedirs(os.path.join(self.profile, "addon_data", "x", "f.txt"))
@@ -1661,20 +1794,32 @@ class TestKodiRuntimeBackendFilesystem(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Kodi runtime backend — setting API selection (stubbed xbmcaddon)
+# Kodi runtime backend — setting API + Addon lifetime (stubbed xbmcaddon)
 # ---------------------------------------------------------------------------
 
 class _StubSettings:
-    """Stand-in for Kodi's xbmcaddon.Settings wrapper."""
+    """Stand-in for Kodi's xbmcaddon.Settings wrapper.
+
+    Mirrors the property that made the original BM-015 bug silent: Kodi's
+    CAddonSettings reaches its owning add-on through a WEAK reference, so this
+    stub holds only a weakref to the Addon. If the Addon has been released, a
+    setter still succeeds against in-memory state but Save() cannot reach its
+    owner and nothing is persisted — no exception is raised.
+    """
 
     def __init__(self, addon):
-        self._addon = addon
+        self._store = addon.store
+        self._owner = weakref.ref(addon)
+
+    def _owner_alive(self):
+        return self._owner() is not None
 
     def _get(self, kind, key):
-        self._addon.record.append(("getSettings." + kind, key))
-        if key not in self._addon.values:
+        self._store["record"].append((kind, key, self._owner_alive()))
+        if key not in self._store["values"]:
             raise RuntimeError(f"Invalid setting type for {key}")
-        return self._addon.values[key]
+        # In-memory reads work regardless of owner lifetime.
+        return self._store["values"][key]
 
     def getString(self, key):
         return self._get("getString", key)
@@ -1688,60 +1833,69 @@ class _StubSettings:
     def getNumber(self, key):
         return self._get("getNumber", key)
 
-    # Present, but must never be used for writes: in Kodi 21 these do not
-    # persist. Any call fails the test that pins the API choice.
-    def _forbidden(self, key, value):
-        self._addon.record.append(("FORBIDDEN-settings-setter", key))
-        return True
+    def _set(self, kind, key, value):
+        alive = self._owner_alive()
+        self._store["record"].append((kind, key, alive, value))
+        if self._store["fail_setters"]:
+            return False
+        self._store["memory"][key] = value
+        if not alive:
+            # Save() cannot reach a released owner: silent non-persistence.
+            self._store["orphaned_writes"].append(key)
+            return None
+        self._store["values"][key] = value
+        return None  # Kodi's Settings setters are void
 
-    setString = setBool = setInt = setNumber = _forbidden
+    def setString(self, key, value):
+        return self._set("setString", key, value)
+
+    def setBool(self, key, value):
+        return self._set("setBool", key, value)
+
+    def setInt(self, key, value):
+        return self._set("setInt", key, value)
+
+    def setNumber(self, key, value):
+        return self._set("setNumber", key, value)
 
 
 class _StubAddon:
-    """Stand-in for xbmcaddon.Addon sharing state across handles."""
+    """Stand-in for xbmcaddon.Addon sharing persisted state across handles.
+
+    The deprecated typed setters exist so a test can prove they are never
+    called; using one records a FORBIDDEN entry.
+    """
 
     registry = {}
 
     def __init__(self, addon_id):
         if addon_id not in self.registry:
             raise RuntimeError(f"Unknown addon id: {addon_id}")
-        state = self.registry[addon_id]
-        self.values = state["values"]
-        self.record = state["record"]
-        self.fail_setters = state["fail_setters"]
+        self.store = self.registry[addon_id]
 
     def getSettings(self):
         return _StubSettings(self)
 
-    def _set(self, kind, key, value):
-        self.record.append((kind, key, value))
-        if self.fail_setters:
-            return False
-        self.values[key] = value
+    def _deprecated(self, kind, key, value):
+        self.store["record"].append(("FORBIDDEN-" + kind, key, True, value))
+        self.store["values"][key] = value
         return True
 
     def setSettingString(self, key, value):
-        return self._set("setSettingString", key, value)
+        return self._deprecated("setSettingString", key, value)
 
     def setSettingBool(self, key, value):
-        return self._set("setSettingBool", key, value)
+        return self._deprecated("setSettingBool", key, value)
 
     def setSettingInt(self, key, value):
-        return self._set("setSettingInt", key, value)
+        return self._deprecated("setSettingInt", key, value)
 
     def setSettingNumber(self, key, value):
-        return self._set("setSettingNumber", key, value)
+        return self._deprecated("setSettingNumber", key, value)
 
 
-class TestKodiRuntimeBackendSettings(unittest.TestCase):
-    """Pin the exact Kodi API the production backend uses for settings.
-
-    Kodi 21's Settings-wrapper setters only mutate the in-memory CSetting and
-    never call Save(), so values written through them do not persist. The
-    backend must read through getSettings() and write through the typed Addon
-    setters, which call SaveSettings(). The stub fails loudly if a write ever
-    goes through the wrapper.
-    """
+class _StubKodiAddonModule(unittest.TestCase):
+    """Base class installing a stub xbmcaddon module."""
 
     def setUp(self):
         import sys
@@ -1751,7 +1905,9 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
                 "values": {
                     "text": "old", "flag": False, "count": 1, "ratio": 0.5,
                 },
+                "memory": {},
                 "record": [],
+                "orphaned_writes": [],
                 "fail_setters": False,
             },
         }
@@ -1770,17 +1926,30 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
             sys.modules["xbmcaddon"] = self._saved
 
     @property
+    def store(self):
+        return _StubAddon.registry["plugin.video.example"]
+
+    @property
     def record(self):
-        return _StubAddon.registry["plugin.video.example"]["record"]
+        return self.store["record"]
+
+
+class TestKodiRuntimeBackendSettings(_StubKodiAddonModule):
+    """Pin the exact Kodi API the production backend uses for settings.
+
+    The backend must use the current recommended Settings wrapper for BOTH
+    reads and writes, and must keep the owning Addon alive across the call.
+    The deprecated Addon.setSettingString/Bool/Int/Number must never be used.
+    """
 
     def test_reads_use_the_settings_wrapper(self):
         value = self.backend.get_setting(
             "plugin.video.example", "text", ConfigSettingType.STRING
         )
         self.assertEqual(value, "old")
-        self.assertEqual(self.record, [("getSettings.getString", "text")])
+        self.assertEqual(self.record, [("getString", "text", True)])
 
-    def test_each_type_reads_through_its_typed_getter(self):
+    def test_each_type_reads_through_its_typed_wrapper_getter(self):
         for key, setting_type, getter in (
             ("text", ConfigSettingType.STRING, "getString"),
             ("flag", ConfigSettingType.BOOL, "getBool"),
@@ -1789,14 +1958,14 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
         ):
             self.record.clear()
             self.backend.get_setting("plugin.video.example", key, setting_type)
-            self.assertEqual(self.record, [("getSettings." + getter, key)])
+            self.assertEqual(self.record, [(getter, key, True)])
 
-    def test_writes_use_the_persisting_typed_addon_setters(self):
+    def test_writes_use_the_settings_wrapper_setters(self):
         for key, setting_type, value, setter in (
-            ("text", ConfigSettingType.STRING, "new", "setSettingString"),
-            ("flag", ConfigSettingType.BOOL, True, "setSettingBool"),
-            ("count", ConfigSettingType.INT, 7, "setSettingInt"),
-            ("ratio", ConfigSettingType.NUMBER, 1.5, "setSettingNumber"),
+            ("text", ConfigSettingType.STRING, "new", "setString"),
+            ("flag", ConfigSettingType.BOOL, True, "setBool"),
+            ("count", ConfigSettingType.INT, 7, "setInt"),
+            ("ratio", ConfigSettingType.NUMBER, 1.5, "setNumber"),
         ):
             self.record.clear()
             self.backend.set_setting(
@@ -1806,7 +1975,31 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
             self.assertEqual(self.record[0][0], setter)
             self.assertEqual(self.record[0][1], key)
 
-    def test_no_write_ever_goes_through_the_settings_wrapper(self):
+    def test_addon_is_still_alive_when_the_setter_runs(self):
+        """The owning Addon must not be released before the write completes."""
+        for key, setting_type, value in (
+            ("text", ConfigSettingType.STRING, "new"),
+            ("flag", ConfigSettingType.BOOL, True),
+            ("count", ConfigSettingType.INT, 7),
+            ("ratio", ConfigSettingType.NUMBER, 1.5),
+        ):
+            self.record.clear()
+            self.backend.set_setting(
+                "plugin.video.example", key, setting_type, value
+            )
+            self.assertTrue(
+                self.record[0][2],
+                f"owning Addon was already released during the {key!r} write",
+            )
+        self.assertEqual(self.store["orphaned_writes"], [])
+
+    def test_addon_is_still_alive_when_the_getter_runs(self):
+        self.backend.get_setting(
+            "plugin.video.example", "text", ConfigSettingType.STRING
+        )
+        self.assertTrue(self.record[0][2])
+
+    def test_deprecated_addon_typed_setters_are_never_called(self):
         for key, setting_type, value in (
             ("text", ConfigSettingType.STRING, "new"),
             ("flag", ConfigSettingType.BOOL, True),
@@ -1819,11 +2012,44 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
         forbidden = [e for e in self.record if e[0].startswith("FORBIDDEN")]
         self.assertEqual(forbidden, [])
 
+    def test_discarding_the_addon_would_silently_lose_the_write(self):
+        """Documents the original defect the lifetime rule prevents.
+
+        This is the shape the first BM-015 revision used: a helper that built
+        the Settings wrapper and dropped the Addon. The setter does not raise,
+        in-memory state changes, and nothing is persisted.
+        """
+        import gc
+
+        def orphaned_settings():
+            addon = _StubAddon("plugin.video.example")
+            return addon.getSettings()          # addon released on return
+
+        settings = orphaned_settings()
+        gc.collect()
+        settings.setString("text", "lost-value")
+
+        self.assertEqual(self.store["memory"]["text"], "lost-value")
+        self.assertEqual(self.store["values"]["text"], "old")
+        self.assertEqual(self.store["orphaned_writes"], ["text"])
+        self.assertFalse(self.record[-1][2])
+
+    def test_verification_reads_through_a_fresh_addon_and_settings_pair(self):
+        """Each accessor opens its own Addon; no handle is reused across ops."""
+        manager = ConfigurationManager(self.backend)
+        manager.apply(EffectiveConfiguration(settings=(
+            setting(addon_id="plugin.video.example", key="text",
+                    setting_type=ConfigSettingType.STRING, value="new"),
+        )))
+        kinds = [entry[0] for entry in self.record]
+        self.assertEqual(kinds, ["getString", "setString", "getString"])
+        self.assertTrue(all(entry[2] for entry in self.record))
+
     def test_number_is_passed_as_float(self):
         self.backend.set_setting(
             "plugin.video.example", "ratio", ConfigSettingType.NUMBER, 2
         )
-        self.assertIsInstance(self.record[0][2], float)
+        self.assertIsInstance(self.record[0][3], float)
 
     def test_write_then_read_round_trip(self):
         self.backend.set_setting(
@@ -1850,26 +2076,11 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
         self.assertNotIsInstance(ctx.exception, ConfigAddonUnavailableError)
 
     def test_setter_returning_false_is_a_failure(self):
-        _StubAddon.registry["plugin.video.example"]["fail_setters"] = True
+        self.store["fail_setters"] = True
         with self.assertRaises(ConfigBackendError):
             self.backend.set_setting(
                 "plugin.video.example", "text", ConfigSettingType.STRING, "new"
             )
-
-    def test_missing_setter_method_fails_closed(self):
-        class NoSetters(_StubAddon):
-            setSettingString = None
-
-        import sys
-        sys.modules["xbmcaddon"].Addon = NoSetters
-        self.addCleanup(
-            setattr, sys.modules["xbmcaddon"], "Addon", _StubAddon
-        )
-        with self.assertRaises(ConfigBackendError) as ctx:
-            self.backend.set_setting(
-                "plugin.video.example", "text", ConfigSettingType.STRING, "new"
-            )
-        self.assertIn("setSettingString", str(ctx.exception))
 
     def test_manager_drives_the_real_backend_end_to_end(self):
         manager = ConfigurationManager(self.backend)
@@ -1885,6 +2096,7 @@ class TestKodiRuntimeBackendSettings(unittest.TestCase):
         second = manager.apply(effective)
         self.assertEqual(second.changed, ())
         self.assertEqual(len(second.unchanged), 2)
+        self.assertEqual(self.store["orphaned_writes"], [])
 
 
 # ---------------------------------------------------------------------------
@@ -2067,6 +2279,171 @@ class TestValidationStateSnapshot(unittest.TestCase):
         self.assertTrue(state.is_fully_verified)
         self.assertEqual(state.failed_settings, ())
         self.assertEqual(state.failed_files, ())
+
+
+# ---------------------------------------------------------------------------
+# EffectiveConfiguration identity
+# ---------------------------------------------------------------------------
+
+class TestEffectiveConfigurationIdentity(PackageFixture):
+    """The identity must cover desired CONTENT, not merely target scope."""
+
+    def _effective(self, packages, settings_by_package, files_by_package=None):
+        for package_id in packages:
+            entries = settings_by_package.get(package_id, [])
+            files = (files_by_package or {}).get(package_id)
+            descriptor = {
+                "schema_version": 1,
+                "id": package_id,
+                "settings": [
+                    {"addon_id": a, "key": k, "type": t, "value": v}
+                    for a, k, t, v in entries
+                ],
+            }
+            sources = {}
+            if files is not None:
+                descriptor["files"] = [{
+                    "source": "files/a.txt",
+                    "destination": "addon_data/x/f.txt",
+                }]
+                sources["files/a.txt"] = files
+            self.write_package(package_id, descriptor, sources=sources)
+
+        keys = sorted({
+            (a, k)
+            for entries in settings_by_package.values()
+            for a, k, _t, _v in entries
+        })
+        managed_files = (
+            ["addon_data/x/f.txt"] if files_by_package else []
+        )
+        return self.loader.resolve(declarations(
+            packages=packages, settings=keys, files=managed_files,
+        ))
+
+    def test_identity_is_a_sha256_string(self):
+        effective = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "1080p")]},
+        )
+        self.assertTrue(effective.identity.startswith("sha256:"))
+        self.assertEqual(len(effective.identity), len("sha256:") + 64)
+
+    def test_identity_is_stable_across_resolutions(self):
+        args = (
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "1080p")]},
+        )
+        first = self._effective(*args)
+        second = self.loader.resolve(declarations(
+            packages=["common"], settings=[("plugin.video.example", "quality")],
+        ))
+        self.assertEqual(first.identity, second.identity)
+
+    def test_changed_desired_setting_value_changes_identity(self):
+        before = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "720p")]},
+        )
+        after = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "4k")]},
+        )
+        self.assertEqual(
+            {(s.addon_id, s.key) for s in before.settings},
+            {(s.addon_id, s.key) for s in after.settings},
+        )
+        self.assertNotEqual(before.identity, after.identity)
+
+    def test_changed_setting_type_changes_identity(self):
+        before = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "limit", "int", 1)]},
+        )
+        after = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "limit", "number", 1)]},
+        )
+        self.assertNotEqual(before.identity, after.identity)
+
+    def test_changed_file_content_changes_identity(self):
+        before = self._effective(
+            ["common"], {"common": []}, files_by_package={"common": b"first"}
+        )
+        after = self._effective(
+            ["common"], {"common": []}, files_by_package={"common": b"second"}
+        )
+        self.assertEqual(
+            [f.destination for f in before.files],
+            [f.destination for f in after.files],
+        )
+        self.assertNotEqual(before.identity, after.identity)
+
+    def test_changed_package_order_affecting_winner_changes_identity(self):
+        settings = {
+            "common": [("plugin.video.example", "quality", "string", "720p")],
+            "device": [("plugin.video.example", "quality", "string", "4k")],
+        }
+        forward = self._effective(["common", "device"], settings)
+        reverse = self._effective(["device", "common"], settings)
+        self.assertNotEqual(forward.identity, reverse.identity)
+
+    def test_changed_winning_package_changes_identity_even_for_same_value(self):
+        """Same effective value, different responsible package → new identity."""
+        settings = {
+            "common": [("plugin.video.example", "quality", "string", "4k")],
+            "device": [("plugin.video.example", "quality", "string", "4k")],
+        }
+        forward = self._effective(["common", "device"], settings)
+        reverse = self._effective(["device", "common"], settings)
+        self.assertEqual(
+            forward.settings[0].value, reverse.settings[0].value
+        )
+        self.assertNotEqual(forward.settings[0].package_id,
+                            reverse.settings[0].package_id)
+        self.assertNotEqual(forward.identity, reverse.identity)
+
+    def test_added_target_changes_identity(self):
+        before = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "4k")]},
+        )
+        after = self._effective(
+            ["common"],
+            {"common": [
+                ("plugin.video.example", "quality", "string", "4k"),
+                ("plugin.video.example", "limit", "int", 5),
+            ]},
+        )
+        self.assertNotEqual(before.identity, after.identity)
+
+    def test_identity_contains_no_raw_values(self):
+        effective = self._effective(
+            ["common"],
+            {"common": [
+                ("plugin.video.example", "quality", "string", "secret-marker"),
+            ]},
+        )
+        self.assertNotIn("secret-marker", effective.identity)
+
+    def test_empty_configuration_has_a_stable_identity(self):
+        self.assertEqual(
+            EffectiveConfiguration().identity, EffectiveConfiguration().identity
+        )
+
+    def test_apply_result_carries_the_effective_identity(self):
+        effective = self._effective(
+            ["common"],
+            {"common": [("plugin.video.example", "quality", "string", "4k")]},
+        )
+        backend = FakeConfigurationBackend(
+            settings={("plugin.video.example", "quality"): "4k"}
+        )
+        result = ConfigurationManager(backend).apply(effective)
+        self.assertEqual(result.effective_identity, effective.identity)
+        self.assertEqual(
+            result.validation_state.effective_identity, effective.identity
+        )
 
 
 # ---------------------------------------------------------------------------

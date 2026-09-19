@@ -25,8 +25,8 @@ The test suite covers:
 | `test_addon_manager.py` | General add-on installation (BM-011) | 132 |
 | `test_dependencies.py` | Dependency closure discovery/reconciliation (BM-012) | 96 |
 | `test_addon_state.py` | Enable/disable state reconciliation (BM-013) | 66 |
-| `test_validator.py` | Post-operation state validation (BM-014) | 97 |
-| `test_config.py` | Configuration package deployment (BM-015) | 202 |
+| `test_validator.py` | Post-operation state validation (BM-014) | 105 |
+| `test_config.py` | Configuration package deployment (BM-015) | 226 |
 
 ## Disposable Kodi harness
 
@@ -392,20 +392,59 @@ are used anywhere in this fixture.
     post-restart apply performs zero mutations.
 12. The real Kodi profile is untouched.
 
-#### Kodi API finding
+#### Kodi Addon-lifetime finding
 
 The first live run failed every setting verification and produced no
-`settings.xml` at all. Kodi 21's `Settings`-wrapper setters
-(`getSettings().setString/setBool/setInt/setNumber`) only mutate the in-memory
-`CSetting` — `SetSettingValue()` in `xbmc/interfaces/legacy/Settings.cpp`
-returns without calling `Save()`. The typed `Addon` setters
-(`setSettingString/setSettingBool/setSettingInt/setSettingNumber`) call
-`addon->SaveSettings()` and do persist.
+`settings.xml` at all. The cause was **not** the `Settings` API —
+`Settings::setBool` / `setInt` / `setNumber` / `setString` in
+`xbmc/interfaces/legacy/Settings.cpp` do call `settings->Save()`, and
+`CAddonSettings::Save()` reaches the owning add-on's `SaveSettings()`.
 
-The production backend therefore **reads** through the Kodi 20+ Settings wrapper
-and **writes** through the typed `Addon` setters. Both are typed APIs; only one
-stores a value. `tests/test_config.py` pins this with a stubbed `xbmcaddon`
-whose wrapper setters fail the test if they are ever called.
+The cause was **Addon object lifetime**. The backend used a helper of the shape:
+
+```python
+def _settings_for(addon_id):          # WRONG
+    addon = xbmcaddon.Addon(addon_id)
+    return addon.getSettings()        # addon is released on return
+```
+
+Kodi's `CAddonSettings` reaches its owning add-on through a *weak* reference, so
+once the `Addon` was released the wrapper still accepted writes and served
+in-memory reads while `Save()` could no longer reach its owner. That explains
+every symptom: the setter did not raise, in-memory state changed, no
+`settings.xml` appeared, a fresh handle did not see the value, and a restart
+lost it.
+
+The production backend uses the Kodi 20+ `Settings` wrapper for **both** reads
+and writes, and keeps the owning `Addon` bound in the same frame across the
+call. The deprecated `Addon.setSettingString/Bool/Int/Number` are not used.
+`tests/test_config.py` pins this with a stubbed `xbmcaddon` whose `Settings`
+stub holds only a **weakref** to its `Addon` — exactly mirroring Kodi — so a
+write from a released handle silently fails to persist, and a dedicated test
+reproduces the original defect to document it.
+
+#### BM-014 artifact binding
+
+Step 18 supplies BM-014 with **both** BM-015 artifacts and proves the gate
+behaviour live:
+
+| Artifacts supplied | CONFIGURATION domain |
+|---|---|
+| none | NOT_CHECKED |
+| `configuration_state` only | NOT_CHECKED |
+| `effective_configuration` only | NOT_CHECKED |
+| matching pair | 5/5 PASS, `report.passed=True` |
+| partial state | NOT_CHECKED |
+| stale state (same scope, different desired content) | NOT_CHECKED |
+
+The stale case resolves a second `EffectiveConfiguration` from `bm015-common`
+alone. Its managed scope is **identical** to the real one — only the desired
+values differ — so scope comparison alone would false-pass. The differing
+`EffectiveConfiguration.identity` is what makes it NOT_CHECKED.
+
+The step also cross-checks that the identity computed inside Kodi matches the
+identity the harness computes by resolving the same packages out of process,
+confirming the fingerprint is deterministic.
 
 Ports: Kodi 8920, HTTP server 8922.
 

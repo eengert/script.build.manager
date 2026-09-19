@@ -1,6 +1,6 @@
 # Agent Handoff — BM-015 Complete (Pending Supervisor Review)
 
-**Date**: 2026-09-18
+**Date**: 2026-09-18 (corrections applied)
 **Agent**: Claude (claude-opus-5, effort xhigh)
 **Status**: BM-015 complete on `agent/claude`. NOT merged to `matrix`. BM-016 not started.
 
@@ -11,7 +11,7 @@
 BM-015 (prototype configuration deployment) is implemented, unit-tested,
 live-validated and documented.
 
-- **Unit tests**: 1346/1346 pass (was 1129; +217)
+- **Unit tests**: 1378/1378 pass (was 1129; +249)
 - **Live validation**: 24/24 `validate-config` (Kodi 21.1, macOS, disposable
   `.kodi-test` profile only)
 - **Branch**: `agent/claude`
@@ -31,12 +31,12 @@ live-validated and documented.
 **Created**
 - `resources/lib/config.py` — the BM-015 module
 - `resources/config/packages/README.md` — embedded package root
-- `tests/test_config.py` — 202 tests
+- `tests/test_config.py` — 226 tests
 - `docs/CONFIG_PACKAGES.md` — package format reference
 
 **Modified**
 - `resources/lib/validator.py` — optional `configuration_state` parameter
-- `tests/test_validator.py` — +15 tests (97 total)
+- `tests/test_validator.py` — +23 tests (105 total)
 - `tools/kodi_test.py` — `validate-config` live sequence + disposable runner
 - `docs/MANIFEST.md` — "Config package format" open question resolved
 - `docs/TESTING.md` — `validate-config` documentation
@@ -44,43 +44,83 @@ live-validated and documented.
 
 ---
 
-## Kodi Settings API persistence discovery
+## Kodi Addon-lifetime discovery (corrected)
 
-**This is the most important finding of the task and should survive into any
-future settings work.**
+**Correction**: an earlier BM-015 handoff claimed Kodi 21's `Settings`-wrapper
+setters do not persist because `Settings.cpp` never calls `Save()`. That was
+wrong. It came from reading only the `SetSettingValue<>` template and stopping
+before the setter methods themselves. In Omega:
 
-The first live run failed **every** setting verification and produced no
-`settings.xml` at all, while the managed-file operation succeeded.
+```cpp
+void Settings::setString(const char* id, const String& value)
+{
+  if (!SetSettingValue<CSettingString>(settings, id, value))
+    throw XBMCAddon::WrongTypeException(...);
+  settings->Save();
+}
+```
 
-**Finding**: in Kodi 21 (Omega), the Kodi 20+ typed `Settings` wrapper obtained
-from `xbmcaddon.Addon(id).getSettings()` **does not persist writes**.
-`SetSettingValue()` in `xbmc/interfaces/legacy/Settings.cpp` calls
-`setting->SetValue(value)` and returns — there is **no `Save()` call**. Values
-written through `setString` / `setBool` / `setInt` / `setNumber` mutate only the
-in-memory `CSetting`, are not written to the add-on's `settings.xml`, and are not
-observable from a fresh `Addon` handle or after a restart. The setters do not
-raise and (in this build) give no failure signal.
+Equivalent `Save()` calls exist for `setBool` / `setInt` / `setNumber`, and
+`CAddonSettings::Save()` reaches the owning add-on's `SaveSettings()`. The
+Settings API persists correctly.
 
-**Mechanism used instead**: the typed `Addon` setters —
-`setSettingString` / `setSettingBool` / `setSettingInt` / `setSettingNumber` in
-`xbmc/interfaces/legacy/Addon.cpp` — which call `addon->SaveSettings()` after
-updating the value and do persist.
+**Actual root cause — Addon object lifetime.** The original backend helper was:
 
-**Production backend (`KodiRuntimeConfigurationBackend`) therefore**:
+```python
+def _settings_for(addon_id):          # WRONG
+    addon = xbmcaddon.Addon(addon_id)
+    return addon.getSettings()        # addon released on return
+```
 
-| Direction | API |
-|---|---|
-| read | `xbmcaddon.Addon(id).getSettings().getString/getBool/getInt/getNumber` |
-| write | `xbmcaddon.Addon(id).setSettingString/setSettingBool/setSettingInt/setSettingNumber` |
+Kodi's `CAddonSettings` holds a **weak** reference to its owning add-on. With
+the `Addon` released, the wrapper remained usable for in-memory access while
+`Save()` could no longer reach its owner. That explains every observed symptom:
+the setter did not raise, in-memory state changed, no `settings.xml` appeared, a
+fresh handle did not see the value, and a restart lost it.
 
-Both are typed APIs; only one stores a value. No generated per-add-on
-`settings.xml` is ever edited directly. `tests/test_config.py` pins this with a
-stubbed `xbmcaddon` whose wrapper setters fail the test if ever called.
+**Production API now used** — the Kodi 20+ typed `Settings` wrapper for BOTH
+directions, with the owning `Addon` kept alive:
 
-Related verified detail: `CSettingNumber::ToString()` uses default
-`std::ostringstream` double formatting — **6 significant digits**. BM-015 rejects
+```python
+addon = xbmcaddon.Addon(addon_id)      # stays bound in this frame
+settings = addon.getSettings()
+settings.getString(key)                # read
+settings.setString(key, value)         # write
+```
+
+`_open_addon()` returns the **Addon**, never a Settings wrapper, so the helper
+shape that caused the bug cannot recur. The deprecated
+`Addon.setSettingString/setSettingBool/setSettingInt/setSettingNumber`
+(deprecated since Kodi 20) are no longer used anywhere.
+
+Post-write verification is unchanged and still mandatory: the value is re-read
+through a **fresh** `Addon`/`Settings` pair.
+
+Unaffected and still verified: `CSettingNumber::ToString()` uses default
+`std::ostringstream` double formatting — 6 significant digits. BM-015 rejects
 package `number` values that do not survive that round trip and compares numbers
 at exactly that precision.
+
+---
+
+## Path-safety corrections
+
+**Secure staging file.** The predictable `<dest>.bm-config-tmp` staging name is
+gone. Writes now stage through `tempfile.mkstemp(dir=parent, ...)`
+(`O_CREAT|O_EXCL`, mode 0600, unpredictable name), then `os.replace()`. A
+pre-existing symlink at the old predictable path can no longer capture the
+write. The staging file is removed on every failure path.
+
+**Destinations never traverse a symlink.** Containment is lexical against the
+realpath'ed profile root plus an explicit refusal of any existing symlink
+component — parent directories and the destination itself, checked with lstat
+semantics. This rejects an in-profile symlink pointing at a different in-profile
+file, not just escapes: a managed path names that exact file, never an alias.
+Reads obey the same rule.
+
+**Descriptor containment.** `package.json`'s real path must remain inside the
+selected package directory, matching the rule already applied to package source
+assets.
 
 ---
 
@@ -119,9 +159,10 @@ untouched. This is preflight, *not* rollback — once `apply()` starts, earlier
 successful operations are not undone if a later one fails.
 
 **Files**: destinations resolve against `special://profile/` via
-`xbmcvfs.translatePath`; staged sibling temp file + `os.replace()` (atomic on
-POSIX and Windows, never cross-filesystem). `xbmcvfs.rename()` is deliberately
-avoided — Kodi documents it as unable to move across filesystems on all
+`xbmcvfs.translatePath`; securely created sibling temp file
+(`tempfile.mkstemp`) + `os.replace()` (atomic on POSIX and Windows, never
+cross-filesystem). No symlink is ever traversed. `xbmcvfs.rename()` is
+deliberately avoided — Kodi documents it as unable to move across filesystems on all
 platforms and `CFile::Rename` has no overwrite guarantee or fallback. Fails
 closed if the profile root does not translate to a local path.
 
@@ -134,22 +175,35 @@ detection — BM-017 owns credential portability.
 
 ---
 
-## BM-014 integration — Option A
+## BM-014 integration — Option A (identity-bound)
 
 `ConfigApplyResult.validation_state` returns an immutable
-`ConfigurationValidationState` (full applied scope + the verified subset).
-`validate_build_state()` gained an optional `configuration_state` parameter.
+`ConfigurationValidationState` carrying the applied scope, the verified subset,
+and the `effective_identity` it was produced from.
+`validate_build_state()` now takes both `configuration_state` and
+`effective_configuration`.
 
-| Case | Result |
+**Why identity is required**: scope alone false-passes. A package whose desired
+value changes from `720p` to `4k` keeps an identical managed scope, so a stale
+snapshot would otherwise validate the new configuration.
+`EffectiveConfiguration.identity` is a deterministic SHA-256 over the ordered
+package selection and, per target, the setting type plus the desired value
+digest (or file content digest) plus the winning package ID. No raw values are
+included.
+
+Four gates, all NOT_CHECKED on failure (never FAIL — a stale artifact is not
+evidence of drift):
+
+| # | Gate |
 |---|---|
-| `desired.config is None` | no CONFIGURATION checks |
-| config present, snapshot `None` | NOT_CHECKED (unchanged behaviour) |
-| snapshot scope == declared managed scope | PASS/FAIL per declared target |
-| snapshot empty / partial / unrelated | NOT_CHECKED (scope mismatch) |
+| 1 | effective package selection corresponds to `desired.config.packages` |
+| 2 | effective target scope equals the declared managed scope |
+| 3 | snapshot scope equals the effective scope |
+| 4 | snapshot `effective_identity` equals `EffectiveConfiguration.identity` |
 
-Scope comparison is set equality, mirroring BM-014's dependency-root discipline.
-BM-014 remains strictly read-only and never claims configuration is validated
-merely because `apply()` succeeded. All three behaviours are proven live.
+`desired.config is None` still emits no checks. BM-014 remains strictly
+read-only and never resolves or reads package files — it receives the already
+resolved `EffectiveConfiguration` as an immutable expected snapshot.
 
 ---
 
@@ -179,6 +233,13 @@ externally) repairing exactly the two drifted targets; ownership violation
 failing preflight with zero mutations (injected drift survives); restart
 persistence with a zero-mutation post-restart apply; real Kodi profile untouched.
 
+BM-014 artifact binding proven live (step 18): no artifacts → NOT_CHECKED;
+state only → NOT_CHECKED; effective only → NOT_CHECKED; matching pair → 5/5
+PASS with `report.passed=True`; partial state → NOT_CHECKED; **stale state with
+an identical managed scope but different desired content → NOT_CHECKED**. The
+identity computed inside Kodi is also cross-checked against the identity the
+harness computes out of process.
+
 ---
 
 ## What is NOT done
@@ -205,13 +266,17 @@ BM-016.
 
 ## Usage
 
-Start: 5h 59% / wk 88% (claude-opus-5, effort xhigh — observed, matches the
-requested Opus preference).
-End: 5h 94% / wk 94%.
-Delta: +35% / +6%.
+**BM-015 (initial)** — start 5h 59% / wk 88%, end 5h 94% / wk 94%,
+delta +35% / +6% (claude-opus-5, effort xhigh).
 
-Most of the delta went to the Kodi Settings API investigation: the first live
-run failed every setting verification, which required reading the Kodi source to
-establish that the documented modern wrapper does not persist.
+**BM-015-corrections** — start 5h 8% / wk 95%, end recorded in
+`.agent/USAGE_HISTORY.md` (claude-opus-5, effort xhigh).
 
-See `.agent/USAGE_HISTORY.md` for the appended row.
+Most of the initial delta went to investigating the failed live setting writes.
+That investigation reached the wrong conclusion — the Settings API was blamed
+after reading only the `SetSettingValue<>` template and stopping before the
+setter methods. The supervisor's independent source inspection identified the
+real cause (discarded `Addon`, weak-referenced `CAddonSettings`), which this
+correction round implements and documents.
+
+See `.agent/USAGE_HISTORY.md` for the appended rows.

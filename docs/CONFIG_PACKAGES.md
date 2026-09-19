@@ -133,10 +133,10 @@ BM-015 supports exactly four types, mapped to Kodi's typed setting APIs:
 
 | `type` | Required JSON value | Kodi read | Kodi write |
 |---|---|---|---|
-| `string` | string | `Settings.getString` | `Addon.setSettingString` |
-| `bool` | boolean | `Settings.getBool` | `Addon.setSettingBool` |
-| `int` | integer (never boolean) | `Settings.getInt` | `Addon.setSettingInt` |
-| `number` | number (never boolean) | `Settings.getNumber` | `Addon.setSettingNumber` |
+| `string` | string | `Settings.getString` | `Settings.setString` |
+| `bool` | boolean | `Settings.getBool` | `Settings.setBool` |
+| `int` | integer (never boolean) | `Settings.getInt` | `Settings.setInt` |
+| `number` | number (never boolean) | `Settings.getNumber` | `Settings.setNumber` |
 
 Type validation is exact and fails closed:
 
@@ -151,19 +151,50 @@ blobs, secret/reference values, expressions or templates, environment-variable
 substitution, and shell expansion. These can be added when a real use requires
 them — not before.
 
-### Why reads and writes use different Kodi APIs
+### The Settings wrapper, and why Addon lifetime matters
 
-Kodi 21 (Omega) documents `Addon.getSettings()` as the modern typed accessor,
-and Build Manager uses it for **reads**. It is not used for **writes**:
-`SetSettingValue()` in `xbmc/interfaces/legacy/Settings.cpp` updates the
-in-memory `CSetting` and returns without calling `Save()`, so a value written
-through the wrapper is never persisted. The typed `Addon` setters in
-`xbmc/interfaces/legacy/Addon.cpp` call `addon->SaveSettings()` and do persist.
+Build Manager uses the Kodi 20+ typed `Settings` wrapper — the current
+recommended API — for **both** reads and writes:
 
-This was confirmed against the Kodi source and observed directly in live
-validation: an early run using the wrapper's setters produced no `settings.xml`
-at all, and every post-write verification failed. Both APIs are typed; only one
-stores a value.
+```python
+addon = xbmcaddon.Addon(addon_id)
+settings = addon.getSettings()
+settings.setString("quality", "1080p")      # addon still referenced here
+```
+
+The deprecated `Addon.setSettingString` / `setSettingBool` / `setSettingInt` /
+`setSettingNumber` (deprecated since Kodi 20) are **not** used.
+
+**The owning `Addon` object must stay referenced for as long as the `Settings`
+wrapper derived from it is used.** Kodi's `CAddonSettings` reaches its owning
+add-on through a *weak* reference. Once the `Addon` is released, the wrapper can
+still serve in-memory reads and accept writes, but `Save()` can no longer reach
+its owner. The failure is silent: the setter does not raise, in-memory state
+changes, no `settings.xml` appears, a fresh handle does not see the value, and a
+restart loses it.
+
+This shape is the bug:
+
+```python
+def _settings_for(addon_id):          # WRONG
+    addon = xbmcaddon.Addon(addon_id)
+    return addon.getSettings()        # addon is released on return
+```
+
+An early BM-015 revision used exactly that helper, and live validation failed
+every setting verification with no `settings.xml` written at all. The `Settings`
+wrapper is not at fault: `Settings::setBool` / `setInt` / `setNumber` /
+`setString` in `xbmc/interfaces/legacy/Settings.cpp` **do** call
+`settings->Save()`, and `CAddonSettings::Save()` reaches the owning add-on's
+`SaveSettings()`. The defect was the discarded `Addon`.
+
+The backend therefore never returns a `Settings` wrapper from a helper: it
+returns the `Addon`, and each accessor keeps it bound in its own frame across
+the wrapper call.
+
+Post-write verification remains mandatory regardless — the value is re-read
+through a **fresh** `Addon`/`Settings` pair, so a persistence failure is caught
+even when the setter returns normally.
 
 Build Manager never edits a generated per-add-on `settings.xml` directly. It
 owns selected keys, not the whole file.
@@ -290,6 +321,10 @@ A package `source` must:
 A symlink inside `files/` pointing outside the package is rejected, not
 followed.
 
+`package.json` itself obeys the same trust boundary: its real path must remain
+inside the selected package directory, so a descriptor symlink cannot pull in a
+document from elsewhere.
+
 ### Destination paths
 
 A `destination` must:
@@ -299,12 +334,25 @@ A `destination` must:
   `http://` or any other scheme
 - never be an absolute OS path or a UNC path
 - exactly match a normalized path in `config.managed_files`
-- stay inside the translated Kodi profile root after symlink resolution
+- stay inside the translated Kodi profile root
+- traverse **no symlink at all** (see below)
 
 Destinations are **profile-relative**. They are resolved at runtime against
 `special://profile/` using `xbmcvfs.translatePath` — never a hard-coded OS path.
 `special://profile/addon_data/<addon-id>/...` is the current profile's add-on
 data area. Kodi application and system directories are not valid destinations.
+
+### Symlinks are never followed
+
+A managed destination names that **exact filesystem path**, never an alias to
+another file. If any existing path component beneath the profile root is a
+symlink — a parent directory or the destination itself — the operation fails
+closed. This holds whether the link points outside the profile or at a different
+file inside it, and whether or not it is broken.
+
+Following an in-profile symlink would let an explicitly declared managed path
+redirect writes to an undeclared file, which breaks the ownership model just as
+surely as escaping the profile would. Reads obey the same rule.
 
 ### Whole-file ownership
 
@@ -317,11 +365,16 @@ so exact replacement is allowed for that path.
 
 ### Atomic replacement
 
-Desired bytes are written to a sibling temporary file in the destination's own
-directory, flushed and `fsync`ed, then moved into place with `os.replace()`,
-which overwrites atomically on both POSIX and Windows. Because the staged file
-is always a sibling, no cross-filesystem move occurs. The original file is never
-deleted ahead of its replacement.
+Desired bytes are written to a **securely created** temporary file in the
+destination's own directory via `tempfile.mkstemp()`, which creates the file
+with `O_CREAT|O_EXCL` and mode `0600`. The staging name is unique and
+unpredictable, so a pre-existing symlink cannot capture the write before the
+swap — a deterministic staging name such as `<dest>.bm-config-tmp` would be
+exactly that hazard. The file is written, flushed, `fsync`ed and closed, then
+moved into place with `os.replace()`, which overwrites atomically on both POSIX
+and Windows. Because the staging file is always a sibling of the destination, no
+cross-filesystem move occurs. The staging file is removed on every failure path,
+and the original file is never deleted ahead of its replacement.
 
 `xbmcvfs.rename()` is deliberately not used for the swap: Kodi documents it as
 unable to move between filesystems on all platforms, and `CFile::Rename`
@@ -468,14 +521,55 @@ makes no backend calls at all.
 The first two are preflight failures raised by `resolve()` — zero mutations. The
 last two surface as `FAILED` operations inside `apply()`.
 
+### Effective configuration identity
+
+`EffectiveConfiguration.identity` is a deterministic SHA-256 fingerprint of the
+desired configuration. It covers:
+
+- the ordered selected package IDs
+- per setting target: `addon_id`, `key`, setting type, the desired value's
+  type-tagged digest, and the winning package ID
+- per file target: destination, desired content digest, and the winning package ID
+
+Raw values never appear — settings contribute their digest, files theirs.
+
+Scope alone is not an identity. A package whose desired value changes from
+`720p` to `4k` keeps exactly the same managed scope, so the fingerprint is what
+distinguishes one resolution from another. Changing a desired value, a setting
+type, file content, the package order, or which package wins a target all change
+the identity.
+
 ### Validation state for BM-014
 
 `result.validation_state` is an immutable `ConfigurationValidationState` naming
-the full managed scope that was applied and the subset verified correct. Passing
-it to `validate_build_state(..., configuration_state=...)` lets BM-014 report the
-CONFIGURATION domain. BM-014 stays read-only and reports PASS/FAIL only when the
-snapshot scope exactly matches the manifest-declared managed scope; a partial or
-unrelated snapshot yields NOT_CHECKED.
+the full managed scope that was applied, the subset verified correct, and the
+`effective_identity` it was produced from.
+
+BM-014 needs **both** artifacts:
+
+```python
+validate_build_state(
+    desired, actual, dependency_closure,
+    configuration_state=result.validation_state,
+    effective_configuration=effective,
+)
+```
+
+BM-014 stays read-only and never resolves packages itself — it receives the
+already-resolved `EffectiveConfiguration` as an immutable expected snapshot.
+Four gates must pass before any PASS/FAIL is emitted:
+
+| # | Gate |
+|---|---|
+| 1 | effective package selection corresponds to `desired.config.packages` |
+| 2 | effective target scope equals the declared managed scope |
+| 3 | snapshot scope equals the effective scope |
+| 4 | snapshot `effective_identity` equals `EffectiveConfiguration.identity` |
+
+Any gate failure — including a missing artifact — yields **NOT_CHECKED, never
+FAIL**. A stale or unrelated artifact is not evidence of current Kodi drift.
+Gate 4 is what scope comparison alone cannot do: without it, a snapshot from a
+prior resolution with the same scope would produce a false PASS.
 
 ---
 

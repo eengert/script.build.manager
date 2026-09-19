@@ -31,7 +31,13 @@ from resources.lib.manifest import (
     Repository,
     SkinEntry,
 )
-from resources.lib.config import ConfigurationValidationState
+from resources.lib.config import (
+    ConfigFile,
+    ConfigSetting,
+    ConfigSettingType,
+    ConfigurationValidationState,
+    EffectiveConfiguration,
+)
 from resources.lib.resolver import ResolvedBuild
 from resources.lib.validator import (
     ValidationCheck,
@@ -709,7 +715,8 @@ class TestConfigurationValidation(unittest.TestCase):
             verified_settings=(("plugin.video.x", "key1"),),
         )
         report = validate_build_state(
-            _resolved(config=None), _state(), configuration_state=state
+            _resolved(config=None), _state(), configuration_state=state,
+            effective_configuration=EffectiveConfiguration(),
         )
         config_checks = [
             c for c in report.checks if c.domain == ValidationDomain.CONFIGURATION
@@ -738,12 +745,49 @@ def _config(settings=(), files=(), packages=("my-pkg",)):
     )
 
 
-class TestConfigurationStateIntegration(unittest.TestCase):
-    """CONFIGURATION domain driven by a BM-015 ConfigurationValidationState."""
+def _effective(settings=(), files=(), packages=("my-pkg",)):
+    """Build an EffectiveConfiguration from (addon_id, key, value) triples."""
+    return EffectiveConfiguration(
+        packages=tuple(packages),
+        settings=tuple(
+            ConfigSetting(
+                addon_id=addon_id, key=key,
+                setting_type=ConfigSettingType.STRING, value=value,
+                package_id=packages[0],
+            )
+            for addon_id, key, value in settings
+        ),
+        files=tuple(
+            ConfigFile(destination=destination, source="files/a",
+                       content=content, package_id=packages[0])
+            for destination, content in files
+        ),
+    )
 
-    def _report(self, cfg, state):
+
+def _state_for(effective, verified_settings=None, verified_files=None):
+    """Snapshot bound to `effective`, verifying everything unless told otherwise."""
+    targets = tuple(sorted((s.addon_id, s.key) for s in effective.settings))
+    destinations = tuple(sorted(f.destination for f in effective.files))
+    return ConfigurationValidationState(
+        effective_identity=effective.identity,
+        setting_targets=targets,
+        file_targets=destinations,
+        verified_settings=targets if verified_settings is None
+        else tuple(verified_settings),
+        verified_files=destinations if verified_files is None
+        else tuple(verified_files),
+    )
+
+
+class TestConfigurationStateIntegration(unittest.TestCase):
+    """CONFIGURATION domain driven by BM-015 artifacts (scope + identity)."""
+
+    def _report(self, cfg, state, effective):
         return validate_build_state(
-            _resolved(config=cfg), _state(), configuration_state=state
+            _resolved(config=cfg), _state(),
+            configuration_state=state,
+            effective_configuration=effective,
         )
 
     def _config_checks(self, report):
@@ -751,17 +795,17 @@ class TestConfigurationStateIntegration(unittest.TestCase):
             c for c in report.checks if c.domain == ValidationDomain.CONFIGURATION
         ]
 
-    def test_matching_scope_fully_verified_passes(self):
+    # -- happy path ---------------------------------------------------------
+
+    def test_matching_scope_and_identity_passes(self):
         cfg = _config(
             settings=[("plugin.video.x", "key1")], files=["userdata/my.conf"]
         )
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.x", "key1"),),
-            file_targets=("userdata/my.conf",),
-            verified_settings=(("plugin.video.x", "key1"),),
-            verified_files=("userdata/my.conf",),
+        effective = _effective(
+            settings=[("plugin.video.x", "key1", "v")],
+            files=[("userdata/my.conf", b"content")],
         )
-        report = self._report(cfg, state)
+        report = self._report(cfg, _state_for(effective), effective)
         checks = self._config_checks(report)
         self.assertEqual(len(checks), 2)
         self.assertTrue(all(c.status == ValidationStatus.PASS for c in checks))
@@ -770,10 +814,10 @@ class TestConfigurationStateIntegration(unittest.TestCase):
 
     def test_unverified_setting_fails(self):
         cfg = _config(settings=[("plugin.video.x", "key1")])
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.x", "key1"),),
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        report = self._report(
+            cfg, _state_for(effective, verified_settings=()), effective
         )
-        report = self._report(cfg, state)
         checks = self._config_checks(report)
         self.assertEqual(len(checks), 1)
         self.assertEqual(checks[0].status, ValidationStatus.FAIL)
@@ -782,158 +826,281 @@ class TestConfigurationStateIntegration(unittest.TestCase):
 
     def test_unverified_file_fails(self):
         cfg = _config(files=["userdata/my.conf"])
-        state = ConfigurationValidationState(file_targets=("userdata/my.conf",))
-        report = self._report(cfg, state)
+        effective = _effective(files=[("userdata/my.conf", b"content")])
+        report = self._report(
+            cfg, _state_for(effective, verified_files=()), effective
+        )
         checks = self._config_checks(report)
         self.assertEqual(len(checks), 1)
         self.assertEqual(checks[0].status, ValidationStatus.FAIL)
         self.assertEqual(checks[0].subject, "userdata/my.conf")
-
-    def test_partial_snapshot_is_not_checked(self):
-        cfg = _config(settings=[
-            ("plugin.video.x", "key1"), ("plugin.video.x", "key2"),
-        ])
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.x", "key1"),),
-            verified_settings=(("plugin.video.x", "key1"),),
-        )
-        report = self._report(cfg, state)
-        checks = self._config_checks(report)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
-        self.assertFalse(report.is_complete)
-        self.assertTrue(report.is_valid)
-
-    def test_superset_snapshot_is_not_checked(self):
-        cfg = _config(settings=[("plugin.video.x", "key1")])
-        state = ConfigurationValidationState(
-            setting_targets=(
-                ("plugin.video.x", "key1"), ("plugin.video.y", "key9"),
-            ),
-            verified_settings=(
-                ("plugin.video.x", "key1"), ("plugin.video.y", "key9"),
-            ),
-        )
-        checks = self._config_checks(self._report(cfg, state))
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
-
-    def test_unrelated_snapshot_is_not_checked(self):
-        cfg = _config(settings=[("plugin.video.x", "key1")])
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.other", "other"),),
-            verified_settings=(("plugin.video.other", "other"),),
-        )
-        checks = self._config_checks(self._report(cfg, state))
-        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
-
-    def test_empty_snapshot_against_declared_scope_is_not_checked(self):
-        cfg = _config(settings=[("plugin.video.x", "key1")])
-        checks = self._config_checks(
-            self._report(cfg, ConfigurationValidationState())
-        )
-        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
-
-    def test_file_scope_mismatch_alone_is_not_checked(self):
-        cfg = _config(
-            settings=[("plugin.video.x", "key1")], files=["userdata/my.conf"]
-        )
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.x", "key1"),),
-            verified_settings=(("plugin.video.x", "key1"),),
-        )
-        checks = self._config_checks(self._report(cfg, state))
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
-
-    def test_scope_comparison_ignores_ordering(self):
-        cfg = _config(settings=[
-            ("plugin.video.x", "key2"), ("plugin.video.x", "key1"),
-        ])
-        state = ConfigurationValidationState(
-            setting_targets=(
-                ("plugin.video.x", "key1"), ("plugin.video.x", "key2"),
-            ),
-            verified_settings=(
-                ("plugin.video.x", "key2"), ("plugin.video.x", "key1"),
-            ),
-        )
-        checks = self._config_checks(self._report(cfg, state))
-        self.assertEqual(len(checks), 2)
-        self.assertTrue(all(c.status == ValidationStatus.PASS for c in checks))
-
-    def test_declared_but_empty_scope_passes_domain(self):
-        cfg = ConfigDeclarations(packages=("my-pkg",))
-        report = self._report(cfg, ConfigurationValidationState())
-        checks = self._config_checks(report)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].status, ValidationStatus.PASS)
-        self.assertEqual(checks[0].subject, "configuration_domain")
-        self.assertTrue(report.passed)
 
     def test_mixed_pass_and_fail(self):
         cfg = _config(
             settings=[("plugin.video.x", "key1"), ("plugin.video.x", "key2")],
             files=["userdata/a.conf", "userdata/b.conf"],
         )
-        state = ConfigurationValidationState(
-            setting_targets=(
-                ("plugin.video.x", "key1"), ("plugin.video.x", "key2"),
-            ),
-            file_targets=("userdata/a.conf", "userdata/b.conf"),
+        effective = _effective(
+            settings=[("plugin.video.x", "key1", "1"),
+                      ("plugin.video.x", "key2", "2")],
+            files=[("userdata/a.conf", b"a"), ("userdata/b.conf", b"b")],
+        )
+        state = _state_for(
+            effective,
             verified_settings=(("plugin.video.x", "key1"),),
             verified_files=("userdata/b.conf",),
         )
-        checks = self._config_checks(self._report(cfg, state))
+        checks = self._config_checks(self._report(cfg, state, effective))
         statuses = {c.subject: c.status for c in checks}
         self.assertEqual(statuses["plugin.video.x/key1"], ValidationStatus.PASS)
         self.assertEqual(statuses["plugin.video.x/key2"], ValidationStatus.FAIL)
         self.assertEqual(statuses["userdata/a.conf"], ValidationStatus.FAIL)
         self.assertEqual(statuses["userdata/b.conf"], ValidationStatus.PASS)
 
+    def test_scope_comparison_ignores_ordering(self):
+        cfg = _config(settings=[
+            ("plugin.video.x", "key2"), ("plugin.video.x", "key1"),
+        ])
+        effective = _effective(settings=[
+            ("plugin.video.x", "key1", "1"), ("plugin.video.x", "key2", "2"),
+        ])
+        state = ConfigurationValidationState(
+            effective_identity=effective.identity,
+            setting_targets=(("plugin.video.x", "key2"),
+                             ("plugin.video.x", "key1")),
+            verified_settings=(("plugin.video.x", "key2"),
+                               ("plugin.video.x", "key1")),
+        )
+        checks = self._config_checks(self._report(cfg, state, effective))
+        self.assertEqual(len(checks), 2)
+        self.assertTrue(all(c.status == ValidationStatus.PASS for c in checks))
+
     def test_settings_precede_files_and_each_group_is_sorted(self):
         cfg = _config(
             settings=[("plugin.video.z", "k"), ("plugin.video.a", "k")],
             files=["userdata/z.conf", "userdata/a.conf"],
         )
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.a", "k"), ("plugin.video.z", "k")),
-            file_targets=("userdata/a.conf", "userdata/z.conf"),
-            verified_settings=(("plugin.video.a", "k"), ("plugin.video.z", "k")),
-            verified_files=("userdata/a.conf", "userdata/z.conf"),
+        effective = _effective(
+            settings=[("plugin.video.z", "k", "1"), ("plugin.video.a", "k", "2")],
+            files=[("userdata/z.conf", b"z"), ("userdata/a.conf", b"a")],
         )
-        checks = self._config_checks(self._report(cfg, state))
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
         self.assertEqual(
             [c.subject for c in checks],
             ["plugin.video.a/k", "plugin.video.z/k",
              "userdata/a.conf", "userdata/z.conf"],
         )
 
-    def test_validator_remains_read_only_with_state(self):
+    def test_declared_but_empty_scope_passes_domain(self):
+        cfg = ConfigDeclarations(packages=("my-pkg",))
+        effective = _effective()
+        report = self._report(cfg, _state_for(effective), effective)
+        checks = self._config_checks(report)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, ValidationStatus.PASS)
+        self.assertEqual(checks[0].subject, "configuration_domain")
+        self.assertTrue(report.passed)
+
+    # -- missing artifacts --------------------------------------------------
+
+    def test_missing_effective_configuration_is_not_checked(self):
         cfg = _config(settings=[("plugin.video.x", "key1")])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        report = validate_build_state(
+            _resolved(config=cfg), _state(),
+            configuration_state=_state_for(effective),
+        )
+        checks = self._config_checks(report)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertIn("effective_configuration", checks[0].reason)
+
+    def test_missing_state_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        report = validate_build_state(
+            _resolved(config=cfg), _state(), effective_configuration=effective,
+        )
+        checks = self._config_checks(report)
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertIn("configuration_state", checks[0].reason)
+
+    # -- stale / mismatched identity ---------------------------------------
+
+    def test_changed_desired_setting_value_is_not_checked(self):
+        """Same scope, different desired value → stale snapshot, not a FAIL."""
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        old_effective = _effective(settings=[("plugin.video.x", "key1", "720p")])
+        new_effective = _effective(settings=[("plugin.video.x", "key1", "4k")])
+        stale = _state_for(old_effective)
+
+        checks = self._config_checks(self._report(cfg, stale, new_effective))
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertIn("different effective configuration", checks[0].reason)
+
+    def test_changed_file_content_is_not_checked(self):
+        cfg = _config(files=["userdata/my.conf"])
+        old_effective = _effective(files=[("userdata/my.conf", b"first")])
+        new_effective = _effective(files=[("userdata/my.conf", b"second")])
+        checks = self._config_checks(
+            self._report(cfg, _state_for(old_effective), new_effective)
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_changed_setting_type_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        as_string = _effective(settings=[("plugin.video.x", "key1", "1")])
+        as_int = EffectiveConfiguration(
+            packages=("my-pkg",),
+            settings=(ConfigSetting(
+                addon_id="plugin.video.x", key="key1",
+                setting_type=ConfigSettingType.INT, value=1,
+                package_id="my-pkg",
+            ),),
+        )
+        checks = self._config_checks(
+            self._report(cfg, _state_for(as_string), as_int)
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_changed_winning_package_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")],
+                      packages=("a", "b"))
+        from_a = EffectiveConfiguration(
+            packages=("a", "b"),
+            settings=(ConfigSetting(
+                addon_id="plugin.video.x", key="key1",
+                setting_type=ConfigSettingType.STRING, value="v",
+                package_id="a",
+            ),),
+        )
+        from_b = EffectiveConfiguration(
+            packages=("a", "b"),
+            settings=(ConfigSetting(
+                addon_id="plugin.video.x", key="key1",
+                setting_type=ConfigSettingType.STRING, value="v",
+                package_id="b",
+            ),),
+        )
+        checks = self._config_checks(self._report(cfg, _state_for(from_a), from_b))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_changed_package_order_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")], packages=("a", "b"))
+        forward = _effective(
+            settings=[("plugin.video.x", "key1", "v")], packages=("a", "b")
+        )
+        reverse = _effective(
+            settings=[("plugin.video.x", "key1", "v")], packages=("b", "a")
+        )
+        # Reverse no longer corresponds to desired.config.packages either.
+        checks = self._config_checks(self._report(cfg, _state_for(forward), reverse))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_empty_identity_snapshot_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
         state = ConfigurationValidationState(
             setting_targets=(("plugin.video.x", "key1"),),
             verified_settings=(("plugin.video.x", "key1"),),
         )
+        checks = self._config_checks(self._report(cfg, state, effective))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    # -- scope mismatches ---------------------------------------------------
+
+    def test_partial_snapshot_is_not_checked(self):
+        cfg = _config(settings=[
+            ("plugin.video.x", "key1"), ("plugin.video.x", "key2"),
+        ])
+        effective = _effective(settings=[
+            ("plugin.video.x", "key1", "1"), ("plugin.video.x", "key2", "2"),
+        ])
+        state = ConfigurationValidationState(
+            effective_identity=effective.identity,
+            setting_targets=(("plugin.video.x", "key1"),),
+            verified_settings=(("plugin.video.x", "key1"),),
+        )
+        report = self._report(cfg, state, effective)
+        checks = self._config_checks(report)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertFalse(report.is_complete)
+        self.assertTrue(report.is_valid)
+
+    def test_unrelated_snapshot_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        state = ConfigurationValidationState(
+            effective_identity=effective.identity,
+            setting_targets=(("plugin.video.other", "other"),),
+            verified_settings=(("plugin.video.other", "other"),),
+        )
+        checks = self._config_checks(self._report(cfg, state, effective))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_effective_scope_not_matching_manifest_is_not_checked(self):
+        cfg = _config(settings=[
+            ("plugin.video.x", "key1"), ("plugin.video.x", "key2"),
+        ])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertIn("manifest-declared managed scope", checks[0].reason)
+
+    def test_effective_packages_not_matching_manifest_is_not_checked(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")], packages=("my-pkg",))
+        effective = _effective(
+            settings=[("plugin.video.x", "key1", "v")], packages=("other-pkg",)
+        )
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+        self.assertIn("config.packages", checks[0].reason)
+
+    def test_duplicate_declared_packages_are_deduplicated_for_comparison(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")],
+                      packages=("a", "b", "a"))
+        effective = _effective(
+            settings=[("plugin.video.x", "key1", "v")], packages=("a", "b")
+        )
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
+        self.assertTrue(all(c.status == ValidationStatus.PASS for c in checks))
+
+    # -- read-only ----------------------------------------------------------
+
+    def test_validator_remains_read_only_with_artifacts(self):
+        cfg = _config(settings=[("plugin.video.x", "key1")])
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
+        state = _state_for(effective)
         desired = _resolved(config=cfg)
         actual = _state()
-        before = (desired, actual, state)
-        validate_build_state(desired, actual, configuration_state=state)
-        self.assertEqual(before, (desired, actual, state))
+        before = (desired, actual, state, effective)
+        validate_build_state(
+            desired, actual,
+            configuration_state=state, effective_configuration=effective,
+        )
+        self.assertEqual(before, (desired, actual, state, effective))
 
     def test_configuration_domain_is_last(self):
         cfg = _config(settings=[("plugin.video.x", "key1")])
-        state = ConfigurationValidationState(
-            setting_targets=(("plugin.video.x", "key1"),),
-            verified_settings=(("plugin.video.x", "key1"),),
-        )
+        effective = _effective(settings=[("plugin.video.x", "key1", "v")])
         report = validate_build_state(
             _resolved(
                 config=cfg,
                 repositories=(Repository(addon_id="repository.test"),),
             ),
             _state(addons=(_installed("repository.test"),)),
-            configuration_state=state,
+            configuration_state=_state_for(effective),
+            effective_configuration=effective,
         )
         domains = [c.domain for c in report.checks]
         self.assertEqual(domains[-1], ValidationDomain.CONFIGURATION)

@@ -3768,7 +3768,9 @@ def _run_apply(config, manifest, job):
         "changed": [r.target for r in applied.changed],
         "unchanged": [r.target for r in applied.unchanged],
         "failed": [r.target for r in applied.failed],
+        "effective_identity": effective.identity,
         "validation_state": {
+            "effective_identity": state.effective_identity,
             "setting_targets": [list(t) for t in state.setting_targets],
             "file_targets": list(state.file_targets),
             "verified_settings": [list(t) for t in state.verified_settings],
@@ -4017,7 +4019,10 @@ def validate_config() -> None:
     if str(PROJECT) not in sys.path:
         sys.path.insert(0, str(PROJECT))
     from resources.lib.addons import AddonManager, AddonStatus
-    from resources.lib.config import ConfigurationValidationState
+    from resources.lib.config import (
+        ConfigPackageLoader,
+        ConfigurationValidationState,
+    )
     from resources.lib.dependencies import DependencyResolver
     from resources.lib.inspector import KodiStateInspector
     from resources.lib.manifest import (
@@ -4293,13 +4298,14 @@ def validate_config() -> None:
             )
         print("  5/5 operations ALREADY_CORRECT, 0 mutations ✓")
 
-        print("\n[18/24] feed BM-015 validation_state to BM-014 validate_build_state")
+        print("\n[18/24] feed BM-015 artifacts to BM-014 validate_build_state")
         snapshot = again["validation_state"]
         if not snapshot["is_fully_verified"]:
             raise RuntimeError(
                 f"Validation failed: snapshot not fully verified: {snapshot}"
             )
         state = ConfigurationValidationState(
+            effective_identity=snapshot["effective_identity"],
             setting_targets=tuple(
                 tuple(t) for t in snapshot["setting_targets"]
             ),
@@ -4309,6 +4315,37 @@ def validate_config() -> None:
             ),
             verified_files=tuple(snapshot["verified_files"]),
         )
+
+        config_declarations = ConfigDeclarations(
+            packages=(_BM015_PACKAGE_COMMON, _BM015_PACKAGE_DEVICE),
+            managed_settings=(
+                ManagedSettingScope(
+                    addon_id=_BM015_TEST_ADDON_ID,
+                    keys=tuple(_BM015_EXPECTED),
+                ),
+            ),
+            managed_files=(_BM015_MANAGED_FILE,),
+        )
+        # Resolve the same packages outside Kodi (the loader is pure) to obtain
+        # the EffectiveConfiguration BM-014 needs as its expected snapshot.
+        harness_loader = ConfigPackageLoader(
+            str(_bm015_installed_packages_root())
+        )
+        effective = harness_loader.resolve(config_declarations)
+        if effective.identity != again["effective_identity"]:
+            raise RuntimeError(
+                f"Validation failed: effective identity resolved in Kodi "
+                f"({again['effective_identity']}) differs from the identity "
+                f"resolved by the harness ({effective.identity})"
+            )
+        if state.effective_identity != effective.identity:
+            raise RuntimeError(
+                "Validation failed: snapshot is not bound to the effective "
+                "configuration identity"
+            )
+        print(f"  effective identity = {effective.identity}")
+        print("  in-Kodi and harness resolutions agree on the identity ✓")
+
         actual = inspector.inspect()
         desired = ResolvedBuild(
             build=BuildInfo(id="bm015-test", version="1.0.0",
@@ -4322,41 +4359,41 @@ def validate_config() -> None:
             ),
             addons=(AddonEntry(addon_id=_BM015_TEST_ADDON_ID, state="enabled"),),
             skin=SkinEntry(addon_id=actual.active_skin),
-            config=ConfigDeclarations(
-                packages=(_BM015_PACKAGE_COMMON, _BM015_PACKAGE_DEVICE),
-                managed_settings=(
-                    ManagedSettingScope(
-                        addon_id=_BM015_TEST_ADDON_ID,
-                        keys=tuple(_BM015_EXPECTED),
-                    ),
-                ),
-                managed_files=(_BM015_MANAGED_FILE,),
-            ),
+            config=config_declarations,
             optional_groups_applied=(),
             restart_policy=None,
             private_overlay=None,
         )
         closure = dep_resolver.resolve_closure([_BM015_TEST_ADDON_ID])
-        without_state = validate_build_state(desired, actual, closure)
-        config_unchecked = [
-            c for c in without_state.checks
-            if c.domain == ValidationDomain.CONFIGURATION
-        ]
-        if (len(config_unchecked) != 1
-                or config_unchecked[0].status != ValidationStatus.NOT_CHECKED):
-            raise RuntimeError(
-                "Validation failed: without a snapshot the CONFIGURATION domain "
-                "must be NOT_CHECKED"
+
+        def _config_checks(report):
+            return [
+                c for c in report.checks
+                if c.domain == ValidationDomain.CONFIGURATION
+            ]
+
+        def _expect_not_checked(label, **kwargs):
+            checks = _config_checks(
+                validate_build_state(desired, actual, closure, **kwargs)
             )
-        print("  without snapshot: CONFIGURATION = NOT_CHECKED ✓")
+            if (len(checks) != 1
+                    or checks[0].status != ValidationStatus.NOT_CHECKED):
+                raise RuntimeError(
+                    f"Validation failed: {label} must yield a single "
+                    f"NOT_CHECKED configuration check, got "
+                    f"{[(c.subject, c.status.value) for c in checks]}"
+                )
+            print(f"  {label}: CONFIGURATION = NOT_CHECKED ✓")
+
+        _expect_not_checked("no artifacts")
+        _expect_not_checked("state only", configuration_state=state)
+        _expect_not_checked("effective only", effective_configuration=effective)
 
         report = validate_build_state(
-            desired, actual, closure, configuration_state=state
+            desired, actual, closure,
+            configuration_state=state, effective_configuration=effective,
         )
-        config_checks = [
-            c for c in report.checks
-            if c.domain == ValidationDomain.CONFIGURATION
-        ]
+        config_checks = _config_checks(report)
         if len(config_checks) != 5 or not all(
             c.status == ValidationStatus.PASS for c in config_checks
         ):
@@ -4372,28 +4409,50 @@ def validate_config() -> None:
                 f"    [{c.status.value}] {c.domain.value} {c.subject}: {c.reason}"
                 for c in report.failures + report.not_checked
             )
-            raise RuntimeError(
-                f"Validation failed: report not passed:\n{detail}"
-            )
-        print(f"  with snapshot: 5/5 CONFIGURATION checks PASS, report.passed=True ✓")
+            raise RuntimeError(f"Validation failed: report not passed:\n{detail}")
+        print("  matching pair: 5/5 CONFIGURATION checks PASS, passed=True ✓")
 
         partial = ConfigurationValidationState(
+            effective_identity=state.effective_identity,
             setting_targets=state.setting_targets[:1],
             verified_settings=state.verified_settings[:1],
         )
-        partial_report = validate_build_state(
-            desired, actual, closure, configuration_state=partial
+        _expect_not_checked(
+            "partial state",
+            configuration_state=partial, effective_configuration=effective,
         )
-        partial_checks = [
-            c for c in partial_report.checks
-            if c.domain == ValidationDomain.CONFIGURATION
-        ]
-        if (len(partial_checks) != 1
-                or partial_checks[0].status != ValidationStatus.NOT_CHECKED):
+
+        # Stale artifact: the managed scope is identical, only the desired
+        # content differs. Scope comparison alone would false-pass here.
+        stale_declarations = ConfigDeclarations(
+            packages=(_BM015_PACKAGE_COMMON,),
+            managed_settings=config_declarations.managed_settings,
+            managed_files=config_declarations.managed_files,
+        )
+        stale_effective = harness_loader.resolve(stale_declarations)
+        stale_targets = {(s.addon_id, s.key) for s in stale_effective.settings}
+        if stale_targets != {(s.addon_id, s.key) for s in effective.settings}:
             raise RuntimeError(
-                "Validation failed: a partial snapshot must yield NOT_CHECKED"
+                "Validation failed: the stale fixture must have an identical "
+                "managed scope for this proof to mean anything"
             )
-        print("  partial snapshot: CONFIGURATION = NOT_CHECKED (scope mismatch) ✓")
+        if stale_effective.identity == effective.identity:
+            raise RuntimeError(
+                "Validation failed: differing desired values must produce "
+                "different effective identities"
+            )
+        print(f"  stale identity    = {stale_effective.identity}")
+        stale_state = ConfigurationValidationState(
+            effective_identity=stale_effective.identity,
+            setting_targets=state.setting_targets,
+            file_targets=state.file_targets,
+            verified_settings=state.verified_settings,
+            verified_files=state.verified_files,
+        )
+        _expect_not_checked(
+            "stale state (same scope, different desired content)",
+            configuration_state=stale_state, effective_configuration=effective,
+        )
 
         print("\n[19/24] drift a managed setting externally (Kodi stopped)")
         stop()
