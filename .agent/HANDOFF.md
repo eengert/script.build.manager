@@ -2,57 +2,61 @@
 
 ## Status
 
-Implementation and unit validation are complete in commit `0260ef8`:
+BM-018D is complete on `agent/codex` at `39bd26c`:
 
-`feat(BM-018D): add typed skin configuration support`
+`fix(BM-018D): resolve AF3 disposable live gate`
 
-The disposable AF3 live gate is blocked by the local Kodi/AF3 activation
-environment and is not represented as a pass.
+The branch remains separate from `matrix`; no history was rewritten and no
+worker branch other than `agent/codex` was changed.
 
-## What changed
+## What was done
 
-- `resources/lib/manifest.py` and `resources/builds/schema-v1.json`: explicit
-  `target: addon|skin` for managed setting scopes; omitted target remains addon.
-- `resources/lib/config.py`: target-kind identity, overlay, ownership,
-  preflight, validation snapshots, dedicated skin backend dispatch, bool/string
-  skin restriction, and the reviewed AF3 mutually-exclusive mode policy.
-- `resources/lib/skin.py`: active-skin precondition and typed Kodi JSON-RPC
-  `Settings.GetSkinSettingValue` / `Settings.SetSkinSettingValue` adapter;
-  BM-018A confirmation handling now waits for loaded-skin/dialog lifecycle,
-  supports both Kodi success result forms, and requires stable final state.
-- `resources/lib/resolver.py` and `resources/lib/validator.py`: explicit
-  target-aware merge and CONFIGURATION validation while accepting legacy addon
-  snapshot pairs.
-- `tools/kodi_test.py`: disposable `validate-skin-config` harness, synthetic
-  AF3 bool/string package, in-Kodi production runner, idempotency/drift/
-  ownership/wrong-skin/persistence checks, and real-profile mtime guard.
-- `docs/AF3_PORTABILITY.md`, `docs/CONFIG_PACKAGES.md`, `docs/MANIFEST.md`,
-  `docs/TESTING.md`: schema, runtime boundary, package specification, and
-  harness documentation.
-- Tests cover target parsing/backward compatibility, identity/overlay/
-  ownership, dedicated skin reads/writes, validator snapshots, AF3 policy, and
-  activation lifecycle.
+- Moved the AF3 `HomeSwitcher.EnableIcons` / `HomeSwitcher.EnableIconText`
+  mutual-exclusion rule into `resources/lib/af3.py`; generic skin-setting
+  backend code has no AF3 hard-coded policy.
+- Verified AF3 3.2.19's complete 18-node transitive closure in disposable
+  Kodi. All nodes are installed, enabled, and not broken, with versions
+  recorded before activation.
+- Diagnosed the original fallback: AF3 was transiently loaded and the Yes
+  confirmation was sent; `script.skinvariables` first-run generation then
+  reloaded the skin during Kodi's keep/revert transaction, and Kodi returned
+  to Estuary. The persisted setting also reverted to Estuary. The issue was
+  not an unaccepted confirmation and not a missing dependency after closure
+  enablement.
+- Updated the disposable harness to initialize AF3's generated runtime state
+  in `.kodi-test` only, then prove the actual BM-018A activation from Estuary.
+- Corrected live Kodi typed skin-setting handling for lowercase AF3 IDs and
+  Kodi's string-setter return value.
 
 ## Validation
 
-- Full unit suite: `1,436/1,436 passing`.
-- Focused BM-018D/config/skin/validator suite: `722 passing`.
+- BM-018D disposable live gate: `17/17 passing`.
+  - AF3 persisted and `xbmc.getSkinDir()` remained AF3.
+  - typed bool/string deployment and authoritative read-back passed;
+    identical reapply was idempotent; drift was repaired.
+  - unmanaged setting preservation, BM-014 configuration validation, restart
+    persistence, ownership preflight, and wrong-skin zero-mutation behavior
+    passed.
+- Focused skin/configuration tests: `264/264 passing`.
+- Full unit suite: `1,438/1,438 passing`.
 - `git diff --check`: passing.
-- No real Kodi profile or Apple TV was mutated.
+- Real Kodi profile mtime unchanged; no real profile settings or generated
+  state were copied; no Apple TV was accessed.
 
-## Live evidence and blocker
+## Not done
 
-The harness copied only installed AF3 `3.2.19` and available declared
-dependencies into `.kodi-test`, seeded one synthetic disposable first-run
-marker, launched Estuary, and invoked BM-018A through the production runner.
-Kodi loaded AF3 transiently, but repeatedly reloaded it and ultimately fell
-back to Estuary after the confirmation lifecycle. The final persisted/loaded
-check correctly failed closed, so typed skin deployment was not falsely claimed.
+- No production `af3-common` package was created.
+- BM-017, BM-018E, BM-019, and BM-020 were not started.
+- `matrix` was not integrated or modified. The current matrix SHA is
+  `bd78cc29a8aa572cc43f393d94a470e4912f3d32`.
 
-The next smallest step is to resolve or reproduce that AF3/Kodi disposable
-activation fallback, then rerun:
+## Smallest next step
 
-`python3 tools/kodi_test.py validate-skin-config`
+Supervisor-directed integration review of `agent/codex` commit `39bd26c`.
+Do not start another Build Manager task from this handoff.
 
-No production `af3-common` package was created. BM-017, BM-018E, BM-019, and
-BM-020 were not started. No worker branch other than `agent/codex` was changed.
+## Usage
+
+No reliable Codex usage source was available. The existing BM-018D Luna/High
+usage row remains exactly once in `.agent/USAGE_HISTORY.md`; no figures were
+fabricated and no duplicate row was added.
