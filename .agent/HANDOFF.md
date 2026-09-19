@@ -269,8 +269,8 @@ BM-016.
 **BM-015 (initial)** — start 5h 59% / wk 88%, end 5h 94% / wk 94%,
 delta +35% / +6% (claude-opus-5, effort xhigh).
 
-**BM-015-corrections** — start 5h 8% / wk 95%, end recorded in
-`.agent/USAGE_HISTORY.md` (claude-opus-5, effort xhigh).
+**BM-015-corrections** — start 5h 8% / wk 95%, end 5h 19% / wk 97%,
+delta +11% / +2% (claude-opus-5, effort xhigh).
 
 Most of the initial delta went to investigating the failed live setting writes.
 That investigation reached the wrong conclusion — the Settings API was blamed

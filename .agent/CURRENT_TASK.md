@@ -1,6 +1,6 @@
 # Current Task
 
-## Idle — BM-015 complete, awaiting supervisor review
+## Idle — BM-015 complete (corrections applied), awaiting supervisor review
 
 **Agent**: none
 **Branch**: `agent/claude`
@@ -8,12 +8,12 @@
 
 ### Last completed
 
-BM-015 (prototype configuration deployment) complete on `agent/claude`.
-Not merged to `matrix` — supervisor review gate.
+BM-015 (prototype configuration deployment) complete on `agent/claude`,
+including the three supervisor corrections. Not merged to `matrix`.
 
-- 1346/1346 unit tests (was 1129)
+- 1378/1378 unit tests (was 1129)
 - 24/24 live `validate-config` (Kodi 21.1, macOS, disposable profile)
-- Commits: `69d5984`, `52a08b9`, `762b36b`, plus the completion record
+- Corrections commit: `2344020`
 
 ### Next
 

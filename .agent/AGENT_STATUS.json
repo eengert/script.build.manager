@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-015",
-  "reason": "BM-015 configuration deployment prototype complete on agent/claude. 1346/1346 tests. 24/24 live validate-config. Awaiting supervisor review/merge. BM-016 not started.",
-  "last_commit": "b640b5e",
+  "task": "BM-015-corrections",
+  "reason": "BM-015 complete on agent/claude with all three supervisor corrections applied (Addon lifetime / Settings wrapper, secure staging + symlink policy, EffectiveConfiguration identity binding). 1378/1378 tests. 24/24 live validate-config. Awaiting supervisor review/merge. BM-016 not started.",
+  "last_commit": "2344020",
   "matrix_sha": "bc0be68",
   "next_agent": "human",
-  "updated_at": "2026-09-18T19:15:00Z"
+  "updated_at": "2026-09-18T21:25:00Z"
 }
