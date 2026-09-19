@@ -1,22 +1,22 @@
 # Current Task
 
-## BM-018A — verified Kodi skin activation merged
+## BM-018B — skin configuration package wiring merged
 
-**Status**: Complete and merged on matrix; awaiting next supervisor assignment.
+**Status**: Complete, supervisor-approved, and merged on matrix; awaiting next
+supervisor assignment.
 
-Integration commit: `9d7dbdd`.
+Integration commit: `c2502e9`.
 
-BM-018A implements verified Kodi skin activation using
-`Settings.SetSettingValue("lookandfeel.skin", ...)`, installed/enabled
-prerequisites, a pre-existing Yes/No-dialog safety guard, bounded
-confirmation-dialog detection, and `SendClick(11)` only after the newly
-created dialog is observed. It verifies both the persisted setting and loaded
-skin, and the planner enables a disabled desired skin before activation.
+Winning `SkinEntry.config_packages` are appended after ordinary resolved
+configuration packages using deterministic first-seen de-duplication. The
+deepest/winning skin supplies the package list. Skin-only packages create a
+resolved configuration with empty ownership scopes. BM-015 ownership checks
+remain authoritative, and the planner uses the existing `CONFIGURE` action
+after `SET_SKIN`.
 
-- Full suite before integration: 1398/1398 passing.
-- Live alternate-skin activation remains deferred because the disposable
-  profile contains only Estuary.
+- Full suite: 1412/1412 passing.
+- No live Kodi mutation.
+- No production AF3 package yet.
 - BM-017 not started.
-- Remaining BM-018 work not started.
 
-Next step: supervisor assignment.
+Next task awaits supervisor assignment.

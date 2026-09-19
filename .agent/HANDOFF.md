@@ -1,31 +1,26 @@
-# Agent Handoff — BM-018A merged
+# Agent Handoff — BM-018B merged
 
 **Status**: Complete, supervisor-approved, and merged on `matrix` at
-`9d7dbdd`. Matrix is neutral and awaiting the next assignment.
+`c2502e9`. Matrix remains neutral and awaits the next assignment.
 
 ## Integrated behavior
 
-- Skin selection uses `Settings.SetSettingValue` for
-  `lookandfeel.skin` rather than a nonexistent builtin.
-- Installed/enabled prerequisites are enforced before mutation.
-- A pre-existing `Window.IsActive(yesnodialog)` fails safely without changing
-  the setting or clicking Yes.
-- Confirmation visibility is bounded and observed after mutation; `SendClick(11)`
-  is issued only after the new dialog appears.
-- Completion waits for dialog disappearance, then verifies both the persisted
-  skin setting and loaded skin.
-- The planner enables an installed-but-disabled desired skin before activation.
+- Ordinary resolved configuration packages precede packages selected by the
+  winning `SkinEntry.config_packages`.
+- Package IDs are collapsed by deterministic first-seen de-duplication.
+- Deepest skin resolution is replace/deepest-wins; superseded skin package
+  lists are not accumulated.
+- Skin-only package selections create `ResolvedBuild.config` with empty
+  ownership scopes.
+- BM-015's generic package format, loader, deployer, and ownership checks
+  remain unchanged and authoritative.
+- The planner emits existing `CONFIGURE` after `SET_SKIN`.
 
 ## Validation and boundaries
 
-- Focused BM-018A tests: 106/106.
-- Full suite: 1398/1398.
-- No real Kodi profile or physical device was modified.
-- Live alternate-skin validation remains deferred because the disposable
-  profile contains only Estuary.
-- BM-017 not started.
-- AF3 configuration-package provisioning not started.
-- BM-019 not started.
-- BM-020 not started.
+- Full suite: 1412/1412 passing.
+- No live Kodi mutation occurred.
+- No production AF3 package was created.
+- BM-017 was not started.
 
-Next step: supervisor assignment.
+Next task awaits supervisor assignment.
