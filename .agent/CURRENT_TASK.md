@@ -1,22 +1,27 @@
 # Current Task
 
-## BM-018B — skin configuration package wiring merged
+## BM-018C — AF3 configuration portability inventory merged
 
-**Status**: Complete, supervisor-approved, and merged on matrix; awaiting next
-supervisor assignment.
+**Status**: Complete, supervisor-approved, and merged on `matrix`; awaiting the
+next supervisor assignment.
 
-Integration commit: `c2502e9`.
+Integration commits:
 
-Winning `SkinEntry.config_packages` are appended after ordinary resolved
-configuration packages using deterministic first-seen de-duplication. The
-deepest/winning skin supplies the package list. Skin-only packages create a
-resolved configuration with empty ownership scopes. BM-015 ownership checks
-remain authoritative, and the planner uses the existing `CONFIGURE` action
-after `SET_SKIN`.
+- `b782bbd` — `fix: eliminate planner invalid escape warning`
+- `23796e2` — `docs(BM-018C): inventory AF3 portable configuration`
+
+The AF3 `3.2.19` portability inventory is complete: 280 observed skin
+settings were classified as portable, generated, device-specific/private, or
+unknown. The initial future `af3-common` specification uses only reviewed
+typed bool/string targets, has zero whole-file targets, defers menu/widget
+source from common, excludes generated/runtime state, and defers private/auth
+state to BM-017.
 
 - Full suite: 1412/1412 passing.
-- No live Kodi mutation.
-- No production AF3 package yet.
-- BM-017 not started.
+- `git diff --check`: passing.
+- Real Kodi profile remained read-only; no live Kodi mutation occurred.
+- No production `af3-common` package was created.
+- BM-017 was not started.
+- BM-018D was not started.
 
 Next task awaits supervisor assignment.
