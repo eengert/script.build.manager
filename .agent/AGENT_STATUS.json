@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-015-corrections",
-  "reason": "BM-015 complete on agent/claude with all three supervisor corrections applied (Addon lifetime / Settings wrapper, secure staging + symlink policy, EffectiveConfiguration identity binding). 1378/1378 tests. 24/24 live validate-config. Awaiting supervisor review/merge. BM-016 not started.",
-  "last_commit": "2344020",
-  "matrix_sha": "bc0be68",
+  "task": "BM-016",
+  "reason": "BM-016 research substantially complete; remaining unknowns documented; pending supervisor review. BM-017 not started.",
+  "last_commit": "cbb93db",
+  "matrix_sha": "91b41a1",
   "next_agent": "human",
-  "updated_at": "2026-09-18T21:25:00Z"
+  "updated_at": "2026-09-19T11:53:53Z"
 }

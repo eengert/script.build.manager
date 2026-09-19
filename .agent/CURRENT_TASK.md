@@ -1,20 +1,20 @@
 # Current Task
 
-## Idle — BM-015 complete (corrections applied), awaiting supervisor review
+## BM-016 research substantially complete — pending supervisor review
 
-**Agent**: none
-**Branch**: `agent/claude`
-**Status**: idle
+**Agent**: Codex
+**Branch**: `agent/codex`
+**Status**: idle pending review
 
-### Last completed
+BM-016's Red Light 2.6.2 portability inventory and classifications are saved
+in `docs/RED_LIGHT_PORTABILITY.md` (research commit `cbb93db`).
 
-BM-015 (prototype configuration deployment) complete on `agent/claude`,
-including the three supervisor corrections. Not merged to `matrix`.
+- 508 setting definitions inventoried and redacted safely.
+- No Red Light setting is directly deployable through BM-015 today because the
+  real store is a mixed custom SQLite database.
+- 1378/1378 unit tests pass.
+- Remaining questions are documented as `UNKNOWN_NEEDS_TESTING` or
+  `UNTESTED_CROSS_PLATFORM`.
+- BM-017 has not started.
 
-- 1378/1378 unit tests (was 1129)
-- 24/24 live `validate-config` (Kodi 21.1, macOS, disposable profile)
-- Corrections commit: `2344020`
-
-### Next
-
-BM-016 — Research Red Light configuration portability. **Not started.**
+Next action: supervisor review.
