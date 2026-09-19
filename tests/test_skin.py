@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from resources.lib.skin import (
     KodiRuntimeSkinBackend,
+    KodiRuntimeSkinSettingsBackend,
     SkinActivator,
     SkinBackend,
     SkinError,
@@ -41,7 +42,7 @@ class FakeSkinBackend(SkinBackend):
         self.active_reads = list(active_reads or ["skin.estuary"])
         self.skins: Dict[str, SkinState] = dict(skins or {})
         self.setting = setting
-        self.dialog_visibility = list(dialog_visibility or [False, True, False])
+        self.dialog_visibility = list(dialog_visibility or [False, True, True, False])
         self.calls: List[str] = []
         self.observed_dialog = False
 
@@ -126,7 +127,9 @@ class TestSkinActivator(unittest.TestCase):
         self.assertEqual(result.status, SkinStatus.ACTIVATED)
         self.assertEqual(backend.calls, [
             "get_active", "get_state:skin.foo", "dialog:False",
-            "set_setting:skin.foo", "dialog:True", "confirm", "dialog:False",
+            "set_setting:skin.foo", "get_active", "dialog:True",
+            "confirm", "dialog:True", "dialog:False", "dialog:False",
+            "get_setting", "get_active", "get_setting", "get_active",
             "get_setting", "get_active",
         ])
 
@@ -144,7 +147,7 @@ class TestSkinActivator(unittest.TestCase):
         self.assertNotIn("get_setting", backend.calls)
 
     def test_temporary_load_then_revert_is_failure(self):
-        backend = _backend(active_reads=["skin.estuary", "skin.estuary"])
+        backend = _backend(active_reads=["skin.estuary", "skin.foo", "skin.estuary"])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("Loaded skin", result.message)
@@ -155,6 +158,7 @@ class TestSkinActivator(unittest.TestCase):
                 self.calls.append(f"set_setting:{addon_id}")
 
         backend = NonPersisting(
+            active_reads=["skin.estuary", "skin.foo"],
             skins={"skin.foo": SkinState(True, True)}, setting="skin.other"
         )
         result = self._activate(backend)
@@ -162,7 +166,7 @@ class TestSkinActivator(unittest.TestCase):
         self.assertIn("Persisted skin setting", result.message)
 
     def test_loaded_skin_mismatch_is_failure(self):
-        backend = _backend(active_reads=["skin.estuary", "skin.other"])
+        backend = _backend(active_reads=["skin.estuary", "skin.foo", "skin.other"])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("Loaded skin", result.message)
@@ -241,6 +245,48 @@ class TestKodiRuntimeSkinBackend(unittest.TestCase):
         with patch.dict(sys.modules, {"xbmc": xbmc}):
             self.assertTrue(backend.is_confirmation_visible())
         xbmc.getCondVisibility.assert_called_once_with("Window.IsActive(yesnodialog)")
+
+
+class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
+    def _backend(self, responses, active="skin.foo"):
+        xbmc = MagicMock()
+        xbmc.getSkinDir.return_value = active
+        xbmc.executeJSONRPC.side_effect = [json.dumps(value) for value in responses]
+        return KodiRuntimeSkinSettingsBackend(), xbmc
+
+    def test_bool_read_and_write_use_skin_jsonrpc_namespace(self):
+        backend, xbmc = self._backend([
+            {"jsonrpc": "2.0", "result": {"value": False}, "id": 1},
+            {"jsonrpc": "2.0", "result": True, "id": 1},
+        ])
+        with patch.dict(sys.modules, {"xbmc": xbmc}):
+            self.assertFalse(backend.get_setting("skin.foo", "feature", "bool"))
+            backend.set_setting("skin.foo", "feature", "bool", True)
+        requests = [json.loads(call.args[0]) for call in xbmc.executeJSONRPC.call_args_list]
+        self.assertEqual(requests[0]["method"], "Settings.GetSkinSettingValue")
+        self.assertEqual(requests[0]["params"], {"setting": "feature"})
+        self.assertEqual(requests[1]["method"], "Settings.SetSkinSettingValue")
+        self.assertEqual(requests[1]["params"], {"setting": "feature", "value": True})
+
+    def test_string_read_is_typed_and_wrong_active_skin_fails_before_rpc(self):
+        backend, xbmc = self._backend([
+            {"jsonrpc": "2.0", "result": {"value": "Standard"}, "id": 1},
+        ])
+        with patch.dict(sys.modules, {"xbmc": xbmc}):
+            self.assertEqual(
+                backend.get_setting("skin.foo", "mode", "string"), "Standard"
+            )
+        wrong, wrong_xbmc = self._backend([], active="skin.estuary")
+        with patch.dict(sys.modules, {"xbmc": wrong_xbmc}):
+            with self.assertRaises(SkinError):
+                wrong.set_setting("skin.foo", "mode", "string", "Standard")
+        wrong_xbmc.executeJSONRPC.assert_not_called()
+
+    def test_skin_target_rejects_numeric_type(self):
+        backend, xbmc = self._backend([])
+        with patch.dict(sys.modules, {"xbmc": xbmc}):
+            with self.assertRaises(SkinError):
+                backend.get_setting("skin.foo", "count", "int")
 
 
 if __name__ == "__main__":

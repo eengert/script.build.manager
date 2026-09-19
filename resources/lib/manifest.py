@@ -37,6 +37,7 @@ import posixpath
 import re
 import urllib.parse
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, Optional, Tuple
 
 
@@ -82,6 +83,13 @@ class Repository:
     required: bool = True
 
 
+class SettingTargetKind(str, Enum):
+    """The runtime namespace that owns a managed setting target."""
+
+    ADDON = "addon"
+    SKIN = "skin"
+
+
 @dataclass(frozen=True)
 class SkinEntry:
     addon_id: str
@@ -92,6 +100,7 @@ class SkinEntry:
 class ManagedSettingScope:
     addon_id: str
     keys: Tuple[str, ...] = ()
+    target_kind: SettingTargetKind = SettingTargetKind.ADDON
 
 
 @dataclass(frozen=True)
@@ -188,7 +197,7 @@ _REPO_KEYS              = frozenset({"addon_id", "bootstrap_url", "required"})
 _ADDON_KEYS             = frozenset({"addon_id", "state", "note"})
 _SKIN_KEYS              = frozenset({"addon_id", "config_packages"})
 _CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files"})
-_MANAGED_SETTING_KEYS   = frozenset({"addon_id", "keys"})
+_MANAGED_SETTING_KEYS   = frozenset({"target", "addon_id", "keys"})
 _PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional"})
 _DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional"})
 _OPTIONAL_GROUP_KEYS    = frozenset({"id", "label", "description", "addons", "config"})
@@ -532,17 +541,18 @@ def _parse_config(raw: object, *, label: str) -> Optional[ConfigDeclarations]:
         ms_raw = raw["managed_settings"]
         if not isinstance(ms_raw, list):
             raise ManifestValidationError(f"{label}.managed_settings: must be an array")
-        seen_addon_ids: set = set()
+        seen_scopes: set = set()
         ms_list = []
         for j, scope in enumerate(ms_raw):
             slbl = f"{label}.managed_settings[{j}]"
             parsed = _parse_managed_setting_scope(scope, label=slbl)
-            if parsed.addon_id in seen_addon_ids:
+            scope_identity = (parsed.target_kind, parsed.addon_id)
+            if scope_identity in seen_scopes:
                 raise ManifestValidationError(
-                    f"{slbl}.addon_id: duplicate managed_settings scope for "
-                    f"{parsed.addon_id!r}"
+                    f"{slbl}: duplicate managed_settings scope for "
+                    f"{parsed.target_kind.value}:{parsed.addon_id!r}"
                 )
-            seen_addon_ids.add(parsed.addon_id)
+            seen_scopes.add(scope_identity)
             ms_list.append(parsed)
         managed_settings = tuple(ms_list)
 
@@ -576,6 +586,10 @@ def _parse_managed_setting_scope(raw: object, *, label: str) -> ManagedSettingSc
         raise ManifestValidationError(f"{label}: must be an object")
     _reject_unknown(raw, _MANAGED_SETTING_KEYS, label)
 
+    target_kind = _parse_setting_target_kind(
+        raw.get("target", "addon"), label=label
+    )
+
     addon_id = _require_str(raw, "addon_id", label)
     if not _RE_ADDON_ID.match(addon_id):
         raise ManifestValidationError(
@@ -591,7 +605,26 @@ def _parse_managed_setting_scope(raw: object, *, label: str) -> ManagedSettingSc
         if not isinstance(k, str):
             raise ManifestValidationError(f"{label}.keys[{j}]: must be a string")
 
-    return ManagedSettingScope(addon_id=addon_id, keys=tuple(keys_raw))
+    return ManagedSettingScope(
+        addon_id=addon_id,
+        keys=tuple(keys_raw),
+        target_kind=target_kind,
+    )
+
+
+def _parse_setting_target_kind(raw: object, *, label: str) -> SettingTargetKind:
+    if not isinstance(raw, str):
+        raise ManifestValidationError(
+            f"{label}.target: must be a string when present"
+        )
+    try:
+        return SettingTargetKind(raw)
+    except ValueError as exc:
+        supported = ", ".join(kind.value for kind in SettingTargetKind)
+        raise ManifestValidationError(
+            f"{label}.target: unsupported target kind {raw!r} "
+            f"(supported: {supported})"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

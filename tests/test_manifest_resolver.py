@@ -65,8 +65,11 @@ def _config(packages=None, managed_settings=None, managed_files=None):
     return d
 
 
-def _ms(addon_id, keys):
-    return {"addon_id": addon_id, "keys": keys}
+def _ms(addon_id, keys, target=None):
+    result = {"addon_id": addon_id, "keys": keys}
+    if target is not None:
+        result["target"] = target
+    return result
 
 
 def _make(doc):
@@ -161,6 +164,21 @@ class TestBaseOnly(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestPlatformOverrides(unittest.TestCase):
+
+    def test_config_scopes_merge_by_target_kind(self):
+        doc = _base({
+            "config": {"managed_settings": [
+                _ms("same.id", ["key"], target="addon"),
+                _ms("same.id", ["key"], target="skin"),
+            ]},
+        })
+        resolved = resolve_manifest(_make(doc), "dev")
+        self.assertEqual(
+            [(scope.target_kind.value, scope.addon_id, scope.keys)
+             for scope in resolved.config.managed_settings],
+            [("addon", "same.id", ("key",)),
+             ("skin", "same.id", ("key",))],
+        )
 
     def test_platform_overrides_existing_addon_state(self):
         doc = _base({

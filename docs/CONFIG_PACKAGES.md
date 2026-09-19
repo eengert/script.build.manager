@@ -64,10 +64,18 @@ package directory is still inside the package root.
 
   "settings": [
     {
+      "target": "addon",
       "addon_id": "plugin.video.example",
       "key": "quality",
       "type": "string",
       "value": "1080p"
+    },
+    {
+      "target": "skin",
+      "addon_id": "skin.arctic.fuse.3",
+      "key": "HomeSwitcher.EnableIcons",
+      "type": "bool",
+      "value": true
     },
     {
       "addon_id": "plugin.video.example",
@@ -113,6 +121,7 @@ secret references) that the engine would silently ignore.
 
 | Field | Notes |
 |---|---|
+| `target` | Optional explicit namespace: `addon` (default, backward compatible) or `skin`. Skin entries use Kodi's active-skin API and must match a manifest scope with the same target. |
 | `addon_id` | Must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}`. |
 | `key` | Must match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. |
 | `type` | One of `string`, `bool`, `int`, `number`. |
@@ -224,7 +233,7 @@ base → platform → device → optional groups
 ```
 
 Packages are applied in that order. For a target named by more than one
-selected package — a `(addon_id, key)` setting or a file `destination` — the
+selected package — a `(target, addon_id, key)` setting or a file `destination` — the
 **last package wins**:
 
 ```
@@ -239,14 +248,17 @@ Duplicate package IDs in `config.packages` collapse to their first occurrence,
 matching the resolver's union semantics.
 
 **Inside a single package** there is no override semantics at all: duplicate
-`(addon_id, key)` setting targets and duplicate file destinations are rejected.
+`(target, addon_id, key)` setting targets and duplicate file destinations are
+rejected. An `addon` target and a `skin` target with the same `addon_id` and
+`key` are distinct identities, but neither can satisfy the other's manifest
+ownership declaration.
 Neither first-wins nor last-wins — a package that contradicts itself is a bug.
 
 ### Determinism
 
 The same packages in the same order always produce an identical effective
-configuration. Output is sorted (settings by `(addon_id, key)`, files by
-destination) because that ordering carries no meaning; package order is
+configuration. Output is sorted (settings by `(target, addon_id, key)`, files
+by destination) because that ordering carries no meaning; package order is
 preserved only where it decides precedence. No result depends on dict or set
 iteration order.
 
@@ -257,7 +269,7 @@ iteration order.
 Build Manager's authority comes from `ResolvedBuild.config`, never from a
 package.
 
-**Declared setting targets** are every `(addon_id, key)` pair in
+**Declared setting targets** are every `(target, addon_id, key)` triple in
 `config.managed_settings`. **Declared file targets** are the normalized paths in
 `config.managed_files`.
 
@@ -277,6 +289,17 @@ Build Manager cannot actually reconcile.
 
 Anything not declared — other settings of the same add-on, sibling files in the
 same directory, any other add-on — is never read and never written.
+
+### Skin-setting runtime boundary
+
+Entries with `target: skin` are handled by a dedicated adapter using Kodi's
+`Settings.GetSkinSettingValue` and `Settings.SetSkinSettingValue` JSON-RPC
+methods. The adapter verifies `xbmc.getSkinDir()` equals the declared
+`addon_id` before reading or writing. It supports only explicit `bool` and
+`string` targets, performs one-key writes, and the normal BM-015 manager reads
+the value again through the adapter after every write. It never calls
+`xbmcaddon.Addon(...).getSettings()` for a skin target and never edits the
+skin's generated `settings.xml` directly.
 
 ---
 
