@@ -29,6 +29,7 @@ from resources.lib.manifest import (
     ProfileLayer,
     Repository,
     RestartPolicy,
+    SettingTargetKind,
     SkinEntry,
     load_manifest_file,
     load_manifest_json,
@@ -427,6 +428,49 @@ class TestConfigDeclarations(unittest.TestCase):
         })
         m = validate_manifest(doc)
         self.assertEqual(m.config.packages, ("af3-common",))
+
+    def test_target_defaults_to_addon(self):
+        m = validate_manifest(self._doc_with_config({
+            "managed_settings": [{
+                "addon_id": "plugin.video.foo", "keys": ["key1"],
+            }],
+        }))
+        self.assertIs(m.config.managed_settings[0].target_kind,
+                      SettingTargetKind.ADDON)
+
+    def test_explicit_skin_target_is_preserved(self):
+        m = validate_manifest(self._doc_with_config({
+            "managed_settings": [{
+                "target": "skin", "addon_id": "skin.foo", "keys": ["key1"],
+            }],
+        }))
+        self.assertIs(m.config.managed_settings[0].target_kind,
+                      SettingTargetKind.SKIN)
+
+    def test_invalid_setting_target_is_rejected(self):
+        _assert_invalid(self, self._doc_with_config({
+            "managed_settings": [{
+                "target": "prefix", "addon_id": "plugin.video.foo",
+                "keys": ["key1"],
+            }],
+        }), contains="target")
+
+    def test_addon_and_skin_scopes_same_id_are_distinct(self):
+        m = validate_manifest(self._doc_with_config({
+            "managed_settings": [
+                {"addon_id": "same.id", "keys": ["key"]},
+                {"target": "skin", "addon_id": "same.id", "keys": ["key"]},
+            ],
+        }))
+        self.assertEqual(len(m.config.managed_settings), 2)
+
+    def test_duplicate_same_target_scope_is_rejected(self):
+        _assert_invalid(self, self._doc_with_config({
+            "managed_settings": [
+                {"target": "skin", "addon_id": "same.id", "keys": ["a"]},
+                {"target": "skin", "addon_id": "same.id", "keys": ["b"]},
+            ],
+        }), contains="duplicate")
 
     def test_duplicate_managed_settings_addon_id(self):
         doc = self._doc_with_config({

@@ -241,8 +241,8 @@ def _merge_config(
     """Merge config declarations using union semantics.
 
     - packages: union in first-seen order, no duplicates
-    - managed_settings: per addon_id, keys unioned in first-seen order,
-      addon_id order is first-seen
+    - managed_settings: per (target kind, addon_id), keys unioned in
+      first-seen order, scope order is first-seen
     - managed_files: union in first-seen order, no duplicates
 
     Returns None when every supplied layer has no config.
@@ -250,9 +250,9 @@ def _merge_config(
     pkg_seen: set = set()
     packages: List[str] = []
 
-    ms_order: List[str] = []
-    ms_keys: Dict[str, List[str]] = {}
-    ms_keys_seen: Dict[str, set] = {}
+    ms_order: List[Tuple[object, str]] = []
+    ms_keys: Dict[Tuple[object, str], List[str]] = {}
+    ms_keys_seen: Dict[Tuple[object, str], set] = {}
 
     file_seen: set = set()
     files: List[str] = []
@@ -269,14 +269,15 @@ def _merge_config(
                 packages.append(pkg)
 
         for scope in cfg.managed_settings:
-            if scope.addon_id not in ms_keys:
-                ms_order.append(scope.addon_id)
-                ms_keys[scope.addon_id] = []
-                ms_keys_seen[scope.addon_id] = set()
+            scope_identity = (scope.target_kind, scope.addon_id)
+            if scope_identity not in ms_keys:
+                ms_order.append(scope_identity)
+                ms_keys[scope_identity] = []
+                ms_keys_seen[scope_identity] = set()
             for key in scope.keys:
-                if key not in ms_keys_seen[scope.addon_id]:
-                    ms_keys_seen[scope.addon_id].add(key)
-                    ms_keys[scope.addon_id].append(key)
+                if key not in ms_keys_seen[scope_identity]:
+                    ms_keys_seen[scope_identity].add(key)
+                    ms_keys[scope_identity].append(key)
 
         for path in cfg.managed_files:
             if path not in file_seen:
@@ -289,8 +290,12 @@ def _merge_config(
     return ConfigDeclarations(
         packages=tuple(packages),
         managed_settings=tuple(
-            ManagedSettingScope(addon_id=aid, keys=tuple(ms_keys[aid]))
-            for aid in ms_order
+            ManagedSettingScope(
+                target_kind=target_kind,
+                addon_id=addon_id,
+                keys=tuple(ms_keys[(target_kind, addon_id)]),
+            )
+            for target_kind, addon_id in ms_order
         ),
         managed_files=tuple(files),
     )

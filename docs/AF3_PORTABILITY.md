@@ -106,8 +106,16 @@ Build Manager's BM-015 package format already supports `string`, `bool`, `int`,
 and `number` typed values and insists on read-back verification. Its current
 runtime backend, however, opens Kodi add-on settings through
 `xbmcaddon.Addon(...).getSettings()`. That API is not the AF3 skin-setting map.
-BM-018D must add an explicit, typed skin-setting backend/target (or an equally
-strict adapter) before an AF3 setting can be placed in a real package.
+BM-018D adds an explicit, typed skin-setting target and dedicated adapter
+before any AF3 setting can be placed in a real package. The target identity is
+`(skin, addon_id, key)`, not merely `(addon_id, key)`, and it must be declared
+as `target: skin` in both the manifest ownership scope and the package entry.
+The adapter uses Kodi's `Settings.GetSkinSettingValue` and
+`Settings.SetSkinSettingValue` JSON-RPC methods, requires the exact skin to be
+active, supports only `bool` and `string` initially, and verifies every write
+through a fresh read. It never routes skin targets through
+`xbmcaddon.Addon(...).getSettings()` and never manages `settings.xml` as a
+whole file. The production `af3-common` package remains out of scope.
 
 ### Menus and widgets
 
@@ -368,7 +376,7 @@ The package must not contain:
 
 The manifest declaration should use `skin.config_packages: ["af3-common"]`
 as already supported by BM-018B, plus `config.managed_settings` entries for
-every exact `(skin.arctic.fuse.3, key)` target supplied by the package. No
+every exact `("skin", "skin.arctic.fuse.3", key)` target supplied by the package. No
 undeclared setting may be silently accepted. The package values should be
 written as normal BM-015 typed values once BM-018D supplies the skin-settings
 backend and post-write verification.
@@ -392,31 +400,37 @@ files/keys separately and never broaden `af3-common`. A device package still
 cannot contain secrets; private authentication remains a separate BM-017
 boundary.
 
-## BM-018D implementation and validation requirements
+## BM-018D implementation and validation boundary
 
-BM-018D should not start from whole-file copying. It should implement and test:
+BM-018D implements the typed target path without whole-file copying:
 
 1. A typed AF3 skin-setting backend that reads the active skin's bool/string
-   map, validates the requested skin ID, writes one owned key at a time, and
-   reads each value back through a fresh handle or equivalent authoritative
-   route.
+   map through `Settings.GetSkinSettingValue`, validates the requested skin ID,
+   writes one owned key at a time through `Settings.SetSkinSettingValue`, and
+   reads each value back through the authoritative route.
 2. Ownership declarations that distinguish an AF3 skin-setting target from a
    normal add-on setting while preserving BM-015's fail-closed package and
    manifest checks.
 3. Cross-setting validation for mutually exclusive menu modes and enum/value
-   allowlists for the common table.
+   allowlists for the common table. The implemented AF3 policy rejects the
+   reviewed `HomeSwitcher.EnableIcons=true` plus
+   `HomeSwitcher.EnableIconText=true` contradiction; broader allowlists remain
+   future review work.
 4. A file overlay transaction for any future helper source: validate all JSON,
    stage while AF3 is inactive, preserve rollback state, activate/reload,
    rebuild through the helper's supported route, and verify live source and
    generated fingerprints without managing the generated products.
-5. Disposable Kodi-profile tests for a clean profile, AF3 active, AF3
+5. Disposable Kodi-profile harness coverage for a clean profile, AF3 active,
+   AF3
    inactive, missing helper, missing referenced add-on, stale generated output,
    malformed JSON, path/URI rejection, private-looking values, and rebuild
    persistence. Do not use Family Rm, Bonus Rm, or Apple TV profiles.
 
-The BM-018C research itself performed no Kodi writes, no helper rebuild, no
-skin switch, and no Apple TV access. Those remain validation work for the
-future implementation task.
+The unit suite covers the completed typed path. The disposable harness reaches
+real Kodi and proves the Estuary precondition and AF3 source/dependency
+preparation, but the current local Kodi/AF3 combination repeatedly falls back
+to Estuary after the keep/revert cycle; therefore a full live BM-018D pass is
+not claimed until that environment-specific activation issue is resolved.
 
 ## Evidence index
 
