@@ -830,6 +830,27 @@ class TestOverlay(PackageFixture):
         self.assertEqual(len(effective.settings), 1)
         self.assertEqual(effective.settings[0].value, "1080p")
 
+    def test_skin_selected_package_uses_existing_loader_and_ownership(self):
+        self.write_package("skin-pkg", self.simple_descriptor(
+            "skin-pkg", settings=[
+                ("skin.foo", "accent", "string", "blue"),
+            ],
+        ))
+        effective = self.loader.resolve(declarations(
+            packages=["skin-pkg"], settings=[("skin.foo", "accent")],
+        ))
+        self.assertEqual(effective.packages, ("skin-pkg",))
+        self.assertEqual(effective.settings[0].package_id, "skin-pkg")
+
+    def test_skin_selected_package_cannot_expand_ownership(self):
+        self.write_package("skin-pkg", self.simple_descriptor(
+            "skin-pkg", settings=[
+                ("skin.foo", "accent", "string", "blue"),
+            ],
+        ))
+        with self.assertRaises(ConfigOwnershipError):
+            self.loader.resolve(declarations(packages=["skin-pkg"]))
+
     def test_multiple_packages_union(self):
         self._build_layers()
         effective = self.loader.resolve(declarations(

@@ -406,6 +406,18 @@ class TestConfig(unittest.TestCase):
         # current_state must be unchecked, not any specific value
         self.assertEqual(cfg.current_state, "unchecked")
 
+    def test_skin_selected_config_is_normal_configure_action(self):
+        """Resolver-selected skin packages use CONFIGURE, not a new action."""
+        config = ConfigDeclarations(packages=("skin-pkg",))
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.foo"), config=config,
+        )
+        actual = _make_state(
+            addons=[_addon("skin.foo", True)], active_skin="skin.estuary"
+        )
+        kinds = _action_kinds(plan_changes(desired, actual))
+        self.assertEqual(kinds, [SET_SKIN, CONFIGURE])
+
 
 # ---------------------------------------------------------------------------
 # TestRepositories
