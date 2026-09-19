@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp.server import MCPServer
+from mcp.server.mcpserver import MCPServer
 
 from . import core
 
