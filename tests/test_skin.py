@@ -268,6 +268,26 @@ class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
         self.assertEqual(requests[1]["method"], "Settings.SetSkinSettingValue")
         self.assertEqual(requests[1]["params"], {"setting": "feature", "value": True})
 
+    def test_string_write_accepts_kodis_written_value_response(self):
+        backend, xbmc = self._backend([
+            {"jsonrpc": "2.0", "result": "Standard", "id": 1},
+        ])
+        with patch.dict(sys.modules, {"xbmc": xbmc}):
+            backend.set_setting("skin.foo", "mode", "string", "Standard")
+
+    def test_af3_setting_falls_back_to_kodi_lowercase_id(self):
+        backend, xbmc = self._backend([
+            {"jsonrpc": "2.0", "error": {"code": -32602}, "id": 1},
+            {"jsonrpc": "2.0", "result": {"value": False}, "id": 1},
+        ])
+        with patch.dict(sys.modules, {"xbmc": xbmc}):
+            self.assertFalse(
+                backend.get_setting("skin.foo", "HomeSwitcher.EnableIcons", "bool")
+            )
+        requests = [json.loads(call.args[0]) for call in xbmc.executeJSONRPC.call_args_list]
+        self.assertEqual(requests[0]["params"], {"setting": "HomeSwitcher.EnableIcons"})
+        self.assertEqual(requests[1]["params"], {"setting": "homeswitcher.enableicons"})
+
     def test_string_read_is_typed_and_wrong_active_skin_fails_before_rpc(self):
         backend, xbmc = self._backend([
             {"jsonrpc": "2.0", "result": {"value": "Standard"}, "id": 1},

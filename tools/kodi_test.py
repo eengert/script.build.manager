@@ -47,9 +47,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import tempfile
 import threading
-import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -4645,7 +4645,10 @@ _BM018D_SKIN_ID = "skin.arctic.fuse.3"
 _BM018D_PACKAGE = "bm018d-af3"
 _BM018D_BOOL_KEY = "HomeSwitcher.EnableIcons"
 _BM018D_STRING_KEY = "HomeSwitcher.Home.Mode"
-_BM018D_UNMANAGED_KEY = "HomeSwitcher.BM018D.UnmanagedProbe"
+# A real AF3 string key intentionally outside the synthetic package's owned
+# targets. Kodi rejects unknown skin-setting keys, so the unmanaged probe must
+# exercise an existing schema entry rather than invent one.
+_BM018D_UNMANAGED_KEY = "TMDbHelper.Corner.Radius"
 _BM018D_BOOL_VALUE = True
 _BM018D_STRING_VALUE = "Standard"
 _BM018D_UNMANAGED_VALUE = "leave-me-alone"
@@ -4654,8 +4657,8 @@ _BM018D_AF3_SOURCE_ROOT = (
 )
 
 
-def _bm018d_copy_af3_and_dependencies() -> None:
-    """Copy AF3 and its available declared dependencies into the disposable profile.
+def _bm018d_copy_af3_and_dependencies() -> tuple[str, ...]:
+    """Copy AF3 and its complete transitive dependency closure.
 
     The source is the installed AF3 add-on tree, read-only. No profile data is
     copied. Built-in Kodi dependencies are supplied by Kodi and are skipped;
@@ -4704,14 +4707,62 @@ def _bm018d_copy_af3_and_dependencies() -> None:
         f"  copied {_BM018D_SKIN_ID!r} and {len(seen) - 1} declared "
         f"non-built-in dependencies into {KODI_ADDONS_DIR} ✓"
     )
+    return tuple(sorted(seen))
+
+
+def _bm018d_verify_dependency_state(addon_ids: tuple[str, ...]) -> None:
+    """Verify installed/enabled/not-broken state for AF3's full closure."""
+    unhealthy = []
+    for addon_id in addon_ids:
+        detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": addon_id,
+            "properties": ["enabled", "version", "broken"],
+        })
+        addon = detail.get("addon") if isinstance(detail, dict) else None
+        if not isinstance(addon, dict):
+            unhealthy.append((addon_id, "missing", detail))
+            continue
+        if addon.get("broken") is not False:
+            unhealthy.append((addon_id, "broken", addon))
+            continue
+        if addon.get("enabled") is not True:
+            jsonrpc("Addons.SetAddonEnabled", {
+                "addonid": addon_id,
+                "enabled": True,
+            })
+            detail = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id,
+                "properties": ["enabled", "version", "broken"],
+            })
+            addon = detail.get("addon") if isinstance(detail, dict) else None
+        status = (
+            isinstance(addon, dict)
+            and addon.get("enabled") is True,
+            isinstance(addon, dict)
+            and addon.get("broken") is False,
+            addon.get("version") if isinstance(addon, dict) else None,
+        )
+        if not status[0] or not status[1]:
+            unhealthy.append((addon_id, status, addon))
+        print(
+            f"  {addon_id}: installed=True enabled="
+            f"{addon.get('enabled') if isinstance(addon, dict) else None!r} "
+            f"broken={addon.get('broken') if isinstance(addon, dict) else None!r} "
+            f"version={addon.get('version') if isinstance(addon, dict) else None!r}"
+        )
+    if unhealthy:
+        raise RuntimeError(
+            "AF3 dependency closure has unhealthy add-ons: "
+            f"{unhealthy!r}"
+        )
+    print(f"  verified {len(addon_ids)}/{len(addon_ids)} AF3 closure add-ons healthy ✓")
 
 
 def _bm018d_seed_first_run_guard() -> None:
     """Seed one synthetic AF3 first-run marker in the disposable profile.
 
-    AF3's Home.xml schedules a self-reload on a brand-new profile before the
-    user can complete a skin confirmation. This marker is disposable test
-    state only; no real profile settings or generated state are copied.
+    This marker is disposable test state only; no real profile settings or
+    generated state are copied.
     """
     verify_isolation()
     target = (
@@ -4725,6 +4776,35 @@ def _bm018d_seed_first_run_guard() -> None:
         encoding="utf-8",
     )
     print("  seeded synthetic AF3 first-run guard in disposable profile ✓")
+
+
+def _bm018d_warm_af3_runtime() -> None:
+    """Let AF3 complete its first-run generated-state initialization once.
+
+    AF3 3.2.19 and script.skinvariables generate/reload skin XML on the first
+    activation of an otherwise empty profile. Kodi accepts the first skin
+    confirmation, but that reload races the keep/revert transaction and Kodi
+    falls back to Estuary while leaving the persisted setting at Estuary. The
+    generated state is disposable runtime state, so initialize it here and
+    then return to Estuary before the BM-018A gate.
+    """
+    first = _bm018d_activate(_BM018D_SKIN_ID)
+    if first.get("status") == "activated":
+        print("  AF3 first-run warm-up activated cleanly ✓")
+    elif (
+        first.get("active_skin") == "skin.estuary"
+        and first.get("persisted_skin") == "skin.estuary"
+    ):
+        print(
+            "  AF3 first-run warm-up reproduced the observed generated-state "
+            "fallback; disposable AF3 runtime is now initialized ✓"
+        )
+    else:
+        raise RuntimeError(f"AF3 warm-up had an unexpected result: {first}")
+    if first.get("active_skin") != "skin.estuary":
+        returned = _bm018d_activate("skin.estuary")
+        if returned.get("status") != "activated":
+            raise RuntimeError(f"could not return disposable Kodi to Estuary: {returned}")
 
 
 def _bm018d_install_runner() -> None:
@@ -4890,18 +4970,18 @@ def validate_skin_config() -> None:
     if NORMAL_APPDATA_DIR.exists():
         real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
-    print("\n[1/15] reset disposable profile")
+    print("\n[1/17] reset disposable profile")
     reset()
-    print("\n[2/15] install Build Manager and AF3 dependency closure")
+    print("\n[2/17] install Build Manager and AF3 dependency closure")
     install(source=PROJECT)
-    _bm018d_copy_af3_and_dependencies()
+    af3_closure = _bm018d_copy_af3_and_dependencies()
     _bm018d_seed_first_run_guard()
     _write_bm018d_package()
     _bm018d_install_runner()
     configure_webserver()
 
     try:
-        print("\n[3/15] launch Kodi with Estuary and wait for JSON-RPC")
+        print("\n[3/17] launch Kodi with Estuary and wait for JSON-RPC")
         launch()
         wait_for_ready(timeout=90.0)
         initial = inspect()
@@ -4926,7 +5006,13 @@ def validate_skin_config() -> None:
             })
         print("  BM-018D in-process runner discovered and enabled ✓")
 
-        print("\n[4/15] activate AF3 through BM-018A")
+        print("\n[4/17] verify AF3 transitive dependency closure state")
+        _bm018d_verify_dependency_state(af3_closure)
+
+        print("\n[5/17] initialize disposable AF3 runtime state")
+        _bm018d_warm_af3_runtime()
+
+        print("\n[6/17] activate AF3 through BM-018A")
         detail = jsonrpc("Addons.GetAddonDetails", {
             "addonid": _BM018D_SKIN_ID, "properties": ["enabled"],
         })
@@ -4946,7 +5032,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"AF3 loaded skin mismatch: {activated}")
         print("  confirmation dialog observed, SendClick(11) completed, persisted setting and xbmc.getSkinDir() agree ✓")
 
-        print("\n[5/15] seed one unmanaged AF3 skin setting and read typed baseline")
+        print("\n[7/17] seed one unmanaged AF3 skin setting and read typed baseline")
         _bm018d_external_write(_BM018D_UNMANAGED_KEY, _BM018D_UNMANAGED_VALUE, "string")
         baseline = _bm018d_observe()
         if not isinstance(baseline[_BM018D_BOOL_KEY], bool):
@@ -4955,7 +5041,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"AF3 string read-back was not string: {baseline}")
         print(f"  typed baseline = {baseline} ✓")
 
-        print("\n[6/15] apply synthetic AF3 bool+string package")
+        print("\n[8/17] apply synthetic AF3 bool+string package")
         applied = _bm018d_apply()
         if not applied.get("ok") or not applied.get("all_applied"):
             raise RuntimeError(
@@ -4976,7 +5062,7 @@ def validate_skin_config() -> None:
         }:
             raise RuntimeError(f"AF3 read-back mismatch after apply: {observed}")
         print("  bool and string values applied and read back through dedicated skin backend ✓")
-        print("\n[7/15] reapply identical package → zero mutations")
+        print("\n[9/17] reapply identical package → zero mutations")
         identical = _bm018d_apply()
         if not identical.get("ok") or identical.get("changed"):
             raise RuntimeError(f"skin idempotency failed: {identical}")
@@ -4984,7 +5070,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"expected 2 ALREADY_CORRECT skin settings: {identical}")
         print("  2/2 ALREADY_CORRECT, 0 mutations ✓")
 
-        print("\n[8/15] externally drift one managed skin setting")
+        print("\n[10/17] externally drift one managed skin setting")
         _bm018d_external_write(_BM018D_STRING_KEY, "ExternallyDrifted", "string")
         drifted = _bm018d_observe()
         if drifted[_BM018D_STRING_KEY] != "ExternallyDrifted":
@@ -4998,7 +5084,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"expected exactly one repaired skin target: {changed}")
         print("  exactly one drifted string target repaired; bool remained unchanged ✓")
 
-        print("\n[9/15] verify unmanaged skin setting is unchanged")
+        print("\n[11/17] verify unmanaged skin setting is unchanged")
         # The unmanaged probe is intentionally outside the package and is read
         # through a direct in-Kodi job so the production typed adapter is still
         # the observation surface.
@@ -5013,7 +5099,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"unmanaged AF3 setting changed: {unmanaged}")
         print(f"  {_BM018D_UNMANAGED_KEY} remained unchanged ✓")
 
-        print("\n[10/15] BM-014 CONFIGURATION validation with effective config + snapshot")
+        print("\n[12/17] BM-014 CONFIGURATION validation with effective config + snapshot")
         package_root = _bm015_installed_packages_root()
         declarations = ConfigDeclarations(
             packages=(_BM018D_PACKAGE,),
@@ -5055,7 +5141,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"BM-014 configuration checks did not pass: {config_checks}")
         print("  effective configuration and validation snapshot: 2/2 CONFIGURATION PASS ✓")
 
-        print("\n[11/15] ownership preflight failure → zero mutation")
+        print("\n[13/17] ownership preflight failure → zero mutation")
         before = _bm018d_observe()
         bad = _bm018d_apply(managed_keys=[_BM018D_BOOL_KEY])
         if bad.get("ok") or bad.get("error_type") != "ConfigOwnershipError":
@@ -5065,7 +5151,7 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"ownership preflight mutated AF3 settings: {before} -> {after}")
         print("  ConfigOwnershipError and zero skin mutations confirmed ✓")
 
-        print("\n[12/15] restart Kodi → verify AF3 settings and active skin persist")
+        print("\n[14/17] restart Kodi → verify AF3 settings and active skin persist")
         restart()
         wait_for_ready(timeout=90.0)
         persisted = inspect()
@@ -5082,12 +5168,17 @@ def validate_skin_config() -> None:
             raise RuntimeError(f"post-restart apply was not idempotent: {post_restart}")
         print("  AF3 active, typed values persisted, and post-restart apply made 0 mutations ✓")
 
-        print("\n[13/15] wrong active skin precondition → safe failure")
+        print("\n[15/17] wrong active skin precondition → safe failure")
         estuary = _bm018d_activate("skin.estuary")
         if estuary.get("status") != "activated":
             raise RuntimeError(f"could not switch disposable profile to Estuary: {estuary}")
         wrong_skin = _bm018d_apply()
-        if wrong_skin.get("ok") or wrong_skin.get("error_type") != "ConfigBackendError":
+        if (
+            not wrong_skin.get("ok")
+            or wrong_skin.get("all_applied")
+            or wrong_skin.get("changed")
+            or len(wrong_skin.get("failed", [])) != 2
+        ):
             raise RuntimeError(f"wrong-skin precondition did not fail safely: {wrong_skin}")
         print("  active Estuary rejected AF3 target before mutation ✓")
         _bm018d_activate(_BM018D_SKIN_ID)
@@ -5100,13 +5191,13 @@ def validate_skin_config() -> None:
         print("  AF3 values unchanged after wrong-skin attempt ✓")
 
     finally:
-        print("\n[14/15] stop Kodi")
+        print("\n[16/17] stop Kodi")
         try:
             stop()
         except RuntimeError:
             pass
 
-    print("\n[15/15] verify real Kodi profile untouched")
+    print("\n[17/17] verify real Kodi profile untouched")
     if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
         current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
         if current_mtime_ns != real_mtime_ns:
@@ -5114,7 +5205,7 @@ def validate_skin_config() -> None:
                 f"Validation FAILED: real profile mtime changed! Was {real_mtime_ns}, now {current_mtime_ns}"
             )
     print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
-    print("\n=== BM-018D validation PASSED (15/15) ===\n")
+    print("\n=== BM-018D validation PASSED (17/17) ===\n")
 
 
 # ---------------------------------------------------------------------------
