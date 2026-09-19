@@ -958,6 +958,9 @@ Participants:
 ChatGPT
     Project supervisor / architect / reviewer
 
+ChatGPT Local
+    Fallback coding agent through custom MCP + Secure MCP Tunnel
+
 Codex
     Coding agent
 
@@ -965,7 +968,12 @@ Claude Code
     Coding agent
 ```
 
-Neither coding agent should be treated as the permanent owner of a subsystem.
+No coding agent should be treated as the permanent owner of a subsystem.
+
+ChatGPT's supervisor role and ChatGPT Local coding-agent role are operationally
+distinct. ChatGPT Local uses the dedicated `agent/chatgpt` worktree and must
+not use ChatGPT Work mode, because this fallback exists specifically to remain
+available when the Codex usage pool is exhausted.
 
 Tasks should be assigned based on:
 
@@ -1027,7 +1035,7 @@ Expected handoff
 
 ---
 
-# 25. Codex / Claude Task Prompt Template
+# 25. Coding-Agent Task Prompt Template
 
 ```text
 PROJECT: Build Manager
@@ -1105,7 +1113,7 @@ Avoid long narrative handoffs unless something unusual occurred.
 
 # 27. Cross-Agent Review
 
-Use the second coding agent when:
+Use an independent coding agent when:
 
 - security-sensitive behavior changes
 - destructive file operations are introduced
@@ -1116,19 +1124,15 @@ Use the second coding agent when:
 - a stubborn bug survives multiple attempts
 - the primary agent expresses uncertainty
 
-Typical pattern:
+Typical patterns:
 
 ```text
-Codex implements
-      ↓
-Claude reviews
-
-or
-
-Claude implements
-      ↓
-Codex reviews
+Codex implements       Claude implements       ChatGPT Local implements
+      ↓                       ↓                         ↓
+Claude/ChatGPT review  Codex/ChatGPT review    Codex/Claude review
 ```
+
+The reviewer should be a different coding agent when practical.
 
 The reviewer should inspect code rather than simply trust the previous agent's summary.
 
@@ -1146,7 +1150,8 @@ Not:
 
 > Lowest model tier or lowest reasoning setting per request.
 
-Track observed performance over time and adjust recommendations separately for Codex and Claude Code.
+Track observed performance over time and adjust recommendations separately for
+Codex, Claude Code, and ChatGPT Local where reliable measurements exist.
 
 ## 28.1 Codex
 
@@ -1227,7 +1232,7 @@ Do not use Codex model names or effort terminology when recommending Claude Code
 
 # 29. Parallel Work Rules
 
-Codex and Claude may work concurrently only when scopes do not overlap.
+Codex, Claude, and ChatGPT Local may work concurrently only when scopes do not overlap.
 
 Good:
 
@@ -1237,6 +1242,9 @@ manifest parser
 
 Claude:
 test harness improvements
+
+ChatGPT Local:
+documentation or another non-overlapping bounded task
 ```
 
 Risky:
@@ -1263,10 +1271,11 @@ Established branch structure:
 matrix          ← protected integration branch; supervisor-reviewed merges only
 agent/codex     ← Codex worktree branch
 agent/claude    ← Claude worktree branch
+agent/chatgpt   ← normal ChatGPT local-agent worktree branch
 ```
 
-Normal implementation work occurs on the appropriate agent branch (`agent/codex`
-or `agent/claude`). Completed work is supervisor-reviewed before being merged
+Normal implementation work occurs on the appropriate agent branch
+(`agent/codex`, `agent/claude`, or `agent/chatgpt`). Completed work is supervisor-reviewed before being merged
 into `matrix`. Do not introduce a `main` branch unless the project architecture
 is explicitly changed.
 
@@ -1297,7 +1306,7 @@ docs: document device profile schema
 
 # 31. Agent Safety Rules
 
-Codex and Claude should never:
+Codex, Claude, and ChatGPT Local should never:
 
 - modify Eric's real Kodi profile unless explicitly authorized
 - delete Kodi userdata outside a disposable profile
@@ -1351,6 +1360,11 @@ Instructions intended for Codex and other coding agents.
 ## `CLAUDE.md`
 
 Claude-specific working instructions if useful.
+
+## `CHATGPT.md`
+
+Normal-ChatGPT local coding-agent instructions. The implementation and setup
+guide lives in `docs/CHATGPT_LOCAL.md`.
 
 ---
 
