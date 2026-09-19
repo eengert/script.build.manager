@@ -16,13 +16,15 @@
   `xbmc.getSkinDir()`.
 - Corrected `Addons.GetAddonDetails` handling so only Kodi's distinct
   not-found response is treated as absent; malformed/protocol errors fail.
+- Added a pre-mutation `Window.IsActive(yesnodialog)` guard. A pre-existing
+  dialog returns `FAILED` without changing `lookandfeel.skin` or clicking Yes.
 - Expanded focused tests in `tests/test_skin.py`; prior BM-018A planner work
   remains unchanged.
 
 ## Validation and safety
 
-- Focused tests: 105/105 passing.
-- Full unit suite: 1397/1397 passing.
+- Focused tests: 106/106 passing.
+- Full unit suite: 1398/1398 passing.
 - No Kodi process, disposable profile, real profile, or Apple TV was used.
 - Runtime behavior is unit-tested with an injected fake and mocked Kodi JSON-RPC.
 - Live disposable validation was not run: the existing harness has no skin

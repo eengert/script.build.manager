@@ -122,6 +122,15 @@ class SkinActivator:
             if not state.enabled:
                 return self._failed(addon_id, active, "Skin is installed but disabled")
 
+            # Do not claim ownership of a dialog that predates this operation.
+            # The post-mutation visibility check must observe a newly-created
+            # confirmation dialog before SendClick(11) is permitted.
+            if self._backend.is_confirmation_visible():
+                return self._failed(
+                    addon_id, active,
+                    "A pre-existing Yes/No dialog prevents safe skin activation",
+                )
+
             # The setting mutation is synchronous only as an API call; Kodi's
             # UI confirmation is asynchronous and must be observed separately.
             self._backend.set_skin_setting(addon_id)

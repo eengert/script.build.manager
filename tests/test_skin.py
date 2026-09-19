@@ -112,13 +112,21 @@ class TestSkinActivator(unittest.TestCase):
             self.assertEqual(result.status, SkinStatus.FAILED)
             self.assertNotIn("set_setting:skin.foo", backend.calls)
 
+    def test_pre_existing_dialog_is_mutation_free_failure(self):
+        backend = _backend(dialog_visibility=[True])
+        result = self._activate(backend)
+        self.assertEqual(result.status, SkinStatus.FAILED)
+        self.assertIn("pre-existing Yes/No dialog", result.message)
+        self.assertNotIn("set_setting:skin.foo", backend.calls)
+        self.assertNotIn("confirm", backend.calls)
+
     def test_confirmation_observed_before_yes_and_stable_state_verified(self):
         backend = _backend()
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.ACTIVATED)
         self.assertEqual(backend.calls, [
-            "get_active", "get_state:skin.foo", "set_setting:skin.foo",
-            "dialog:False", "dialog:True", "confirm", "dialog:False",
+            "get_active", "get_state:skin.foo", "dialog:False",
+            "set_setting:skin.foo", "dialog:True", "confirm", "dialog:False",
             "get_setting", "get_active",
         ])
 
