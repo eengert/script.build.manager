@@ -11,7 +11,9 @@ from tools.chatgpt_local import core
 class ChatGPTLocalBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        # macOS exposes /var as a symlink to /private/var. Canonicalize the
+        # temporary root so path-policy assertions compare like with like.
+        self.root = Path(self.temp.name).resolve()
         (self.root / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
         (self.root / "src").mkdir()
         (self.root / "src" / "sample.py").write_text("alpha\nbeta\nAlpha again\n", encoding="utf-8")
