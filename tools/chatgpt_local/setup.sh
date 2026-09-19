@@ -7,14 +7,77 @@ VENV="$STATE_DIR/venv"
 
 mkdir -p "$STATE_DIR"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required" >&2
+python_has_ssl() {
+  "$1" -c 'import ssl' >/dev/null 2>&1
+}
+
+pick_python() {
+  if [ -n "${CHATGPT_LOCAL_PYTHON:-}" ]; then
+    if [ ! -x "$CHATGPT_LOCAL_PYTHON" ]; then
+      echo "CHATGPT_LOCAL_PYTHON is not executable: $CHATGPT_LOCAL_PYTHON" >&2
+      return 1
+    fi
+    if ! python_has_ssl "$CHATGPT_LOCAL_PYTHON"; then
+      echo "CHATGPT_LOCAL_PYTHON has no working ssl module: $CHATGPT_LOCAL_PYTHON" >&2
+      return 1
+    fi
+    printf '%s\n' "$CHATGPT_LOCAL_PYTHON"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    candidate=$(command -v python3)
+    if python_has_ssl "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    echo "Ignoring python3 without a working ssl module: $candidate" >&2
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    prefix=$(brew --prefix python 2>/dev/null || true)
+    if [ -n "$prefix" ] && [ -x "$prefix/bin/python3" ] && python_has_ssl "$prefix/bin/python3"; then
+      printf '%s\n' "$prefix/bin/python3"
+      return 0
+    fi
+  fi
+
+  for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [ -x "$candidate" ] && python_has_ssl "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "No SSL-capable Python 3 installation was found." >&2
+  echo "Install Homebrew Python with: brew install python" >&2
+  echo "Or set CHATGPT_LOCAL_PYTHON to an SSL-capable python3 executable." >&2
+  return 1
+}
+
+PYTHON=$(pick_python)
+
+echo "Using Python:"
+"$PYTHON" -c 'import sys, ssl; print("  executable:", sys.executable); print("  version:", sys.version.split()[0]); print("  ssl:", ssl.OPENSSL_VERSION)'
+
+# The bridge venv is generated state, not repository state. Recreate it so a
+# previous failed setup cannot leave an unusable interpreter behind.
+rm -rf "$VENV"
+
+if ! "$PYTHON" -m venv "$VENV"; then
+  rm -rf "$VENV"
   exit 1
 fi
 
-python3 -m venv "$VENV"
-"$VENV/bin/python" -m pip install --upgrade pip
-"$VENV/bin/python" -m pip install -r "$PROJECT_ROOT/tools/chatgpt_local/requirements.txt"
+if ! "$VENV/bin/python" -m pip install --upgrade pip; then
+  rm -rf "$VENV"
+  exit 1
+fi
+
+if ! "$VENV/bin/python" -m pip install -r "$PROJECT_ROOT/tools/chatgpt_local/requirements.txt"; then
+  rm -rf "$VENV"
+  exit 1
+fi
 
 echo
 echo "ChatGPT Local bridge environment installed at:"
