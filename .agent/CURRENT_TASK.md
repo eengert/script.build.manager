@@ -1,20 +1,22 @@
 # Current Task
 
-## BM-018B — skin configuration package wiring
+## BM-018C — AF3 configuration portability inventory and package specification
 
 **Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: complete; pending supervisor review
+**Status**: In progress after synchronization with matrix
 
-Resolved `SkinEntry.config_packages` into the existing generic BM-015
-configuration pipeline. Ordinary packages remain first; winning-skin packages
-are appended with deterministic first-seen de-duplication. Skin-only packages
-create `ResolvedBuild.config` with empty ownership scopes, so existing BM-015
-ownership checks remain fail-closed.
+The BM-018B worker state was synchronized with the supervisor-approved
+`origin/matrix` endpoint. This task is research/classification only.
 
-- Focused tests: 510/510 passing.
-- Full suite: 1412/1412 passing.
-- No live Kodi mutation; no AF3 package created.
-- BM-017 not started.
+Scope:
 
-Next action: supervisor review.
+- Inspect Eric's installed Arctic Fuse 3 read-only.
+- Inspect AF3 source and relevant helper-owned state.
+- Inspect Backup Pro history and prior AF3 evidence read-only.
+- Produce `docs/AF3_PORTABILITY.md` with the minimal safe `af3-common`
+  specification and overlay candidates.
+- Do not create a production AF3 package.
+- Do not start BM-017 or BM-018D.
+
+Synchronization endpoint: `91752ab`.

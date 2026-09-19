@@ -1,10 +1,19 @@
-# Agent Handoff — BM-018B skin configuration package wiring
+# Agent Handoff — BM-018C AF3 portability inventory
 
-**Agent**: Codex (Luna / Medium)
+**Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: Complete; pending supervisor review. BM-017 not started.
+**Status**: In progress. BM-017 remains deferred.
 
-## Result
+## Synchronization
+
+- Refreshed `origin/matrix` at `91752ab`.
+- Verified endpoint trees differ only in the four `.agent/*` metadata files.
+- Verified `git diff --quiet origin/matrix HEAD -- . ':(exclude).agent/**'`
+  exited successfully.
+- Normal merge is in progress; metadata conflicts are being resolved as
+  worker-specific state.
+
+## Integrated behavior
 
 - Resolver appends the winning skin's `config_packages` after ordinary
   resolved configuration packages.
@@ -19,7 +28,7 @@
 - Documentation updated in `docs/MANIFEST.md` and
   `docs/CONFIG_PACKAGES.md`; the BM-015 module boundary text was corrected.
 
-## Validation and safety
+## Validation and boundaries
 
 - Focused resolver/planner/config/validator tests: 510/510 passing.
 - Full suite: 1412/1412 passing.
@@ -27,6 +36,11 @@
 - No production AF3 package was created and no AF3 configuration was copied.
 - BM-017, BM-019, and BM-020 were not started.
 
-## Smallest next step
+## BM-018C scope
 
-Supervisor review, followed by integration through Agent Handoff.
+Research/classification only. Inspect installed AF3 read-only, AF3 source,
+and Backup Pro history; then write `docs/AF3_PORTABILITY.md`. Classify typed
+settings and candidate files as public portable, personal non-secret,
+device-specific, generated runtime, private/secret, or unknown. Define the
+minimal safe future `af3-common` package and overlay candidates. Do not start
+BM-018D.
