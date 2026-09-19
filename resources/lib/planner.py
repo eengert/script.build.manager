@@ -1,4 +1,4 @@
-"""
+r"""
 Build Manager desired-vs-actual planner (BM-006).
 
 Public API
