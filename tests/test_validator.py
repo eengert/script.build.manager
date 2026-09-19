@@ -903,6 +903,35 @@ class TestConfigurationStateIntegration(unittest.TestCase):
         self.assertEqual(checks[0].subject, "configuration_domain")
         self.assertTrue(report.passed)
 
+    def test_skin_selected_package_is_in_expected_effective_identity(self):
+        cfg = _config(
+            settings=[("skin.foo", "accent")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        effective = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        report = self._report(cfg, _state_for(effective), effective)
+        checks = self._config_checks(report)
+        self.assertEqual(checks[0].status, ValidationStatus.PASS)
+
+    def test_skin_selected_package_mismatch_is_not_checked(self):
+        cfg = _config(
+            settings=[("skin.foo", "accent")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        stale = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary",),
+        )
+        expected = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        checks = self._config_checks(self._report(cfg, _state_for(stale), expected))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
     # -- missing artifacts --------------------------------------------------
 
     def test_missing_effective_configuration_is_not_checked(self):

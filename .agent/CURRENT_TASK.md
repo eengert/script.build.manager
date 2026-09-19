@@ -1,14 +1,20 @@
 # Current Task
 
-## BM-018A correction — verified Kodi skin activation
+## BM-018B — skin configuration package wiring
 
 **Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: complete; pending supervisor handoff
+**Status**: complete; pending supervisor review
 
-Corrected the two supervisor-identified runtime blockers and added the final
-safety guard: a pre-existing `yesnodialog` now fails before any setting
-mutation. Confirmation is observed before SendClick(11) with bounded
-close/final-state verification. BM-017 was not started.
+Resolved `SkinEntry.config_packages` into the existing generic BM-015
+configuration pipeline. Ordinary packages remain first; winning-skin packages
+are appended with deterministic first-seen de-duplication. Skin-only packages
+create `ResolvedBuild.config` with empty ownership scopes, so existing BM-015
+ownership checks remain fail-closed.
 
-Next action: supervisor review and integration decision.
+- Focused tests: 510/510 passing.
+- Full suite: 1412/1412 passing.
+- No live Kodi mutation; no AF3 package created.
+- BM-017 not started.
+
+Next action: supervisor review.

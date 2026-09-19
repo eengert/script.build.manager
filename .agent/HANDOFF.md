@@ -1,53 +1,32 @@
-# Agent Handoff — BM-018A runtime correctness correction
+# Agent Handoff — BM-018B skin configuration package wiring
 
-**Date**: 2026-09-19
 **Agent**: Codex (Luna / Medium)
+**Branch**: `agent/codex`
 **Status**: Complete; pending supervisor review. BM-017 not started.
 
 ## Result
 
-- Replaced the invalid `Skin.SetSkin(...)` builtin with strict
-  `Settings.SetSettingValue` for `lookandfeel.skin`.
-- Added strict `Settings.GetSettingValue` final verification and strict
-  JSON-RPC response handling for setting mutation/read operations.
-- Added bounded `Window.IsActive(yesnodialog)` polling; `SendClick(11)` is
-  issued only after the dialog is observed, followed by bounded close polling.
-- Added final verification of both persisted `lookandfeel.skin` and
-  `xbmc.getSkinDir()`.
-- Corrected `Addons.GetAddonDetails` handling so only Kodi's distinct
-  not-found response is treated as absent; malformed/protocol errors fail.
-- Added a pre-mutation `Window.IsActive(yesnodialog)` guard. A pre-existing
-  dialog returns `FAILED` without changing `lookandfeel.skin` or clicking Yes.
-- Expanded focused tests in `tests/test_skin.py`; prior BM-018A planner work
-  remains unchanged.
+- Resolver appends the winning skin's `config_packages` after ordinary
+  resolved configuration packages.
+- Package IDs use the existing deterministic first-seen de-duplication.
+- Skin-only packages create `ResolvedBuild.config` with empty ownership scopes.
+- Deepest-wins skin resolution means superseded skin package lists are not
+  accumulated; inherited skins retain their package list.
+- Planner emits the existing `CONFIGURE` action after `SET_SKIN`.
+- BM-015 package format, loader, deployer, and bidirectional ownership checks
+  remain unchanged. Validator package identity behavior remains unchanged and
+  now naturally includes the merged selection.
+- Documentation updated in `docs/MANIFEST.md` and
+  `docs/CONFIG_PACKAGES.md`; the BM-015 module boundary text was corrected.
 
 ## Validation and safety
 
-- Focused tests: 106/106 passing.
-- Full unit suite: 1398/1398 passing.
-- No Kodi process, disposable profile, real profile, or Apple TV was used.
-- Runtime behavior is unit-tested with an injected fake and mocked Kodi JSON-RPC.
-- Live disposable validation was not run: the existing harness has no skin
-  activation command, and the disposable Kodi installation has only
-  `skin.estuary`; adding alternate-skin acquisition/UI harness work would be
-  unrelated expansion.
-- No shell execution, database manipulation, fallback skin, or destructive
-  cleanup was added.
-- `matrix`, `agent/claude`, and Backup Pro were untouched.
-
-## Scope boundary / remaining unknowns
-
-- Live confirmation timing and activation persistence on Kodi remain unproven
-  for the precise blocker above.
-- No AF3 configuration, private overlay, account/token portability, or BM-017
-  code was created.
+- Focused resolver/planner/config/validator tests: 510/510 passing.
+- Full suite: 1412/1412 passing.
+- No live Kodi mutation occurred.
+- No production AF3 package was created and no AF3 configuration was copied.
+- BM-017, BM-019, and BM-020 were not started.
 
 ## Smallest next step
 
-Supervisor review of this correction checkpoint, then integrate before
-beginning separately scoped AF3 configuration work.
-
-## Usage
-
-Start/end/delta: unavailable. Codex has no reliable usage-introspection source
-for this task.
+Supervisor review, followed by integration through Agent Handoff.

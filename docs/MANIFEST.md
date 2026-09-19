@@ -249,7 +249,13 @@ IDs follow standard Kodi conventions.
 ```
 
 The desired active skin. `config_packages` names configuration packages to apply
-after activation. Absent means Build Manager does not manage skin selection.
+after activation. During profile resolution, packages from the winning skin
+are appended after ordinary resolved `config.packages`; duplicates are removed
+by deterministic first-seen order. The deepest explicitly declared skin wins
+completely, including its package list, so superseded skins do not contribute
+packages. Package targets still require ownership declarations in
+`config.managed_settings` and `config.managed_files`. Absent means Build
+Manager does not manage skin selection.
 
 ### `config` *(optional)*
 

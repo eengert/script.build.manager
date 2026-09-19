@@ -475,12 +475,13 @@ Test fixtures use obviously synthetic, non-secret values.
 
 ## Skin boundary
 
-`SkinEntry.config_packages` already exists in the manifest schema, and BM-015
-does **not** deploy it. Only `ResolvedBuild.config.packages` is applied.
-
-BM-018 will define skin provisioning and AF3-specific behaviour. The package
-format, loader and deployer described here are generic and are intended to be
-reused by it unchanged.
+`SkinEntry.config_packages` is resolved into the end of
+`ResolvedBuild.config.packages` by BM-018B. BM-015 then applies the merged
+selection through this same generic package/ownership/deployer pipeline. The
+deepest winning skin supplies its package list; duplicate IDs are collapsed by
+first-seen order. Skin-selected packages do not gain authority to modify
+undeclared targets: `config.managed_settings` and `config.managed_files`
+remain the ownership boundary. There is no separate skin package format.
 
 ---
 
