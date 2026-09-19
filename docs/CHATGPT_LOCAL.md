@@ -88,7 +88,7 @@ Then:
 
 ```sh
 cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-chatgpt
-tools/chatgpt_local/setup.sh
+sh tools/chatgpt_local/setup.sh
 ```
 
 The setup script creates its Python environment under:
@@ -121,7 +121,7 @@ Launch:
 
 ```sh
 cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-chatgpt
-tools/chatgpt_local/run_tunnel.sh
+sh tools/chatgpt_local/run_tunnel.sh
 ```
 
 The launcher uses the bridge worktree as the default workspace. To use the same
@@ -129,7 +129,7 @@ bridge implementation against another dedicated ChatGPT worktree:
 
 ```sh
 CHATGPT_LOCAL_WORKSPACE=/path/to/other-chatgpt-worktree \
-  tools/chatgpt_local/run_tunnel.sh
+  sh tools/chatgpt_local/run_tunnel.sh
 ```
 
 Only one active `tunnel-client` instance should use a given tunnel ID when
