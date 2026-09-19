@@ -1,54 +1,31 @@
-# Agent Handoff — BM-016 research substantially complete
+# Agent Handoff — BM-018A merged
 
-**Date**: 2026-09-19
-**Agent**: Codex (Sol / Ultra requested; runtime slug unavailable)
-**Status**: Pending supervisor review. BM-017 not started.
+**Status**: Complete, supervisor-approved, and merged on `matrix` at
+`9d7dbdd`. Matrix is neutral and awaiting the next assignment.
 
-## Result
+## Integrated behavior
 
-- Created `docs/RED_LIGHT_PORTABILITY.md` at commit `cbb93db`.
-- Inspected Red Light `plugin.video.redlight` 2.6.2 read-only.
-- Inventoried all 508 source settings plus 70 generated display rows.
-- Classified source settings: 337 `PUBLIC_PORTABLE`, 71
-  `PRIVATE_PORTABLE_CANDIDATE`, 47 `DEVICE_SPECIFIC`, 45
-  `GENERATED_RUNTIME`, and 8 `UNKNOWN_NEEDS_TESTING`.
-- Found that real settings live in mixed-content custom SQLite
-  `settings.db`, not Kodi's typed settings surface. BM-015 therefore has
-  zero directly deployable Red Light settings today, and whole-file deployment
-  is unsafe.
-- Documented file/state inventory, auth field names, do-not-copy state,
-  cross-platform limits, and BM-017 evidence boundaries.
+- Skin selection uses `Settings.SetSettingValue` for
+  `lookandfeel.skin` rather than a nonexistent builtin.
+- Installed/enabled prerequisites are enforced before mutation.
+- A pre-existing `Window.IsActive(yesnodialog)` fails safely without changing
+  the setting or clicking Yes.
+- Confirmation visibility is bounded and observed after mutation; `SendClick(11)`
+  is issued only after the new dialog appears.
+- Completion waits for dialog disappearance, then verifies both the persisted
+  skin setting and loaded skin.
+- The planner enables an installed-but-disabled desired skin before activation.
 
-## Validation and safety
+## Validation and boundaries
 
-- Production code changed: no.
-- Tests added: no.
-- Full unit suite: 1378/1378 passing.
-- Disposable Red Light mutation: not run; no safe BM-015 target exists and a
-  custom SQLite writer is outside BM-016.
-- Secret audit: 508 inventory rows; every private default redacted; no JWT or
-  bearer marker; no real-profile absolute path in the report.
-- Real Kodi profile: read-only inspection only; no Kodi process/device control.
-- `matrix` and `agent/claude`: untouched.
+- Focused BM-018A tests: 106/106.
+- Full suite: 1398/1398.
+- No real Kodi profile or physical device was modified.
+- Live alternate-skin validation remains deferred because the disposable
+  profile contains only Estuary.
+- BM-017 not started.
+- AF3 configuration-package provisioning not started.
+- BM-019 not started.
+- BM-020 not started.
 
-## Scope boundary / remaining unknowns
-
-- tvOS, Android TV/Shield, and Fire OS remain `UNTESTED_CROSS_PLATFORM`.
-- Structured row application/restart behavior, selected auxiliary databases,
-  and account portability remain explicitly unproven.
-- No production package, private overlay, credential move, or BM-017 code was
-  created.
-
-## Smallest next step
-
-Supervisor review of BM-016. If accepted, scope BM-017 to the documented
-authentication field names and disposable reauthorization/restore evidence.
-A separate reviewed task is required before any structured public Red Light
-settings adapter or `redlight-common` package.
-
-## Usage
-
-Start: 5-hour 15% used / weekly 2% used.
-End: 5-hour 90% used / weekly 14% used.
-Observed delta: +75 / +12 percentage points used. These are account-level
-shared-usage readings, not task-isolated billing.
+Next step: supervisor assignment.

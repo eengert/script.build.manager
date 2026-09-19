@@ -1,20 +1,22 @@
 # Current Task
 
-## BM-016 research substantially complete — pending supervisor review
+## BM-018A — verified Kodi skin activation merged
 
-**Agent**: Codex
-**Branch**: `agent/codex`
-**Status**: idle pending review
+**Status**: Complete and merged on matrix; awaiting next supervisor assignment.
 
-BM-016's Red Light 2.6.2 portability inventory and classifications are saved
-in `docs/RED_LIGHT_PORTABILITY.md` (research commit `cbb93db`).
+Integration commit: `9d7dbdd`.
 
-- 508 setting definitions inventoried and redacted safely.
-- No Red Light setting is directly deployable through BM-015 today because the
-  real store is a mixed custom SQLite database.
-- 1378/1378 unit tests pass.
-- Remaining questions are documented as `UNKNOWN_NEEDS_TESTING` or
-  `UNTESTED_CROSS_PLATFORM`.
-- BM-017 has not started.
+BM-018A implements verified Kodi skin activation using
+`Settings.SetSettingValue("lookandfeel.skin", ...)`, installed/enabled
+prerequisites, a pre-existing Yes/No-dialog safety guard, bounded
+confirmation-dialog detection, and `SendClick(11)` only after the newly
+created dialog is observed. It verifies both the persisted setting and loaded
+skin, and the planner enables a disabled desired skin before activation.
 
-Next action: supervisor review.
+- Full suite before integration: 1398/1398 passing.
+- Live alternate-skin activation remains deferred because the disposable
+  profile contains only Estuary.
+- BM-017 not started.
+- Remaining BM-018 work not started.
+
+Next step: supervisor assignment.

@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "idle",
-  "task": "BM-016",
-  "reason": "BM-016 research substantially complete; remaining unknowns documented; pending supervisor review. BM-017 not started.",
-  "last_commit": "cbb93db",
-  "matrix_sha": "91b41a1",
+  "task": "BM-018A",
+  "reason": "BM-018A complete, supervisor-approved, and merged; awaiting next assignment.",
+  "last_commit": "9d7dbdd",
+  "matrix_sha": "9d7dbdd",
   "next_agent": "human",
-  "updated_at": "2026-09-19T11:53:53Z"
+  "updated_at": "2026-09-19T17:29:16Z"
 }
