@@ -1,7 +1,7 @@
 # Agent Handoff — BM-018C merged
 
-**Status**: Complete, supervisor-approved, and merged on `matrix`. Matrix
-remains neutral (`active_agent = none`) and awaits the next assignment.
+**Status**: Complete, supervisor-approved, and merged on `matrix`. The worker
+is normalized to `origin/matrix` `bd78cc2` and ready for the next assignment.
 
 ## Integrated state
 
@@ -24,5 +24,13 @@ remains neutral (`active_agent = none`) and awaits the next assignment.
 - BM-017 was not started.
 - BM-018D was not started.
 - Worker branches were not modified.
+
+## Normalization
+
+- Preserved the original Antigravity planner POC commit `58a141e`.
+- Merged `origin/matrix` normally into `agent/antigravity`.
+- Current protected tip: `bd78cc2`.
+- `.agent/*` now records Antigravity as idle/ready.
+- Existing usage history was preserved without duplicate rows.
 
 Next task awaits supervisor assignment.

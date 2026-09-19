@@ -1,5 +1,17 @@
 # Current Task
 
+## Ready for supervisor assignment
+
+**Agent**: Antigravity
+**Branch**: `agent/antigravity`
+**Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-antigravity`
+**Status**: idle
+
+The worker is synchronized with `origin/matrix` at `bd78cc2` and ready for
+the next supervisor-assigned task. Do not start BM-018D automatically.
+
+---
+
 ## BM-018C — AF3 configuration portability inventory merged
 
 **Status**: Complete, supervisor-approved, and merged on `matrix`; awaiting the

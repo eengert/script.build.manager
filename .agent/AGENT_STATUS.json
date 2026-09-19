@@ -1,10 +1,10 @@
 {
-  "active_agent": "none",
-  "status": "complete",
-  "task": "BM-018C",
-  "reason": "BM-018C complete, supervisor-approved, and merged; awaiting next assignment.",
-  "last_commit": "23796e2",
-  "matrix_sha": "23796e2",
-  "next_agent": "human",
+  "active_agent": "antigravity",
+  "status": "idle",
+  "task": "ready",
+  "reason": "Worker normalized to origin/matrix; ready for supervisor-assigned work.",
+  "last_commit": "bd78cc2",
+  "matrix_sha": "bd78cc2",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-19T18:41:11Z"
 }
