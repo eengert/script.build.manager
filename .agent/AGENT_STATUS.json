@@ -1,10 +1,10 @@
 {
-  "active_agent": "codex",
+  "active_agent": "claude",
   "status": "idle",
   "task": "BM-016",
-  "reason": "BM-016 research substantially complete; remaining unknowns documented; pending supervisor review. BM-017 not started.",
-  "last_commit": "cbb93db",
+  "reason": null,
+  "last_commit": "ab5ad26",
   "matrix_sha": "91b41a1",
-  "next_agent": "human",
-  "updated_at": "2026-09-19T11:53:53Z"
+  "next_agent": null,
+  "updated_at": "2026-09-19T12:53:47Z"
 }
