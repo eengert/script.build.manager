@@ -2,7 +2,8 @@
 
 **Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: Complete. BM-017 remains deferred.
+**Status**: Complete. BM-017 remains deferred. Worker normalized to
+`origin/matrix` `bd78cc2`; ready for supervisor review/assignment.
 
 ## Synchronization
 
@@ -54,6 +55,12 @@ Research/classification completed in `docs/AF3_PORTABILITY.md` (commit
 
 Validation: full unit suite `1412/1412` passing. No live Kodi mutation, no
 Apple TV access, and no production AF3 package was created.
+
+## Normalization
+
+- Normal merge of `origin/matrix` into `agent/codex` completed.
+- `.agent/*` retained as Codex worker state; usage history preserved once.
+- Current protected tip: `bd78cc2`.
 
 ## Smallest next step
 

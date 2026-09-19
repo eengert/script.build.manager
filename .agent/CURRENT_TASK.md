@@ -1,5 +1,16 @@
 # Current Task
 
+## Ready for supervisor assignment
+
+**Agent**: Codex
+**Branch**: `agent/codex`
+**Status**: idle
+
+BM-018C is complete and integrated. The worker is synchronized with
+`origin/matrix` at `bd78cc2`. Do not start BM-018D automatically.
+
+---
+
 ## BM-018C — AF3 configuration portability inventory and package specification
 
 **Agent**: Codex
