@@ -2,37 +2,38 @@
 
 ## Ready for supervisor assignment
 
-**Agent**: Codex
-**Branch**: `agent/codex`
+**Agent**: Antigravity
+**Branch**: `agent/antigravity`
+**Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-antigravity`
 **Status**: idle
 
-BM-018C is complete and integrated. The worker is synchronized with
-`origin/matrix` at `bd78cc2`. Do not start BM-018D automatically.
+The worker is synchronized with `origin/matrix` at `bd78cc2` and ready for
+the next supervisor-assigned task. Do not start BM-018D automatically.
 
 ---
 
-## BM-018C — AF3 configuration portability inventory and package specification
+## BM-018C — AF3 configuration portability inventory merged
 
-**Agent**: Codex
-**Branch**: `agent/codex`
-**Status**: Complete
+**Status**: Complete, supervisor-approved, and merged on `matrix`; awaiting the
+next supervisor assignment.
 
-The BM-018B worker state was synchronized with the supervisor-approved
-`origin/matrix` endpoint. This task was research/classification only.
+Integration commits:
 
-Scope:
+- `b782bbd` — `fix: eliminate planner invalid escape warning`
+- `23796e2` — `docs(BM-018C): inventory AF3 portable configuration`
 
-- Inspect Eric's installed Arctic Fuse 3 read-only.
-- Inspect AF3 source and relevant helper-owned state.
-- Inspect Backup Pro history and prior AF3 evidence read-only.
-- Produced `docs/AF3_PORTABILITY.md` with the minimal safe `af3-common`
-  specification and overlay candidates.
-- Do not create a production AF3 package.
-- Do not start BM-017 or BM-018D.
+The AF3 `3.2.19` portability inventory is complete: 280 observed skin
+settings were classified as portable, generated, device-specific/private, or
+unknown. The initial future `af3-common` specification uses only reviewed
+typed bool/string targets, has zero whole-file targets, defers menu/widget
+source from common, excludes generated/runtime state, and defers private/auth
+state to BM-017.
 
-Synchronization endpoint: `91752ab`.
+- Full suite: 1412/1412 passing.
+- `git diff --check`: passing.
+- Real Kodi profile remained read-only; no live Kodi mutation occurred.
+- No production `af3-common` package was created.
+- BM-017 was not started.
+- BM-018D was not started.
 
-Validation: full unit suite `1412/1412` passing. No live Kodi mutation, no
-Apple TV access, and no production AF3 package.
-
-Next task: supervisor review/assignment. Do not start BM-018D automatically.
+Next task awaits supervisor assignment.

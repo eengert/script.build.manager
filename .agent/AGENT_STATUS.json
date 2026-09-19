@@ -2,9 +2,9 @@
   "active_agent": "codex",
   "status": "idle",
   "task": "ready",
-  "reason": "Worker normalized to origin/matrix; ready for supervisor-assigned work.",
-  "last_commit": "bd78cc2",
-  "matrix_sha": "bd78cc2",
-  "next_agent": "supervisor",
-  "updated_at": "2026-09-19T18:33:39Z"
+  "reason": null,
+  "last_commit": "5345857",
+  "matrix_sha": "bd78cc29a8aa572cc43f393d94a470e4912f3d32",
+  "next_agent": null,
+  "updated_at": "2026-09-19T20:08:05Z"
 }
