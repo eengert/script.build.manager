@@ -11,8 +11,8 @@ unrelated code while implementing a feature or fix.
 
 ## Branch Policy
 
-- Normal implementation work happens on your agent branch (`agent/codex` or
-  `agent/claude`), never directly on `matrix`.
+- Normal implementation work happens on your agent branch (`agent/codex`,
+  `agent/claude`, or `agent/chatgpt`), never directly on `matrix`.
 - The `matrix` branch is protected. Do not push or merge to it unless the
   task explicitly authorizes it (e.g., a bootstrap or release operation with
   supervisor approval).
@@ -74,7 +74,7 @@ usage source is actually available to you — record:
 
 | Field | Meaning |
 |---|---|
-| Agent | `codex` or `claude` |
+| Agent | `codex`, `claude`, or `chatgpt` |
 | Model | The model that actually ran, in that agent's own naming |
 | Effort | Reasoning/thinking/effort setting, in that agent's own naming |
 | Task ID | e.g. `BM-003`, or a `WF-` id for workflow/doc tasks |
@@ -118,7 +118,9 @@ efficiently" / "showed higher burn than expected on a comparable task").
 ### Known constraint
 
 Neither the `codex` nor the `claude` CLI exposes a documented, machine-readable
-quota/usage API. This was confirmed during Backup Pro and is documented in
+quota/usage API. Normal ChatGPT local-agent sessions likewise have no reliable
+allowance metric exposed to the bridge; record ChatGPT usage as `unavailable`
+unless ChatGPT itself exposes an actual reliable metric for that session. This was confirmed during Backup Pro and is documented in
 `/Users/eengert/Documents/Kodi/tools/ai-supervisor/README.md` under
 "Usage/quota detection"; the CLI help output was re-checked for this project
 and still shows no such command.
@@ -142,6 +144,23 @@ Follow the checkpoint procedure proven on Backup Pro
 3. Commit a checkpoint.
 4. Update `.agent/HANDOFF.md` (and the usage row, if a reading is available).
 5. Exit normally.
+
+## ChatGPT Local-Agent Notes
+
+Normal ChatGPT can act as a third coding agent through the custom local MCP
+bridge described in `CHATGPT.md` and `docs/CHATGPT_LOCAL.md`.
+
+- Branch: `agent/chatgpt`
+- Worktree: dedicated per repository
+- Execution: normal ChatGPT chat + custom MCP app + Secure MCP Tunnel
+- Do not use ChatGPT Work mode for this fallback path.
+- Usage readings: `unavailable` unless a reliable ChatGPT allowance metric is
+  actually exposed. Never infer usage from token count or message count.
+- The bridge intentionally omits arbitrary shell execution, pushes/merges,
+  destructive Git operations, direct `.git` access, secret-like files, and
+  real Kodi profile/device actions.
+
+Read `CHATGPT.md` for the agent-specific startup and handoff procedure.
 
 ## Codex-Specific Notes
 
