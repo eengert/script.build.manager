@@ -1,5 +1,5 @@
 {
-  "active_agent": "none",
+  "active_agent": "codex",
   "status": "idle",
   "task": "BM-015-corrections",
   "reason": "BM-015 complete on agent/claude with all three supervisor corrections applied (Addon lifetime / Settings wrapper, secure staging + symlink policy, EffectiveConfiguration identity binding). 1378/1378 tests. 24/24 live validate-config. Awaiting supervisor review/merge. BM-016 not started.",
