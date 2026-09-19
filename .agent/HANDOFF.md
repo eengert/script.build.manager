@@ -1,54 +1,28 @@
-# Agent Handoff — BM-016 research substantially complete
+# Agent Handoff — BM-018C merged
 
-**Date**: 2026-09-19
-**Agent**: Codex (Sol / Ultra requested; runtime slug unavailable)
-**Status**: Pending supervisor review. BM-017 not started.
+**Status**: Complete, supervisor-approved, and merged on `matrix`. Matrix
+remains neutral (`active_agent = none`) and awaits the next assignment.
 
-## Result
+## Integrated state
 
-- Created `docs/RED_LIGHT_PORTABILITY.md` at commit `cbb93db`.
-- Inspected Red Light `plugin.video.redlight` 2.6.2 read-only.
-- Inventoried all 508 source settings plus 70 generated display rows.
-- Classified source settings: 337 `PUBLIC_PORTABLE`, 71
-  `PRIVATE_PORTABLE_CANDIDATE`, 47 `DEVICE_SPECIFIC`, 45
-  `GENERATED_RUNTIME`, and 8 `UNKNOWN_NEEDS_TESTING`.
-- Found that real settings live in mixed-content custom SQLite
-  `settings.db`, not Kodi's typed settings surface. BM-015 therefore has
-  zero directly deployable Red Light settings today, and whole-file deployment
-  is unsafe.
-- Documented file/state inventory, auth field names, do-not-copy state,
-  cross-platform limits, and BM-017 evidence boundaries.
+- `b782bbd`: the reviewed Antigravity POC changes only the planner module
+  docstring from `"""` to `r"""` to eliminate the invalid escape warning.
+- `23796e2`: adds only `docs/AF3_PORTABILITY.md`.
+- AF3 `3.2.19` inventory complete with 280 observed skin settings.
+- Initial future `af3-common` specification uses reviewed typed bool/string
+  targets only; it defines zero whole-file targets.
+- Menu/widget source is deferred from common.
+- Generated/runtime state is excluded.
+- Private/auth state is deferred to BM-017.
 
-## Validation and safety
+## Validation and boundaries
 
-- Production code changed: no.
-- Tests added: no.
-- Full unit suite: 1378/1378 passing.
-- Disposable Red Light mutation: not run; no safe BM-015 target exists and a
-  custom SQLite writer is outside BM-016.
-- Secret audit: 508 inventory rows; every private default redacted; no JWT or
-  bearer marker; no real-profile absolute path in the report.
-- Real Kodi profile: read-only inspection only; no Kodi process/device control.
-- `matrix` and `agent/claude`: untouched.
+- Full suite: 1412/1412 passing.
+- `git diff --check` passed.
+- No live Kodi mutation occurred.
+- No production `af3-common` package was created.
+- BM-017 was not started.
+- BM-018D was not started.
+- Worker branches were not modified.
 
-## Scope boundary / remaining unknowns
-
-- tvOS, Android TV/Shield, and Fire OS remain `UNTESTED_CROSS_PLATFORM`.
-- Structured row application/restart behavior, selected auxiliary databases,
-  and account portability remain explicitly unproven.
-- No production package, private overlay, credential move, or BM-017 code was
-  created.
-
-## Smallest next step
-
-Supervisor review of BM-016. If accepted, scope BM-017 to the documented
-authentication field names and disposable reauthorization/restore evidence.
-A separate reviewed task is required before any structured public Red Light
-settings adapter or `redlight-common` package.
-
-## Usage
-
-Start: 5-hour 15% used / weekly 2% used.
-End: 5-hour 90% used / weekly 14% used.
-Observed delta: +75 / +12 percentage points used. These are account-level
-shared-usage readings, not task-isolated billing.
+Next task awaits supervisor assignment.

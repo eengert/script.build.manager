@@ -131,11 +131,17 @@ def resolve_manifest(manifest: Manifest, device_profile_id: str) -> ResolvedBuil
     # 5. Resolve skin: deepest explicit layer wins
     skin = _resolve_skin([manifest.skin, platform.skin, device.skin])
 
-    # 6. Merge config: base → platform → device → optional groups
-    config = _merge_config(
+    # 6. Merge ordinary config first, then append packages from the winning
+    # skin. Skin resolution is replace/deepest-wins, so superseded skins never
+    # contribute packages. Reuse ConfigDeclarations so BM-015 remains the
+    # single generic package/ownership pipeline.
+    config_layers: List[Optional[ConfigDeclarations]] = (
         [manifest.config, platform.config, device.config]
         + [g.config for g in opt_groups]
     )
+    if skin is not None and skin.config_packages:
+        config_layers.append(ConfigDeclarations(packages=skin.config_packages))
+    config = _merge_config(config_layers)
 
     return ResolvedBuild(
         build=manifest.build,

@@ -285,6 +285,16 @@ def _validate_no_contradictions(desired: ResolvedBuild) -> None:
             f"in desired add-ons"
         )
 
+    if desired.skin is not None:
+        skin_entries = {
+            e.addon_id: e.state for e in desired.addons
+        }
+        skin_state = skin_entries.get(desired.skin.addon_id)
+        if skin_state is not None and skin_state != "enabled":
+            raise PlanningError(
+                f"Desired skin {desired.skin.addon_id!r} must be declared enabled"
+            )
+
     required_repo_ids: Set[str] = {
         r.addon_id for r in desired.repositories if r.required
     }
@@ -432,26 +442,32 @@ def _plan_enable_disable(
     """Plan ENABLE_ADDON and DISABLE_ADDON for installed add-ons in wrong state."""
     actions: List[PlanAction] = []
 
-    for entry in sorted(desired.addons, key=lambda e: e.addon_id):
-        if entry.state == "absent":
+    entries = {entry.addon_id: entry.state for entry in desired.addons}
+    if desired.skin is not None and desired.skin.addon_id not in entries:
+        # A skin must be enabled before SET_SKIN can safely activate it.  Keep
+        # this prerequisite in the existing state-reconciliation phase.
+        entries[desired.skin.addon_id] = "enabled"
+
+    for addon_id, desired_state in sorted(entries.items()):
+        if desired_state == "absent":
             continue
-        actual_addon = actual_map.get(entry.addon_id)
+        actual_addon = actual_map.get(addon_id)
         if actual_addon is None:
             # Not installed; covered by INSTALL_ADDON
             continue
 
-        if entry.state == "enabled" and not actual_addon.enabled:
+        if desired_state == "enabled" and not actual_addon.enabled:
             actions.append(PlanAction(
                 kind=ENABLE_ADDON,
-                addon_id=entry.addon_id,
+                addon_id=addon_id,
                 desired_state="enabled",
                 current_state="disabled",
                 reason="Add-on is installed and disabled; desired state: enabled",
             ))
-        elif entry.state == "disabled" and actual_addon.enabled:
+        elif desired_state == "disabled" and actual_addon.enabled:
             actions.append(PlanAction(
                 kind=DISABLE_ADDON,
-                addon_id=entry.addon_id,
+                addon_id=addon_id,
                 desired_state="disabled",
                 current_state="enabled",
                 reason="Add-on is installed and enabled; desired state: disabled",

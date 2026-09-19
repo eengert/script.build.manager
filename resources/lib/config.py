@@ -129,9 +129,10 @@ raw setting values or file contents.
 
 Skin boundary
 -------------
-SkinEntry.config_packages is NOT deployed by BM-015. Only
-ResolvedBuild.config.packages is used. BM-018 will define skin/AF3
-provisioning and can reuse this loader and deployer unchanged.
+SkinEntry.config_packages are appended to ResolvedBuild.config by the BM-018B
+resolver integration. BM-015 consumes that merged ConfigDeclarations through
+the same generic loader, ownership checks and deployer; there is no separate
+skin package format or deployer.
 
 Add-on absence
 --------------

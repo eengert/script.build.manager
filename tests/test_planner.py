@@ -314,10 +314,8 @@ class TestSkin(unittest.TestCase):
         self.assertEqual(install_count, 1, "Expected exactly one INSTALL_ADDON for skin")
         self.assertIn(SET_SKIN, _action_kinds(plan))
 
-    def test_skin_active_but_disabled_in_desired_addons(self):
-        """Skin active and in desired addons as disabled → DISABLE + SET if different."""
-        # Skin is active but should be disabled in addons, and there's a different desired skin.
-        # This is unusual, but we test the logic is consistent.
+    def test_skin_disabled_declaration_is_rejected(self):
+        """An active desired skin cannot simultaneously be disabled."""
         desired = _make_resolved(
             addons=[_desired("skin.arctic.fuse.3", "disabled")],
             skin=SkinEntry(addon_id="skin.arctic.fuse.3"),
@@ -326,11 +324,17 @@ class TestSkin(unittest.TestCase):
             active_skin="skin.estuary",
             addons=[_addon("skin.arctic.fuse.3", True)],
         )
+        with self.assertRaises(PlanningError):
+            plan_changes(desired, actual)
+
+    def test_installed_disabled_skin_is_enabled_before_activation(self):
+        desired = _make_resolved(skin=SkinEntry(addon_id="skin.foo"))
+        actual = _make_state(
+            active_skin="skin.estuary", addons=[_addon("skin.foo", False)]
+        )
         plan = plan_changes(desired, actual)
-        kinds = _action_kinds(plan)
-        # Should disable the skin add-on per desired addons, and also set it as skin
-        self.assertIn(DISABLE_ADDON, kinds)
-        self.assertIn(SET_SKIN, kinds)
+        self.assertEqual(_action_kinds(plan), [ENABLE_ADDON, SET_SKIN])
+        self.assertEqual(plan.actions[0].addon_id, "skin.foo")
 
     def test_set_skin_current_state_is_actual_skin(self):
         desired = _make_resolved(skin=SkinEntry(addon_id="skin.foo"),
@@ -401,6 +405,18 @@ class TestConfig(unittest.TestCase):
         cfg = next(a for a in plan.actions if a.kind == CONFIGURE)
         # current_state must be unchecked, not any specific value
         self.assertEqual(cfg.current_state, "unchecked")
+
+    def test_skin_selected_config_is_normal_configure_action(self):
+        """Resolver-selected skin packages use CONFIGURE, not a new action."""
+        config = ConfigDeclarations(packages=("skin-pkg",))
+        desired = _make_resolved(
+            skin=SkinEntry(addon_id="skin.foo"), config=config,
+        )
+        actual = _make_state(
+            addons=[_addon("skin.foo", True)], active_skin="skin.estuary"
+        )
+        kinds = _action_kinds(plan_changes(desired, actual))
+        self.assertEqual(kinds, [SET_SKIN, CONFIGURE])
 
 
 # ---------------------------------------------------------------------------
