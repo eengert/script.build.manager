@@ -2,7 +2,7 @@
 
 **Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: In progress. BM-017 remains deferred.
+**Status**: Complete. BM-017 remains deferred.
 
 ## Synchronization
 
@@ -10,8 +10,8 @@
 - Verified endpoint trees differ only in the four `.agent/*` metadata files.
 - Verified `git diff --quiet origin/matrix HEAD -- . ':(exclude).agent/**'`
   exited successfully.
-- Normal merge is in progress; metadata conflicts are being resolved as
-  worker-specific state.
+- Normal synchronization merge completed as `0366a90`, with parents
+  `4ad00f1` and `91752ab`. It was pushed to `origin/agent/codex`.
 
 ## Integrated behavior
 
@@ -36,11 +36,27 @@
 - No production AF3 package was created and no AF3 configuration was copied.
 - BM-017, BM-019, and BM-020 were not started.
 
-## BM-018C scope
+## BM-018C result
 
-Research/classification only. Inspect installed AF3 read-only, AF3 source,
-and Backup Pro history; then write `docs/AF3_PORTABILITY.md`. Classify typed
-settings and candidate files as public portable, personal non-secret,
-device-specific, generated runtime, private/secret, or unknown. Define the
-minimal safe future `af3-common` package and overlay candidates. Do not start
-BM-018D.
+Research/classification completed in `docs/AF3_PORTABILITY.md` (commit
+`db58403`). The specification records:
+
+- installed AF3 identity/version (`skin.arctic.fuse.3` `3.2.19`), helper
+  ownership, typed settings, profile-relative file layout and lifecycle;
+- the minimal safe common subset: reviewed typed bool/string preferences only,
+  with no whole-file state;
+- menu/widget source classification, path/add-on/credential checks and
+  personal-overlay boundary;
+- generated viewtype/include/hash/checksum exclusions;
+- private login/authentication exclusions owned by BM-017;
+- platform/device overlay criteria and BM-018D typed skin-setting backend and
+  disposable-profile validation requirements.
+
+Validation: full unit suite `1412/1412` passing. No live Kodi mutation, no
+Apple TV access, and no production AF3 package was created.
+
+## Smallest next step
+
+Supervisor review of `docs/AF3_PORTABILITY.md`; then decide whether BM-018D
+should implement the typed AF3 skin-settings backend. Do not start BM-018D
+automatically.
