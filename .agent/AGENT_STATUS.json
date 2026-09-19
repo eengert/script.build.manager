@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "BM-016",
-  "reason": null,
-  "last_commit": "3212dca",
-  "matrix_sha": "91b41a1",
-  "next_agent": null,
+  "status": "complete",
+  "task": "BM-018A",
+  "reason": "Implementation and full unit validation complete; pending supervisor review.",
+  "last_commit": "pending",
+  "matrix_sha": "6c0adf3",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-19T12:57:26Z"
 }
