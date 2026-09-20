@@ -1,102 +1,21 @@
 # Agent Handoff — synchronized Codex worker
 
-## BM-019 completion
-
-BM-019 is complete on `agent/codex` and remains unintegrated; `matrix` is
-unchanged at `cfd335499123126027741f8e595489cc32b9e207`. The external Agent
-Handoff pointer was not changed.
-
-Substantive commit: `703ff4c3ae4fdf5cb88445e5521e041287adef57`
-(`feat(BM-019): add typed restart requirement aggregation`).
-
-Implemented `resources/lib/restart.py` with the typed `NONE` /
-`KODI_RESTART` contract, monotonic `RestartAggregator`, immutable
-`RestartReport`, nested report aggregation, and JSON-safe reporting. Existing
-repository, add-on, dependency, skin, and configuration results now preserve
-typed restart metadata. The planner remains non-mutating and does not infer a
-final restart from an action kind.
-
-Failure semantics are explicit: successful changed operations contribute;
-idempotent/no-change operations do not; failed/uncommitted operations are
-counted but do not establish a restart requirement; and a later failure cannot
-erase an earlier successful requirement. BM-018D/BM-018E operations remain
-`NONE`; their skin-setting persistence compatibility fix does not require a
-restart. BM-020 still owns restart execution, transaction persistence, and
-resume/re-entry behavior.
-
-Documentation: `docs/RESTART_REQUIREMENTS.md`, canonical restart-section
-update, and testing inventory update. Tests: focused **813/813**, full
-**1476/1476**, `git diff --check` clean. No current operation genuinely
-requires restart, so no synthetic live restart scenario was added. No real
-Kodi profile, Apple TV, or other device was accessed.
-
-Usage telemetry was unavailable and remains recorded as unavailable. BM-017,
-BM-020, and all later milestones were not started. The smallest next step is
-supervisor review and integration of this worker branch.
-
-## Prior synchronized state
-
-## Current synchronized state
-
-Codex is synchronized with the protected matrix at
-`cfd335499123126027741f8e595489cc32b9e207`, idle, and ready for the next
-supervisor assignment. This is reconciliation, not a new handoff or milestone
-start; the external Agent Handoff active-worker pointer was not changed.
-
-BM-018D compatibility support and supervisor-approved BM-018E are complete and
-integrated. The production `af3-common` package contains the approved 16 typed
-settings and `files: []`; typed lookup/persistence fallback and AF3 policy
-boundaries remain as integrated on matrix. Disposable validation passed BM-018D
-17/17 and BM-018E 14/14, with focused tests 461/461 and full suite 1463/1463.
-The real Kodi profile remained read-only and no Apple TV or other device was
-accessed. BM-017, BM-019, BM-020, and any next milestone were not started.
-
-The legitimate Codex usage history is preserved without adding a duplicate
-task row. Next step: await supervisor assignment.
-
-## Historical BM-018E worker record
-
 ## Status
 
-BM-018E is complete on `agent/codex` at implementation commit `28b8b90` and
-is ready for supervisor review and normal integration. Matrix remains at
-`466d431a3de0dd7b35105ef3c13ca4e0cc0058a7`; no matrix, Claude, or Antigravity
-branch was changed, and no Codex-to-Agent-Handoff transition has occurred.
+Codex is synchronized with protected matrix at
+`3b87bd394e7733636b74231c83853f577c596a71`, idle, and ready for the next
+supervisor assignment. This is reconciliation, not a new handoff or
+milestone start; the external Agent Handoff active-worker pointer was not
+changed.
 
-## Implemented
+BM-019 is complete, supervisor-approved, and integrated. The typed
+`RestartRequirement` contract uses `NONE` and `KODI_RESTART`, with central
+monotonic aggregation of successful changed results. Idempotent/no-change and
+failed/uncommitted operations do not establish a requirement, and the planner
+does not infer one from action kinds. BM-020 owns restart execution,
+transaction persistence, and resume/re-entry and has not started.
 
-- Preserved the approved 16-setting `af3-common` package and its explicit skin
-  ownership; no package values or AF3-specific mutual-exclusion policy changed.
-- Added generic Kodi skin-setting compatibility for canonical/lowercase typed
-  lookup, guarded `-32602` fallback, safe `Skin.SetBool`/`Skin.SetString`/
-  `Skin.Reset` writes, strict effective read-back, and bounded persistence
-  verification.
-- Ensured successful typed JSON-RPC writes also schedule the durable skin XML
-  save, because Kodi's JSON-RPC setter alone does not do so.
-- Extended disposable harness bootstrap to exercise AF3's missing-on-pristine
-  `Skin.*` schema entries without editing XML or copying real profile state.
-- Updated AF3 portability/testing documentation with the compatibility and
-  validation boundary.
-
-## Live evidence
-
-- `validate-skin-config`: 17/17.
-- `validate-af3-package`: 14/14, including all 16 production settings,
-  authoritative read-back, idempotency, drift repair, unmanaged preservation,
-  ownership zero-mutation failure, restart persistence, and wrong-skin
-  failure-before-mutation.
-- AF3 3.2.19 plus its complete transitive closure: 18/18 installed, enabled,
-  and not broken.
-- BM-018A Estuary -> AF3 confirmation/activation passed after the disposable
-  AF3 generated-runtime bootstrap; pristine first-ever AF3 provisioning remains
-  intentionally unclaimed.
-- Full unit suite: 1463/1463. Focused implementation/config/planner/harness
-  tests: 461/461. `git diff --check`: clean.
-
-## Boundaries and next step
-
-The real Kodi profile's mtime was unchanged. No Apple TV or other device was
-accessed. BM-017, BM-019, BM-020, BM-018D, and any next milestone were not
-started. The existing BM-018E usage row remains exactly once; no usage numbers
-were fabricated and no duplicate row was added. The smallest next step is
-supervisor review, followed by the normal integration workflow if approved.
+Focused BM-019 tests passed 813/813 and the full suite passed 1476/1476.
+BM-018D and BM-018E remain complete and integrated. The real Kodi profile and
+all devices remained untouched. Legitimate usage history is preserved without
+duplicate task rows. Next step: await supervisor assignment.

@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-019",
-  "reason": "BM-019 typed restart-requirement aggregation is complete on agent/codex. No current operation emits a restart requirement; restart execution and resume remain BM-020 scope. Matrix is unchanged.",
-  "last_commit": "703ff4c3ae4fdf5cb88445e5521e041287adef57",
-  "matrix_sha": "cfd335499123126027741f8e595489cc32b9e207",
+  "status": "idle",
+  "task": "synchronized-worker",
+  "reason": "BM-019 is complete and integrated on matrix; Codex is synchronized and ready for the next supervisor assignment. BM-020 has not started.",
+  "last_commit": "3b87bd394e7733636b74231c83853f577c596a71",
+  "matrix_sha": "3b87bd394e7733636b74231c83853f577c596a71",
   "next_agent": "human",
   "updated_at": "2026-09-20"
 }
