@@ -73,8 +73,10 @@ against. BM-002 defines the data contract only; no merge logic is implemented.
 
 - `packages`: union of all package names across all layers. Duplicates are
   ignored.
-- `managed_settings`: union per `addon_id`. If the same `addon_id` appears in
-  multiple layers, the `keys` lists are unioned.
+- `managed_settings`: union per `(target, addon_id)`. If the same explicit
+  target and `addon_id` appears in multiple layers, the `keys` lists are
+  unioned. The optional `target` defaults to `addon` for backward
+  compatibility; use `skin` only for Kodi skin settings.
 - `managed_files`: union of all paths across all layers. Duplicates are ignored.
 
 ### Skin merge (across all layers)
@@ -164,6 +166,22 @@ The relationship is enforced in both directions (BM-015): a configuration
 package may not target anything outside these declarations, and every declared
 target must be supplied by some selected package. Either violation fails
 preflight before any Kodi state is changed.
+
+### Add-on settings versus skin settings
+
+The setting target namespace is explicit and is part of the target identity:
+
+```text
+(target, addon_id, key)
+```
+
+An omitted package `target` means `addon`, preserving existing package
+behavior. A package entry with `target: skin` must match a manifest
+`managed_settings` scope with `target: skin` and is applied through Kodi's
+skin-setting API only after that exact skin is active. The `skin.` prefix is
+not used as a heuristic; an explicit target is required. BM-018D initially
+supports only typed `bool` and `string` skin entries. Skin `settings.xml` is
+never managed as a whole file.
 
 ---
 
@@ -266,6 +284,11 @@ Manager does not manage skin selection.
     {
       "addon_id": "plugin.video.redlight",
       "keys": ["server_url", "playback_quality"]
+    },
+    {
+      "target": "skin",
+      "addon_id": "skin.arctic.fuse.3",
+      "keys": ["HomeSwitcher.EnableIcons"]
     }
   ],
   "managed_files": [
@@ -279,7 +302,7 @@ Declares which configuration is owned by this build. Contains no values.
 | Sub-field | Notes |
 |---|---|
 | `packages` | Named config packages the engine must apply, in resolved order; later packages override earlier ones. See [`docs/CONFIG_PACKAGES.md`](CONFIG_PACKAGES.md). |
-| `managed_settings` | Which add-on setting keys Build Manager owns. Only listed keys are written. |
+| `managed_settings` | Which explicit add-on (`target: addon`, or omitted) or active-skin (`target: skin`) setting keys Build Manager owns. Only listed targets are written. |
 | `managed_files` | Kodi userdata-relative paths Build Manager may overwrite. |
 
 ### `platform_profiles` *(optional)*

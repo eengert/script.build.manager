@@ -1,36 +1,54 @@
-# Agent Handoff — BM-018C merged
+# Agent Handoff — BM-018D incoming-worker preparation
 
-**Status**: Complete, supervisor-approved, and merged on `matrix`. The worker
-is normalized to `origin/matrix` `bd78cc2` and ready for the next assignment.
+**Status**: BM-018D is complete and supervisor-approved. `agent/antigravity`
+is synchronized with current `origin/matrix` and prepared for the incoming
+worker handoff. The Codex -> Antigravity handoff has not occurred; the GUI
+remains responsible for that transition. Matrix remains neutral
+(`active_agent = none`).
 
 ## Integrated state
 
-- `b782bbd`: the reviewed Antigravity POC changes only the planner module
-  docstring from `"""` to `r"""` to eliminate the invalid escape warning.
-- `23796e2`: adds only `docs/AF3_PORTABILITY.md`.
-- AF3 `3.2.19` inventory complete with 280 observed skin settings.
-- Initial future `af3-common` specification uses reviewed typed bool/string
-  targets only; it defines zero whole-file targets.
-- Menu/widget source is deferred from common.
-- Generated/runtime state is excluded.
-- Private/auth state is deferred to BM-017.
+- `28a6fd4` — `feat(BM-018D): add typed skin configuration support`.
+- `5a3cc9a` — `fix(BM-018D): resolve AF3 disposable live gate`.
+- Only the reviewed BM-018D substantive commits were integrated; worker-only
+  `.agent` commits and unrelated worker history were not merged.
+- Generic typed skin-setting support is complete.
+- AF3-specific mutual-exclusion policy remains isolated from the generic skin
+  backend; AF3 key normalization and non-boolean string-setter return handling
+  are handled by the backend/runtime adaptation.
+
+## Live evidence
+
+- Disposable AF3 live gate: 17/17 passed.
+- The AF3 dependency closure must be installed, enabled, and not broken in the
+  disposable environment.
+- AF3 first-run generated-state initialization caused the original transient
+  fallback. The harness bootstraps that generated runtime state only inside
+  `.kodi-test`, then validates the actual BM-018A Estuary -> AF3
+  confirmation/activation path.
+- Therefore BM-018A confirmation is live-proven once AF3 generated first-run
+  runtime state exists; completely pristine first-ever AF3 provisioning is not
+  claimed as proven.
 
 ## Validation and boundaries
 
-- Full suite: 1412/1412 passing.
+- Focused BM-018D tests: 765/765 passing.
+- Full suite: 1438/1438 passing.
 - `git diff --check` passed.
-- No live Kodi mutation occurred.
+- Real Kodi profile remained read-only; no Apple TV access occurred.
 - No production `af3-common` package was created.
-- BM-017 was not started.
-- BM-018D was not started.
-- Worker branches were not modified.
+- BM-018E, BM-017, BM-019, and BM-020 were not started.
+- Matrix, `agent/codex`, and `agent/claude` were not modified.
 
-## Normalization
+## Synchronization
 
-- Preserved the original Antigravity planner POC commit `58a141e`.
-- Merged `origin/matrix` normally into `agent/antigravity`.
-- Current protected tip: `bd78cc2`.
-- `.agent/*` now records Antigravity as idle/ready.
-- Existing usage history was preserved without duplicate rows.
+- Preserved the original Antigravity planner POC in Git history; no
+  substantive Antigravity-only endpoint work existed after the merge base.
+- Merged current `origin/matrix` normally into `agent/antigravity`.
+- Current protected tip: `0e38797d90bb64cd19ca5e7608c41a741afb2e07`.
+- `.agent/*` records Antigravity as complete and prepared, without claiming
+  that the GUI handoff has already occurred.
+- Usage history is the semantic union of the worker and matrix histories,
+  with exact duplicate rows removed and no telemetry fabricated.
 
-Next task awaits supervisor assignment.
+Do not start another Build Manager milestone from this handoff.

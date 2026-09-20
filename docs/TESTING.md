@@ -96,6 +96,9 @@ python3 tools/kodi_test.py validate-repo
 # BM-015 live validation: configuration package deployment
 python3 tools/kodi_test.py validate-config
 
+# BM-018D live validation: typed AF3 skin configuration
+python3 tools/kodi_test.py validate-skin-config
+
 # Step by step
 python3 tools/kodi_test.py reset
 python3 tools/kodi_test.py install
@@ -448,10 +451,47 @@ confirming the fingerprint is deterministic.
 
 Ports: Kodi 8920, HTTP server 8922.
 
-### Out of scope for BM-009 through BM-015
+### validate-skin-config command (BM-018D)
+
+`validate-skin-config` is a disposable macOS integration harness for the typed
+skin-target path. It copies the installed AF3 add-on and its available declared
+dependencies transitively into `.kodi-test`, then verifies and enables every
+non-built-in closure node before activation; it never copies Eric's real profile, skin
+settings, generated state, or authentication data. The only profile seed is a
+synthetic AF3 first-run marker. The harness also allows AF3 3.2.19 and
+`script.skinvariables` to generate their disposable runtime state once; that
+first-run reload otherwise races Kodi's keep/revert transaction. The actual
+BM-018A gate starts from Estuary after this warm-up.
+
+The runner executes the production modules inside Kodi because Kodi's typed
+skin-setting API is not exposed as an external JSON-RPC deployment API. The
+sequence proves on the local AF3/Kodi combination:
+
+1. Estuary starts in the disposable profile.
+2. BM-018A activates AF3 through the confirmation-dialog lifecycle and checks
+   the persisted skin setting plus `xbmc.getSkinDir()`.
+3. A synthetic package applies one AF3 bool and one AF3 string through the
+   explicit `target: "skin"` backend.
+4. Read-back, zero-mutation reapply, one-setting drift repair, unmanaged-key
+   preservation, restart persistence, BM-014 CONFIGURATION validation, and
+   ownership preflight zero-mutation behavior are checked.
+5. A wrong-active-skin attempt is rejected before any skin-setting mutation.
+6. Kodi is stopped and the real profile's mtime is checked unchanged.
+
+The closure check records installed, enabled, broken, and version status for
+AF3 plus every transitive dependency. The adapter also handles Kodi's mixed
+skin-setting key namespace: canonical AF3 `HomeSwitcher.*` identifiers fall
+back to their lowercase stored IDs only when Kodi returns invalid parameters;
+mixed-case IDs that Kodi accepts remain unchanged.
+
+The command requires `/Applications/Kodi.app`, uses Kodi JSON-RPC port 8920,
+and can require local-process/network permission in a sandboxed environment.
+It does not create `af3-common`; the package is synthetic harness data only.
+
+### Out of scope for BM-009 through BM-018D
 
 - Add-on provisioning from the full planner action plan
-- Skin / AF3 provisioning and `SkinEntry.config_packages` (BM-018)
+- Production AF3 provisioning package (`af3-common`) and whole-file skin state
 - Authentication and credential portability (BM-017)
 - Remote or versioned configuration package delivery
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
