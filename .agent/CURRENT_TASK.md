@@ -2,8 +2,10 @@
 
 ## BM-020A production reconciliation executor
 
-**Status**: BM-020A is complete on `agent/codex` and is not integrated on
-`matrix`. BM-020B and BM-020C have not started; no new milestone has begun.
+**Status**: BM-020A implementation is complete on `agent/codex`, but the
+required disposable production-executor gate is blocked in preflight and BM-020A
+is not ready for matrix integration. BM-020B and BM-020C have not started; no
+new milestone has begun.
 
 Current matrix: `e2458d4f977e09769b01d8e8a82635497b913546`.
 
@@ -17,10 +19,16 @@ values. Unknown actions and phase/action failures fail closed; execution stops
 after the first failed action while preserving earlier results.
 
 BM-019, BM-018D, and BM-018E remain complete and integrated. BM-020A owns the
-the production executor; BM-020B/C remain deferred. The existing BM-020A1
+production executor; BM-020B/C remain deferred. The existing BM-020A1
 enabled/disabled ownership and dependency-conflict contracts remain intact.
 
-Focused executor tests passed 5/5; the full suite passed 1467/1467. The
-disposable harness has no BM-020A executor validation command, so no live
-executor gate was claimed. The real Kodi profile, Apple TV, and all devices
-remained untouched. Next step: supervisor review; do not integrate to matrix.
+The new `validate-build-manager` command invoked the actual production
+`BuildManager.reconcile()` inside disposable Kodi using the installed
+`eric-main.example.json` and `family-room` request. It failed closed before
+planning or mutation with `PREFLIGHT_FAILED`: `redlight-common` is selected by
+the authoritative example but is intentionally unavailable because BM-016
+deferred Red Light portability. No fake package or reduced manifest was added.
+Harness/relevant focused tests passed 1173/1173; the full suite passed
+1468/1468. The real Kodi profile was not accessed, Apple TV and all devices
+remained untouched. Next step: supervisor decision on the deferred Red Light
+package boundary; do not integrate to matrix.

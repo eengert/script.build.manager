@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "complete",
+  "status": "blocked",
   "task": "BM-020A",
-  "reason": "BM-020A production reconciliation executor is complete on agent/codex; it is not integrated to matrix. BM-020B/C and BM-017 remain deferred.",
-  "last_commit": "213c9c0",
+  "reason": "BM-020A implementation is complete on agent/codex, but its disposable executor gate is blocked in preflight because authoritative family-room selects unavailable redlight-common. Do not integrate; BM-020B/C and BM-017 remain deferred.",
+  "last_commit": "2a52c6a",
   "matrix_sha": "e2458d4f977e09769b01d8e8a82635497b913546",
   "next_agent": "human",
   "updated_at": "2026-09-20"
