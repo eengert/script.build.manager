@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "engine_min_version": "0.1.0",
+  "build": {
+    "id": "bm020a-executor-validation",
+    "version": "0.1.0",
+    "name": "BM-020A Disposable Executor Validation",
+    "description": "Test-only disposable fixture; not Eric's personal production build."
+  },
+  "addons": [
+    {"addon_id": "skin.arctic.fuse.3", "state": "enabled"}
+  ],
+  "skin": {
+    "addon_id": "skin.arctic.fuse.3",
+    "config_packages": ["af3-common"]
+  },
+  "config": {
+    "managed_settings": [
+      {
+        "target": "skin",
+        "addon_id": "skin.arctic.fuse.3",
+        "keys": [
+          "HomeSwitcher.Vertical",
+          "HomeSwitcher.EnableIcons",
+          "HomeSwitcher.EnableIconText",
+          "HomeSwitcher.DisableHeader",
+          "HomeSwitcher.DisableDate",
+          "HomeSwitcher.DisableSearch",
+          "HomeSwitcher.DisableFirstWidgetFocus",
+          "HomeSwitcher.LoopBack",
+          "Spotlight.EnableSlide",
+          "Spotlight.UseMenuButton",
+          "View.UseDetailedListLabels",
+          "Widgets.EnableShowMore",
+          "Widgets.DisableNoResultsItem",
+          "Navigation.OnBack",
+          "Seekbar.TimeDisplay",
+          "Skin.FlixArt.Size"
+        ]
+      }
+    ],
+    "managed_files": []
+  },
+  "platform_profiles": {
+    "disposable": {
+      "label": "BM-020A disposable validation platform"
+    }
+  },
+  "device_profiles": {
+    "bm020a-disposable": {
+      "label": "BM-020A disposable executor fixture",
+      "extends": "disposable"
+    }
+  }
+}

@@ -22,6 +22,9 @@ sys.path.insert(0, REPO_ROOT)
 SCHEMA_PATH = os.path.join(REPO_ROOT, "resources", "builds", "schema-v1.json")
 MINIMAL_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "minimal.json")
 ERIC_MAIN_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "eric-main.example.json")
+BM020A_FIXTURE_PATH = os.path.join(
+    REPO_ROOT, "resources", "builds", "examples", "bm020a-executor.example.json"
+)
 
 VALID_ADDON_STATES = {"enabled", "disabled"}
 VALID_OVERLAY_TYPES = {"local_file"}
@@ -465,6 +468,7 @@ class TestEricMainExample(unittest.TestCase):
                         f"{filename} selects unavailable package {package_id!r}",
                     )
 
+
     def test_eric_main_has_platform_profiles(self):
         pp = self.doc.get("platform_profiles", {})
         self.assertIn("tvos", pp)
@@ -526,6 +530,21 @@ class TestEricMainExample(unittest.TestCase):
             url = repo.get("bootstrap_url", "")
             if url:
                 self.assertIn(".invalid", url, "Example bootstrap_url should use .invalid TLD")
+
+
+class TestBM020AExecutorFixture(unittest.TestCase):
+
+    def test_fixture_is_valid_and_explicitly_disposable(self):
+        with open(BM020A_FIXTURE_PATH, encoding="utf-8") as handle:
+            document = json.load(handle)
+        validate_manifest_structure(document, label="bm020a-executor.example.json")
+        self.assertEqual(document["build"]["id"], "bm020a-executor-validation")
+        self.assertEqual(
+            document["device_profiles"]["bm020a-disposable"]["extends"],
+            "disposable",
+        )
+        self.assertEqual(document["skin"]["config_packages"], ["af3-common"])
+        self.assertEqual(document["config"]["managed_files"], [])
 
 
 # ---------------------------------------------------------------------------
