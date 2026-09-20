@@ -1,7 +1,8 @@
-# Agent Handoff — WF-002 Antigravity usage reporting via CodexBar
+# Agent Handoff — synchronized Antigravity worker
 
-**Status**: WF-002 is complete. Reliable, read-only Antigravity usage reporting
-via CodexBar has been implemented and validated.
+**Status**: WF-002 is complete and supervisor-approved on matrix. This branch
+is synchronized and ready as an incoming Antigravity worker; no Agent Handoff
+has occurred and `active_agent` remains `antigravity` here.
 
 ## What was done
 
@@ -23,23 +24,32 @@ via CodexBar has been implemented and validated.
 - Updated `AGENTS.md` with Antigravity-Specific Notes documenting the authoritative
   command, helper usage, distinct pool preservation, and usage conventions.
 - Updated `.agent/USAGE_HISTORY.md` with task convention note and WF-002 row.
-- Updated `.agent/AGENT_STATUS.json` and `.agent/CURRENT_TASK.md`.
+- Updated `.agent/AGENT_STATUS.json` and `.agent/CURRENT_TASK.md` for the
+  synchronized Antigravity worker state.
 
 ## Validation
 
 - Focused tests: `python3 -m unittest tests/test_antigravity_usage.py` — 11/11 passing.
-- Live read-only smoke test: `tools/antigravity-usage --human` and JSON output verified.
-- Direct output comparison: Helper output matches raw CodexBar command results exactly.
+- Live read-only smoke test: attempted; current CodexBar invocation timed out.
+  The helper returned a sanitized unavailable result and exposed no raw stderr
+  or private account data.
 - `git diff --check`: passed cleanly.
 - Real Kodi profile untouched; no Apple TV access; no BM milestone work started.
 
-## Measured Usage (WF-002)
+## Prior BM-018D boundary
 
-- Start: Gemini weekly: 32.53% used / Claude/GPT weekly: 25.42% used
-- End:   Gemini weekly: 42.96% used / Claude/GPT weekly: 25.42% used
-- Delta: Gemini: +10.43% / Claude/GPT: ~0% (consistent with Gemini 3.8 Flash model usage)
+- BM-018D remains complete: 17/17 disposable AF3 live checks and 1438/1438
+  full tests were previously recorded.
+- No production `af3-common` package was created on this worker.
+- BM-018E, BM-017, BM-019, and BM-020 were not started.
+- Real Kodi profile remained read-only; no Apple TV access occurred.
 
-## Next Steps
+## WF-002 usage record
 
-- Await supervisor review and next milestone assignment.
-- BM-017, BM-018E, BM-019, BM-020 remain not started.
+The Antigravity worker's measured WF-002 usage row is preserved exactly once
+in `.agent/USAGE_HISTORY.md`; no Codex usage figures were fabricated.
+
+Current protected matrix: `466d431a3de0dd7b35105ef3c13ca4e0cc0058a7`.
+
+Next step awaits an explicit Agent Handoff or supervisor assignment. Do not
+move BM-018E manually.

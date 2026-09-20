@@ -1,15 +1,26 @@
 # Current Task
 
-## WF-002 — Antigravity usage reporting via CodexBar
+## Worker State — synchronized with current matrix
 
 **Agent**: Antigravity
 **Branch**: `agent/antigravity`
-**Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-antigravity`
-**Status**: Complete; tools/antigravity-usage helper implemented, tested (11/11 tests), documented in AGENTS.md, and validated against live CodexBar CLI.
+**Status**: Synchronized and idle; no Agent Handoff has occurred.
 
-Current protected matrix: `0e38797d90bb64cd19ca5e7608c41a741afb2e07`.
-Substantive BM-018D work is already integrated on matrix as `28a6fd4` and
-`5a3cc9a`; this preparation changes history/metadata only.
+Current protected matrix: `466d431a3de0dd7b35105ef3c13ca4e0cc0058a7`.
+
+WF-002 adds the read-only `tools/antigravity-usage` helper, focused tests, and
+the Antigravity CodexBar usage guidance in `AGENTS.md`. The helper preserves
+distinct named Gemini and Claude/GPT pools, account/source/login metadata when
+available, and sanitized bounded failure results.
+
+WF-002 is supervisor-approved and integrated on current `matrix`. The approved
+`AGENTS.md`, `tests/test_antigravity_usage.py`, and `tools/antigravity-usage`
+endpoints match matrix exactly. Antigravity remains the incoming worker
+identity for a future handoff; stale WF-002 task state is not being revived.
+
+Focused tests: 11/11 passing. The live helper smoke test was attempted
+read-only; the current CodexBar invocation timed out and the helper returned
+the sanitized unavailable result without exposing stderr or private data.
 
 Integrated substantive commits:
 
@@ -33,5 +44,8 @@ exclusion policy remains isolated from the generic backend.
 - Full suite: 1438/1438 passing.
 - `git diff --check`: passing.
 - Real Kodi profile remained read-only; no Apple TV access occurred.
-- No production `af3-common` package was created.
-- BM-018E, BM-017, BM-019, and BM-020 were not started.
+- No production `af3-common` package was created on this worker.
+- BM-018E, BM-017, BM-019, and BM-020 were not started on this worker.
+
+Next step awaits an explicit Agent Handoff or supervisor assignment; do not
+move BM-018E manually.
