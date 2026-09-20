@@ -240,15 +240,15 @@ Live validation (Kodi 21.1 macOS, 2026-09-18): **13/13 steps passed**.
   Public API: `plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan`.
   Error: `PlanningError`. Output types: `Plan`, `PlanAction` (both frozen dataclasses).
   Action kinds: `INSTALL_REPOSITORY`, `INSTALL_ADDON`, `ENABLE_ADDON`, `DISABLE_ADDON`,
-  `ENSURE_ABSENT`, `SET_SKIN`, `CONFIGURE`.
-  Deterministic ordering: repos→installs→enable/disable→absent→skin→config,
+  `SET_SKIN`, `CONFIGURE`.
+  Deterministic ordering: repos→installs→enable/disable→skin→config,
   lexical by addon_id within category.
   Cross-category dedup: INSTALL_REPOSITORY suppresses INSTALL_ADDON for same addon_id;
   desired_state="disabled" propagated when overlapping desired add-on state is disabled.
   Skin dedup: planned_install_ids (union of repo + addon installs) prevents duplicate
   INSTALL_ADDON for skin even when skin-as-repo pathological manifest is used.
-  Contradictory-state validation: raises PlanningError when desired skin also declared
-  absent, or when required repository also declared absent.
+  Contradictory-state validation: raises PlanningError when a desired skin is
+  not declared enabled. Add-on removal is outside the supported manifest contract.
   Unmanaged add-ons in actual state are never touched.
   CONFIGURE always `current_state="unchecked"` (BM-005 does not inspect config state).
   `PlanningError` on duplicate addon_ids in KodiState.

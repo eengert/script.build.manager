@@ -23,7 +23,7 @@ SCHEMA_PATH = os.path.join(REPO_ROOT, "resources", "builds", "schema-v1.json")
 MINIMAL_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "minimal.json")
 ERIC_MAIN_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "eric-main.example.json")
 
-VALID_ADDON_STATES = {"enabled", "disabled", "absent"}
+VALID_ADDON_STATES = {"enabled", "disabled"}
 VALID_OVERLAY_TYPES = {"local_file"}
 
 KNOWN_TOP_LEVEL_KEYS = {
@@ -357,8 +357,8 @@ class TestSchemaFile(unittest.TestCase):
         state_enum = schema["definitions"]["addon_state"]["enum"]
         self.assertIn("enabled", state_enum)
         self.assertIn("disabled", state_enum)
-        self.assertIn("absent", state_enum)
-        self.assertEqual(len(state_enum), 3, "addon_state enum should have exactly 3 values")
+        self.assertNotIn("absent", state_enum)
+        self.assertEqual(len(state_enum), 2, "addon_state enum should have exactly 2 values")
 
     def test_schema_defines_all_key_definitions(self):
         with open(SCHEMA_PATH) as f:

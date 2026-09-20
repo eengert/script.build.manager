@@ -1715,6 +1715,22 @@ Implement AF3 provisioning.
 ### BM-019
 Implement restart requirement aggregation.
 
+### BM-020A1 (current prerequisite)
+Complete the executable action-ownership prerequisites for reconciliation:
+
+- managed add-on states are `enabled` and `disabled`; an omitted add-on is
+  unmanaged, and `absent` is rejected because unattended add-on removal is not
+  supported by Kodi's public API;
+- a target install owns its required dependency preflight and reconciliation
+  through `DependencyAwareInstaller`, returning one nested aggregate result;
+- explicit desired-disabled required dependencies fail before mutation; and
+- nested `AddonInstallResult.restart_requirement` values propagate through
+  `DependencyAction`, `DependencyResult`, and the enclosing install result.
+
+BM-020A1 does not implement the production reconciliation executor. BM-020A
+remains the restart/resume state work; BM-020B and BM-020C remain later
+transaction/re-entry and restart/resume milestones.
+
 ### BM-020
 Implement restart/resume state.
 

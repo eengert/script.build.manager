@@ -1,24 +1,28 @@
 # Current Task
 
-## Synchronized worker state
+## BM-020A1 — supported action contract and dependency ownership
 
-**Status**: BM-019 is complete, supervisor-approved, and integrated on
-`matrix`. Codex is synchronized, idle, and ready for the next supervisor
-assignment. BM-020 has not started and no new milestone has begun.
+**Status**: Complete on `agent/codex`; supervisor review is the next gate.
+BM-020A, BM-020B, BM-020C, BM-017, and all later milestones have not started.
 
-Current matrix: `3b87bd394e7733636b74231c83853f577c596a71`.
+Implemented the approved prerequisite scope:
 
-BM-019 established typed `RestartRequirement` aggregation with `NONE` and
-`KODI_RESTART`, monotonic aggregation of successful changed operations, and
-JSON-safe reporting. Idempotent/no-change and failed/uncommitted operations do
-not establish a requirement; later failures do not erase an earlier success.
-The planner remains non-mutating and does not infer restart requirements from
-action kinds. BM-020 owns restart execution, transaction persistence, and
-resume/re-entry.
+- managed add-on states are only `enabled` and `disabled`; omitted add-ons are
+  unmanaged, and `absent` is rejected before planning or mutation with an
+  explanation that unattended removal is unsupported by Kodi's public API;
+- removed the planner's `ENSURE_ABSENT` contract and updated schema, validator,
+  manifest docs, planner tests, and project architecture notes;
+- added `DependencyAwareInstaller`, which owns required dependency preflight,
+  conflict detection, reconciliation, target installation, and one nested
+  result; optional dependencies remain optional;
+- required dependencies explicitly declared `disabled` fail before any
+  dependency or target mutation; and nested add-on install restart requirements
+  propagate through dependency actions/results and the enclosing result.
 
-BM-018D and BM-018E remain complete and integrated, including the approved
-16-setting `af3-common` package and typed skin persistence compatibility.
+Validation: focused manifest/planner/dependency/add-on/restart tests passed
+711/711; full suite passed 1462/1462; `git diff --check` passed. No disposable
+Kodi or real-profile mutation was needed for this prerequisite; the real Kodi
+profile and all devices remained untouched.
 
-Focused BM-019 tests passed 813/813; the full suite passed 1476/1476. The real
-Kodi profile and devices remained untouched. No BM-020 or other milestone work
-has started.
+Smallest next step: supervisor review and, if approved, normal integration of
+BM-020A1. Do not begin the BM-020A production executor in this task.

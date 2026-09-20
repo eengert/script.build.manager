@@ -53,8 +53,9 @@ installed add-ons are never queried or modified.
 
 Valid desired states
 --------------------
-Only "enabled" and "disabled" are accepted. "absent" and any other string are
-rejected before any backend call; the result for that add-on is FAILED.
+Only "enabled" and "disabled" are accepted. Add-on removal is outside the
+public Kodi API contract and any other string is rejected before any backend
+call; the result for that add-on is FAILED.
 
 Dependency protection
 ---------------------
