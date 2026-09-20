@@ -105,8 +105,8 @@
 
     "addon_state": {
       "type": "string",
-      "enum": ["enabled", "disabled", "absent"],
-      "description": "'enabled': must be installed and enabled. 'disabled': must be installed but disabled. 'absent': must not be installed. An add-on omitted from a profile layer inherits its state from the parent layer — omission is NOT equivalent to 'disabled'."
+      "enum": ["enabled", "disabled"],
+      "description": "'enabled': must be installed and enabled. 'disabled': must be installed but disabled. Add-on removal is not supported by the public Kodi API; omit an add-on to leave it unmanaged. An add-on omitted from a profile layer inherits its state from the parent layer — omission is NOT equivalent to 'disabled'."
     },
 
     "addon_entry": {

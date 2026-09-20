@@ -72,7 +72,7 @@ class BuildInfo:
 @dataclass(frozen=True)
 class AddonEntry:
     addon_id: str
-    state: str          # "enabled" | "disabled" | "absent"
+    state: str          # "enabled" | "disabled"
     note: str = ""
 
 
@@ -183,7 +183,7 @@ _RE_REPO_ID    = re.compile(r'^repository\.[a-z0-9._-]+$')
 _RE_SKIN_ID    = re.compile(r'^skin\.[a-z0-9._-]+$')
 _RE_OPT_ID     = re.compile(r'^[a-z0-9][a-z0-9_-]*$')
 
-_VALID_ADDON_STATES   = frozenset({"enabled", "disabled", "absent"})
+_VALID_ADDON_STATES   = frozenset({"enabled", "disabled"})
 _VALID_OVERLAY_TYPES  = frozenset({"local_file"})
 _VALID_URL_SCHEMES    = frozenset({"https", "http"})
 
@@ -471,8 +471,14 @@ def _parse_addon_entry(raw: object, *, label: str) -> AddonEntry:
 
     state = _require_str(raw, "state", label)
     if state not in _VALID_ADDON_STATES:
+        if state == "absent":
+            raise ManifestValidationError(
+                f"{label}.state: add-on removal is unsupported by Kodi's public "
+                "API; valid managed states are 'enabled' or 'disabled'. "
+                "Omit the add-on to leave it unmanaged."
+            )
         raise ManifestValidationError(
-            f"{label}.state: expected enabled|disabled|absent, got {state!r}"
+            f"{label}.state: expected enabled|disabled, got {state!r}"
         )
 
     note = ""

@@ -116,14 +116,18 @@ A build definition can change (new add-ons, config updates) without changing the
 manifest format (`schema_version` stays `1`) and without requiring a new Build
 Manager release.
 
-### `enabled` vs `disabled` vs `absent` vs omitted
+### `enabled` vs `disabled` vs omitted
 
 | Value | Meaning |
 |---|---|
 | `"enabled"` | Install the add-on if missing; ensure it is enabled. |
 | `"disabled"` | Install the add-on if missing; ensure it is disabled. |
-| `"absent"` | Ensure the add-on is not installed. Uncommon; use cautiously. |
-| *(omitted from a profile)* | Inherit the state from the parent layer. **Not** equivalent to `"disabled"`. |
+| *(omitted from a profile)* | Inherit the state from the parent layer. At the top level, the add-on is unmanaged. **Not** equivalent to `"disabled"`. |
+
+Build Manager does not uninstall add-ons. The former `"absent"` state is
+rejected because Kodi does not expose a supported unattended removal API with
+the lifecycle and data-preservation guarantees required here. Omit an add-on
+to leave it unmanaged; do not translate removal into `"disabled"`.
 
 ### Repository vs add-on
 

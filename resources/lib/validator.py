@@ -456,33 +456,12 @@ def _validate_addons(
                     reason=f"{addon_id!r} is disabled as desired",
                 ))
 
-        elif desired_state == "absent":
-            if actual_addon is None:
-                checks.append(ValidationCheck(
-                    domain=ValidationDomain.ADDON,
-                    subject=addon_id,
-                    status=ValidationStatus.PASS,
-                    expected="absent",
-                    actual_state="not installed",
-                    reason=f"{addon_id!r} is absent as desired",
-                ))
-            else:
-                state_desc = "installed and enabled" if actual_addon.enabled else "installed but disabled"
-                checks.append(ValidationCheck(
-                    domain=ValidationDomain.ADDON,
-                    subject=addon_id,
-                    status=ValidationStatus.FAIL,
-                    expected="absent",
-                    actual_state=state_desc,
-                    reason=f"{addon_id!r} desired absent but is {state_desc}",
-                ))
-
         else:
             checks.append(ValidationCheck(
                 domain=ValidationDomain.ADDON,
                 subject=addon_id,
                 status=ValidationStatus.FAIL,
-                expected="enabled | disabled | absent",
+                expected="enabled | disabled",
                 actual_state="unknown",
                 reason=(
                     f"{addon_id!r} has unrecognised desired state "
@@ -498,7 +477,7 @@ def _validate_dependencies(
 ) -> list:
     """Validate the dependency closure if provided; emit NOT_CHECKED if not."""
     # Expected roots: only desired managed add-ons with state "enabled".
-    # Disabled, absent, and unmanaged add-ons are excluded.
+    # Disabled and unmanaged add-ons are excluded.
     expected_roots = frozenset(
         entry.addon_id for entry in desired.addons if entry.state == "enabled"
     )

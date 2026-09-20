@@ -5,7 +5,7 @@ Covers:
   - ValidationReport aggregate properties (is_valid, is_complete, passed,
     passes, failures, warnings, not_checked)
   - Repository domain validation (required=True only)
-  - Addon domain validation (enabled / disabled / absent / unknown state)
+  - Addon domain validation (enabled / disabled / unknown state)
   - Dependency domain validation (all DependencyStatus values)
   - Skin domain validation
   - Configuration domain (NOT_CHECKED when config is non-None)
@@ -308,7 +308,7 @@ class TestRepositoryValidation(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestAddonValidation(unittest.TestCase):
-    """Addon domain: desired enabled / disabled / absent."""
+    """Addon domain: desired enabled / disabled."""
 
     # --- desired "enabled" ---
 
@@ -360,33 +360,6 @@ class TestAddonValidation(unittest.TestCase):
         entry = AddonEntry(addon_id="plugin.video.bar", state="disabled")
         desired = _resolved(addons=(entry,))
         actual = _state(addons=[])
-        report = validate_build_state(desired, actual)
-        checks = [c for c in report.checks if c.domain == ValidationDomain.ADDON]
-        self.assertEqual(checks[0].status, ValidationStatus.FAIL)
-
-    # --- desired "absent" ---
-
-    def test_absent_desired_not_installed_pass(self):
-        entry = AddonEntry(addon_id="plugin.video.old", state="absent")
-        desired = _resolved(addons=(entry,))
-        actual = _state(addons=[])
-        report = validate_build_state(desired, actual)
-        checks = [c for c in report.checks if c.domain == ValidationDomain.ADDON]
-        self.assertEqual(checks[0].status, ValidationStatus.PASS)
-
-    def test_absent_desired_installed_enabled_fail(self):
-        entry = AddonEntry(addon_id="plugin.video.old", state="absent")
-        desired = _resolved(addons=(entry,))
-        actual = _state(addons=[_installed("plugin.video.old", enabled=True)])
-        report = validate_build_state(desired, actual)
-        checks = [c for c in report.checks if c.domain == ValidationDomain.ADDON]
-        self.assertEqual(checks[0].status, ValidationStatus.FAIL)
-        self.assertIn("installed", checks[0].actual_state)
-
-    def test_absent_desired_installed_disabled_fail(self):
-        entry = AddonEntry(addon_id="plugin.video.old", state="absent")
-        desired = _resolved(addons=(entry,))
-        actual = _state(addons=[_installed("plugin.video.old", enabled=False)])
         report = validate_build_state(desired, actual)
         checks = [c for c in report.checks if c.domain == ValidationDomain.ADDON]
         self.assertEqual(checks[0].status, ValidationStatus.FAIL)
@@ -1507,14 +1480,6 @@ class TestDependencyClosureRootScope(unittest.TestCase):
         """CASE 1: only disabled desired add-on → dep validation not applicable; no NOT_CHECKED."""
         desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.d", state="disabled"),))
         actual = _state(addons=[_installed("plugin.video.d", enabled=False)])
-        report = validate_build_state(desired, actual, dependency_closure=None)
-        dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
-        self.assertEqual(len(dep_checks), 0)
-
-    def test_absent_only_desired_no_dep_check(self):
-        """CASE 1: only absent desired add-on → dep validation not applicable; no NOT_CHECKED."""
-        desired = _resolved(addons=(AddonEntry(addon_id="plugin.video.gone", state="absent"),))
-        actual = _state()
         report = validate_build_state(desired, actual, dependency_closure=None)
         dep_checks = [c for c in report.checks if c.domain == ValidationDomain.DEPENDENCY]
         self.assertEqual(len(dep_checks), 0)

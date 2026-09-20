@@ -290,11 +290,11 @@ class TestDeviceOverrides(unittest.TestCase):
             }},
             "device_profiles": {"dev": {
                 "extends": "tvos",
-                "addons": [_addon("plugin.video.foo", "absent")]
+                "addons": [_addon("plugin.video.foo", "enabled")]
             }},
         })
         r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(r.addons[0].state, "absent")
+        self.assertEqual(r.addons[0].state, "enabled")
 
     def test_device_adds_new_addon_appended(self):
         doc = _base({
@@ -534,12 +534,12 @@ class TestOptionalGroups(unittest.TestCase):
             platform_include=["extras"],
             groups=[{
                 "id": "extras",
-                "addons": [_addon("plugin.video.base", "absent")]
+                "addons": [_addon("plugin.video.base", "disabled")]
             }],
         )
         r = resolve_manifest(_make(doc), "dev")
         base_addon = next(a for a in r.addons if a.addon_id == "plugin.video.base")
-        self.assertEqual(base_addon.state, "absent")
+        self.assertEqual(base_addon.state, "disabled")
 
     def test_optional_config_merges_correctly(self):
         doc = self._doc_with_optional(
@@ -570,23 +570,6 @@ class TestAddonStates(unittest.TestCase):
         doc = _base({"addons": [_addon("plugin.video.foo", "disabled")]})
         r = resolve_manifest(_make(doc), "dev")
         self.assertEqual(r.addons[0].state, "disabled")
-
-    def test_absent_state_resolved(self):
-        doc = _base({"addons": [_addon("plugin.video.foo", "absent")]})
-        r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(r.addons[0].state, "absent")
-
-    def test_absent_remains_in_resolved_set(self):
-        doc = _base({
-            "addons": [_addon("plugin.video.foo", "enabled")],
-            "device_profiles": {"dev": {
-                "extends": "tvos",
-                "addons": [_addon("plugin.video.foo", "absent")]
-            }},
-        })
-        r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(len(r.addons), 1)
-        self.assertEqual(r.addons[0].state, "absent")
 
     def test_platform_disabled_then_device_enabled(self):
         doc = _base({
