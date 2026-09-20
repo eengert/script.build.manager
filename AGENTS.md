@@ -143,6 +143,34 @@ Follow the checkpoint procedure proven on Backup Pro
 4. Update `.agent/HANDOFF.md` (and the usage row, if a reading is available).
 5. Exit normally.
 
+## Antigravity-Specific Notes
+
+### Usage source
+
+Antigravity usage is read-only and queried via CodexBar.
+
+Authoritative command:
+```bash
+/usr/local/bin/codexbar usage --provider antigravity --source auto --format json --pretty --no-color
+```
+
+Or via the project helper:
+```bash
+tools/antigravity-usage          # normalized JSON
+tools/antigravity-usage --human  # human-readable summary
+```
+
+Important rules:
+- **Preserve distinct allowance pools**: Antigravity exposes separate model-family
+  allowance pools (e.g. Gemini weekly vs. Claude/GPT weekly in `extraRateWindows`).
+  Never collapse or flatten them together.
+- **Never fabricate values**: If CodexBar fails or fields are missing, report
+  `unavailable` with a sanitized reason.
+- **Calculate remaining percentage** only as: `remaining = 100 - usedPercent`.
+- **Capture start and end snapshots** for every substantive Antigravity task.
+- Record agent (`antigravity`), observed model, effort, task ID, type, and
+  difficulty in `.agent/USAGE_HISTORY.md`.
+
 ## Codex-Specific Notes
 
 Per §32 of `BUILD_MANAGER_PROJECT_PLAN.md`, this file is the Codex instruction

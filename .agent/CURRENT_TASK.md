@@ -1,9 +1,20 @@
 # Current Task
 
-## BM-018D — typed skin-setting configuration integrated
+## WF-002 — Antigravity usage reporting via CodexBar integrated
 
 **Status**: Complete, supervisor-approved, and integrated on `matrix`;
-`matrix` is neutral and awaits the next supervisor assignment.
+`matrix` remains neutral and awaits the next assignment.
+
+Integrated workflow commit: `fcc7caa` (cherry-picked with provenance).
+
+WF-002 adds the read-only `tools/antigravity-usage` helper, focused tests, and
+the Antigravity CodexBar usage guidance in `AGENTS.md`. The helper preserves
+distinct named Gemini and Claude/GPT pools, account/source/login metadata when
+available, and sanitized bounded failure results.
+
+Focused tests: 11/11 passing. The live helper smoke test was attempted
+read-only; the current CodexBar invocation timed out and the helper returned
+the sanitized unavailable result without exposing stderr or private data.
 
 Integrated substantive commits:
 

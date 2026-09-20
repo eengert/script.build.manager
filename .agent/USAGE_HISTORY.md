@@ -20,6 +20,9 @@ See `AGENTS.md` §"Usage Tracking" for the shared rules, `CLAUDE.md`
   `mcp__ccd_session_mgmt__get_session` and are recorded as reported.
 - Codex rows: no usage source exists today, so Start/End/Delta are
   `unavailable`. The remaining columns are still recorded.
+- Antigravity rows: usage is read-only via CodexBar (`tools/antigravity-usage`),
+  preserving distinct rate windows (Gemini weekly, Claude/GPT weekly). Recorded
+  as percent used.
 - Model/effort terminology stays in each agent's own namespace. Claude uses
   Sonnet/Opus with Claude Code's `effort` value; Codex uses Luna/Sol/Astra
   with Codex effort names. Never translate between them.
@@ -73,3 +76,4 @@ See `AGENTS.md` §"Usage Tracking" for the shared rules, `CLAUDE.md`
 | BM-018A-safety-correction | codex | Luna | Medium | safety-correction | low | unavailable | unavailable | unavailable | clean | Added pre-existing yesnodialog guard before lookandfeel.skin mutation; 106 focused and 1398 full tests passing. |
 | BM-018C | codex | Luna | High | research/classification | hard | unavailable | unavailable | unavailable | clean | Supervisor-approved AF3 3.2.19 portability inventory complete: 280 observed skin settings; reviewed typed bool/string targets only for initial af3-common specification; zero whole-file targets; menu/widget source deferred from common; generated/runtime excluded; private/auth state deferred to BM-017; 1412/1412 full suite; real Kodi profile read-only; BM-018D not started. |
 | BM-018D | codex | Luna | High | typed-skin-config/validation | hard | unavailable | unavailable | unavailable | clean | Generic typed skin-setting support complete; disposable AF3 live gate 17/17; full suite 1438/1438. Dependency closure installed/enabled/not broken; first-run generated-state bootstrap is disposable-only; pristine first-ever AF3 provisioning not claimed. Real Kodi profile read-only; BM-018E, BM-017, BM-019, and BM-020 not started. |
+| WF-002 | antigravity | Gemini 3.8 Flash | Medium | tooling/workflow | easy | Gem: 32.53% / 3p: 25.42% | Gem: 42.96% / 3p: 25.42% | Gem: +10.43% / 3p: ~0% | clean | Added tools/antigravity-usage helper and tests/test_antigravity_usage.py (11/11 tests). Read-only CodexBar integration preserving distinct Gemini and Claude/GPT weekly pools. Updated AGENTS.md. Live smoke test matched raw codexbar command. |
