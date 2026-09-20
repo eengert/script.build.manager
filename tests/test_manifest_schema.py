@@ -446,6 +446,25 @@ class TestEricMainExample(unittest.TestCase):
         skin = self.doc.get("skin", {})
         self.assertEqual(skin.get("addon_id"), "skin.arctic.fuse.3")
 
+    def test_shipped_executable_examples_select_existing_packages(self):
+        examples_dir = os.path.join(REPO_ROOT, "resources", "builds", "examples")
+        packages_root = os.path.join(REPO_ROOT, "resources", "config", "packages")
+        for filename in sorted(os.listdir(examples_dir)):
+            if not filename.endswith(".example.json"):
+                continue
+            with self.subTest(example=filename):
+                with open(os.path.join(examples_dir, filename), encoding="utf-8") as handle:
+                    document = json.load(handle)
+                package_ids = document.get("config", {}).get("packages", [])
+                skin = document.get("skin", {})
+                package_ids = list(package_ids) + list(skin.get("config_packages", []))
+                for package_id in package_ids:
+                    package_path = os.path.join(packages_root, package_id)
+                    self.assertTrue(
+                        os.path.isfile(os.path.join(package_path, "package.json")),
+                        f"{filename} selects unavailable package {package_id!r}",
+                    )
+
     def test_eric_main_has_platform_profiles(self):
         pp = self.doc.get("platform_profiles", {})
         self.assertIn("tvos", pp)

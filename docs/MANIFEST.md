@@ -283,12 +283,8 @@ Manager does not manage skin selection.
 
 ```json
 "config": {
-  "packages": ["af3-common", "redlight-common"],
+  "packages": ["af3-common"],
   "managed_settings": [
-    {
-      "addon_id": "plugin.video.redlight",
-      "keys": ["server_url", "playback_quality"]
-    },
     {
       "target": "skin",
       "addon_id": "skin.arctic.fuse.3",

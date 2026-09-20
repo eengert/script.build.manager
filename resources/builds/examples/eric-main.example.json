@@ -27,12 +27,8 @@
     "config_packages": ["af3-common"]
   },
   "config": {
-    "packages": ["af3-common", "redlight-common"],
+    "packages": ["af3-common"],
     "managed_settings": [
-      {
-        "addon_id": "plugin.video.redlight",
-        "keys": ["server_url", "playback_quality", "subtitle_language"]
-      },
       {
         "target": "skin",
         "addon_id": "skin.arctic.fuse.3",

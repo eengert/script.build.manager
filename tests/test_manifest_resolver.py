@@ -890,7 +890,7 @@ class TestEricMain(unittest.TestCase):
         r = resolve_manifest(self.manifest, "shield")
         self.assertIsNotNone(r.config)
         self.assertIn("af3-common", r.config.packages)
-        self.assertIn("redlight-common", r.config.packages)
+        self.assertEqual(r.config.packages, ("af3-common",))
 
 
 # ---------------------------------------------------------------------------
