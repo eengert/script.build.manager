@@ -482,14 +482,22 @@ The closure check records installed, enabled, broken, and version status for
 AF3 plus every transitive dependency. The adapter also handles Kodi's mixed
 skin-setting key namespace: canonical AF3 `HomeSwitcher.*` identifiers fall
 back to their lowercase stored IDs only when Kodi returns invalid parameters;
-mixed-case IDs that Kodi accepts remain unchanged.
+mixed-case IDs that Kodi accepts remain unchanged. When both typed lookups
+return Kodi's `-32602 Invalid params`, the adapter checks the active skin's
+persisted XML only for the requested key/type, then reads effective values via
+`Skin.HasSetting` or `Skin.String` and writes via safe `Skin.Set*`/`Skin.Reset`
+builtins. Successful typed JSON-RPC writes also use the builtin path because
+Kodi's JSON-RPC skin setter does not schedule the persisted skin XML save.
+Persistence is verified with a bounded poll; the XML is never the effective
+runtime state backend.
 
 The command requires `/Applications/Kodi.app`, uses Kodi JSON-RPC port 8920,
 and can require local-process/network permission in a sandboxed environment.
 The live runner uses a synthetic two-setting package to keep the runtime gate
-focused on the BM-018D backend. BM-018E separately validates the production
-`af3-common` descriptor and its complete 16-setting ownership through the unit
-suite; it does not copy the real profile into the disposable harness.
+focused on the BM-018D backend. The checked-in `validate-af3-package` command
+separately resolves and applies the production `af3-common` descriptor and
+all 16 owned targets in the same disposable environment; it does not copy the
+real profile into the disposable harness.
 
 ### Out of scope for BM-009 through BM-018D
 

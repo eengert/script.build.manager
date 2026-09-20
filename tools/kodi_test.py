@@ -3854,6 +3854,21 @@ def main():
             payload = _run_external_skin_write(config, job)
         elif job.get("mode") == "observe":
             payload = _run_observe(config, job)
+        elif job.get("mode") == "bootstrap_skin_schema":
+            import xbmc
+            commands = (
+                "Skin.SetBool(View.UseDetailedListLabels)",
+                "Skin.SetBool(Widgets.EnableShowMore)",
+                "Skin.SetBool(Widgets.DisableNoResultsItem)",
+                "Skin.Reset(Widgets.DisableNoResultsItem)",
+                "Skin.SetString(Navigation.OnBack,Previous)",
+            )
+            for command in commands:
+                try:
+                    xbmc.executebuiltin(command, True)
+                except TypeError:
+                    xbmc.executebuiltin(command)
+            payload = {"written": list(commands)}
         else:
             payload = _run_apply(config, manifest, job)
         payload["ok"] = True
@@ -4808,6 +4823,52 @@ def _bm018d_warm_af3_runtime() -> None:
         returned = _bm018d_activate("skin.estuary")
         if returned.get("status") != "activated":
             raise RuntimeError(f"could not return disposable Kodi to Estuary: {returned}")
+
+    # Four AF3 settings are real Skin.* variables but are not present in
+    # Kodi's typed m_settings map on a pristine profile. Exercise their
+    # runtime paths once while AF3 is active so Kodi emits typed entries in
+    # the disposable settings.xml. The production adapter still uses that
+    # file only as a key/type eligibility guard; effective values continue to
+    # come from Skin.HasSetting/Skin.String.
+    bootstrap = _bm018d_activate(_BM018D_SKIN_ID)
+    if bootstrap.get("status") not in ("activated", "already_active"):
+        raise RuntimeError(f"could not activate AF3 for fallback bootstrap: {bootstrap}")
+    bootstrap_result = _bm018d_run_job({"mode": "bootstrap_skin_schema"})
+    if not bootstrap_result.get("ok"):
+        raise RuntimeError(
+            "AF3 fallback schema bootstrap failed: "
+            f"{bootstrap_result.get('error_type')}: {bootstrap_result.get('error')}"
+        )
+    deadline = time.time() + 5.0
+    fallback_ids = {
+        "view.usedetailedlistlabels": "bool",
+        "widgets.enableshowmore": "bool",
+        "widgets.disablenoresultsitem": "bool",
+        "navigation.onback": "string",
+    }
+    settings_path = (
+        KODI_USERDATA_DIR / "addon_data" / _BM018D_SKIN_ID / "settings.xml"
+    )
+    while True:
+        try:
+            root = ET.parse(settings_path).getroot()
+            observed = {
+                (node.get("id") or node.get("name", "")).casefold(): node.get("type")
+                for node in root.findall("setting")
+            }
+            if all(observed.get(key) == kind for key, kind in fallback_ids.items()):
+                break
+        except (ET.ParseError, OSError):
+            pass
+        if time.time() >= deadline:
+            raise RuntimeError(
+                "AF3 fallback schema bootstrap did not persist all typed entries"
+            )
+        time.sleep(0.1)
+    returned = _bm018d_activate("skin.estuary")
+    if returned.get("status") != "activated":
+        raise RuntimeError(f"could not return disposable Kodi to Estuary: {returned}")
+    print("  AF3 fallback Skin.* schema entries persisted in disposable profile ✓")
 
 
 def _bm018d_install_runner() -> None:

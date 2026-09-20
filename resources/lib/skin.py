@@ -9,7 +9,9 @@ only after both the persisted setting and loaded skin are verified.
 from __future__ import annotations
 
 import json
+import re
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
@@ -21,6 +23,18 @@ class SkinError(Exception):
 
 class SkinValidationError(SkinError):
     """The requested skin add-on ID is malformed."""
+
+
+class _SkinRpcError(SkinError):
+    """A Kodi JSON-RPC error with its machine-readable code preserved."""
+
+    def __init__(self, message: str, *, code=None):
+        super().__init__(message)
+        self.code = code
+
+
+class _SkinSettingUnavailable(_SkinRpcError):
+    """Canonical and normalized typed skin-setting lookups were both absent."""
 
 
 class SkinStatus(str, Enum):
@@ -392,6 +406,11 @@ class KodiRuntimeSkinSettingsBackend:
     """
 
     _SUPPORTED_TYPES = frozenset(("bool", "string"))
+    _NOT_FOUND = -32602
+    _SAFE_SETTING_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
+    _SAFE_STRING_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+ -]{0,255}$")
+    _PERSISTENCE_TIMEOUT = 3.0
+    _PERSISTENCE_INTERVAL = 0.1
 
     @staticmethod
     def _setting_type_name(setting_type) -> str:
@@ -412,6 +431,15 @@ class KodiRuntimeSkinSettingsBackend:
                 f"Kodi runtime module (xbmc) is not available: {exc}"
             ) from exc
 
+    def _xbmcvfs(self):
+        try:
+            import xbmcvfs  # noqa: PLC0415
+            return xbmcvfs
+        except ImportError as exc:
+            raise SkinError(
+                f"Kodi runtime module (xbmcvfs) is not available: {exc}"
+            ) from exc
+
     def _rpc(self, method: str, params: dict):
         xbmc = self._xbmc()
         request = json.dumps({
@@ -424,7 +452,13 @@ class KodiRuntimeSkinSettingsBackend:
         if not isinstance(response, dict):
             raise SkinError(f"{method} returned malformed response: {response!r}")
         if "error" in response:
-            raise SkinError(f"{method} JSON-RPC error: {response['error']!r}")
+            error = response["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            message = error.get("message", "unknown error") if isinstance(error, dict) else "unknown error"
+            raise _SkinRpcError(
+                f"{method} JSON-RPC error code {code!r}: {message}",
+                code=code,
+            )
         if "result" not in response:
             raise SkinError(f"{method} response lacks result: {response!r}")
         return response["result"]
@@ -449,30 +483,145 @@ class KodiRuntimeSkinSettingsBackend:
         request = {"setting": key, **params}
         try:
             return self._rpc(method, request)
-        except SkinError as exc:
+        except _SkinRpcError as exc:
             lower = key.lower()
-            if lower == key or "-32602" not in str(exc):
+            if lower == key or exc.code != self._NOT_FOUND:
                 raise
-            return self._rpc(method, {"setting": lower, **params})
+            try:
+                return self._rpc(method, {"setting": lower, **params})
+            except _SkinRpcError as lower_exc:
+                if lower_exc.code == self._NOT_FOUND:
+                    raise _SkinSettingUnavailable(
+                        f"{method} rejected both canonical and normalized "
+                        f"skin-setting IDs for {key!r}",
+                        code=self._NOT_FOUND,
+                    ) from lower_exc
+                raise
 
-    def get_setting(self, addon_id: str, key: str, setting_type) -> object:
-        kind = self._setting_type_name(setting_type)
-        self._require_active(addon_id)
-        result = self._setting_rpc("Settings.GetSkinSettingValue", key)
+    @classmethod
+    def _validate_fallback_id(cls, addon_id: str, key: str) -> None:
+        if not isinstance(addon_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", addon_id
+        ):
+            raise SkinError("skin fallback rejected an unsafe add-on ID")
+        if not isinstance(key, str) or not cls._SAFE_SETTING_ID.fullmatch(key):
+            raise SkinError("skin fallback rejected an unsafe setting ID")
+
+    def _persisted_value(self, addon_id: str, key: str, kind: str) -> object:
+        """Read one XML entry for eligibility or persistence verification only."""
+        self._validate_fallback_id(addon_id, key)
+        path = f"special://profile/addon_data/{addon_id}/settings.xml"
+        xbmcvfs = self._xbmcvfs()
+        try:
+            handle = xbmcvfs.File(path)
+            try:
+                raw = handle.read()
+            finally:
+                handle.close()
+        except Exception as exc:
+            raise SkinError("skin setting eligibility XML is unavailable") from exc
+        if not isinstance(raw, (str, bytes)):
+            raise SkinError("skin setting eligibility XML returned invalid data")
+        try:
+            root = ET.fromstring(raw)
+        except (ET.ParseError, TypeError, ValueError) as exc:
+            raise SkinError("skin setting eligibility XML is malformed") from exc
+        if root.tag != "settings":
+            raise SkinError("skin setting eligibility XML has an invalid root")
+
+        wanted = key.casefold()
+        for element in root.findall("setting"):
+            element_id = element.get("id") or element.get("name")
+            if not isinstance(element_id, str) or element_id.casefold() != wanted:
+                continue
+            stored_type = element.get("type")
+            if stored_type != kind:
+                raise SkinError(
+                    f"skin setting {addon_id}/{key} has an incompatible persisted type"
+                )
+            text = element.text or ""
+            if kind == "bool":
+                if text.casefold() == "true":
+                    return True
+                if text.casefold() == "false" or not text.strip():
+                    return False
+                raise SkinError(
+                    f"skin setting {addon_id}/{key} has an invalid persisted bool"
+                )
+            return text
+        raise SkinError(
+            f"skin setting {addon_id}/{key} is not declared in persisted skin settings"
+        )
+
+    def _fallback_read(self, addon_id: str, key: str, kind: str) -> object:
+        self._persisted_value(addon_id, key, kind)
+        xbmc = self._xbmc()
+        if kind == "bool":
+            value = xbmc.getCondVisibility(f"Skin.HasSetting({key})")
+            if not isinstance(value, (bool, int)):
+                raise SkinError("Kodi returned a malformed effective skin bool")
+            return bool(value)
+        value = xbmc.getInfoLabel(f"Skin.String({key})")
+        if not isinstance(value, str):
+            raise SkinError("Kodi returned a malformed effective skin string")
+        return value
+
+    def _builtin_for_value(self, key: str, kind: str, value: object) -> str:
+        self._validate_fallback_id("skin", key)
+        if kind == "bool":
+            return f"Skin.SetBool({key})" if value else f"Skin.Reset({key})"
+        if value == "":
+            return f"Skin.Reset({key})"
+        if not isinstance(value, str) or not self._SAFE_STRING_VALUE.fullmatch(value):
+            raise SkinError("skin fallback rejected an unsafe string value")
+        return f"Skin.SetString({key},{value})"
+
+    def _execute_builtin(self, command: str) -> None:
+        xbmc = self._xbmc()
+        try:
+            try:
+                xbmc.executebuiltin(command, True)
+            except TypeError:
+                xbmc.executebuiltin(command)
+        except Exception as exc:
+            raise SkinError("Kodi rejected the skin fallback builtin") from exc
+
+    def _decode_value(self, addon_id: str, key: str, kind: str, result) -> object:
         if not isinstance(result, dict) or "value" not in result:
             raise SkinError(
                 f"Settings.GetSkinSettingValue returned malformed result: {result!r}"
             )
         value = result["value"]
         if kind == "bool" and not isinstance(value, bool):
-            raise SkinError(
-                f"skin setting {addon_id}/{key} returned non-bool value"
-            )
+            raise SkinError(f"skin setting {addon_id}/{key} returned non-bool value")
         if kind == "string" and not isinstance(value, str):
-            raise SkinError(
-                f"skin setting {addon_id}/{key} returned non-string value"
-            )
+            raise SkinError(f"skin setting {addon_id}/{key} returned non-string value")
         return value
+
+    def _wait_for_persistence(
+        self, addon_id: str, key: str, kind: str, expected: object
+    ) -> None:
+        deadline = time.monotonic() + self._PERSISTENCE_TIMEOUT
+        while True:
+            try:
+                if self._persisted_value(addon_id, key, kind) == expected:
+                    return
+            except SkinError:
+                pass
+            if time.monotonic() >= deadline:
+                raise SkinError(
+                    f"skin setting {addon_id}/{key} persistence was not verified"
+                )
+            time.sleep(self._PERSISTENCE_INTERVAL)
+
+    def get_setting(self, addon_id: str, key: str, setting_type) -> object:
+        kind = self._setting_type_name(setting_type)
+        self._require_active(addon_id)
+        try:
+            result = self._setting_rpc("Settings.GetSkinSettingValue", key)
+        except _SkinSettingUnavailable:
+            return self._fallback_read(addon_id, key, kind)
+        return self._decode_value(addon_id, key, kind, result)
 
     def set_setting(self, addon_id: str, key: str, setting_type, value: object) -> None:
         kind = self._setting_type_name(setting_type)
@@ -481,9 +630,26 @@ class KodiRuntimeSkinSettingsBackend:
         if kind == "string" and not isinstance(value, str):
             raise SkinError("skin string targets require a string value")
         self._require_active(addon_id)
-        result = self._setting_rpc(
-            "Settings.SetSkinSettingValue", key, value=value,
-        )
+        try:
+            result = self._setting_rpc(
+                "Settings.SetSkinSettingValue", key, value=value,
+            )
+        except _SkinSettingUnavailable:
+            self._persisted_value(addon_id, key, kind)
+            self._execute_builtin(self._builtin_for_value(key, kind, value))
+            try:
+                verified = self._decode_value(
+                    addon_id, key, kind,
+                    self._setting_rpc("Settings.GetSkinSettingValue", key),
+                )
+            except _SkinSettingUnavailable:
+                verified = self._fallback_read(addon_id, key, kind)
+            if verified != value:
+                raise SkinError(
+                    f"skin setting {addon_id}/{key} fallback read-back mismatched"
+                )
+            self._wait_for_persistence(addon_id, key, kind, value)
+            return
         successful = (
             result is True
             or result == "OK"
@@ -494,3 +660,20 @@ class KodiRuntimeSkinSettingsBackend:
                 "Settings.SetSkinSettingValue returned a non-success result: "
                 f"{result!r}"
             )
+        # Kodi's JSON-RPC skin setter updates the in-memory CSkinSetting but
+        # does not trigger CSkinSettingUpdateHandler::TriggerSave().  Use the
+        # proven builtin path to schedule the persisted XML write even when
+        # the typed setter itself reports success.
+        self._execute_builtin(self._builtin_for_value(key, kind, value))
+        try:
+            verified = self._decode_value(
+                addon_id, key, kind,
+                self._setting_rpc("Settings.GetSkinSettingValue", key),
+            )
+        except _SkinSettingUnavailable:
+            verified = self._fallback_read(addon_id, key, kind)
+        if verified != value:
+            raise SkinError(
+                f"skin setting {addon_id}/{key} typed read-back mismatched"
+            )
+        self._wait_for_persistence(addon_id, key, kind, value)

@@ -254,12 +254,32 @@ class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
         xbmc.executeJSONRPC.side_effect = [json.dumps(value) for value in responses]
         return KodiRuntimeSkinSettingsBackend(), xbmc
 
+    @staticmethod
+    def _vfs(xml):
+        xbmcvfs = MagicMock()
+        handle = MagicMock()
+        handle.read.return_value = xml
+        xbmcvfs.File.return_value = handle
+        return xbmcvfs
+
+    @staticmethod
+    def _missing():
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32602, "message": "Invalid params."},
+            "id": 1,
+        }
+
     def test_bool_read_and_write_use_skin_jsonrpc_namespace(self):
         backend, xbmc = self._backend([
             {"jsonrpc": "2.0", "result": {"value": False}, "id": 1},
             {"jsonrpc": "2.0", "result": True, "id": 1},
+            {"jsonrpc": "2.0", "result": {"value": True}, "id": 1},
         ])
-        with patch.dict(sys.modules, {"xbmc": xbmc}):
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"feature\" type=\"bool\">true</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
             self.assertFalse(backend.get_setting("skin.foo", "feature", "bool"))
             backend.set_setting("skin.foo", "feature", "bool", True)
         requests = [json.loads(call.args[0]) for call in xbmc.executeJSONRPC.call_args_list]
@@ -267,13 +287,19 @@ class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
         self.assertEqual(requests[0]["params"], {"setting": "feature"})
         self.assertEqual(requests[1]["method"], "Settings.SetSkinSettingValue")
         self.assertEqual(requests[1]["params"], {"setting": "feature", "value": True})
+        xbmc.executebuiltin.assert_called_once_with("Skin.SetBool(feature)", True)
 
     def test_string_write_accepts_kodis_written_value_response(self):
         backend, xbmc = self._backend([
             {"jsonrpc": "2.0", "result": "Standard", "id": 1},
+            {"jsonrpc": "2.0", "result": {"value": "Standard"}, "id": 1},
         ])
-        with patch.dict(sys.modules, {"xbmc": xbmc}):
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"mode\" type=\"string\">Standard</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
             backend.set_setting("skin.foo", "mode", "string", "Standard")
+        xbmc.executebuiltin.assert_called_once_with("Skin.SetString(mode,Standard)", True)
 
     def test_af3_setting_falls_back_to_kodi_lowercase_id(self):
         backend, xbmc = self._backend([
@@ -287,6 +313,137 @@ class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
         requests = [json.loads(call.args[0]) for call in xbmc.executeJSONRPC.call_args_list]
         self.assertEqual(requests[0]["params"], {"setting": "HomeSwitcher.EnableIcons"})
         self.assertEqual(requests[1]["params"], {"setting": "homeswitcher.enableicons"})
+
+    def test_double_invalid_params_falls_back_to_effective_bool(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmc.getCondVisibility.return_value = True
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"view.usedetailedlistlabels\" "
+            "type=\"bool\">true</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            self.assertTrue(
+                backend.get_setting(
+                    "skin.foo", "View.UseDetailedListLabels", "bool"
+                )
+            )
+        xbmc.getCondVisibility.assert_called_once_with(
+            "Skin.HasSetting(View.UseDetailedListLabels)"
+        )
+
+    def test_double_invalid_params_falls_back_to_effective_string(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmc.getInfoLabel.return_value = "Previous"
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"navigation.onback\" "
+            "type=\"string\">Previous</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            self.assertEqual(
+                backend.get_setting("skin.foo", "Navigation.OnBack", "string"),
+                "Previous",
+            )
+        xbmc.getInfoLabel.assert_called_once_with(
+            "Skin.String(Navigation.OnBack)"
+        )
+
+    def test_fallback_rejects_unknown_setting(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"other.setting\" "
+            "type=\"bool\">false</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            with self.assertRaises(SkinError):
+                backend.get_setting("skin.foo", "Unknown.Setting", "bool")
+        xbmc.getCondVisibility.assert_not_called()
+
+    def test_fallback_rejects_xml_type_mismatch(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"view.usedetailedlistlabels\" "
+            "type=\"string\">true</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            with self.assertRaises(SkinError):
+                backend.get_setting(
+                    "skin.foo", "View.UseDetailedListLabels", "bool"
+                )
+        xbmc.getCondVisibility.assert_not_called()
+
+    def test_fallback_rejects_malformed_xml(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmcvfs = self._vfs("<settings>")
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            with self.assertRaises(SkinError):
+                backend.get_setting("skin.foo", "View.UseDetailedListLabels", "bool")
+
+    def test_unrelated_jsonrpc_error_never_invokes_fallback(self):
+        backend, xbmc = self._backend([{
+            "jsonrpc": "2.0",
+            "error": {"code": -1, "message": "offline"},
+            "id": 1,
+        }])
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"view.usedetailedlistlabels\" "
+            "type=\"bool\">true</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            with self.assertRaises(SkinError):
+                backend.get_setting(
+                    "skin.foo", "View.UseDetailedListLabels", "bool"
+                )
+        xbmcvfs.File.assert_not_called()
+        xbmc.getCondVisibility.assert_not_called()
+
+    def test_fallback_write_bool_uses_builtin_and_strict_readback(self):
+        backend, xbmc = self._backend([
+            self._missing(), self._missing(),
+            self._missing(), self._missing(),
+        ])
+        xbmc.getCondVisibility.return_value = True
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"view.usedetailedlistlabels\" "
+            "type=\"bool\">true</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            backend.set_setting(
+                "skin.foo", "View.UseDetailedListLabels", "bool", True
+            )
+        xbmc.executebuiltin.assert_called_once_with(
+            "Skin.SetBool(View.UseDetailedListLabels)", True
+        )
+
+    def test_fallback_write_string_empty_to_nonempty_is_safe(self):
+        backend, xbmc = self._backend([
+            self._missing(), self._missing(),
+            self._missing(), self._missing(),
+        ])
+        xbmc.getInfoLabel.return_value = "Previous"
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"navigation.onback\" "
+            "type=\"string\">Previous</setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            backend.set_setting(
+                "skin.foo", "Navigation.OnBack", "string", "Previous"
+            )
+        xbmc.executebuiltin.assert_called_once_with(
+            "Skin.SetString(Navigation.OnBack,Previous)", True
+        )
+
+    def test_fallback_rejects_unsafe_builtin_value(self):
+        backend, xbmc = self._backend([self._missing(), self._missing()])
+        xbmcvfs = self._vfs(
+            "<settings><setting id=\"navigation.onback\" "
+            "type=\"string\"></setting></settings>"
+        )
+        with patch.dict(sys.modules, {"xbmc": xbmc, "xbmcvfs": xbmcvfs}):
+            with self.assertRaises(SkinError):
+                backend.set_setting(
+                    "skin.foo", "Navigation.OnBack", "string", "Previous,evil"
+                )
+        xbmc.executebuiltin.assert_not_called()
 
     def test_string_read_is_typed_and_wrong_active_skin_fails_before_rpc(self):
         backend, xbmc = self._backend([
