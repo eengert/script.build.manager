@@ -2,36 +2,30 @@
 
 ## Status
 
-Codex remains the active worker on `agent/codex`, based on protected matrix
-`e2458d4f977e09769b01d8e8a82635497b913546`. BM-020A implementation is complete
-on the worker, but its required disposable production-executor gate is blocked
-in preflight and has not been integrated to matrix. The external Agent Handoff
-pointer was not changed.
+BM-020A remains blocked from matrix integration on `agent/codex`. The external
+Agent Handoff pointer was not changed. Matrix remains
+`e2458d4f977e09769b01d8e8a82635497b913546`.
 
-BM-020A implementation commits are `1e29c23` and `213c9c0`. BM-020A adds the stable
-`BuildManager.reconcile()` orchestration boundary and
-typed `ReconcileRequest`, `ReconcileResult`, phase failures, ordered action
-results, deterministic desired-state fingerprints, and aggregated BM-019
-restart reports. It delegates to the existing manifest loader/resolver,
-inspector, planner, dependency-aware installer, repository manager,
-addon-state reconciler, skin activator, configuration manager, and BM-014
-validator. The executor does not restart Kodi, persist transactions, resume
-after restart, manage session identity, or acquire a process-wide lock.
+The approved executable-example correction is committed as `0b05cdb`:
+`eric-main.example.json` now selects only the existing supported `af3-common`
+package and no longer declares unsupported Red Light setting ownership.
+`redlight-common` was not created; Red Light portability remains deferred under
+BM-016. A general test protects shipped executable examples from selecting a
+package without `package.json`, while existing missing-package loader coverage
+continues to fail closed.
 
-BM-020A1 contracts remain intact: only `enabled`/`disabled` are managed,
-omission is unmanaged, `absent`/`ENSURE_ABSENT` are rejected, dependency
-ownership remains per install operation, explicit disabled required-dependency
-conflicts fail before mutation, and nested BM-019 restart results propagate.
+Disposable evidence from fresh profiles:
 
-Added `validate-build-manager`, which invokes the real production
-`BuildManager.reconcile()` inside disposable Kodi with the exact installed
-`eric-main.example.json` / `family-room` request. The gate reached the
-executor and returned structured `PREFLIGHT_FAILED` before planning or
-mutation because `redlight-common` is absent from the installed package tree.
-That package is intentionally unavailable under the deferred BM-016 Red Light
-portability boundary; no fake package or reduced manifest was introduced.
-Harness/relevant focused tests passed 1173/1173 and the full suite passed
-1468/1468; `git diff --check` passed. The real Kodi profile was not accessed,
-Apple TV and all devices remained untouched. BM-020B/C and BM-017 were not
-started. Next step: supervisor decision on the package boundary; do not
-integrate to matrix.
+- The first rerun failed at preflight because the removed Red Light ownership
+  declarations were unresolved; the example correction removed that blocker.
+- The second rerun reached the real BuildManager planner and reported owners
+  for `INSTALL_REPOSITORY`, `INSTALL_ADDON`, `SET_SKIN`, and `CONFIGURE`, but
+  stopped at the first repository action because the checked-in
+  `https://example.invalid/repository.eengert-1.0.0.zip` cannot resolve.
+  This is a separate executable-example bootstrap blocker; no production
+  bypass was added and no successful AF3 action occurred.
+
+Focused tests passed 384/384 and the full suite passed 1469/1469.
+`git diff --check` passed. BM-020B/C and BM-017 remain unstarted. The real
+Kodi profile, Apple TV, and all devices remained untouched. Next step requires
+separate supervisor direction on the executable repository bootstrap.

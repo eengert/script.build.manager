@@ -2,8 +2,8 @@
   "active_agent": "codex",
   "status": "blocked",
   "task": "BM-020A",
-  "reason": "BM-020A implementation is complete on agent/codex, but its disposable executor gate is blocked in preflight because authoritative family-room selects unavailable redlight-common. Do not integrate; BM-020B/C and BM-017 remain deferred.",
-  "last_commit": "2a52c6a",
+  "reason": "BM-020A remains blocked in disposable execution: the corrected example reaches the repository owner, which cannot resolve its intentional example.invalid bootstrap URL. Red Light remains deferred; do not integrate. BM-020B/C and BM-017 remain deferred.",
+  "last_commit": "0b05cdb0530f27af2a62e0708995acabd13b4dbb",
   "matrix_sha": "e2458d4f977e09769b01d8e8a82635497b913546",
   "next_agent": "human",
   "updated_at": "2026-09-20"

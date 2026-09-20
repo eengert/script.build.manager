@@ -2,33 +2,30 @@
 
 ## BM-020A production reconciliation executor
 
-**Status**: BM-020A implementation is complete on `agent/codex`, but the
-required disposable production-executor gate is blocked in preflight and BM-020A
-is not ready for matrix integration. BM-020B and BM-020C have not started; no
-new milestone has begun.
+**Status**: BM-020A remains blocked from matrix integration. The executable
+example correction is complete, but the disposable gate now reaches the real
+repository owner and fails downloading the example's intentional
+`https://example.invalid/repository.eengert-1.0.0.zip` bootstrap URL. No
+production bypass or placeholder package was added.
 
 Current matrix: `e2458d4f977e09769b01d8e8a82635497b913546`.
 
-BM-020A adds `resources/lib/build_manager.py` as the callable production
-orchestration entrypoint. It accepts only a serializable manifest/device
-request; loads, inspects, resolves, preflights, plans, executes through the
-existing owners, validates read-only afterward, and returns ordered typed
-action results plus a BM-019 `RestartReport`. Desired-state fingerprints are
-canonical and exclude current state, private overlays, and raw configuration
-values. Unknown actions and phase/action failures fail closed; execution stops
-after the first failed action while preserving earlier results.
+Correction commit: `0b05cdb` removes `redlight-common` and unsupported Red
+Light managed-setting ownership from `eric-main.example.json`, keeps
+`af3-common`, updates the example documentation, and adds general shipped
+example package-existence coverage. Red Light portability remains deferred
+under BM-016; `redlight-common` is not created.
 
-BM-019, BM-018D, and BM-018E remain complete and integrated. BM-020A owns the
-production executor; BM-020B/C remain deferred. The existing BM-020A1
-enabled/disabled ownership and dependency-conflict contracts remain intact.
+Gate evidence:
 
-The new `validate-build-manager` command invoked the actual production
-`BuildManager.reconcile()` inside disposable Kodi using the installed
-`eric-main.example.json` and `family-room` request. It failed closed before
-planning or mutation with `PREFLIGHT_FAILED`: `redlight-common` is selected by
-the authoritative example but is intentionally unavailable because BM-016
-deferred Red Light portability. No fake package or reduced manifest was added.
-Harness/relevant focused tests passed 1173/1173; the full suite passed
-1468/1468. The real Kodi profile was not accessed, Apple TV and all devices
-remained untouched. Next step: supervisor decision on the deferred Red Light
-package boundary; do not integrate to matrix.
+- First rerun: the original Red Light preflight failure was eliminated.
+- Second rerun: real planner emitted production owners for repository,
+  dependency-aware add-on installation, skin activation, and configuration;
+  execution stopped at `INSTALL_REPOSITORY` because `example.invalid` does not
+  resolve. No successful action or AF3 application occurred.
+- Focused tests: 384/384. Full suite: 1469/1469. `git diff --check` passed.
+
+BM-019, BM-018D, and BM-018E remain complete and integrated. BM-020B/C and
+BM-017 have not started. The real Kodi profile, Apple TV, and all devices
+remained untouched. Next step requires a separately approved resolution for
+the executable repository bootstrap; do not integrate to matrix yet.
