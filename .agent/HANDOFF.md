@@ -1,5 +1,34 @@
 # Agent Handoff — WF-002 Antigravity usage reporting integrated
 
+## Current matrix state — BM-018D compatibility extension + BM-018E
+
+**Status**: Complete, supervisor-approved, and integrated on `matrix`.
+`active_agent = none`; no worker identity or Agent Handoff pointer was copied
+into the matrix state.
+
+Integrated substantive commit: `1c024e9` —
+`feat(BM-018E): integrate AF3 compatibility and package`.
+
+- The approved `af3-common` package contains exactly 16 reviewed bool/string
+  targets and `files: []`.
+- Generic Kodi skin-setting compatibility handles canonical-to-lowercase
+  access, guarded fallback after double `-32602`, safe Skin.* persistence,
+  strict typed/effective read-back, and bounded persistence verification.
+- XML remains eligibility/persistence evidence only; it is not the effective
+  runtime backend.
+- AF3 mutual-exclusion validation remains in the AF3-specific policy layer;
+  BM-018A confirmation behavior is unchanged.
+- BM-018D disposable validation passed 17/17; BM-018E production validation
+  passed 14/14; the AF3 dependency closure was 18/18 healthy; focused tests
+  passed 461/461; and the full suite passed 1463/1463.
+- The JSON-RPC setter persistence quirk is handled generically. AF3's
+  first-run generated-state bootstrap is disposable-only, so pristine
+  first-ever AF3 provisioning remains intentionally unclaimed.
+- The real Kodi profile remained read-only. No Apple TV or other device was
+  accessed. BM-017, BM-019, BM-020, and no next milestone were started.
+
+The existing WF-002 handoff record follows as historical integration context.
+
 **Status**: WF-002 is complete and supervisor-approved. The helper and tests
 are integrated on matrix; `active_agent = none` and matrix awaits the next
 assignment.

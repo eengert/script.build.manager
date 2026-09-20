@@ -1,6 +1,41 @@
 # Current Task
 
-## WF-002 — Antigravity usage reporting via CodexBar integrated
+## BM-018D compatibility extension + BM-018E — integrated
+
+**Status**: Complete, supervisor-approved, and integrated on `matrix`.
+`active_agent` is `none`; matrix remains neutral and awaits the next
+assignment.
+
+Substantive integration commit: `1c024e9`.
+
+The integrated work preserves the approved 16-setting `af3-common` package
+with `files: []`, explicit skin ownership, and the AF3-specific mutual-
+exclusion policy outside the generic backend. The generic skin backend now
+handles canonical/lowercase typed lookup, double-`-32602` fallback, safe
+`Skin.SetBool`/`Skin.SetString`/`Skin.Reset` persistence, strict effective
+read-back, and bounded persisted-state verification. XML is used only for
+fallback key/type eligibility and persistence verification, never as the
+effective state backend.
+
+BM-018D disposable validation passed 17/17. BM-018E's production AF3 gate
+passed 14/14 for all 16 settings, including authoritative read-back,
+idempotency, drift repair, ownership failure before mutation, restart
+persistence, and wrong-skin rejection. AF3's complete disposable dependency
+closure was 18/18 installed, enabled, and not broken. The first-run AF3
+generated-runtime bootstrap remains disposable-only; pristine first-ever AF3
+provisioning is not overstated as proven.
+
+Focused tests passed 461/461; the full suite passed 1463/1463; and
+`git diff --check` passed. The real Kodi profile remained read-only, with no
+Apple TV or other device access. BM-017, BM-019, BM-020, and any next
+milestone were not started. BM-019/BM-020 retain ownership of future
+restart aggregation/resume work.
+
+Next task awaits supervisor assignment.
+
+## Prior integrated task
+
+### WF-002 — Antigravity usage reporting via CodexBar integrated
 
 **Status**: Complete, supervisor-approved, and integrated on `matrix`;
 `matrix` remains neutral and awaits the next assignment.
@@ -38,7 +73,8 @@ exclusion policy remains isolated from the generic backend.
 - Full suite: 1438/1438 passing.
 - `git diff --check`: passing.
 - Real Kodi profile remained read-only; no Apple TV access occurred.
-- No production `af3-common` package was created.
-- BM-018E, BM-017, BM-019, and BM-020 were not started.
+- At that earlier WF-002 checkpoint, no production `af3-common` package had
+  yet been created.
+- At that checkpoint BM-018E, BM-017, BM-019, and BM-020 were not started.
 
 Next task awaits supervisor assignment.
