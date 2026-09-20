@@ -493,6 +493,7 @@ class TestCommandDispatch(unittest.TestCase):
                                                 "webserver_configured": False,
                                                 "log": "/l"}),
             "validate": make_noop("validate"),
+            "validate_af3_package": make_noop("validate_af3_package"),
         }
         if side_effects:
             patches.update(side_effects)
@@ -510,6 +511,11 @@ class TestCommandDispatch(unittest.TestCase):
         rc, called = self._run_cmd("install")
         self.assertEqual(rc, 0)
         self.assertIn("install", called)
+
+    def test_validate_af3_package_routes(self):
+        rc, called = self._run_cmd("validate-af3-package")
+        self.assertEqual(rc, 0)
+        self.assertIn("validate_af3_package", called)
 
     def test_configure_routes(self):
         rc, called = self._run_cmd("configure")

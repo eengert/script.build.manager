@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "af3-common",
+  "settings": [
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.Vertical","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.EnableIcons","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.EnableIconText","type":"bool","value":true},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.DisableHeader","type":"bool","value":true},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.DisableDate","type":"bool","value":true},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.DisableSearch","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.DisableFirstWidgetFocus","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"HomeSwitcher.LoopBack","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Spotlight.EnableSlide","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Spotlight.UseMenuButton","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"View.UseDetailedListLabels","type":"bool","value":true},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Widgets.EnableShowMore","type":"bool","value":true},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Widgets.DisableNoResultsItem","type":"bool","value":false},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Navigation.OnBack","type":"string","value":"Previous"},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Seekbar.TimeDisplay","type":"string","value":"Combined"},
+    {"target":"skin","addon_id":"skin.arctic.fuse.3","key":"Skin.FlixArt.Size","type":"string","value":"ExtraLarge"}
+  ],
+  "files": []
+}

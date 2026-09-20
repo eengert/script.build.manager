@@ -482,16 +482,28 @@ The closure check records installed, enabled, broken, and version status for
 AF3 plus every transitive dependency. The adapter also handles Kodi's mixed
 skin-setting key namespace: canonical AF3 `HomeSwitcher.*` identifiers fall
 back to their lowercase stored IDs only when Kodi returns invalid parameters;
-mixed-case IDs that Kodi accepts remain unchanged.
+mixed-case IDs that Kodi accepts remain unchanged. When both typed lookups
+return Kodi's `-32602 Invalid params`, the adapter checks the active skin's
+persisted XML only for the requested key/type, then reads effective values via
+`Skin.HasSetting` or `Skin.String` and writes via safe `Skin.Set*`/`Skin.Reset`
+builtins. Successful typed JSON-RPC writes also use the builtin path because
+Kodi's JSON-RPC skin setter does not schedule the persisted skin XML save.
+Persistence is verified with a bounded poll; the XML is never the effective
+runtime state backend.
 
 The command requires `/Applications/Kodi.app`, uses Kodi JSON-RPC port 8920,
 and can require local-process/network permission in a sandboxed environment.
-It does not create `af3-common`; the package is synthetic harness data only.
+The live runner uses a synthetic two-setting package to keep the runtime gate
+focused on the BM-018D backend. The checked-in `validate-af3-package` command
+separately resolves and applies the production `af3-common` descriptor and
+all 16 owned targets in the same disposable environment; it does not copy the
+real profile into the disposable harness.
 
 ### Out of scope for BM-009 through BM-018D
 
 - Add-on provisioning from the full planner action plan
-- Production AF3 provisioning package (`af3-common`) and whole-file skin state
+- Whole-file AF3 skin state and production AF3 provisioning beyond the reviewed
+  typed `af3-common` package
 - Authentication and credential portability (BM-017)
 - Remote or versioned configuration package delivery
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)

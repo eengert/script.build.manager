@@ -1,7 +1,9 @@
 # Arctic Fuse 3 Portability Inventory
 
-Status: BM-018C research specification. No AF3 configuration package is
-created by this task.
+Status: BM-018C research specification, with BM-018D/BM-018E typed-setting
+implementation and disposable validation recorded below. The approved
+`af3-common` package is now present on this worker branch; no whole-file AF3
+state is packaged.
 
 This document defines the evidence-backed boundary for a future
 `af3-common` package and identifies state that must remain in a platform or
@@ -17,7 +19,7 @@ version.
 
 | State | BM-018C decision |
 |---|---|
-| `addon_data/skin.arctic.fuse.3/settings.xml` | Do not manage as a whole file. Use typed setting targets after BM-018D adds a skin-settings backend. |
+| `addon_data/skin.arctic.fuse.3/settings.xml` | Do not manage as a whole file. Use typed setting targets through the BM-018D skin-settings backend; the backend reads this file only for fallback key/type eligibility and persistence verification. |
 | `addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/*.json` | Personal, non-secret source state. Exclude from `af3-common`; a later curated overlay may manage selected files after sanitization and lifecycle testing. |
 | `addon_data/script.skinvariables/*-viewtypes.json` | `GENERATED_RUNTIME`; exclude. AF3 rebuild behavior recreates it. |
 | `addon_data/script.skinvariables/logins/...` | `PRIVATE_OR_SECRET`; exclude. BM-017 owns authentication portability. |
@@ -347,21 +349,49 @@ that is not evidence that every AF3 installation should receive those
 mappings. A standard build may choose a curated mapping only after its add-on
 dependencies are declared and the generated output is verified.
 
-## Future package specification
+## Package specification
 
-### `af3-common`
+### `af3-common` (BM-018E)
 
-BM-018D should create `af3-common` only after a supervisor-approved value set
-exists. Its v1 contract is:
+BM-018E creates the initial supervisor-approved production package. Its v1
+contract is:
 
 ```text
 settings:
   target family: skin.arctic.fuse.3 typed skin settings
   allowed types: bool, string
-  allowed keys: the PUBLIC_PORTABLE table above, minus any key rejected by
-                value-specific or cross-setting validation
+  allowed keys: the 16 exact keys listed below
 files: []
 ```
+
+The package values are policy values, not a copy of Eric's live profile:
+
+| Key | Type | Value |
+|---|---|---|
+| `HomeSwitcher.Vertical` | bool | `false` |
+| `HomeSwitcher.EnableIcons` | bool | `false` |
+| `HomeSwitcher.EnableIconText` | bool | `true` |
+| `HomeSwitcher.DisableHeader` | bool | `true` |
+| `HomeSwitcher.DisableDate` | bool | `true` |
+| `HomeSwitcher.DisableSearch` | bool | `false` |
+| `HomeSwitcher.DisableFirstWidgetFocus` | bool | `false` |
+| `HomeSwitcher.LoopBack` | bool | `false` |
+| `Spotlight.EnableSlide` | bool | `false` |
+| `Spotlight.UseMenuButton` | bool | `false` |
+| `View.UseDetailedListLabels` | bool | `true` |
+| `Widgets.EnableShowMore` | bool | `true` |
+| `Widgets.DisableNoResultsItem` | bool | `false` |
+| `Navigation.OnBack` | string | `Previous` |
+| `Seekbar.TimeDisplay` | string | `Combined` |
+| `Skin.FlixArt.Size` | string | `ExtraLarge` |
+
+The following reviewed candidates remain intentionally unmanaged in
+`af3-common`: `OSD.AutoOnPause`, `OSD.AutoOnPause.Delay`, `Plotline.Movie`,
+`Plotline.TVShow`, `Mouse.PointerSize`, and `SeasonalTheme.PropsDensity`.
+They are preference-dependent, device/display-dependent, or otherwise not
+approved for the initial common policy. The existing AF3 cross-setting policy
+also keeps `HomeSwitcher.EnableIcons=true` and
+`HomeSwitcher.EnableIconText=true` mutually exclusive.
 
 The package must not contain:
 
@@ -378,7 +408,7 @@ The manifest declaration should use `skin.config_packages: ["af3-common"]`
 as already supported by BM-018B, plus `config.managed_settings` entries for
 every exact `("skin", "skin.arctic.fuse.3", key)` target supplied by the package. No
 undeclared setting may be silently accepted. The package values should be
-written as normal BM-015 typed values once BM-018D supplies the skin-settings
+written as normal BM-015 typed values through the BM-018D skin-settings
 backend and post-write verification.
 
 ### Future personal, platform and device overlays
@@ -407,7 +437,14 @@ BM-018D implements the typed target path without whole-file copying:
 1. A typed AF3 skin-setting backend that reads the active skin's bool/string
    map through `Settings.GetSkinSettingValue`, validates the requested skin ID,
    writes one owned key at a time through `Settings.SetSkinSettingValue`, and
-   reads each value back through the authoritative route.
+   reads each value back through the authoritative route. Kodi's JSON-RPC skin
+   setter does not schedule the skin XML save, so successful typed writes also
+   use the safe `Skin.SetBool`, `Skin.SetString`, or `Skin.Reset` runtime path
+   before bounded persisted-state verification. If both canonical and
+   lowercase typed lookups return `-32602`, fallback eligibility is guarded by
+   the active skin's persisted key/type entry and effective reads use only
+   `Skin.HasSetting`/`Skin.String`; the XML is never treated as effective
+   runtime state.
 2. Ownership declarations that distinguish an AF3 skin-setting target from a
    normal add-on setting while preserving BM-015's fail-closed package and
    manifest checks.
@@ -416,10 +453,11 @@ BM-018D implements the typed target path without whole-file copying:
    reviewed `HomeSwitcher.EnableIcons=true` plus
    `HomeSwitcher.EnableIconText=true` contradiction; broader allowlists remain
    future review work.
-4. A file overlay transaction for any future helper source: validate all JSON,
-   stage while AF3 is inactive, preserve rollback state, activate/reload,
-   rebuild through the helper's supported route, and verify live source and
-   generated fingerprints without managing the generated products.
+4. File overlays for future helper source remain deferred: any later design
+   must validate all JSON, stage while AF3 is inactive, preserve rollback
+   state, activate/reload, rebuild through the helper's supported route, and
+   verify live source and generated fingerprints without managing the generated
+   products.
 5. Disposable Kodi-profile harness coverage for a clean profile, AF3 active,
    AF3
    inactive, missing helper, missing referenced add-on, stale generated output,
@@ -427,10 +465,13 @@ BM-018D implements the typed target path without whole-file copying:
    persistence. Do not use Family Rm, Bonus Rm, or Apple TV profiles.
 
 The unit suite covers the completed typed path. The disposable harness reaches
-real Kodi and proves the Estuary precondition and AF3 source/dependency
-preparation, but the current local Kodi/AF3 combination repeatedly falls back
-to Estuary after the keep/revert cycle; therefore a full live BM-018D pass is
-not claimed until that environment-specific activation issue is resolved.
+real Kodi and proves the Estuary precondition, BM-018A confirmation lifecycle,
+AF3 source/dependency preparation, typed fallback, persistence, ownership, and
+wrong-skin protection. BM-018D's disposable gate passes 17/17. The production
+`af3-common` gate passes all 16 typed settings through apply, idempotent
+reapply, drift repair, restart persistence, and wrong-skin rejection. AF3's
+first-run generated-state bootstrap is performed only inside `.kodi-test`;
+completely pristine first-ever AF3 provisioning is not overstated as proven.
 
 ## Evidence index
 
