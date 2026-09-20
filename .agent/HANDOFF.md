@@ -1,22 +1,28 @@
-# Agent Handoff — synchronized Codex worker
+# Agent Handoff — BM-020A Codex worker
 
 ## Status
 
-Codex is synchronized with protected matrix at
-`e2458d4f977e09769b01d8e8a82635497b913546`, idle, and ready for the next
-supervisor assignment. This is reconciliation, not a new handoff or
-milestone start; the external Agent Handoff active-worker pointer was not
-changed.
+Codex remains the active worker on `agent/codex`, based on protected matrix
+`e2458d4f977e09769b01d8e8a82635497b913546`. BM-020A is complete on the worker
+and has not been integrated to matrix. The external Agent Handoff pointer was
+not changed.
 
-BM-020A1 is complete, supervisor-approved, and integrated. The supported
-add-on states are `enabled` and `disabled`; omission is unmanaged; `absent`
-and `ENSURE_ABSENT` are rejected. `DependencyAwareInstaller` owns required
-dependency preflight and reconciliation for each target install, fails closed
-on explicitly disabled required dependencies, preserves optional dependency
-semantics, and propagates nested BM-019 restart results.
+BM-020A adds the stable `BuildManager.reconcile()` orchestration boundary and
+typed `ReconcileRequest`, `ReconcileResult`, phase failures, ordered action
+results, deterministic desired-state fingerprints, and aggregated BM-019
+restart reports. It delegates to the existing manifest loader/resolver,
+inspector, planner, dependency-aware installer, repository manager,
+addon-state reconciler, skin activator, configuration manager, and BM-014
+validator. The executor does not restart Kodi, persist transactions, resume
+after restart, manage session identity, or acquire a process-wide lock.
 
-Integrated focused tests passed 988/988 and the full suite passed 1462/1462.
-BM-019, BM-018D, and BM-018E remain complete. BM-020A production executor
-work and BM-020B/C have not started. The real Kodi profile, Apple TV, and all
-devices remained untouched. Legitimate usage history is preserved without
-duplicate task rows. Next step: await supervisor assignment.
+BM-020A1 contracts remain intact: only `enabled`/`disabled` are managed,
+omission is unmanaged, `absent`/`ENSURE_ABSENT` are rejected, dependency
+ownership remains per install operation, explicit disabled required-dependency
+conflicts fail before mutation, and nested BM-019 restart results propagate.
+
+Focused executor tests passed 5/5 and the full suite passed 1467/1467;
+`git diff --check` passed. The disposable harness exposes no BM-020A executor
+live-validation command, so no live gate was claimed. The real Kodi profile,
+Apple TV, and all devices remained untouched. BM-020B/C and BM-017 were not
+started. Next step: supervisor review; do not integrate to matrix.
