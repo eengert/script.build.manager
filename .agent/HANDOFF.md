@@ -1,4 +1,24 @@
-# Agent Handoff — BM-018E
+# Agent Handoff — synchronized Codex worker
+
+## Current synchronized state
+
+Codex is synchronized with the protected matrix at
+`cfd335499123126027741f8e595489cc32b9e207`, idle, and ready for the next
+supervisor assignment. This is reconciliation, not a new handoff or milestone
+start; the external Agent Handoff active-worker pointer was not changed.
+
+BM-018D compatibility support and supervisor-approved BM-018E are complete and
+integrated. The production `af3-common` package contains the approved 16 typed
+settings and `files: []`; typed lookup/persistence fallback and AF3 policy
+boundaries remain as integrated on matrix. Disposable validation passed BM-018D
+17/17 and BM-018E 14/14, with focused tests 461/461 and full suite 1463/1463.
+The real Kodi profile remained read-only and no Apple TV or other device was
+accessed. BM-017, BM-019, BM-020, and any next milestone were not started.
+
+The legitimate Codex usage history is preserved without adding a duplicate
+task row. Next step: await supervisor assignment.
+
+## Historical BM-018E worker record
 
 ## Status
 

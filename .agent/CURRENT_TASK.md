@@ -1,6 +1,33 @@
 # Current Task
 
-## BM-018E — production AF3 common typed-settings package
+## Synchronized worker state
+
+**Status**: BM-018D and BM-018E are complete, supervisor-approved, and
+integrated on `matrix`. Codex is synchronized, idle, and ready for the next
+supervisor assignment. No new milestone has started.
+
+Current matrix: `cfd335499123126027741f8e595489cc32b9e207`.
+
+The integrated state preserves the approved 16-setting `af3-common` package
+with `files: []`, explicit skin ownership, and AF3-specific mutual-exclusion
+policy outside the generic backend. The generic skin backend handles
+canonical/lowercase typed lookup, guarded double-`-32602` fallback, safe
+`Skin.SetBool`/`Skin.SetString`/`Skin.Reset` persistence, strict effective
+read-back, and bounded persisted-state verification.
+
+BM-018D disposable validation passed 17/17. BM-018E production AF3 validation
+passed 14/14 for all 16 settings, including authoritative read-back,
+idempotency, drift repair, ownership failure before mutation, restart
+persistence, and wrong-skin rejection. The AF3 dependency closure was 18/18
+installed, enabled, and not broken. The first-run AF3 generated-runtime
+bootstrap remains disposable-only; pristine first-ever AF3 provisioning is not
+overstated as proven.
+
+Focused tests passed 461/461 and the full suite passed 1463/1463. The real
+Kodi profile remained read-only, with no Apple TV or other device access.
+BM-017, BM-019, BM-020, and any next milestone were not started.
+
+## Prior worker record
 
 **Agent**: Codex
 **Branch**: `agent/codex`
