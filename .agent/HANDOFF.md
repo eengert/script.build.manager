@@ -1,5 +1,30 @@
 # Agent Handoff — WF-002 Antigravity usage reporting integrated
 
+## BM-019 integration complete
+
+BM-019 is complete and integrated on protected `matrix`; the matrix state is
+neutral with `active_agent: none`. The substantive integration commit is
+`202f41d` (`feat(BM-019): integrate restart requirement aggregation`).
+
+The typed contract exposes `NONE` and `KODI_RESTART`. Operation results declare
+requirements locally, and central aggregation retains only the strongest
+successful changed requirement. Idempotent/no-change operations do not create
+restart requirements. Failed/uncommitted operations do not establish one, and
+a later failure cannot erase an earlier successful requirement. The planner
+does not infer restart requirements from action kinds.
+
+`docs/RESTART_REQUIREMENTS.md` documents the contract and the BM-019/BM-020
+boundary. BM-018D/BM-018E paths remain `NONE`; no current production operation
+legitimately requires restart, so no synthetic live restart scenario was run.
+BM-020 restart execution, transaction persistence, and resume/re-entry remain
+unstarted.
+
+Validation from the integrated tree: focused tests **813/813**, full suite
+**1476/1476**, and `git diff --check` clean. The real Kodi profile and all
+devices remained untouched.
+
+## Prior integrated state
+
 ## Current matrix state — BM-018D compatibility extension + BM-018E
 
 **Status**: Complete, supervisor-approved, and integrated on `matrix`.

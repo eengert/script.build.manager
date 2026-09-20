@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-018E",
-  "reason": "BM-018D compatibility extension and BM-018E are complete and integrated; matrix remains neutral and awaits the next assignment.",
-  "last_commit": "1c024e9",
-  "matrix_sha": "1c024e9",
+  "task": "BM-019",
+  "reason": "BM-019 typed restart-requirement aggregation is complete and integrated; matrix remains neutral. BM-020 restart execution and resume remain deferred.",
+  "last_commit": "202f41d",
+  "matrix_sha": "202f41d",
   "next_agent": "human",
   "updated_at": "2026-09-20"
 }
