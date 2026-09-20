@@ -1,28 +1,23 @@
 # Current Task
 
-## BM-020A1 — supported action contract and dependency ownership
+## Synchronized worker state
 
-**Status**: Complete on `agent/codex`; supervisor review is the next gate.
-BM-020A, BM-020B, BM-020C, BM-017, and all later milestones have not started.
+**Status**: BM-020A1 is complete, supervisor-approved, and integrated on
+`matrix`. Codex is synchronized, idle, and ready for the next supervisor
+assignment. BM-020A, BM-020B, and BM-020C have not started; no new milestone
+has begun.
 
-Implemented the approved prerequisite scope:
+Current matrix: `e2458d4f977e09769b01d8e8a82635497b913546`.
 
-- managed add-on states are only `enabled` and `disabled`; omitted add-ons are
-  unmanaged, and `absent` is rejected before planning or mutation with an
-  explanation that unattended removal is unsupported by Kodi's public API;
-- removed the planner's `ENSURE_ABSENT` contract and updated schema, validator,
-  manifest docs, planner tests, and project architecture notes;
-- added `DependencyAwareInstaller`, which owns required dependency preflight,
-  conflict detection, reconciliation, target installation, and one nested
-  result; optional dependencies remain optional;
-- required dependencies explicitly declared `disabled` fail before any
-  dependency or target mutation; and nested add-on install restart requirements
-  propagate through dependency actions/results and the enclosing result.
+BM-020A1 established the supported add-on contract (`enabled`/`disabled`, with
+omission unmanaged and `absent` rejected), removed `ENSURE_ABSENT`, and made
+each target install operation own required dependency preflight and
+reconciliation. Explicitly disabled required dependencies fail closed before
+mutation, optional dependencies remain optional, and nested install results
+propagate BM-019 restart requirements.
 
-Validation: focused manifest/planner/dependency/add-on/restart tests passed
-711/711; full suite passed 1462/1462; `git diff --check` passed. No disposable
-Kodi or real-profile mutation was needed for this prerequisite; the real Kodi
-profile and all devices remained untouched.
+BM-019, BM-018D, and BM-018E remain complete and integrated. BM-020A owns the
+future production executor; BM-020B/C remain deferred.
 
-Smallest next step: supervisor review and, if approved, normal integration of
-BM-020A1. Do not begin the BM-020A production executor in this task.
+Focused integrated tests passed 988/988; the full suite passed 1462/1462. The
+real Kodi profile, Apple TV, and all devices remained untouched.
