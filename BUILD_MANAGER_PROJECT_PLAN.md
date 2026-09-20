@@ -1727,9 +1727,21 @@ Complete the executable action-ownership prerequisites for reconciliation:
 - nested `AddonInstallResult.restart_requirement` values propagate through
   `DependencyAction`, `DependencyResult`, and the enclosing install result.
 
-BM-020A1 does not implement the production reconciliation executor. BM-020A
-remains the restart/resume state work; BM-020B and BM-020C remain later
-transaction/re-entry and restart/resume milestones.
+### BM-020A (production reconciliation executor)
+Implement the callable production orchestration boundary in
+`resources/lib/build_manager.py`:
+
+- accept only a serializable manifest/device request;
+- load, inspect read-only, resolve, preflight, plan, execute through the
+  existing owners, and aggregate typed action/restart results;
+- fingerprint normalized resolved desired state without current or private
+  values; and
+- fail closed on unknown actions, preflight errors, and the first failed
+  execution action while preserving earlier results.
+
+BM-020A does not restart Kodi, persist transactions, resume after restart,
+manage session identity, handle restart loops, or acquire a process-wide lock.
+Those remain BM-020B/C scope.
 
 ### BM-020
 Implement restart/resume state.
