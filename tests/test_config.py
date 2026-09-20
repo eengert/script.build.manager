@@ -38,6 +38,7 @@ from resources.lib.config import (
     ConfigPackageLoader,
     ConfigSetting,
     ConfigSettingType,
+    ConfigTargetKind,
     ConfigurationBackend,
     ConfigurationManager,
     ConfigurationValidationState,
@@ -125,7 +126,46 @@ class FakeConfigurationBackend(ConfigurationBackend):
     @property
     def mutations(self):
         """Every call that could have changed Kodi state."""
-        return [c for c in self.calls if c[0] in ("set_setting", "write_file")]
+        return [c for c in self.calls if c[0] in (
+            "set_setting", "set_skin_setting", "write_file"
+        )]
+
+
+class FakeSkinConfigurationBackend(FakeConfigurationBackend):
+    """In-memory explicit skin namespace for BM-018D unit tests."""
+
+    def __init__(self, settings=None, *, active_skin="skin.arctic.fuse.3"):
+        super().__init__()
+        self.skin_settings = dict(settings or {})
+        self.active_skin = active_skin
+        self.skin_get_errors = {}
+        self.skin_set_errors = {}
+        self.skin_write_result = {}
+
+    def get_skin_setting(self, addon_id, key, setting_type):
+        self.calls.append(("get_skin_setting", addon_id, key))
+        if self.active_skin != addon_id:
+            raise ConfigBackendError(
+                f"requested skin {addon_id!r} is not active"
+            )
+        if (addon_id, key) in self.skin_get_errors:
+            raise ConfigBackendError(self.skin_get_errors[(addon_id, key)])
+        if (addon_id, key) not in self.skin_settings:
+            raise ConfigBackendError(f"unknown skin setting {addon_id}/{key}")
+        return self.skin_settings[(addon_id, key)]
+
+    def set_skin_setting(self, addon_id, key, setting_type, value):
+        self.calls.append(("set_skin_setting", addon_id, key))
+        self.writes.append(("skin", addon_id, key))
+        if self.active_skin != addon_id:
+            raise ConfigBackendError(
+                f"requested skin {addon_id!r} is not active"
+            )
+        if (addon_id, key) in self.skin_set_errors:
+            raise ConfigBackendError(self.skin_set_errors[(addon_id, key)])
+        self.skin_settings[(addon_id, key)] = self.skin_write_result.get(
+            (addon_id, key), value
+        )
 
 
 class PackageFixture(unittest.TestCase):
@@ -261,6 +301,54 @@ class TestDescriptorParsing(PackageFixture):
         self.assertIs(setting.setting_type, ConfigSettingType.STRING)
         self.assertEqual(setting.value, "1080p")
         self.assertEqual(setting.package_id, "common")
+
+    def test_omitted_target_defaults_to_addon(self):
+        self.write_package("common", self.simple_descriptor(
+            "common",
+            settings=[("plugin.video.example", "quality", "string", "1080p")],
+        ))
+        self.assertIs(
+            self.loader.load_package("common").settings[0].target_kind,
+            ConfigTargetKind.ADDON,
+        )
+
+    def test_explicit_skin_target_is_typed(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [{
+                "target": "skin", "addon_id": "skin.arctic.fuse.3",
+                "key": "HomeSwitcher.EnableIcons", "type": "bool", "value": True,
+            }],
+        })
+        parsed = self.loader.load_package("common").settings[0]
+        self.assertIs(parsed.target_kind, ConfigTargetKind.SKIN)
+        self.assertEqual(
+            parsed.target,
+            ("skin", "skin.arctic.fuse.3", "HomeSwitcher.EnableIcons"),
+        )
+
+    def test_skin_target_rejects_int_and_number_types(self):
+        for setting_type, value in (("int", 1), ("number", 1.5)):
+            with self.subTest(setting_type=setting_type):
+                self.write_package("common", {
+                    "schema_version": 1, "id": "common",
+                    "settings": [{
+                        "target": "skin", "addon_id": "skin.foo",
+                        "key": "key", "type": setting_type, "value": value,
+                    }],
+                })
+                with self.assertRaises(ConfigPackageError):
+                    self.loader.load_package("common")
+
+    def test_addon_and_skin_same_identity_are_distinct(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [
+                {"addon_id": "same.id", "key": "key", "type": "string", "value": "a"},
+                {"target": "skin", "addon_id": "same.id", "key": "key", "type": "string", "value": "b"},
+            ],
+        })
+        self.assertEqual(len(self.loader.load_package("common").settings), 2)
 
     def test_settings_and_files_optional(self):
         self.write_package("empty", {"schema_version": 1, "id": "empty"})
@@ -830,6 +918,27 @@ class TestOverlay(PackageFixture):
         self.assertEqual(len(effective.settings), 1)
         self.assertEqual(effective.settings[0].value, "1080p")
 
+    def test_skin_selected_package_uses_existing_loader_and_ownership(self):
+        self.write_package("skin-pkg", self.simple_descriptor(
+            "skin-pkg", settings=[
+                ("skin.foo", "accent", "string", "blue"),
+            ],
+        ))
+        effective = self.loader.resolve(declarations(
+            packages=["skin-pkg"], settings=[("skin.foo", "accent")],
+        ))
+        self.assertEqual(effective.packages, ("skin-pkg",))
+        self.assertEqual(effective.settings[0].package_id, "skin-pkg")
+
+    def test_skin_selected_package_cannot_expand_ownership(self):
+        self.write_package("skin-pkg", self.simple_descriptor(
+            "skin-pkg", settings=[
+                ("skin.foo", "accent", "string", "blue"),
+            ],
+        ))
+        with self.assertRaises(ConfigOwnershipError):
+            self.loader.resolve(declarations(packages=["skin-pkg"]))
+
     def test_multiple_packages_union(self):
         self._build_layers()
         effective = self.loader.resolve(declarations(
@@ -920,6 +1029,112 @@ class TestOverlay(PackageFixture):
         winner = next(s for s in effective.settings if s.key == "quality")
         self.assertEqual(winner.value, "1080p")
 
+    def test_resolve_is_repeatable(self):
+        self._build_layers()
+        decls = declarations(
+            packages=["common", "tvos", "bonus-room"],
+            settings=[
+                ("plugin.video.example", "quality"),
+                ("plugin.video.example", "shared"),
+            ],
+        )
+        first = self.loader.resolve(decls)
+        second = self.loader.resolve(decls)
+        self.assertEqual(first, second)
+
+
+class TestSkinTargetResolution(PackageFixture):
+
+    @staticmethod
+    def _scope(target_kind, addon_id, key):
+        return ManagedSettingScope(
+            target_kind=target_kind, addon_id=addon_id, keys=(key,)
+        )
+
+    def test_skin_target_requires_skin_ownership(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [{
+                "target": "skin", "addon_id": "skin.foo", "key": "accent",
+                "type": "string", "value": "blue",
+            }],
+        })
+        with self.assertRaises(ConfigOwnershipError):
+            self.loader.resolve(ConfigDeclarations(
+                packages=("common",),
+                managed_settings=(self._scope(
+                    ConfigTargetKind.ADDON, "skin.foo", "accent"
+                ),),
+            ))
+
+    def test_addon_and_skin_targets_with_same_addon_and_key_are_distinct(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [
+                {"addon_id": "same.id", "key": "key", "type": "string", "value": "addon"},
+                {"target": "skin", "addon_id": "same.id", "key": "key", "type": "string", "value": "skin"},
+            ],
+        })
+        effective = self.loader.resolve(ConfigDeclarations(
+            packages=("common",),
+            managed_settings=(
+                self._scope(ConfigTargetKind.ADDON, "same.id", "key"),
+                self._scope(ConfigTargetKind.SKIN, "same.id", "key"),
+            ),
+        ))
+        self.assertEqual(
+            {setting.target for setting in effective.settings},
+            {("addon", "same.id", "key"), ("skin", "same.id", "key")},
+        )
+
+    def test_skin_target_identity_changes_effective_identity(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [{
+                "addon_id": "same.id", "key": "key", "type": "string", "value": "v",
+            }],
+        })
+        addon = self.loader.resolve(ConfigDeclarations(
+            packages=("common",),
+            managed_settings=(self._scope(
+                ConfigTargetKind.ADDON, "same.id", "key"
+            ),),
+        ))
+        self.write_package("skinpkg", {
+            "schema_version": 1, "id": "skinpkg",
+            "settings": [{
+                "target": "skin", "addon_id": "same.id", "key": "key",
+                "type": "string", "value": "v",
+            }],
+        })
+        skin = self.loader.resolve(ConfigDeclarations(
+            packages=("skinpkg",),
+            managed_settings=(self._scope(
+                ConfigTargetKind.SKIN, "same.id", "key"
+            ),),
+        ))
+        self.assertNotEqual(addon.identity, skin.identity)
+
+    def test_af3_mutually_exclusive_modes_fail_preflight(self):
+        self.write_package("common", {
+            "schema_version": 1, "id": "common",
+            "settings": [
+                {"target": "skin", "addon_id": "skin.arctic.fuse.3",
+                 "key": "HomeSwitcher.EnableIcons", "type": "bool", "value": True},
+                {"target": "skin", "addon_id": "skin.arctic.fuse.3",
+                 "key": "HomeSwitcher.EnableIconText", "type": "bool", "value": True},
+            ],
+        })
+        with self.assertRaises(ConfigPackageError) as ctx:
+            self.loader.resolve(ConfigDeclarations(
+                packages=("common",),
+                managed_settings=(
+                    self._scope(ConfigTargetKind.SKIN, "skin.arctic.fuse.3", "HomeSwitcher.EnableIcons"),
+                    self._scope(ConfigTargetKind.SKIN, "skin.arctic.fuse.3", "HomeSwitcher.EnableIconText"),
+                ),
+            ))
+        self.assertIn("mutually exclusive", str(ctx.exception))
+
     def test_missing_package_fails(self):
         self.write_package("common", self.simple_descriptor("common", settings=[
             ("plugin.video.example", "quality", "string", "1080p"),
@@ -970,20 +1185,6 @@ class TestOverlay(PackageFixture):
             [f.destination for f in effective.files],
             ["addon_data/a.txt", "addon_data/z.txt"],
         )
-
-    def test_resolve_is_repeatable(self):
-        self._build_layers()
-        decls = declarations(
-            packages=["common", "tvos", "bonus-room"],
-            settings=[
-                ("plugin.video.example", "quality"),
-                ("plugin.video.example", "shared"),
-            ],
-        )
-        first = self.loader.resolve(decls)
-        second = self.loader.resolve(decls)
-        self.assertEqual(first, second)
-
 
 # ---------------------------------------------------------------------------
 # No config / empty config
@@ -1273,10 +1474,10 @@ class TestPreflightGuarantee(PackageFixture):
 
 def setting(addon_id="plugin.video.example", key="k",
             setting_type=ConfigSettingType.STRING, value="v",
-            package_id="common"):
+            package_id="common", target_kind=ConfigTargetKind.ADDON):
     return ConfigSetting(
         addon_id=addon_id, key=key, setting_type=setting_type,
-        value=value, package_id=package_id,
+        value=value, package_id=package_id, target_kind=target_kind,
     )
 
 
@@ -1312,6 +1513,73 @@ class TestSettingDeployment(unittest.TestCase):
              ("set_setting", "plugin.video.example", "k"),
              ("get_setting", "plugin.video.example", "k")],
         )
+
+    def test_skin_bool_and_string_use_dedicated_namespace(self):
+        backend = FakeSkinConfigurationBackend(settings={
+            ("skin.arctic.fuse.3", "flag"): False,
+            ("skin.arctic.fuse.3", "label"): "old",
+        })
+        result = ConfigurationManager(backend).apply(EffectiveConfiguration(
+            settings=(
+                setting(
+                    addon_id="skin.arctic.fuse.3", key="flag",
+                    setting_type=ConfigSettingType.BOOL, value=True,
+                    target_kind=ConfigTargetKind.SKIN,
+                ),
+                setting(
+                    addon_id="skin.arctic.fuse.3", key="label", value="new",
+                    target_kind=ConfigTargetKind.SKIN,
+                ),
+            ),
+        ))
+        self.assertTrue(result.all_applied)
+        self.assertEqual(len(result.changed), 2)
+        self.assertEqual(
+            backend.calls,
+            [("get_skin_setting", "skin.arctic.fuse.3", "flag"),
+             ("set_skin_setting", "skin.arctic.fuse.3", "flag"),
+             ("get_skin_setting", "skin.arctic.fuse.3", "flag"),
+             ("get_skin_setting", "skin.arctic.fuse.3", "label"),
+             ("set_skin_setting", "skin.arctic.fuse.3", "label"),
+             ("get_skin_setting", "skin.arctic.fuse.3", "label")],
+        )
+
+    def test_skin_wrong_active_skin_fails_without_mutation(self):
+        backend = FakeSkinConfigurationBackend(
+            settings={("skin.arctic.fuse.3", "flag"): False},
+            active_skin="skin.estuary",
+        )
+        outcome = self._apply_one(backend, setting(
+            addon_id="skin.arctic.fuse.3", key="flag",
+            setting_type=ConfigSettingType.BOOL, value=True,
+            target_kind=ConfigTargetKind.SKIN,
+        ))
+        self.assertIs(outcome.status, ConfigOperationStatus.FAILED)
+        self.assertEqual(backend.mutations, [])
+
+    def test_skin_failed_read_fails_without_mutation(self):
+        backend = FakeSkinConfigurationBackend()
+        backend.skin_get_errors[("skin.arctic.fuse.3", "flag")] = "unavailable"
+        outcome = self._apply_one(backend, setting(
+            addon_id="skin.arctic.fuse.3", key="flag",
+            setting_type=ConfigSettingType.BOOL, value=True,
+            target_kind=ConfigTargetKind.SKIN,
+        ))
+        self.assertIs(outcome.status, ConfigOperationStatus.FAILED)
+        self.assertEqual(backend.mutations, [])
+
+    def test_skin_verification_mismatch_fails(self):
+        backend = FakeSkinConfigurationBackend(
+            settings={("skin.arctic.fuse.3", "flag"): False},
+        )
+        backend.skin_write_result[("skin.arctic.fuse.3", "flag")] = False
+        outcome = self._apply_one(backend, setting(
+            addon_id="skin.arctic.fuse.3", key="flag",
+            setting_type=ConfigSettingType.BOOL, value=True,
+            target_kind=ConfigTargetKind.SKIN,
+        ))
+        self.assertIs(outcome.status, ConfigOperationStatus.FAILED)
+        self.assertIn("verification mismatch", outcome.detail)
 
     def test_bool_already_correct(self):
         backend = FakeConfigurationBackend(
@@ -2230,9 +2498,9 @@ class TestValidationStateSnapshot(unittest.TestCase):
             files=(config_file(destination="addon_data/f.txt", content=b"x"),),
         ))
         state = result.validation_state
-        self.assertEqual(state.setting_targets, (("plugin.video.a", "k"),))
+        self.assertEqual(state.setting_targets, (("addon", "plugin.video.a", "k"),))
         self.assertEqual(state.file_targets, ("addon_data/f.txt",))
-        self.assertEqual(state.verified_settings, (("plugin.video.a", "k"),))
+        self.assertEqual(state.verified_settings, (("addon", "plugin.video.a", "k"),))
         self.assertEqual(state.verified_files, ("addon_data/f.txt",))
         self.assertTrue(state.is_fully_verified)
 
@@ -2243,9 +2511,9 @@ class TestValidationStateSnapshot(unittest.TestCase):
             settings=(setting(addon_id="plugin.video.a", key="k", value="v"),),
         ))
         state = result.validation_state
-        self.assertEqual(state.setting_targets, (("plugin.video.a", "k"),))
+        self.assertEqual(state.setting_targets, (("addon", "plugin.video.a", "k"),))
         self.assertEqual(state.verified_settings, ())
-        self.assertEqual(state.failed_settings, (("plugin.video.a", "k"),))
+        self.assertEqual(state.failed_settings, (("addon", "plugin.video.a", "k"),))
         self.assertFalse(state.is_fully_verified)
 
     def test_failed_file_reported(self):
@@ -2271,7 +2539,8 @@ class TestValidationStateSnapshot(unittest.TestCase):
         ))
         self.assertEqual(
             result.validation_state.setting_targets,
-            (("plugin.video.a", "z"), ("plugin.video.b", "k")),
+            (("addon", "plugin.video.a", "z"),
+             ("addon", "plugin.video.b", "k")),
         )
 
     def test_empty_snapshot_is_fully_verified_vacuously(self):

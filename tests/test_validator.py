@@ -32,6 +32,7 @@ from resources.lib.manifest import (
     SkinEntry,
 )
 from resources.lib.config import (
+    ConfigTargetKind,
     ConfigFile,
     ConfigSetting,
     ConfigSettingType,
@@ -731,22 +732,43 @@ class TestConfigurationValidation(unittest.TestCase):
 def _config(settings=(), files=(), packages=("my-pkg",)):
     by_addon = {}
     order = []
-    for addon_id, key in settings:
-        if addon_id not in by_addon:
-            by_addon[addon_id] = []
-            order.append(addon_id)
-        by_addon[addon_id].append(key)
+    for item in settings:
+        if len(item) == 2:
+            target_kind = ConfigTargetKind.ADDON
+            addon_id, key = item
+        else:
+            target_kind, addon_id, key = item
+            target_kind = ConfigTargetKind(target_kind)
+        scope_id = (target_kind, addon_id)
+        if scope_id not in by_addon:
+            by_addon[scope_id] = []
+            order.append(scope_id)
+        by_addon[scope_id].append(key)
     return ConfigDeclarations(
         packages=tuple(packages),
         managed_settings=tuple(
-            ManagedSettingScope(addon_id=a, keys=tuple(by_addon[a])) for a in order
+            ManagedSettingScope(
+                target_kind=target_kind,
+                addon_id=addon_id,
+                keys=tuple(by_addon[(target_kind, addon_id)]),
+            )
+            for target_kind, addon_id in order
         ),
         managed_files=tuple(files),
     )
 
 
 def _effective(settings=(), files=(), packages=("my-pkg",)):
-    """Build an EffectiveConfiguration from (addon_id, key, value) triples."""
+    """Build an EffectiveConfiguration from setting identity/value tuples."""
+    normalized = []
+    for item in settings:
+        if len(item) == 3:
+            target_kind = ConfigTargetKind.ADDON
+            addon_id, key, value = item
+        else:
+            target_kind, addon_id, key, value = item
+            target_kind = ConfigTargetKind(target_kind)
+        normalized.append((target_kind, addon_id, key, value))
     return EffectiveConfiguration(
         packages=tuple(packages),
         settings=tuple(
@@ -754,8 +776,9 @@ def _effective(settings=(), files=(), packages=("my-pkg",)):
                 addon_id=addon_id, key=key,
                 setting_type=ConfigSettingType.STRING, value=value,
                 package_id=packages[0],
+                target_kind=target_kind,
             )
-            for addon_id, key, value in settings
+            for target_kind, addon_id, key, value in normalized
         ),
         files=tuple(
             ConfigFile(destination=destination, source="files/a",
@@ -767,7 +790,10 @@ def _effective(settings=(), files=(), packages=("my-pkg",)):
 
 def _state_for(effective, verified_settings=None, verified_files=None):
     """Snapshot bound to `effective`, verifying everything unless told otherwise."""
-    targets = tuple(sorted((s.addon_id, s.key) for s in effective.settings))
+    targets = tuple(sorted(
+        (s.target_kind.value, s.addon_id, s.key)
+        for s in effective.settings
+    ))
     destinations = tuple(sorted(f.destination for f in effective.files))
     return ConfigurationValidationState(
         effective_identity=effective.identity,
@@ -902,6 +928,71 @@ class TestConfigurationStateIntegration(unittest.TestCase):
         self.assertEqual(checks[0].status, ValidationStatus.PASS)
         self.assertEqual(checks[0].subject, "configuration_domain")
         self.assertTrue(report.passed)
+
+    def test_skin_selected_package_is_in_expected_effective_identity(self):
+        cfg = _config(
+            settings=[("skin.foo", "accent")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        effective = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        report = self._report(cfg, _state_for(effective), effective)
+        checks = self._config_checks(report)
+        self.assertEqual(checks[0].status, ValidationStatus.PASS)
+
+    def test_skin_selected_package_mismatch_is_not_checked(self):
+        cfg = _config(
+            settings=[("skin.foo", "accent")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        stale = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary",),
+        )
+        expected = _effective(
+            settings=[("skin.foo", "accent", "blue")],
+            packages=("ordinary", "skin-pkg"),
+        )
+        checks = self._config_checks(self._report(cfg, _state_for(stale), expected))
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
+
+    def test_skin_target_passes_with_explicit_scope_and_snapshot(self):
+        cfg = _config(settings=[(
+            "skin", "skin.foo", "accent"
+        )])
+        effective = _effective(settings=[(
+            ConfigTargetKind.SKIN, "skin.foo", "accent", "blue"
+        )])
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, ValidationStatus.PASS)
+        self.assertEqual(checks[0].subject, "skin:skin.foo/accent")
+
+    def test_skin_target_unverified_fails(self):
+        cfg = _config(settings=[("skin", "skin.foo", "accent")])
+        effective = _effective(settings=[(
+            ConfigTargetKind.SKIN, "skin.foo", "accent", "blue"
+        )])
+        checks = self._config_checks(
+            self._report(
+                cfg, _state_for(effective, verified_settings=()), effective
+            )
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.FAIL)
+
+    def test_target_kind_mismatch_is_not_checked(self):
+        cfg = _config(settings=[("addon", "same.id", "key")])
+        effective = _effective(settings=[(
+            ConfigTargetKind.SKIN, "same.id", "key", "v"
+        )])
+        checks = self._config_checks(
+            self._report(cfg, _state_for(effective), effective)
+        )
+        self.assertEqual(checks[0].status, ValidationStatus.NOT_CHECKED)
 
     # -- missing artifacts --------------------------------------------------
 

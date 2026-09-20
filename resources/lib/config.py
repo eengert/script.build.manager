@@ -129,9 +129,10 @@ raw setting values or file contents.
 
 Skin boundary
 -------------
-SkinEntry.config_packages is NOT deployed by BM-015. Only
-ResolvedBuild.config.packages is used. BM-018 will define skin/AF3
-provisioning and can reuse this loader and deployer unchanged.
+SkinEntry.config_packages are appended to ResolvedBuild.config by the BM-018B
+resolver integration. BM-015 consumes that merged ConfigDeclarations through
+the same generic loader, ownership checks and deployer; there is no separate
+skin package format or deployer.
 
 Add-on absence
 --------------
@@ -161,7 +162,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from resources.lib.manifest import ConfigDeclarations
+from resources.lib.af3 import AF3PolicyError, validate_skin_settings
+from resources.lib.manifest import ConfigDeclarations, SettingTargetKind
+
+
+# Public configuration name for the manifest-level target discriminator.
+ConfigTargetKind = SettingTargetKind
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +250,7 @@ _MAX_PACKAGE_ID_LEN = 64
 
 _DESCRIPTOR_NAME = "package.json"
 _DESCRIPTOR_KEYS = frozenset({"schema_version", "id", "settings", "files"})
-_SETTING_KEYS = frozenset({"addon_id", "key", "type", "value"})
+_SETTING_KEYS = frozenset({"target", "addon_id", "key", "type", "value"})
 _FILE_KEYS = frozenset({"source", "destination"})
 
 _SCHEMA_VERSION = 1
@@ -274,11 +280,12 @@ class ConfigSetting:
     setting_type: ConfigSettingType
     value: object
     package_id: str
+    target_kind: ConfigTargetKind = ConfigTargetKind.ADDON
 
     @property
-    def target(self) -> Tuple[str, str]:
-        """(addon_id, key) — the ownership target this setting claims."""
-        return (self.addon_id, self.key)
+    def target(self) -> Tuple[str, str, str]:
+        """(target_kind, addon_id, key) — the owned setting identity."""
+        return (self.target_kind.value, self.addon_id, self.key)
 
 
 @dataclass(frozen=True)
@@ -347,8 +354,12 @@ class EffectiveConfiguration:
             f"schema:{_SCHEMA_VERSION}",
             "packages:" + ",".join(self.packages),
         ]
-        for item in sorted(self.settings, key=lambda s: (s.addon_id, s.key)):
+        for item in sorted(
+            self.settings,
+            key=lambda s: (s.target_kind.value, s.addon_id, s.key),
+        ):
             lines.append("setting:" + "\x1f".join((
+                item.target_kind.value,
                 item.addon_id,
                 item.key,
                 item.setting_type.value,
@@ -388,12 +399,15 @@ class ConfigOperationResult:
     addon_id: str = ""
     key: str = ""
     destination: str = ""
+    target_kind: ConfigTargetKind = ConfigTargetKind.ADDON
 
     @property
     def target(self) -> str:
         """Human-readable target: 'addon_id/key' for settings, path for files."""
         if self.kind is ConfigOperationKind.SETTING:
-            return f"{self.addon_id}/{self.key}"
+            if self.target_kind is ConfigTargetKind.ADDON:
+                return f"{self.addon_id}/{self.key}"
+            return f"{self.target_kind.value}:{self.addon_id}/{self.key}"
         return self.destination
 
 
@@ -415,13 +429,13 @@ class ConfigurationValidationState:
     given before it reports configuration as validated.
     """
     effective_identity: str = ""
-    setting_targets: Tuple[Tuple[str, str], ...] = ()
+    setting_targets: Tuple[tuple, ...] = ()
     file_targets: Tuple[str, ...] = ()
-    verified_settings: Tuple[Tuple[str, str], ...] = ()
+    verified_settings: Tuple[tuple, ...] = ()
     verified_files: Tuple[str, ...] = ()
 
     @property
-    def failed_settings(self) -> Tuple[Tuple[str, str], ...]:
+    def failed_settings(self) -> Tuple[tuple, ...]:
         verified = set(self.verified_settings)
         return tuple(t for t in self.setting_targets if t not in verified)
 
@@ -499,10 +513,12 @@ class ConfigApplyResult:
         files = self.files
         return ConfigurationValidationState(
             effective_identity=self.effective_identity,
-            setting_targets=tuple(sorted((r.addon_id, r.key) for r in settings)),
+            setting_targets=tuple(sorted(
+                (r.target_kind.value, r.addon_id, r.key) for r in settings
+            )),
             file_targets=tuple(sorted(r.destination for r in files)),
             verified_settings=tuple(sorted(
-                (r.addon_id, r.key) for r in settings
+                (r.target_kind.value, r.addon_id, r.key) for r in settings
                 if r.status is not ConfigOperationStatus.FAILED
             )),
             verified_files=tuple(sorted(
@@ -806,6 +822,10 @@ class ConfigPackageLoader:
         packages = [self.load_package(pid) for pid in ordered_ids]
 
         settings_map, files_map = _overlay(packages)
+        try:
+            validate_skin_settings(settings_map)
+        except AF3PolicyError as exc:
+            raise ConfigPackageError(str(exc)) from exc
         _validate_ownership(config, settings_map, files_map)
 
         return EffectiveConfiguration(
@@ -955,6 +975,10 @@ def _parse_settings(
                     f"{entry_label}.{required}: required field is missing"
                 )
 
+        target_kind = _parse_target_kind(
+            entry.get("target", "addon"), label=entry_label
+        )
+
         addon_id = entry["addon_id"]
         if not isinstance(addon_id, str) or not _RE_ADDON_ID.match(addon_id):
             raise ConfigPackageError(
@@ -988,10 +1012,19 @@ def _parse_settings(
             setting_type, entry["value"], label=entry_label
         )
 
-        target = (addon_id, key)
+        if target_kind is ConfigTargetKind.SKIN and setting_type not in (
+            ConfigSettingType.BOOL, ConfigSettingType.STRING,
+        ):
+            raise ConfigPackageError(
+                f"{entry_label}.type: skin targets support only 'bool' and "
+                f"'string', got {setting_type.value!r}"
+            )
+
+        target = (target_kind.value, addon_id, key)
         if target in seen:
             raise ConfigPackageError(
-                f"{entry_label}: duplicate setting target {addon_id}/{key} "
+                f"{entry_label}: duplicate setting target "
+                f"{target_kind.value}:{addon_id}/{key} "
                 f"within package {package_id!r}"
             )
         seen.add(target)
@@ -1001,8 +1034,24 @@ def _parse_settings(
             setting_type=setting_type,
             value=value,
             package_id=package_id,
+            target_kind=target_kind,
         ))
     return tuple(parsed)
+
+
+def _parse_target_kind(raw: object, *, label: str) -> ConfigTargetKind:
+    if not isinstance(raw, str):
+        raise ConfigPackageError(
+            f"{label}.target: must be a string when present"
+        )
+    try:
+        return ConfigTargetKind(raw)
+    except ValueError as exc:
+        supported = ", ".join(kind.value for kind in ConfigTargetKind)
+        raise ConfigPackageError(
+            f"{label}.target: unsupported target kind {raw!r} "
+            f"(supported: {supported})"
+        ) from exc
 
 
 def _parse_files(
@@ -1092,9 +1141,9 @@ def _read_source_file(*, package_dir: str, source: str, label: str) -> bytes:
 
 def _overlay(
     packages: List[ConfigPackage],
-) -> Tuple[Dict[Tuple[str, str], ConfigSetting], Dict[str, ConfigFile]]:
+) -> Tuple[Dict[Tuple[str, str, str], ConfigSetting], Dict[str, ConfigFile]]:
     """Overlay packages in order; later packages win per target."""
-    settings_map: Dict[Tuple[str, str], ConfigSetting] = {}
+    settings_map: Dict[Tuple[str, str, str], ConfigSetting] = {}
     files_map: Dict[str, ConfigFile] = {}
     for package in packages:
         for setting in package.settings:
@@ -1106,7 +1155,7 @@ def _overlay(
 
 def _validate_ownership(
     config: ConfigDeclarations,
-    settings_map: Dict[Tuple[str, str], ConfigSetting],
+    settings_map: Dict[Tuple[str, str, str], ConfigSetting],
     files_map: Dict[str, ConfigFile],
 ) -> None:
     """Enforce manifest ownership and managed-target completeness.
@@ -1121,7 +1170,7 @@ def _validate_ownership(
     Both raise ConfigOwnershipError before any mutation.
     """
     declared_settings = {
-        (scope.addon_id, key)
+        (scope.target_kind.value, scope.addon_id, key)
         for scope in config.managed_settings
         for key in scope.keys
     }
@@ -1138,10 +1187,11 @@ def _validate_ownership(
 
     undeclared_settings = sorted(set(settings_map) - declared_settings)
     if undeclared_settings:
-        addon_id, key = undeclared_settings[0]
-        package_id = settings_map[(addon_id, key)].package_id
+        target_kind, addon_id, key = undeclared_settings[0]
+        package_id = settings_map[(target_kind, addon_id, key)].package_id
         raise ConfigOwnershipError(
-            f"package {package_id!r} targets setting {addon_id}/{key}, which is "
+            f"package {package_id!r} targets setting "
+            f"{target_kind}:{addon_id}/{key}, which is "
             f"not declared in config.managed_settings "
             f"({len(undeclared_settings)} undeclared setting target(s) total)"
         )
@@ -1158,10 +1208,10 @@ def _validate_ownership(
 
     unresolved_settings = sorted(declared_settings - set(settings_map))
     if unresolved_settings:
-        addon_id, key = unresolved_settings[0]
+        target_kind, addon_id, key = unresolved_settings[0]
         raise ConfigOwnershipError(
             f"unresolved managed configuration: config.managed_settings declares "
-            f"{addon_id}/{key} but no selected package supplies a value "
+            f"{target_kind}:{addon_id}/{key} but no selected package supplies a value "
             f"({len(unresolved_settings)} unresolved setting target(s) total)"
         )
 
@@ -1201,6 +1251,14 @@ class ConfigurationBackend:
         """
         raise NotImplementedError
 
+    def get_skin_setting(
+        self, addon_id: str, key: str, setting_type: ConfigSettingType
+    ) -> object:
+        """Return a typed value from the currently active Kodi skin."""
+        raise ConfigBackendError(
+            "backend does not support explicit skin-setting targets"
+        )
+
     def set_setting(
         self, addon_id: str, key: str, setting_type: ConfigSettingType, value: object
     ) -> None:
@@ -1210,6 +1268,14 @@ class ConfigurationBackend:
         not accepted as proof the value was stored.
         """
         raise NotImplementedError
+
+    def set_skin_setting(
+        self, addon_id: str, key: str, setting_type: ConfigSettingType, value: object
+    ) -> None:
+        """Set one typed value in the currently active Kodi skin."""
+        raise ConfigBackendError(
+            "backend does not support explicit skin-setting targets"
+        )
 
     def read_file(self, destination: str) -> Optional[bytes]:
         """Return the bytes of a managed file, or None when it does not exist.
@@ -1273,7 +1339,21 @@ class ConfigurationManager:
 
     def _apply_setting(self, setting: ConfigSetting) -> ConfigOperationResult:
         expected = _setting_identity(setting.setting_type, setting.value)
-        context = f"{setting.addon_id}/{setting.key}"
+        context = (
+            f"{setting.addon_id}/{setting.key}"
+            if setting.target_kind is ConfigTargetKind.ADDON
+            else f"{setting.target_kind.value}:{setting.addon_id}/{setting.key}"
+        )
+        get_setting = (
+            self._backend.get_setting
+            if setting.target_kind is ConfigTargetKind.ADDON
+            else self._backend.get_skin_setting
+        )
+        set_setting = (
+            self._backend.set_setting
+            if setting.target_kind is ConfigTargetKind.ADDON
+            else self._backend.set_skin_setting
+        )
 
         def failure(detail: str, previous: Optional[str]) -> ConfigOperationResult:
             return ConfigOperationResult(
@@ -1285,10 +1365,11 @@ class ConfigurationManager:
                 detail=detail,
                 addon_id=setting.addon_id,
                 key=setting.key,
+                target_kind=setting.target_kind,
             )
 
         try:
-            current = self._backend.get_setting(
+            current = get_setting(
                 setting.addon_id, setting.key, setting.setting_type
             )
             current = _check_runtime_value(
@@ -1315,17 +1396,18 @@ class ConfigurationManager:
                 detail=f"{context} already matches the desired value",
                 addon_id=setting.addon_id,
                 key=setting.key,
+                target_kind=setting.target_kind,
             )
 
         try:
-            self._backend.set_setting(
+            set_setting(
                 setting.addon_id, setting.key, setting.setting_type, setting.value
             )
         except ConfigBackendError as exc:
             return failure(f"could not set {context}: {exc}", previous)
 
         try:
-            after = self._backend.get_setting(
+            after = get_setting(
                 setting.addon_id, setting.key, setting.setting_type
             )
             after = _check_runtime_value(
@@ -1353,6 +1435,7 @@ class ConfigurationManager:
             detail=f"{context} updated and verified",
             addon_id=setting.addon_id,
             key=setting.key,
+            target_kind=setting.target_kind,
         )
 
     # -- files --------------------------------------------------------------
@@ -1523,9 +1606,11 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
     write is verified by re-reading the destination regardless.
     """
 
-    def __init__(self, profile_root: str = "special://profile/") -> None:
+    def __init__(self, profile_root: str = "special://profile/", *,
+                 skin_settings_backend=None) -> None:
         self._profile_root = profile_root
         self._translated_root: Optional[str] = None
+        self._skin_settings_backend = skin_settings_backend
 
     # -- lazy Kodi imports --------------------------------------------------
 
@@ -1637,6 +1722,48 @@ class KodiRuntimeConfigurationBackend(ConfigurationBackend):
         # Explicitly keep the owning Addon alive until after the setter and its
         # internal Save(). The caller still re-reads through a fresh handle.
         del addon
+
+    # -- explicit skin settings --------------------------------------------
+
+    def _skin_backend(self):
+        """Return the dedicated skin-settings adapter, created lazily."""
+        if self._skin_settings_backend is None:
+            try:
+                from resources.lib.skin import (  # noqa: PLC0415
+                    KodiRuntimeSkinSettingsBackend,
+                )
+                self._skin_settings_backend = KodiRuntimeSkinSettingsBackend()
+            except Exception as exc:
+                raise ConfigBackendError(
+                    f"skin-settings backend is unavailable: {exc}"
+                ) from exc
+        return self._skin_settings_backend
+
+    def get_skin_setting(
+        self, addon_id: str, key: str, setting_type: ConfigSettingType
+    ) -> object:
+        try:
+            return self._skin_backend().get_setting(addon_id, key, setting_type)
+        except ConfigBackendError:
+            raise
+        except Exception as exc:
+            raise ConfigBackendError(
+                f"reading skin:{addon_id}/{key} as {setting_type.value} failed: {exc}"
+            ) from exc
+
+    def set_skin_setting(
+        self, addon_id: str, key: str, setting_type: ConfigSettingType, value: object
+    ) -> None:
+        try:
+            self._skin_backend().set_setting(
+                addon_id, key, setting_type, value
+            )
+        except ConfigBackendError:
+            raise
+        except Exception as exc:
+            raise ConfigBackendError(
+                f"writing skin:{addon_id}/{key} as {setting_type.value} failed: {exc}"
+            ) from exc
 
     # -- managed files ------------------------------------------------------
 

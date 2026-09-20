@@ -222,6 +222,11 @@ def _validate_config_declarations(config, *, label):
         _assert(isinstance(ms, list), f"{label}: 'managed_settings' must be an array")
         for i, scope in enumerate(ms):
             _assert(isinstance(scope, dict), f"{label}.managed_settings[{i}]: must be an object")
+            if "target" in scope:
+                _assert(
+                    scope["target"] in {"addon", "skin"},
+                    f"{label}.managed_settings[{i}]: invalid target",
+                )
             _assert("addon_id" in scope, f"{label}.managed_settings[{i}]: missing 'addon_id'")
             _assert("keys" in scope, f"{label}.managed_settings[{i}]: missing 'keys'")
             _assert(

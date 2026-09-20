@@ -217,8 +217,14 @@
       "type": "object",
       "required": ["addon_id", "keys"],
       "additionalProperties": false,
-      "description": "Declares that Build Manager owns specific setting keys for one add-on.",
+      "description": "Declares that Build Manager owns specific setting keys for one explicit add-on or skin target namespace. Omitted target preserves normal add-on-setting behavior.",
       "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["addon", "skin"],
+          "default": "addon",
+          "description": "Runtime target namespace. 'addon' is the backward-compatible default; 'skin' targets the currently active Kodi skin via its dedicated skin-setting API."
+        },
         "addon_id": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._-]*$"

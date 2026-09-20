@@ -154,6 +154,7 @@ from enum import Enum
 from typing import Dict, Optional, Tuple
 
 from resources.lib.config import (
+    ConfigTargetKind,
     ConfigurationValidationState,
     EffectiveConfiguration,
 )
@@ -740,14 +741,15 @@ def _validate_configuration(
         )
 
     declared_settings = {
-        (scope.addon_id, key)
+        (scope.target_kind.value, scope.addon_id, key)
         for scope in config.managed_settings
         for key in scope.keys
     }
     declared_files = set(config.managed_files)
 
     effective_settings = {
-        (s.addon_id, s.key) for s in effective_configuration.settings
+        (s.target_kind.value, s.addon_id, s.key)
+        for s in effective_configuration.settings
     }
     effective_files = {f.destination for f in effective_configuration.files}
 
@@ -762,7 +764,10 @@ def _validate_configuration(
             "manifest-declared managed scope.",
         )
 
-    snapshot_settings = set(configuration_state.setting_targets)
+    snapshot_settings = {
+        _normalize_setting_target(target)
+        for target in configuration_state.setting_targets
+    }
     snapshot_files = set(configuration_state.file_targets)
 
     # Gate 3 — snapshot scope must equal effective scope.
@@ -803,13 +808,20 @@ def _validate_configuration(
             ),
         )]
 
-    verified_settings = set(configuration_state.verified_settings)
+    verified_settings = {
+        _normalize_setting_target(target)
+        for target in configuration_state.verified_settings
+    }
     verified_files = set(configuration_state.verified_files)
 
     checks = []
-    for addon_id, key in sorted(declared_settings):
-        subject = f"{addon_id}/{key}"
-        verified = (addon_id, key) in verified_settings
+    for target_kind, addon_id, key in sorted(declared_settings):
+        subject = (
+            f"{addon_id}/{key}"
+            if target_kind == ConfigTargetKind.ADDON.value
+            else f"{target_kind}:{addon_id}/{key}"
+        )
+        verified = (target_kind, addon_id, key) in verified_settings
         checks.append(ValidationCheck(
             domain=ValidationDomain.CONFIGURATION,
             subject=subject,
@@ -837,3 +849,16 @@ def _validate_configuration(
         ))
 
     return checks
+
+
+def _normalize_setting_target(target: tuple) -> tuple:
+    """Normalize legacy add-on snapshots and new explicit target identities."""
+    if isinstance(target, (tuple, list)) and len(target) == 2:
+        return (ConfigTargetKind.ADDON.value, target[0], target[1])
+    if (
+        isinstance(target, (tuple, list))
+        and len(target) == 3
+        and target[0] in {kind.value for kind in ConfigTargetKind}
+    ):
+        return tuple(target)
+    return ("invalid", repr(target), "")

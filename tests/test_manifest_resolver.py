@@ -65,8 +65,11 @@ def _config(packages=None, managed_settings=None, managed_files=None):
     return d
 
 
-def _ms(addon_id, keys):
-    return {"addon_id": addon_id, "keys": keys}
+def _ms(addon_id, keys, target=None):
+    result = {"addon_id": addon_id, "keys": keys}
+    if target is not None:
+        result["target"] = target
+    return result
 
 
 def _make(doc):
@@ -161,6 +164,21 @@ class TestBaseOnly(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestPlatformOverrides(unittest.TestCase):
+
+    def test_config_scopes_merge_by_target_kind(self):
+        doc = _base({
+            "config": {"managed_settings": [
+                _ms("same.id", ["key"], target="addon"),
+                _ms("same.id", ["key"], target="skin"),
+            ]},
+        })
+        resolved = resolve_manifest(_make(doc), "dev")
+        self.assertEqual(
+            [(scope.target_kind.value, scope.addon_id, scope.keys)
+             for scope in resolved.config.managed_settings],
+            [("addon", "same.id", ("key",)),
+             ("skin", "same.id", ("key",))],
+        )
 
     def test_platform_overrides_existing_addon_state(self):
         doc = _base({
@@ -329,6 +347,85 @@ class TestDeviceOverrides(unittest.TestCase):
         })
         r = resolve_manifest(_make(doc), "dev")
         self.assertEqual(r.skin.addon_id, "skin.platform")
+
+
+# ---------------------------------------------------------------------------
+# Skin configuration package selection (BM-018B)
+# ---------------------------------------------------------------------------
+
+class TestSkinConfigPackages(unittest.TestCase):
+
+    def test_ordinary_config_only_is_unchanged(self):
+        r = resolve_manifest(_make(_base({
+            "config": _config(packages=["ordinary"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("ordinary",))
+
+    def test_skin_packages_only_create_config(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.foo", ["skin-a"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("skin-a",))
+        self.assertEqual(r.config.managed_settings, ())
+        self.assertEqual(r.config.managed_files, ())
+
+    def test_ordinary_then_skin_packages(self):
+        r = resolve_manifest(_make(_base({
+            "config": _config(packages=["ordinary"]),
+            "skin": _skin("skin.foo", ["skin-a", "skin-b"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("ordinary", "skin-a", "skin-b"))
+
+    def test_duplicate_packages_are_first_seen_once(self):
+        r = resolve_manifest(_make(_base({
+            "config": _config(packages=["shared", "ordinary"]),
+            "skin": _skin("skin.foo", ["shared", "skin-a"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("shared", "ordinary", "skin-a"))
+
+    def test_skin_package_order_is_preserved(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.foo", ["z", "a", "m"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("z", "a", "m"))
+
+    def test_deeper_skin_replaces_parent_package_list(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.base", ["base-skin"]),
+            "platform_profiles": {"tvos": {
+                "skin": _skin("skin.platform", ["platform-skin"]),
+            }},
+            "device_profiles": {"dev": {
+                "extends": "tvos",
+                "skin": _skin("skin.device", ["device-skin"]),
+            }},
+        })), "dev")
+        self.assertEqual(r.config.packages, ("device-skin",))
+
+    def test_inherited_skin_retains_package_list(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.base", ["base-skin"]),
+        })), "dev")
+        self.assertEqual(r.config.packages, ("base-skin",))
+
+    def test_optional_config_precedes_skin_packages(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.foo", ["skin-pkg"]),
+            "platform_profiles": {"tvos": {
+                "include_optional": ["extras"],
+            }},
+            "optional": [{
+                "id": "extras",
+                "config": _config(packages=["optional-pkg"]),
+            }],
+        })), "dev")
+        self.assertEqual(r.config.packages, ("optional-pkg", "skin-pkg"))
+
+    def test_empty_skin_packages_do_not_create_config(self):
+        r = resolve_manifest(_make(_base({
+            "skin": _skin("skin.foo", []),
+        })), "dev")
+        self.assertIsNone(r.config)
 
 
 # ---------------------------------------------------------------------------

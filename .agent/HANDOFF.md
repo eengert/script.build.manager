@@ -1,54 +1,54 @@
-# Agent Handoff — BM-016 research substantially complete
+# Agent Handoff — synchronized Claude worker
 
-**Date**: 2026-09-19
-**Agent**: Codex (Sol / Ultra requested; runtime slug unavailable)
-**Status**: Pending supervisor review. BM-017 not started.
+**Status**: Current matrix state is reconciled onto `agent/claude`. Claude is
+idle and ready for a future assignment; no new handoff has occurred.
 
-## Result
+## What was done
 
-- Created `docs/RED_LIGHT_PORTABILITY.md` at commit `cbb93db`.
-- Inspected Red Light `plugin.video.redlight` 2.6.2 read-only.
-- Inventoried all 508 source settings plus 70 generated display rows.
-- Classified source settings: 337 `PUBLIC_PORTABLE`, 71
-  `PRIVATE_PORTABLE_CANDIDATE`, 47 `DEVICE_SPECIFIC`, 45
-  `GENERATED_RUNTIME`, and 8 `UNKNOWN_NEEDS_TESTING`.
-- Found that real settings live in mixed-content custom SQLite
-  `settings.db`, not Kodi's typed settings surface. BM-015 therefore has
-  zero directly deployable Red Light settings today, and whole-file deployment
-  is unsafe.
-- Documented file/state inventory, auth field names, do-not-copy state,
-  cross-platform limits, and BM-017 evidence boundaries.
+- Implemented `tools/antigravity-usage` helper around `/usr/local/bin/codexbar`:
+  - Queries `provider = antigravity`, `source = auto`, JSON format, no-color.
+  - Parses and preserves named rate windows from `usage.extraRateWindows`
+    (e.g., "Gemini weekly" and "Claude/GPT weekly") without collapsing them.
+  - Preserves account email, source, login method, and reset descriptions.
+  - Calculates remaining percent strictly as `100.0 - usedPercent`.
+  - Fails closed with normalized, sanitized unavailable result on error or missing data.
+  - Supports `--human` summary output and JSON output.
+- Created `tests/test_antigravity_usage.py` covering:
+  - Multi-window parsing and distinct Gemini vs. Claude/GPT pool separation.
+  - Remaining percentage calculation.
+  - Fallback to primary/secondary windows if extraRateWindows is absent.
+  - Error handling: malformed JSON, command exit code, missing binary, timeout,
+    missing provider record, missing usage section, sanitized error output.
+  - All 11/11 tests pass.
+- Updated `AGENTS.md` with Antigravity-Specific Notes documenting the authoritative
+  command, helper usage, distinct pool preservation, and usage conventions.
+- Updated `.agent/USAGE_HISTORY.md` with task convention note and WF-002 row.
+- Updated `.agent/AGENT_STATUS.json` and `.agent/CURRENT_TASK.md` for the
+  synchronized Claude worker state.
 
-## Validation and safety
+## Validation
 
-- Production code changed: no.
-- Tests added: no.
-- Full unit suite: 1378/1378 passing.
-- Disposable Red Light mutation: not run; no safe BM-015 target exists and a
-  custom SQLite writer is outside BM-016.
-- Secret audit: 508 inventory rows; every private default redacted; no JWT or
-  bearer marker; no real-profile absolute path in the report.
-- Real Kodi profile: read-only inspection only; no Kodi process/device control.
-- `matrix` and `agent/claude`: untouched.
+- Focused tests: `python3 -m unittest tests/test_antigravity_usage.py` — 11/11 passing.
+- Live read-only smoke test: attempted; current CodexBar invocation timed out.
+  The helper returned a sanitized unavailable result and exposed no raw stderr
+  or private account data.
+- `git diff --check`: passed cleanly.
+- Real Kodi profile untouched; no Apple TV access; no BM milestone work started.
 
-## Scope boundary / remaining unknowns
+## Prior BM-018D boundary
 
-- tvOS, Android TV/Shield, and Fire OS remain `UNTESTED_CROSS_PLATFORM`.
-- Structured row application/restart behavior, selected auxiliary databases,
-  and account portability remain explicitly unproven.
-- No production package, private overlay, credential move, or BM-017 code was
-  created.
+- BM-018D remains complete: 17/17 disposable AF3 live checks and 1438/1438
+  full tests were previously recorded.
+- No production `af3-common` package was created.
+- BM-018E, BM-017, BM-019, and BM-020 were not started.
+- Real Kodi profile remained read-only; no Apple TV access occurred.
 
-## Smallest next step
+## WF-002 usage record
 
-Supervisor review of BM-016. If accepted, scope BM-017 to the documented
-authentication field names and disposable reauthorization/restore evidence.
-A separate reviewed task is required before any structured public Red Light
-settings adapter or `redlight-common` package.
+The Antigravity worker's measured WF-002 usage row is preserved exactly once
+in `.agent/USAGE_HISTORY.md`; no Codex usage figures were fabricated.
 
-## Usage
+Current protected matrix: `466d431a3de0dd7b35105ef3c13ca4e0cc0058a7`.
 
-Start: 5-hour 15% used / weekly 2% used.
-End: 5-hour 90% used / weekly 14% used.
-Observed delta: +75 / +12 percentage points used. These are account-level
-shared-usage readings, not task-isolated billing.
+Next step awaits an explicit Agent Handoff or supervisor assignment. BM-018E
+is not being worked by Claude.
