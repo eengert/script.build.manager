@@ -4,29 +4,40 @@
 
 **Agent**: Codex
 **Branch**: `agent/codex`
-**Status**: Implementation complete; production-package live gate blocked by
-Kodi 21.1 runtime API behavior. The task is not ready for matrix integration.
+**Status**: Complete on worker; ready for supervisor review/integration.
 
-Created `resources/config/packages/af3-common/package.json` with the approved
-16 typed `skin.arctic.fuse.3` settings, no file overlays, and explicit
-manifest ownership. The six reviewed candidates intentionally remain
-unmanaged. BM-018D's typed skin backend, normalization, idempotency, drift
-repair, and fail-closed ownership checks remain authoritative.
+Commit `28b8b90` completes the generic typed skin-setting compatibility work.
+The approved `resources/config/packages/af3-common/package.json` remains
+unchanged: exactly 16 reviewed bool/string targets and `files: []`, with the
+six reviewed candidates still unmanaged. BM-018A's confirmation lifecycle
+and the AF3-specific mutual-exclusion policy were not changed.
 
-Prior validation: focused package/resolver/schema tests 61/61; BM-018D
-synthetic typed-runtime gate 17/17; full unit suite 1453/1453.
+Root causes and resolution:
 
-BM-018E continuation validation loaded the installed disposable production
-manifest/profile and installed `af3-common` package, copied AF3 3.2.19 and
-its complete 18-add-on closure, proved planner `SET_SKIN -> CONFIGURE`
-ordering, bootstrapped AF3 generated state only in `.kodi-test`, and proved
-BM-018A activation. The actual package applied 12/16 targets, but Kodi 21.1
-returned `-32602 Invalid params` for both canonical and lowercase forms of
-`Navigation.OnBack`, `View.UseDetailedListLabels`,
-`Widgets.DisableNoResultsItem`, and `Widgets.EnableShowMore`. The live gate
-stopped before claiming idempotency, drift, ownership, or restart completion.
+- AF3 3.2.19's first-run generated-state initialization can reload the skin
+  during Kodi's keep/revert transaction and cause the original transient
+  Estuary fallback. The harness bootstraps that generated runtime state only
+  inside `.kodi-test`; pristine first-ever AF3 provisioning is not claimed.
+- Kodi's typed `Settings.SetSkinSettingValue` path reports success but does
+  not schedule the skin-settings XML save. Successful typed writes now also
+  use safe `Skin.SetBool`, `Skin.SetString`, or `Skin.Reset` persistence
+  commands, followed by strict read-back and bounded persisted-state polling.
+- When canonical and lowercase typed lookups both return `-32602`, fallback
+  eligibility is guarded by the active skin's persisted key/type entry only;
+  effective reads use `Skin.HasSetting`/`Skin.String`, never XML contents.
 
-The real Kodi profile and all devices remained untouched. BM-017, BM-019, and
-BM-020 were not started. The smallest next step is a separately reviewed
-resolution of the Kodi runtime/API incompatibility; do not weaken the approved
-16-setting package or reopen BM-018D.
+Validation:
+
+- `python3 tools/kodi_test.py validate-skin-config`: 17/17.
+- `python3 tools/kodi_test.py validate-af3-package`: 14/14, including all 16
+  production targets, idempotent reapply, drift repair, ownership failure
+  before mutation, restart persistence, and wrong-skin failure before mutation.
+- Focused implementation/config/planner/harness tests: 461/461.
+- Full unit suite: 1463/1463.
+- `git diff --check`: clean.
+
+The AF3 dependency closure was installed, enabled, and verified not broken at
+18/18 nodes in the disposable profile. The real Kodi profile remained
+read-only; no Apple TV or other device was accessed. BM-017, BM-019, BM-020,
+and any next milestone were not started. The smallest next step is supervisor
+review and normal worker-to-matrix integration; no handoff has occurred.
