@@ -377,7 +377,15 @@ class BuildManager:
                     failure=failure,
                 )
 
-            result = self._dispatch_action(action, desired, effective, protected)
+            try:
+                result = self._dispatch_action(action, desired, effective, protected)
+            except Exception as exc:
+                result = ActionExecutionResult(
+                    action=action,
+                    succeeded=False,
+                    changed=False,
+                    message=f"action owner raised: {_message(exc)}",
+                )
             action_results.append(result)
             reports.append(result.restart_report)
             if not result.succeeded:
