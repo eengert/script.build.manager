@@ -1,59 +1,50 @@
-# Agent Handoff — BM-018D typed skin configuration
+# Agent Handoff — BM-018D worker synchronization
 
-## Status
+**Status**: BM-018D is complete and supervisor-approved. `agent/codex` is
+synchronized with current `origin/matrix` and ready for the outgoing Codex ->
+Antigravity handoff. Matrix remains neutral (`active_agent = none`).
 
-BM-018D is complete on `agent/codex` at `39bd26c`:
+## Synchronized state
 
-`fix(BM-018D): resolve AF3 disposable live gate`
+- Protected matrix tip: `0e38797d90bb64cd19ca5e7608c41a741afb2e07`.
+- BM-018D substantive commits already integrated on matrix:
+  `28a6fd4` and `5a3cc9a`.
+- The worker was synchronized with a normal merge; no reset, rebase,
+  force-push, history rewrite, or substantive implementation change was used.
+- Endpoint contents match matrix outside worker-local `.agent/*` metadata.
 
-The branch remains separate from `matrix`; no history was rewritten and no
-worker branch other than `agent/codex` was changed.
+## BM-018D evidence
 
-## What was done
+- Generic typed skin-setting support is complete.
+- Disposable AF3 live gate: 17/17 passed.
+- Full suite: 1438/1438 passed.
+- The complete AF3 dependency closure must be installed, enabled, and not
+  broken in the disposable environment.
+- AF3 first-run generated-state initialization caused the original transient
+  fallback. The harness bootstraps generated runtime state only inside
+  `.kodi-test`, then validates the actual BM-018A Estuary -> AF3
+  confirmation/activation path.
+- Completely pristine first-ever AF3 provisioning is not claimed as proven.
+- AF3 key normalization and non-boolean string-setter return handling are
+  handled by the backend/runtime adaptation.
+- AF3-specific mutual-exclusion policy remains isolated from the generic
+  backend.
 
-- Moved the AF3 `HomeSwitcher.EnableIcons` / `HomeSwitcher.EnableIconText`
-  mutual-exclusion rule into `resources/lib/af3.py`; generic skin-setting
-  backend code has no AF3 hard-coded policy.
-- Verified AF3 3.2.19's complete 18-node transitive closure in disposable
-  Kodi. All nodes are installed, enabled, and not broken, with versions
-  recorded before activation.
-- Diagnosed the original fallback: AF3 was transiently loaded and the Yes
-  confirmation was sent; `script.skinvariables` first-run generation then
-  reloaded the skin during Kodi's keep/revert transaction, and Kodi returned
-  to Estuary. The persisted setting also reverted to Estuary. The issue was
-  not an unaccepted confirmation and not a missing dependency after closure
-  enablement.
-- Updated the disposable harness to initialize AF3's generated runtime state
-  in `.kodi-test` only, then prove the actual BM-018A activation from Estuary.
-- Corrected live Kodi typed skin-setting handling for lowercase AF3 IDs and
-  Kodi's string-setter return value.
+## Validation and boundaries
 
-## Validation
-
-- BM-018D disposable live gate: `17/17 passing`.
-  - AF3 persisted and `xbmc.getSkinDir()` remained AF3.
-  - typed bool/string deployment and authoritative read-back passed;
-    identical reapply was idempotent; drift was repaired.
-  - unmanaged setting preservation, BM-014 configuration validation, restart
-    persistence, ownership preflight, and wrong-skin zero-mutation behavior
-    passed.
-- Focused skin/configuration tests: `264/264 passing`.
-- Full unit suite: `1,438/1,438 passing`.
+- Focused BM-018D tests: 765/765 passing.
+- Full suite: 1438/1438 passing.
 - `git diff --check`: passing.
-- Real Kodi profile mtime unchanged; no real profile settings or generated
-  state were copied; no Apple TV was accessed.
-
-## Not done
-
+- Real Kodi profile remained read-only; no Apple TV access occurred.
+- No real Kodi or Apple TV mutation occurred.
 - No production `af3-common` package was created.
 - BM-017, BM-018E, BM-019, and BM-020 were not started.
-- `matrix` was not integrated or modified. The current matrix SHA is
-  `bd78cc29a8aa572cc43f393d94a470e4912f3d32`.
+- Matrix, `agent/claude`, and `agent/antigravity` were not modified.
 
 ## Smallest next step
 
-Supervisor-directed integration review of `agent/codex` commit `39bd26c`.
-Do not start another Build Manager task from this handoff.
+Retry the supervisor-directed outgoing Codex -> Antigravity handoff. Do not
+start another Build Manager milestone from this handoff.
 
 ## Usage
 
