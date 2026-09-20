@@ -65,4 +65,3 @@ fix does not require a restart. No current operation legitimately emits
 `KODI_RESTART`, so BM-019 validates the framework with unit/integration tests
 and does not invent a live restart scenario. BM-020 owns persistence of
 transaction progress, Kodi restart execution, and deterministic continuation.
-
