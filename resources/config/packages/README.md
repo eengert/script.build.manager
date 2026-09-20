@@ -34,3 +34,10 @@ contains only typed `target: "skin"` bool/string settings for
 `skin.arctic.fuse.3`, has no file overlays, and is selected by the manifest's
 `skin.config_packages` declaration. Its exact ownership remains declared by
 `config.managed_settings`; the package cannot broaden that boundary.
+
+Executable example manifests are deployable examples and may select only
+packages that exist in this directory. Red Light configuration portability is
+still deferred under BM-016; Red Light settings must remain unmanaged and
+`redlight-common` must not be added to an executable example until a reviewed
+package is implemented. Executable examples are expected to pass production
+preflight without placeholder ownership declarations.
