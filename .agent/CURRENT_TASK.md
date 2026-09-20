@@ -1,5 +1,34 @@
 # Current Task
 
+## BM-019 — restart-requirement aggregation
+
+**Status**: Complete on `agent/codex`; not integrated to `matrix`.
+
+Substantive commit: `703ff4c3ae4fdf5cb88445e5521e041287adef57`.
+
+Implemented the typed `RestartRequirement` contract with `NONE` and
+`KODI_RESTART`, monotonic aggregation, immutable reporting/serialization, and
+result metadata for repository, add-on, dependency, skin, and configuration
+operations. Only successful changed operations contribute; idempotent results
+do not, failed/uncommitted results do not establish a restart requirement, and
+later failures preserve an earlier successful requirement.
+
+Added `docs/RESTART_REQUIREMENTS.md` and updated the canonical restart section.
+BM-018D/BM-018E paths remain `NONE`; their typed skin persistence compatibility
+behavior does not request a restart. No automatic restart or BM-020 resume
+behavior was added.
+
+Validation: focused restart/planner/config/add-on/dependency/repository/skin
+tests **813/813**; full suite **1476/1476**; `git diff --check` clean. No live
+restart test was invented because no current operation legitimately requires
+one. Only disposable/unit validation is in scope; the real Kodi profile and
+devices were not accessed.
+
+Usage telemetry was unavailable; no values were fabricated. BM-017 and BM-020
+remain deferred. The smallest next step is supervisor review of BM-019.
+
+## Prior integrated state
+
 ## Synchronized worker state
 
 **Status**: BM-018D and BM-018E are complete, supervisor-approved, and

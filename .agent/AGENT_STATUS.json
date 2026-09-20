@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "synchronized-worker",
-  "reason": "BM-018D compatibility extension and BM-018E are complete and integrated on matrix; Codex is synchronized and ready for the next supervisor assignment. No new milestone has started.",
-  "last_commit": "cfd335499123126027741f8e595489cc32b9e207",
+  "status": "complete",
+  "task": "BM-019",
+  "reason": "BM-019 typed restart-requirement aggregation is complete on agent/codex. No current operation emits a restart requirement; restart execution and resume remain BM-020 scope. Matrix is unchanged.",
+  "last_commit": "703ff4c3ae4fdf5cb88445e5521e041287adef57",
   "matrix_sha": "cfd335499123126027741f8e595489cc32b9e207",
   "next_agent": "human",
   "updated_at": "2026-09-20"

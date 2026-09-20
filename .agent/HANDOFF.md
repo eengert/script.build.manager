@@ -1,5 +1,41 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-019 completion
+
+BM-019 is complete on `agent/codex` and remains unintegrated; `matrix` is
+unchanged at `cfd335499123126027741f8e595489cc32b9e207`. The external Agent
+Handoff pointer was not changed.
+
+Substantive commit: `703ff4c3ae4fdf5cb88445e5521e041287adef57`
+(`feat(BM-019): add typed restart requirement aggregation`).
+
+Implemented `resources/lib/restart.py` with the typed `NONE` /
+`KODI_RESTART` contract, monotonic `RestartAggregator`, immutable
+`RestartReport`, nested report aggregation, and JSON-safe reporting. Existing
+repository, add-on, dependency, skin, and configuration results now preserve
+typed restart metadata. The planner remains non-mutating and does not infer a
+final restart from an action kind.
+
+Failure semantics are explicit: successful changed operations contribute;
+idempotent/no-change operations do not; failed/uncommitted operations are
+counted but do not establish a restart requirement; and a later failure cannot
+erase an earlier successful requirement. BM-018D/BM-018E operations remain
+`NONE`; their skin-setting persistence compatibility fix does not require a
+restart. BM-020 still owns restart execution, transaction persistence, and
+resume/re-entry behavior.
+
+Documentation: `docs/RESTART_REQUIREMENTS.md`, canonical restart-section
+update, and testing inventory update. Tests: focused **813/813**, full
+**1476/1476**, `git diff --check` clean. No current operation genuinely
+requires restart, so no synthetic live restart scenario was added. No real
+Kodi profile, Apple TV, or other device was accessed.
+
+Usage telemetry was unavailable and remains recorded as unavailable. BM-017,
+BM-020, and all later milestones were not started. The smallest next step is
+supervisor review and integration of this worker branch.
+
+## Prior synchronized state
+
 ## Current synchronized state
 
 Codex is synchronized with the protected matrix at
