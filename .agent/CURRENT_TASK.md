@@ -1,5 +1,35 @@
 # Current Task
 
+## BM-020A1 — action-ownership prerequisites integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`. `active_agent` is `none`; matrix remains neutral.
+
+Substantive integration commit: `e0c8536`.
+
+The supported add-on contract is now `enabled` / `disabled`; omitted add-ons
+are unmanaged, and `absent` is rejected before planning or mutation because
+Kodi does not expose a supported unattended removal API suitable for Build
+Manager. `ENSURE_ABSENT` and its unreachable planner contract were removed.
+
+Each target install operation owns required dependency preflight and
+reconciliation through `DependencyAwareInstaller`. Complete target metadata is
+required in fail-closed preflight mode; explicit desired-disabled required
+dependencies fail before mutation; dependency failures prevent target
+installation; optional dependencies remain optional; and no global executor
+dependency phase or removal/pruning path was introduced.
+
+Nested `AddonInstallResult` and `RestartReport` values propagate through
+dependency actions/results and the enclosing install result using BM-019's
+typed monotonic restart aggregation.
+
+Focused manifest/planner/dependency/add-on/restart/BM-018 tests passed
+988/988. Full suite passed 1462/1462. `git diff --check` passed. Real Kodi
+profile, Apple TV, and all devices remained untouched. BM-020A, BM-020B/C,
+BM-017, and later milestones were not started.
+
+Next task: BM-020A remains deferred until separately authorized.
+
 ## BM-019 — restart-requirement aggregation integrated
 
 **Status**: Complete, supervisor-approved, and integrated on `matrix`.

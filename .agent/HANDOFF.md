@@ -1,4 +1,26 @@
-# Agent Handoff — WF-002 Antigravity usage reporting integrated
+# Agent Handoff — BM-020A1 integrated
+
+## BM-020A1 integration complete
+
+BM-020A1 is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix state is neutral with `active_agent: none`. The
+substantive integration commit is `e0c8536` (`feat(BM-020A1): integrate action
+ownership prerequisites`). Worker-specific Codex metadata was not copied.
+
+The supported add-on states are `enabled` and `disabled`; omission is
+unmanaged; `absent` is rejected with the public-Kodi-API limitation; and
+`ENSURE_ABSENT` is removed. Required dependency closure is owned by the target
+install operation, preflighted before mutation, and returned as a nested
+aggregate result. Explicit desired-disabled required dependencies fail closed,
+dependency failures prevent target installation, optional dependencies remain
+optional, and BM-019 restart requirements propagate through the nested result.
+
+Validation from the integrated tree: focused tests **988/988**, full suite
+**1462/1462**, and `git diff --check` clean. The real Kodi profile, Apple TV,
+and all devices remained untouched. BM-020A production executor work,
+BM-020B/C, BM-017, and later milestones remain unstarted.
+
+## Prior integrated state
 
 ## BM-019 integration complete
 

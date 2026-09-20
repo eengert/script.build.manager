@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-019",
-  "reason": "BM-019 typed restart-requirement aggregation is complete and integrated; matrix remains neutral. BM-020 restart execution and resume remain deferred.",
-  "last_commit": "202f41d",
-  "matrix_sha": "202f41d",
+  "task": "BM-020A1",
+  "reason": "BM-020A1 action-ownership prerequisites are complete and integrated; matrix remains neutral. BM-020A executor work and BM-020B/C remain deferred.",
+  "last_commit": "e0c8536",
+  "matrix_sha": "e0c8536",
   "next_agent": "human",
   "updated_at": "2026-09-20"
 }
