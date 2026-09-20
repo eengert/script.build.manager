@@ -1,54 +1,45 @@
-# Agent Handoff — BM-018D incoming-worker preparation
+# Agent Handoff — WF-002 Antigravity usage reporting via CodexBar
 
-**Status**: BM-018D is complete and supervisor-approved. `agent/antigravity`
-is synchronized with current `origin/matrix` and prepared for the incoming
-worker handoff. The Codex -> Antigravity handoff has not occurred; the GUI
-remains responsible for that transition. Matrix remains neutral
-(`active_agent = none`).
+**Status**: WF-002 is complete. Reliable, read-only Antigravity usage reporting
+via CodexBar has been implemented and validated.
 
-## Integrated state
+## What was done
 
-- `28a6fd4` — `feat(BM-018D): add typed skin configuration support`.
-- `5a3cc9a` — `fix(BM-018D): resolve AF3 disposable live gate`.
-- Only the reviewed BM-018D substantive commits were integrated; worker-only
-  `.agent` commits and unrelated worker history were not merged.
-- Generic typed skin-setting support is complete.
-- AF3-specific mutual-exclusion policy remains isolated from the generic skin
-  backend; AF3 key normalization and non-boolean string-setter return handling
-  are handled by the backend/runtime adaptation.
+- Implemented `tools/antigravity-usage` helper around `/usr/local/bin/codexbar`:
+  - Queries `provider = antigravity`, `source = auto`, JSON format, no-color.
+  - Parses and preserves named rate windows from `usage.extraRateWindows`
+    (e.g., "Gemini weekly" and "Claude/GPT weekly") without collapsing them.
+  - Preserves account email, source, login method, and reset descriptions.
+  - Calculates remaining percent strictly as `100.0 - usedPercent`.
+  - Fails closed with normalized, sanitized unavailable result on error or missing data.
+  - Supports `--human` summary output and JSON output.
+- Created `tests/test_antigravity_usage.py` covering:
+  - Multi-window parsing and distinct Gemini vs. Claude/GPT pool separation.
+  - Remaining percentage calculation.
+  - Fallback to primary/secondary windows if extraRateWindows is absent.
+  - Error handling: malformed JSON, command exit code, missing binary, timeout,
+    missing provider record, missing usage section, sanitized error output.
+  - All 11/11 tests pass.
+- Updated `AGENTS.md` with Antigravity-Specific Notes documenting the authoritative
+  command, helper usage, distinct pool preservation, and usage conventions.
+- Updated `.agent/USAGE_HISTORY.md` with task convention note and WF-002 row.
+- Updated `.agent/AGENT_STATUS.json` and `.agent/CURRENT_TASK.md`.
 
-## Live evidence
+## Validation
 
-- Disposable AF3 live gate: 17/17 passed.
-- The AF3 dependency closure must be installed, enabled, and not broken in the
-  disposable environment.
-- AF3 first-run generated-state initialization caused the original transient
-  fallback. The harness bootstraps that generated runtime state only inside
-  `.kodi-test`, then validates the actual BM-018A Estuary -> AF3
-  confirmation/activation path.
-- Therefore BM-018A confirmation is live-proven once AF3 generated first-run
-  runtime state exists; completely pristine first-ever AF3 provisioning is not
-  claimed as proven.
+- Focused tests: `python3 -m unittest tests/test_antigravity_usage.py` — 11/11 passing.
+- Live read-only smoke test: `tools/antigravity-usage --human` and JSON output verified.
+- Direct output comparison: Helper output matches raw CodexBar command results exactly.
+- `git diff --check`: passed cleanly.
+- Real Kodi profile untouched; no Apple TV access; no BM milestone work started.
 
-## Validation and boundaries
+## Measured Usage (WF-002)
 
-- Focused BM-018D tests: 765/765 passing.
-- Full suite: 1438/1438 passing.
-- `git diff --check` passed.
-- Real Kodi profile remained read-only; no Apple TV access occurred.
-- No production `af3-common` package was created.
-- BM-018E, BM-017, BM-019, and BM-020 were not started.
-- Matrix, `agent/codex`, and `agent/claude` were not modified.
+- Start: Gemini weekly: 32.53% used / Claude/GPT weekly: 25.42% used
+- End:   Gemini weekly: 42.96% used / Claude/GPT weekly: 25.42% used
+- Delta: Gemini: +10.43% / Claude/GPT: ~0% (consistent with Gemini 3.8 Flash model usage)
 
-## Synchronization
+## Next Steps
 
-- Preserved the original Antigravity planner POC in Git history; no
-  substantive Antigravity-only endpoint work existed after the merge base.
-- Merged current `origin/matrix` normally into `agent/antigravity`.
-- Current protected tip: `0e38797d90bb64cd19ca5e7608c41a741afb2e07`.
-- `.agent/*` records Antigravity as complete and prepared, without claiming
-  that the GUI handoff has already occurred.
-- Usage history is the semantic union of the worker and matrix histories,
-  with exact duplicate rows removed and no telemetry fabricated.
-
-Do not start another Build Manager milestone from this handoff.
+- Await supervisor review and next milestone assignment.
+- BM-017, BM-018E, BM-019, BM-020 remain not started.

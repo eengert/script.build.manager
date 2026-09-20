@@ -1,13 +1,11 @@
 # Current Task
 
-## BM-018D — typed skin-setting configuration prepared for handoff
+## WF-002 — Antigravity usage reporting via CodexBar
 
 **Agent**: Antigravity
 **Branch**: `agent/antigravity`
 **Worktree**: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-antigravity`
-**Status**: Complete and supervisor-approved; synchronized with current
-`origin/matrix` and prepared for the incoming worker handoff. The GUI has not
-performed the Codex -> Antigravity transition yet.
+**Status**: Complete; tools/antigravity-usage helper implemented, tested (11/11 tests), documented in AGENTS.md, and validated against live CodexBar CLI.
 
 Current protected matrix: `0e38797d90bb64cd19ca5e7608c41a741afb2e07`.
 Substantive BM-018D work is already integrated on matrix as `28a6fd4` and

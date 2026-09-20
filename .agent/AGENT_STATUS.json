@@ -1,10 +1,10 @@
 {
   "active_agent": "antigravity",
   "status": "complete",
-  "task": "BM-018D",
-  "reason": "BM-018D complete and supervisor-approved; agent/antigravity is synchronized with current matrix and prepared for incoming handoff, which has not yet occurred.",
-  "last_commit": "5a3cc9a",
+  "task": "WF-002",
+  "reason": "WF-002 complete: added tools/antigravity-usage helper, unit tests (11/11 pass), documentation in AGENTS.md, and USAGE_HISTORY record.",
+  "last_commit": "d3c5a14",
   "matrix_sha": "0e38797d90bb64cd19ca5e7608c41a741afb2e07",
   "next_agent": null,
-  "updated_at": "2026-09-19T23:00:00Z"
+  "updated_at": "2026-09-20T01:46:00Z"
 }
