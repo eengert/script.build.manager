@@ -494,6 +494,7 @@ class TestCommandDispatch(unittest.TestCase):
                                                 "log": "/l"}),
             "validate": make_noop("validate"),
             "validate_af3_package": make_noop("validate_af3_package"),
+            "validate_build_manager": make_noop("validate_build_manager"),
         }
         if side_effects:
             patches.update(side_effects)
@@ -516,6 +517,11 @@ class TestCommandDispatch(unittest.TestCase):
         rc, called = self._run_cmd("validate-af3-package")
         self.assertEqual(rc, 0)
         self.assertIn("validate_af3_package", called)
+
+    def test_validate_build_manager_routes(self):
+        rc, called = self._run_cmd("validate-build-manager")
+        self.assertEqual(rc, 0)
+        self.assertIn("validate_build_manager", called)
 
     def test_configure_routes(self):
         rc, called = self._run_cmd("configure")

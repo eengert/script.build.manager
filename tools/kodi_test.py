@@ -33,6 +33,7 @@ Commands
   validate-post-operations  BM-014 live validation: post-operation state validation
   validate-config BM-015 live validation: configuration package deployment
   validate-af3-package BM-018E live validation: production AF3 package
+  validate-build-manager BM-020A live validation: production executor
 """
 
 from __future__ import annotations
@@ -3838,6 +3839,36 @@ def _run_external_skin_write(config, job):
     return {"written": True}
 
 
+def _run_build_manager(addon_root, job):
+    """Invoke the real BM-020A executor inside disposable Kodi."""
+    from resources.lib.build_manager import BuildManager, ReconcileRequest
+
+    manifest_path = os.path.join(
+        addon_root, "resources", "builds", "examples", "eric-main.example.json"
+    )
+    request = ReconcileRequest(
+        manifest_path=manifest_path,
+        device_profile_id=job.get("device_profile_id", "family-room"),
+    )
+    result = BuildManager().reconcile(request)
+    payload = result.to_dict()
+    payload["owner_dispatch"] = [
+        {
+            "action_kind": action["kind"],
+            "owner": {
+                "INSTALL_REPOSITORY": "RepositoryManager",
+                "INSTALL_ADDON": "DependencyAwareInstaller",
+                "ENABLE_ADDON": "AddonStateReconciler",
+                "DISABLE_ADDON": "AddonStateReconciler",
+                "SET_SKIN": "SkinActivator",
+                "CONFIGURE": "ConfigurationManager",
+            }.get(action["kind"], "unknown"),
+        }
+        for action in payload["planned_actions"]
+    ]
+    return payload
+
+
 def main():
     payload = {"ok": False}
     nonce = ""
@@ -3869,6 +3900,8 @@ def main():
                 except TypeError:
                     xbmc.executebuiltin(command)
             payload = {"written": list(commands)}
+        elif job.get("mode") == "build_manager":
+            payload = _run_build_manager(addon_root, job)
         else:
             payload = _run_apply(config, manifest, job)
         payload["ok"] = True
@@ -5556,6 +5589,134 @@ def validate_skin_config() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BM-020A live validation — production reconciliation executor
+# ---------------------------------------------------------------------------
+
+def _bm020a_run_job(*, device_profile_id: str = "family-room") -> Dict[str, Any]:
+    """Invoke BuildManager.reconcile() inside disposable Kodi."""
+    return _bm015_run_job({
+        "mode": "build_manager",
+        "device_profile_id": device_profile_id,
+    }, timeout=120.0)
+
+
+def _bm020a_ensure_runner_enabled() -> None:
+    detail = jsonrpc("Addons.GetAddonDetails", {
+        "addonid": _BM015_RUNNER_ADDON_ID,
+        "properties": ["enabled"],
+    })
+    addon = detail.get("addon") if isinstance(detail, dict) else None
+    if not isinstance(addon, dict):
+        raise RuntimeError(f"BM-020A runner was not discovered: {detail!r}")
+    if addon.get("enabled") is not True:
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "enabled": True,
+        })
+    print("  BM-020A in-process runner discovered and enabled ✓")
+
+
+def validate_build_manager() -> None:
+    """Run the BM-020A executor against the real disposable Kodi runtime.
+
+    The command deliberately uses the checked-in ``eric-main`` manifest and
+    ``family-room`` selector. It does not synthesize a reduced manifest or
+    substitute direct subsystem calls for the production executor. The
+    disposable environment is prepared only with the Build Manager add-on and
+    harness runner; AF3/Red Light production add-on data is never read from
+    the real profile here.
+    """
+    print("=== Build Manager BM-020A live validation: production executor ===")
+    verify_isolation()
+
+    try:
+        print("\n[1/5] reset disposable profile, install production add-on and runner")
+        reset()
+        install(source=PROJECT)
+        _bm018d_install_runner()
+        configure_webserver()
+
+        print("\n[2/5] launch disposable Kodi and inspect initial state")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        before = inspect()
+        if before.get("active_skin") != "skin.estuary":
+            raise RuntimeError(
+                f"expected disposable Kodi to start on Estuary, got {before!r}"
+            )
+        print("  disposable Kodi started on Estuary ✓")
+
+        print("\n[3/5] invoke production BuildManager.reconcile()")
+        first = _bm020a_run_job()
+        print(json.dumps(first, indent=2, sort_keys=True, default=str))
+        if not first.get("ok"):
+            raise RuntimeError(
+                f"BM-020A runner failed: {first.get('error_type')}: "
+                f"{first.get('error')}"
+            )
+        if not first.get("success"):
+            failure = first.get("failure") or {}
+            raise RuntimeError(
+                "BM-020A disposable gate blocked before a successful pass: "
+                f"phase={failure.get('phase')!r} code={failure.get('code')!r} "
+                f"message={failure.get('message')!r}"
+            )
+
+        request = first.get("request") or {}
+        if request.get("device_profile_id") != "family-room":
+            raise RuntimeError(f"unexpected executor request: {request!r}")
+        if not first.get("desired_fingerprint"):
+            raise RuntimeError("executor returned no desired-state fingerprint")
+        if first.get("restart_report", {}).get("requirement") != "none":
+            raise RuntimeError(
+                f"unexpected first-pass restart requirement: {first.get('restart_report')!r}"
+            )
+        print("  production executor first pass succeeded with RestartRequirement.NONE ✓")
+
+        print("\n[4/5] rerun the exact request and verify idempotency")
+        second = _bm020a_run_job()
+        print(json.dumps(second, indent=2, sort_keys=True, default=str))
+        if not second.get("ok") or not second.get("success"):
+            raise RuntimeError(f"BM-020A second pass failed: {second!r}")
+        if second.get("desired_fingerprint") != first.get("desired_fingerprint"):
+            raise RuntimeError("BM-020A fingerprint changed between identical passes")
+        if second.get("restart_report", {}).get("requirement") != "none":
+            raise RuntimeError(
+                f"unexpected second-pass restart requirement: {second.get('restart_report')!r}"
+            )
+        if second.get("planned_actions"):
+            raise RuntimeError(
+                f"second pass was not a planner no-op: {second.get('planned_actions')!r}"
+            )
+        print("  exact request retained its fingerprint and produced a no-op ✓")
+
+        print("\n[5/5] invalid selector smoke check")
+        unchanged_before = inspect()
+        invalid = _bm020a_run_job(device_profile_id="does-not-exist")
+        unchanged_after = inspect()
+        if (
+            not invalid.get("ok")
+            or invalid.get("success")
+            or (invalid.get("failure") or {}).get("phase") != "resolve"
+            or unchanged_before != unchanged_after
+        ):
+            raise RuntimeError(
+                f"invalid selector did not fail closed without mutation: {invalid!r}"
+            )
+        print("  invalid selector failed in resolve phase; disposable state unchanged ✓")
+    finally:
+        print("\nstop disposable Kodi")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+
+    print("real Kodi profile was not accessed by this gate ✓")
+    print("\n=== BM-020A validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -5602,6 +5763,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-config", help="BM-015 live validation: configuration package deployment")
     sub.add_parser("validate-af3-package", help="BM-018E live validation: production AF3 package")
     sub.add_parser("validate-skin-config", help="BM-018D live validation: typed AF3 skin configuration")
+    sub.add_parser("validate-build-manager", help="BM-020A live validation: production executor")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -5646,6 +5808,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_skin_config()
         elif cmd == "validate-af3-package":
             validate_af3_package()
+        elif cmd == "validate-build-manager":
+            validate_build_manager()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
