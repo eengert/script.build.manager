@@ -164,6 +164,12 @@ from typing import Dict, List, Optional, Tuple
 
 from resources.lib.af3 import AF3PolicyError, validate_skin_settings
 from resources.lib.manifest import ConfigDeclarations, SettingTargetKind
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
 
 
 # Public configuration name for the manifest-level target discriminator.
@@ -400,6 +406,7 @@ class ConfigOperationResult:
     key: str = ""
     destination: str = ""
     target_kind: ConfigTargetKind = ConfigTargetKind.ADDON
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
 
     @property
     def target(self) -> str:
@@ -409,6 +416,19 @@ class ConfigOperationResult:
                 return f"{self.addon_id}/{self.key}"
             return f"{self.target_kind.value}:{self.addon_id}/{self.key}"
         return self.destination
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Typed restart metadata for this operation's actual outcome."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status in (
+                ConfigOperationStatus.UPDATED,
+                ConfigOperationStatus.CREATED,
+            ),
+            succeeded=self.status is not ConfigOperationStatus.FAILED,
+            operation=self.target,
+        ),))
 
 
 @dataclass(frozen=True)
@@ -501,6 +521,27 @@ class ConfigApplyResult:
     def all_applied(self) -> bool:
         """True when no operation failed. An empty result set is applied."""
         return not self.failed
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Aggregate restart metadata without downgrading earlier results."""
+        return aggregate_restart_requirements(
+            RestartObservation(
+                requirement=result.restart_requirement,
+                changed=result.status in (
+                    ConfigOperationStatus.UPDATED,
+                    ConfigOperationStatus.CREATED,
+                ),
+                succeeded=result.status is not ConfigOperationStatus.FAILED,
+                operation=result.target,
+            )
+            for result in self.results
+        )
+
+    @property
+    def restart_requirement(self) -> RestartRequirement:
+        """The final typed requirement for this configuration reconciliation."""
+        return self.restart_report.requirement
 
     @property
     def validation_state(self) -> ConfigurationValidationState:

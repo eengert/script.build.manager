@@ -111,6 +111,12 @@ from pathlib import Path
 from typing import FrozenSet, Optional
 
 from resources.lib.manifest import Repository
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +152,17 @@ class RepositoryInstallResult:
     addon_id: str
     status: RepositoryStatus
     message: str
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Typed restart metadata for this repository result."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status is RepositoryStatus.INSTALLED,
+            succeeded=self.status is not RepositoryStatus.FAILED,
+            operation=f"install-repository:{self.addon_id}",
+        ),))
 
 
 # ---------------------------------------------------------------------------
