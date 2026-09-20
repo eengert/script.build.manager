@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Normalize local CodexBar Antigravity usage data for Build Manager workflow use.
+
+Invokes `codexbar usage --provider antigravity --source auto --format json --pretty --no-color`.
+Extracts account/source information and preserves distinct named rate windows
+(such as Gemini weekly and Claude/GPT weekly pools) without collapsing them into
+a single generic figure.
+
+This is a read-only helper. It never touches CodexBar's config or credentials,
+never talks to upstream APIs directly, and sanitizes failure outputs.
+
+Usage:
+    tools/antigravity-usage             # machine-readable JSON (default)
+    tools/antigravity-usage --human     # human-readable summary
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+CODEXBAR_BIN = "/usr/local/bin/codexbar" if os.path.exists("/usr/local/bin/codexbar") else "codexbar"
+
+CODEXBAR_CMD = [
+    CODEXBAR_BIN,
+    "usage",
+    "--provider",
+    "antigravity",
+    "--source",
+    "auto",
+    "--format",
+    "json",
+    "--pretty",
+    "--no-color",
+]
+
+CODEXBAR_TIMEOUT_SECONDS = 15
+
+
+def _unavailable(reason):
+    return {"available": False, "reason": reason}
+
+
+def _run_codexbar(command):
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=CODEXBAR_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        return None, _unavailable("codexbar CLI not found on PATH or /usr/local/bin/codexbar")
+    except subprocess.TimeoutExpired:
+        return None, _unavailable("codexbar timed out")
+    except OSError as exc:
+        return None, _unavailable("failed to invoke codexbar: %s" % type(exc).__name__)
+
+    if proc.returncode != 0:
+        return None, _unavailable("codexbar exited with status %d" % proc.returncode)
+
+    return proc.stdout, None
+
+
+def _parse_json(raw):
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None, _unavailable("codexbar returned malformed JSON")
+    return data, None
+
+
+def _find_antigravity_record(data):
+    """codexbar's --format json output is typically a top-level list of provider records.
+    Accept a bare dict or common wrappers too."""
+    candidates = []
+    if isinstance(data, list):
+        candidates = data
+    elif isinstance(data, dict):
+        if "provider" in data:
+            candidates = [data]
+        else:
+            for key in ("providers", "results", "data"):
+                if isinstance(data.get(key), list):
+                    candidates = data[key]
+                    break
+
+    for record in candidates:
+        if isinstance(record, dict) and record.get("provider") == "antigravity":
+            return record, None
+
+    return None, _unavailable("no antigravity provider record in codexbar output")
+
+
+def _parse_rate_window(window_dict, name=None, window_id=None):
+    if not isinstance(window_dict, dict):
+        return None
+
+    used_percent = window_dict.get("usedPercent")
+    if not isinstance(used_percent, (int, float)):
+        return None
+
+    remaining_percent = max(0.0, min(100.0, round(100.0 - used_percent, 4)))
+
+    normalized = {
+        "name": name,
+        "id": window_id,
+        "used_percent": round(used_percent, 4),
+        "remaining_percent": remaining_percent,
+        "window_minutes": window_dict.get("windowMinutes"),
+        "resets_at": window_dict.get("resetsAt"),
+        "reset_description": window_dict.get("resetDescription"),
+    }
+    return normalized
+
+
+def _normalize(raw):
+    data, err = _parse_json(raw)
+    if err:
+        return err
+
+    record, err = _find_antigravity_record(data)
+    if err:
+        return err
+
+    usage_section = record.get("usage")
+    if not isinstance(usage_section, dict):
+        return _unavailable("codexbar record missing usage section")
+
+    # Extract account and source information
+    account = record.get("account") or usage_section.get("accountEmail")
+    source = record.get("source")
+    login_method = usage_section.get("loginMethod")
+
+    # Parse named extraRateWindows
+    raw_windows = usage_section.get("extraRateWindows")
+    windows = []
+
+    if isinstance(raw_windows, list):
+        for entry in raw_windows:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("title") or entry.get("name") or entry.get("id")
+            w_id = entry.get("id")
+            w_dict = entry.get("window") if isinstance(entry.get("window"), dict) else entry
+            parsed = _parse_rate_window(w_dict, name=name, window_id=w_id)
+            if parsed:
+                windows.append(parsed)
+
+    # Fallback to primary / secondary if extraRateWindows was empty or absent
+    if not windows:
+        for key, default_name in (("primary", "primary"), ("secondary", "secondary")):
+            sec = usage_section.get(key)
+            if isinstance(sec, dict):
+                parsed = _parse_rate_window(sec, name=default_name, window_id=key)
+                if parsed:
+                    windows.append(parsed)
+
+    if not windows:
+        return _unavailable("codexbar record contained no parseable rate windows")
+
+    # Map pools into a convenient lookup by name/id
+    pools = {}
+    for w in windows:
+        label = w["name"] or w["id"] or "unnamed"
+        pools[label] = {
+            "used_percent": w["used_percent"],
+            "remaining_percent": w["remaining_percent"],
+            "resets_at": w["resets_at"],
+            "reset_description": w["reset_description"],
+            "window_minutes": w["window_minutes"],
+        }
+
+    return {
+        "available": True,
+        "provider": "antigravity",
+        "source": source,
+        "account": account,
+        "login_method": login_method,
+        "updated_at": usage_section.get("updatedAt"),
+        "windows": windows,
+        "pools": pools,
+    }
+
+
+def get_normalized_usage():
+    """Execute codexbar and return normalized Antigravity usage."""
+    raw, error = _run_codexbar(CODEXBAR_CMD)
+    if error:
+        return error
+    return _normalize(raw)
+
+
+def _format_human(result):
+    if not result.get("available"):
+        return "Antigravity usage: unavailable (%s)" % result.get("reason", "unknown reason")
+
+    lines = ["Antigravity usage (CodexBar)"]
+    if result.get("account"):
+        lines.append("Account: %s" % result["account"])
+    if result.get("source"):
+        lines.append("Source: %s" % result["source"])
+    if result.get("login_method"):
+        lines.append("Login Method: %s" % result["login_method"])
+
+    lines.append("")
+    lines.append("Rate Windows:")
+    for w in result.get("windows", []):
+        name = w.get("name") or w.get("id") or "Window"
+        used = w.get("used_percent")
+        rem = w.get("remaining_percent")
+        line = "  - %s: %s%% used / %s%% remaining" % (name, used, rem)
+        lines.append(line)
+        desc = w.get("reset_description") or w.get("resets_at")
+        if desc:
+            lines.append("    Reset: %s" % desc)
+
+    return "\n".join(lines)
+
+
+def main(argv):
+    human = "--human" in argv
+    result = get_normalized_usage()
+    if human:
+        print(_format_human(result))
+    else:
+        print(json.dumps(result, indent=2))
+    return 0 if result.get("available") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
