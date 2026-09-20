@@ -347,21 +347,49 @@ that is not evidence that every AF3 installation should receive those
 mappings. A standard build may choose a curated mapping only after its add-on
 dependencies are declared and the generated output is verified.
 
-## Future package specification
+## Package specification
 
-### `af3-common`
+### `af3-common` (BM-018E)
 
-BM-018D should create `af3-common` only after a supervisor-approved value set
-exists. Its v1 contract is:
+BM-018E creates the initial supervisor-approved production package. Its v1
+contract is:
 
 ```text
 settings:
   target family: skin.arctic.fuse.3 typed skin settings
   allowed types: bool, string
-  allowed keys: the PUBLIC_PORTABLE table above, minus any key rejected by
-                value-specific or cross-setting validation
+  allowed keys: the 16 exact keys listed below
 files: []
 ```
+
+The package values are policy values, not a copy of Eric's live profile:
+
+| Key | Type | Value |
+|---|---|---|
+| `HomeSwitcher.Vertical` | bool | `false` |
+| `HomeSwitcher.EnableIcons` | bool | `false` |
+| `HomeSwitcher.EnableIconText` | bool | `true` |
+| `HomeSwitcher.DisableHeader` | bool | `true` |
+| `HomeSwitcher.DisableDate` | bool | `true` |
+| `HomeSwitcher.DisableSearch` | bool | `false` |
+| `HomeSwitcher.DisableFirstWidgetFocus` | bool | `false` |
+| `HomeSwitcher.LoopBack` | bool | `false` |
+| `Spotlight.EnableSlide` | bool | `false` |
+| `Spotlight.UseMenuButton` | bool | `false` |
+| `View.UseDetailedListLabels` | bool | `true` |
+| `Widgets.EnableShowMore` | bool | `true` |
+| `Widgets.DisableNoResultsItem` | bool | `false` |
+| `Navigation.OnBack` | string | `Previous` |
+| `Seekbar.TimeDisplay` | string | `Combined` |
+| `Skin.FlixArt.Size` | string | `ExtraLarge` |
+
+The following reviewed candidates remain intentionally unmanaged in
+`af3-common`: `OSD.AutoOnPause`, `OSD.AutoOnPause.Delay`, `Plotline.Movie`,
+`Plotline.TVShow`, `Mouse.PointerSize`, and `SeasonalTheme.PropsDensity`.
+They are preference-dependent, device/display-dependent, or otherwise not
+approved for the initial common policy. The existing AF3 cross-setting policy
+also keeps `HomeSwitcher.EnableIcons=true` and
+`HomeSwitcher.EnableIconText=true` mutually exclusive.
 
 The package must not contain:
 
@@ -378,7 +406,7 @@ The manifest declaration should use `skin.config_packages: ["af3-common"]`
 as already supported by BM-018B, plus `config.managed_settings` entries for
 every exact `("skin", "skin.arctic.fuse.3", key)` target supplied by the package. No
 undeclared setting may be silently accepted. The package values should be
-written as normal BM-015 typed values once BM-018D supplies the skin-settings
+are written as normal BM-015 typed values through the BM-018D skin-settings
 backend and post-write verification.
 
 ### Future personal, platform and device overlays

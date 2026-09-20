@@ -28,3 +28,9 @@ BM-017 and the private overlay, not of these packages.
 
 BM-015 supports embedded/local packages only. Remote or versioned package
 delivery is deliberately out of scope.
+
+The production `af3-common` package is the initial reviewed AF3 policy. It
+contains only typed `target: "skin"` bool/string settings for
+`skin.arctic.fuse.3`, has no file overlays, and is selected by the manifest's
+`skin.config_packages` declaration. Its exact ownership remains declared by
+`config.managed_settings`; the package cannot broaden that boundary.

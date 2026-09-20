@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "WF-002",
+  "task": "BM-018E",
   "reason": null,
-  "last_commit": "09b4fef",
-  "matrix_sha": "0e38797d90bb64cd19ca5e7608c41a741afb2e07",
-  "next_agent": null,
-  "updated_at": "2026-09-20T01:50:05Z"
+  "last_commit": "4e6c986",
+  "matrix_sha": "466d431a3de0dd7b35105ef3c13ca4e0cc0058a7",
+  "next_agent": "human",
+  "updated_at": "2026-09-19T00:00:00Z"
 }

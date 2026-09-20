@@ -506,6 +506,14 @@ first-seen order. Skin-selected packages do not gain authority to modify
 undeclared targets: `config.managed_settings` and `config.managed_files`
 remain the ownership boundary. There is no separate skin package format.
 
+The production `af3-common` package is a typed skin-target package for
+`skin.arctic.fuse.3`. It contains the supervisor-approved common AF3 bool and
+string policy only and has `files: []`; the exact key/value contract and the
+six intentionally unmanaged reviewed candidates are recorded in
+[`docs/AF3_PORTABILITY.md`](AF3_PORTABILITY.md). A manifest using it must
+declare each exact skin target with `target: "skin"`. No package can claim
+ownership merely by appearing in `skin.config_packages`.
+
 ---
 
 ## API

@@ -486,12 +486,16 @@ mixed-case IDs that Kodi accepts remain unchanged.
 
 The command requires `/Applications/Kodi.app`, uses Kodi JSON-RPC port 8920,
 and can require local-process/network permission in a sandboxed environment.
-It does not create `af3-common`; the package is synthetic harness data only.
+The live runner uses a synthetic two-setting package to keep the runtime gate
+focused on the BM-018D backend. BM-018E separately validates the production
+`af3-common` descriptor and its complete 16-setting ownership through the unit
+suite; it does not copy the real profile into the disposable harness.
 
 ### Out of scope for BM-009 through BM-018D
 
 - Add-on provisioning from the full planner action plan
-- Production AF3 provisioning package (`af3-common`) and whole-file skin state
+- Whole-file AF3 skin state and production AF3 provisioning beyond the reviewed
+  typed `af3-common` package
 - Authentication and credential portability (BM-017)
 - Remote or versioned configuration package delivery
 - tvOS, Android, Fire TV, Shield testing (require device harnesses)
