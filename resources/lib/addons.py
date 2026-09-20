@@ -138,6 +138,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -443,6 +450,7 @@ class AddonInstallResult:
     enabled       -- observed enabled state from Kodi's database (None on FAILED)
     version       -- observed version string from Kodi's database (None on FAILED)
     message       -- human-readable description of the outcome
+    restart_requirement -- lifecycle requirement declared by the operation
     """
     addon_id: str
     status: AddonStatus
@@ -450,7 +458,17 @@ class AddonInstallResult:
     enabled: Optional[bool]
     version: Optional[str]
     message: str
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
 
+    @property
+    def restart_report(self) -> RestartReport:
+        """Typed restart metadata for this install result."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status is AddonStatus.INSTALLED,
+            succeeded=self.status is not AddonStatus.FAILED,
+            operation=f"install:{self.addon_id}",
+        ),))
 
 # ---------------------------------------------------------------------------
 # Constants

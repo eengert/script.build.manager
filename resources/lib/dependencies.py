@@ -143,6 +143,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
+
 # Type alias used in docstrings — imported lazily at runtime
 # InstalledAddonInfo and AddonInstallResult come from resources.lib.addons
 
@@ -271,6 +278,7 @@ class DependencyAction:
     kind: DependencyActionKind
     reason: str
     required_by: Tuple[str, ...]
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
 
 
 @dataclass(frozen=True)
@@ -280,6 +288,30 @@ class DependencyResult:
     actions: Tuple[DependencyAction, ...]
     all_required_satisfied: bool
     unresolved: Tuple[DependencyNode, ...]  # MISSING, VERSION_INSUFFICIENT, METADATA_ERROR, failed
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Aggregate only successful dependency changes."""
+        return aggregate_restart_requirements(
+            RestartObservation(
+                requirement=action.restart_requirement,
+                changed=action.kind in (
+                    DependencyActionKind.INSTALLED,
+                    DependencyActionKind.ENABLED,
+                ),
+                succeeded=action.kind not in (
+                    DependencyActionKind.FAILED_INSTALL,
+                    DependencyActionKind.FAILED_ENABLE,
+                ),
+                operation=f"dependency:{action.addon_id}",
+            )
+            for action in self.actions
+        )
+
+    @property
+    def restart_requirement(self) -> RestartRequirement:
+        """The final typed requirement for dependency reconciliation."""
+        return self.restart_report.requirement
 
 
 # ---------------------------------------------------------------------------

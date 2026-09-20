@@ -27,6 +27,7 @@ The test suite covers:
 | `test_addon_state.py` | Enable/disable state reconciliation (BM-013) | 66 |
 | `test_validator.py` | Post-operation state validation (BM-014) | 105 |
 | `test_config.py` | Configuration package deployment (BM-015) | 226 |
+| `test_restart.py` | Typed restart-requirement aggregation (BM-019) | 13 |
 
 ## Disposable Kodi harness
 

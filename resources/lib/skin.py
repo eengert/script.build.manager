@@ -16,6 +16,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
 
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
+
 
 class SkinError(Exception):
     """Base class for skin activation errors."""
@@ -53,6 +60,17 @@ class SkinResult:
     status: SkinStatus
     active_skin: Optional[str]
     message: str
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Skin activation is currently in-process; preserve typed metadata."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status is SkinStatus.ACTIVATED,
+            succeeded=self.status is not SkinStatus.FAILED,
+            operation=f"activate-skin:{self.addon_id}",
+        ),))
 
 
 @dataclass(frozen=True)
