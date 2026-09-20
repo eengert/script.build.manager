@@ -7,7 +7,8 @@ Codex remains the active worker on `agent/codex`, based on protected matrix
 and has not been integrated to matrix. The external Agent Handoff pointer was
 not changed.
 
-BM-020A adds the stable `BuildManager.reconcile()` orchestration boundary and
+BM-020A implementation commits are `1e29c23` and `213c9c0`. BM-020A adds the stable
+`BuildManager.reconcile()` orchestration boundary and
 typed `ReconcileRequest`, `ReconcileResult`, phase failures, ordered action
 results, deterministic desired-state fingerprints, and aggregated BM-019
 restart reports. It delegates to the existing manifest loader/resolver,
