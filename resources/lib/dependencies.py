@@ -79,10 +79,11 @@ status=OPTIONAL and excluded from the required closure. <import> with no
 optional attribute, or optional="false", is treated as required.
 
 System/builtin dependencies
-----------------------------
-Add-on IDs beginning with "xbmc." are Kodi-provided builtins. They are
-never installed by BM-012. They are recorded with status=SYSTEM and treated
-as satisfied. Examples: xbmc.python, xbmc.gui, xbmc.json.
+---------------------------
+Kodi-provided builtin add-ons are never installed by BM-012. They are
+recorded with status=SYSTEM and treated as satisfied. This includes runtime
+IDs beginning with "xbmc." and the built-in resource package "kodi.resource".
+Examples: xbmc.python, xbmc.gui, xbmc.json, kodi.resource.
 
 Multi-path requirement consolidation
 --------------------------------------
@@ -341,11 +342,11 @@ class DependencyResult:
 def _is_system_dependency(addon_id: str) -> bool:
     """True if addon_id is a Kodi-provided builtin that should never be installed.
 
-    Kodi provides add-ons whose IDs start with "xbmc." as part of the runtime.
-    Examples: xbmc.python, xbmc.gui, xbmc.json, xbmc.addon.metadata.
-    These are treated as always-satisfied and never passed to install_addon().
+    Kodi provides add-ons whose IDs start with "xbmc." and the built-in
+    ``kodi.resource`` package as part of the runtime. These are treated as
+    always-satisfied and never passed to install_addon().
     """
-    return addon_id.startswith("xbmc.")
+    return addon_id.startswith("xbmc.") or addon_id == "kodi.resource"
 
 
 # ---------------------------------------------------------------------------

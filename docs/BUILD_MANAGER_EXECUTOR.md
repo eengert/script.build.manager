@@ -55,3 +55,25 @@ process-wide lock. Those concerns remain later BM-020 scope.
 
 Validation uses the existing BM-014 validator and BM-015 validation snapshot;
 it does not add a second desired-state or configuration implementation.
+
+## Disposable executor fixture
+
+`tools/kodi_test.py validate-build-manager` uses the explicit test-only
+`resources/builds/examples/bm020a-executor.example.json` fixture. It requests
+only `skin.arctic.fuse.3` and the checked-in `af3-common` package, and is never
+the personal `eric-main` build. The harness prepares the disposable profile by
+copying AF3's known dependency closure, initializing AF3's generated runtime
+state, and then invoking the normal `BuildManager.reconcile()` API with the
+fixture's device selector.
+
+This gate proves top-level inspection, resolution, preflight, planning,
+ordered owner dispatch, result aggregation, fingerprinting, post-validation,
+and idempotent re-entry. Dedicated disposable gates remain the evidence for
+repository bootstrap, general add-on/dependency installation, skin activation,
+and the production `af3-common` configuration backend; BM-020A does not claim
+that the incomplete personal `family-room` distribution is fresh-installable.
+
+Pending separately from BM-020A is production source/distribution coverage for
+the personal build: repository bootstrap, authoritative sources for POV, Red
+Light, Umbrella, MyAccounts, and AF3, explicit source-repository binding, and
+multiple-provider ambiguity/supply-chain policy.

@@ -195,6 +195,12 @@ class TestIsSystemDependency(unittest.TestCase):
     def test_xbmc_addon_metadata(self) -> None:
         self.assertTrue(_is_system_dependency("xbmc.addon.metadata"))
 
+    def test_kodi_resource(self) -> None:
+        self.assertTrue(_is_system_dependency("kodi.resource"))
+
+    def test_kodi_resource_prefix_is_not_broadly_assumed(self) -> None:
+        self.assertFalse(_is_system_dependency("kodi.resource.example"))
+
     def test_script_module_not_system(self) -> None:
         self.assertFalse(_is_system_dependency("script.module.foo"))
 

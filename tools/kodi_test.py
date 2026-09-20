@@ -3843,8 +3843,15 @@ def _run_build_manager(addon_root, job):
     """Invoke the real BM-020A executor inside disposable Kodi."""
     from resources.lib.build_manager import BuildManager, ReconcileRequest
 
+    manifest_filename = job.get("manifest_filename", "bm020a-executor.example.json")
+    if (
+        not isinstance(manifest_filename, str)
+        or not manifest_filename.endswith(".json")
+        or os.path.basename(manifest_filename) != manifest_filename
+    ):
+        raise ValueError("manifest_filename must be a fixture JSON filename")
     manifest_path = os.path.join(
-        addon_root, "resources", "builds", "examples", "eric-main.example.json"
+        addon_root, "resources", "builds", "examples", manifest_filename
     )
     request = ReconcileRequest(
         manifest_path=manifest_path,
@@ -3852,6 +3859,33 @@ def _run_build_manager(addon_root, job):
     )
     result = BuildManager().reconcile(request)
     payload = result.to_dict()
+    if result.validation_report is not None:
+        payload["validation_checks"] = [
+            {
+                "domain": check.domain.value,
+                "subject": check.subject,
+                "status": check.status.value,
+                "expected": check.expected,
+                "actual_state": check.actual_state,
+                "reason": check.reason,
+            }
+            for check in result.validation_report.checks
+        ]
+    configure_result = next(
+        (
+            item.owner_result
+            for item in result.action_results
+            if item.action.kind == "CONFIGURE"
+        ),
+        None,
+    )
+    if configure_result is not None:
+        payload["configuration_summary"] = {
+            "setting_targets": [item.target for item in configure_result.settings],
+            "file_targets": [item.target for item in configure_result.files],
+            "changed_targets": [item.target for item in configure_result.changed],
+            "unchanged_targets": [item.target for item in configure_result.unchanged],
+        }
     payload["owner_dispatch"] = [
         {
             "action_kind": action["kind"],
@@ -4706,6 +4740,28 @@ _BM018D_AF3_SOURCE_ROOT = (
 )
 _BM018E_MANIFEST = PROJECT / "resources" / "builds" / "examples" / "eric-main.example.json"
 _BM018E_PROFILE = "family-room"
+_BM020A_FIXTURE = "bm020a-executor.example.json"
+_BM020A_PROFILE = "bm020a-disposable"
+_BM020A_MANAGED_SETTINGS = {
+    "HomeSwitcher.Vertical": ("bool", False),
+    "HomeSwitcher.EnableIcons": ("bool", False),
+    "HomeSwitcher.EnableIconText": ("bool", True),
+    "HomeSwitcher.DisableHeader": ("bool", True),
+    "HomeSwitcher.DisableDate": ("bool", True),
+    "HomeSwitcher.DisableSearch": ("bool", False),
+    "HomeSwitcher.DisableFirstWidgetFocus": ("bool", False),
+    "HomeSwitcher.LoopBack": ("bool", False),
+    "Spotlight.EnableSlide": ("bool", False),
+    "Spotlight.UseMenuButton": ("bool", False),
+    "View.UseDetailedListLabels": ("bool", True),
+    "Widgets.EnableShowMore": ("bool", True),
+    "Widgets.DisableNoResultsItem": ("bool", False),
+    "Navigation.OnBack": ("string", "Previous"),
+    "Seekbar.TimeDisplay": ("string", "Combined"),
+    "Skin.FlixArt.Size": ("string", "ExtraLarge"),
+}
+_BM020A_UNMANAGED_KEY = "TMDbHelper.Corner.Radius"
+_BM020A_UNMANAGED_VALUE = "bm020a-unmanaged"
 
 
 def _bm018d_copy_af3_and_dependencies() -> tuple[str, ...]:
@@ -5592,12 +5648,49 @@ def validate_skin_config() -> None:
 # BM-020A live validation — production reconciliation executor
 # ---------------------------------------------------------------------------
 
-def _bm020a_run_job(*, device_profile_id: str = "family-room") -> Dict[str, Any]:
+def _bm020a_run_job(
+    *, device_profile_id: str = _BM020A_PROFILE
+) -> Dict[str, Any]:
     """Invoke BuildManager.reconcile() inside disposable Kodi."""
     return _bm015_run_job({
         "mode": "build_manager",
         "device_profile_id": device_profile_id,
+        "manifest_filename": _BM020A_FIXTURE,
     }, timeout=120.0)
+
+
+def _bm020a_observe() -> Dict[str, Any]:
+    result = _bm018d_run_job({
+        "mode": "observe",
+        "observe": [
+            {
+                "target": "skin",
+                "addon_id": _BM018D_SKIN_ID,
+                "key": key,
+                "type": setting_type,
+            }
+            for key, (setting_type, _value) in _BM020A_MANAGED_SETTINGS.items()
+        ] + [{
+            "target": "skin",
+            "addon_id": _BM018D_SKIN_ID,
+            "key": _BM020A_UNMANAGED_KEY,
+            "type": "string",
+        }],
+    })
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"BM-020A typed observation failed: {result.get('error_type')}: "
+            f"{result.get('error')}"
+        )
+    observed = {}
+    for key, entry in result.get("observed", {}).items():
+        if not entry.get("ok"):
+            raise RuntimeError(
+                f"BM-020A typed observation could not read {key!r}: "
+                f"{entry.get('error')}"
+            )
+        observed[key] = entry["value"]
+    return observed
 
 
 def _bm020a_ensure_runner_enabled() -> None:
@@ -5617,26 +5710,24 @@ def _bm020a_ensure_runner_enabled() -> None:
 
 
 def validate_build_manager() -> None:
-    """Run the BM-020A executor against the real disposable Kodi runtime.
-
-    The command deliberately uses the checked-in ``eric-main`` manifest and
-    ``family-room`` selector. It does not synthesize a reduced manifest or
-    substitute direct subsystem calls for the production executor. The
-    disposable environment is prepared only with the Build Manager add-on and
-    harness runner; AF3/Red Light production add-on data is never read from
-    the real profile here.
-    """
+    """Run BM-020A against the explicit AF3 disposable executor fixture."""
     print("=== Build Manager BM-020A live validation: production executor ===")
     verify_isolation()
 
     try:
-        print("\n[1/5] reset disposable profile, install production add-on and runner")
+        print("\n[1/6] reset disposable profile and prepare AF3 fixture")
         reset()
         install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
         _bm018d_install_runner()
         configure_webserver()
+        print(
+            f"  fixture={_BM020A_FIXTURE!r} profile={_BM020A_PROFILE!r}; "
+            f"copied AF3 closure={len(af3_closure)}; real af3-common remains in installed Build Manager ✓"
+        )
 
-        print("\n[2/5] launch disposable Kodi and inspect initial state")
+        print("\n[2/6] launch disposable Kodi and inspect initial state")
         launch()
         wait_for_ready(timeout=90.0)
         _bm020a_ensure_runner_enabled()
@@ -5646,9 +5737,17 @@ def validate_build_manager() -> None:
                 f"expected disposable Kodi to start on Estuary, got {before!r}"
             )
         print("  disposable Kodi started on Estuary ✓")
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm018d_warm_af3_runtime()
+        warmed = inspect()
+        if warmed.get("active_skin") != "skin.estuary":
+            raise RuntimeError(
+                f"AF3 fixture preparation did not return to Estuary: {warmed!r}"
+            )
+        print("  AF3 disposable runtime prepared and returned to Estuary ✓")
 
-        print("\n[3/5] invoke production BuildManager.reconcile()")
-        first = _bm020a_run_job()
+        print("\n[3/6] invoke production BuildManager.reconcile() with fixture")
+        first = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
         print(json.dumps(first, indent=2, sort_keys=True, default=str))
         if not first.get("ok"):
             raise RuntimeError(
@@ -5664,18 +5763,70 @@ def validate_build_manager() -> None:
             )
 
         request = first.get("request") or {}
-        if request.get("device_profile_id") != "family-room":
+        if request.get("device_profile_id") != _BM020A_PROFILE:
             raise RuntimeError(f"unexpected executor request: {request!r}")
+        if not request.get("manifest_path", "").endswith(
+            f"/resources/builds/examples/{_BM020A_FIXTURE}"
+        ):
+            raise RuntimeError(f"unexpected fixture manifest path: {request!r}")
         if not first.get("desired_fingerprint"):
             raise RuntimeError("executor returned no desired-state fingerprint")
         if first.get("restart_report", {}).get("requirement") != "none":
             raise RuntimeError(
                 f"unexpected first-pass restart requirement: {first.get('restart_report')!r}"
             )
+        first_kinds = [action["kind"] for action in first.get("planned_actions", [])]
+        if first_kinds != ["SET_SKIN", "CONFIGURE"]:
+            raise RuntimeError(f"unexpected fixture planner actions: {first_kinds!r}")
+        first_owners = [entry["owner"] for entry in first.get("owner_dispatch", [])]
+        if first_owners != ["SkinActivator", "ConfigurationManager"]:
+            raise RuntimeError(f"unexpected fixture owner dispatch: {first_owners!r}")
+        if not all(result.get("succeeded") for result in first.get("action_results", [])):
+            raise RuntimeError(f"fixture action failed: {first.get('action_results')!r}")
+        configure_result = next(
+            result for result in first["action_results"]
+            if result["action"]["kind"] == "CONFIGURE"
+        )
+        if not configure_result.get("changed"):
+            raise RuntimeError(
+                f"fixture did not reconcile af3-common configuration: {configure_result!r}"
+            )
+        if first.get("validation_passed") is not True:
+            raise RuntimeError(f"fixture post-validation did not pass: {first!r}")
+        summary = first.get("configuration_summary") or {}
+        if summary.get("file_targets") != []:
+            raise RuntimeError(
+                f"production af3-common unexpectedly planned file deployment: {summary!r}"
+            )
+        expected_targets = [
+            f"skin:{_BM018D_SKIN_ID}/{key}"
+            for key in sorted(_BM020A_MANAGED_SETTINGS)
+        ]
+        if sorted(summary.get("setting_targets", [])) != expected_targets:
+            raise RuntimeError(
+                f"production af3-common setting scope mismatch: {summary!r}"
+            )
+        first_values = _bm020a_observe()
+        expected_values = {
+            key: value for key, (_setting_type, value) in _BM020A_MANAGED_SETTINGS.items()
+        }
+        if {
+            key: first_values.get(key) for key in expected_values
+        } != expected_values:
+            raise RuntimeError(
+                f"production af3-common typed read-back mismatch: {first_values!r}"
+            )
+        _bm018d_external_write(
+            _BM020A_UNMANAGED_KEY, _BM020A_UNMANAGED_VALUE, "string"
+        )
+        unmanaged_baseline = _bm020a_observe()
+        if unmanaged_baseline.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError(f"could not seed unmanaged preservation probe: {unmanaged_baseline!r}")
+        print("  all 16 production settings read back exactly; files=[] ✓")
         print("  production executor first pass succeeded with RestartRequirement.NONE ✓")
 
-        print("\n[4/5] rerun the exact request and verify idempotency")
-        second = _bm020a_run_job()
+        print("\n[4/6] rerun the exact fixture request and verify idempotency")
+        second = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
         print(json.dumps(second, indent=2, sort_keys=True, default=str))
         if not second.get("ok") or not second.get("success"):
             raise RuntimeError(f"BM-020A second pass failed: {second!r}")
@@ -5685,13 +5836,45 @@ def validate_build_manager() -> None:
             raise RuntimeError(
                 f"unexpected second-pass restart requirement: {second.get('restart_report')!r}"
             )
-        if second.get("planned_actions"):
+        second_kinds = [action["kind"] for action in second.get("planned_actions", [])]
+        if second_kinds != ["CONFIGURE"]:
+            raise RuntimeError(f"second pass had unexpected actions: {second_kinds!r}")
+        if any(result.get("changed") for result in second.get("action_results", [])):
             raise RuntimeError(
-                f"second pass was not a planner no-op: {second.get('planned_actions')!r}"
+                f"second pass performed an unnecessary mutation: {second.get('action_results')!r}"
             )
-        print("  exact request retained its fingerprint and produced a no-op ✓")
+        if not all(result.get("succeeded") for result in second.get("action_results", [])):
+            raise RuntimeError(f"second pass action failed: {second.get('action_results')!r}")
+        second_values = _bm020a_observe()
+        if second_values.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError(f"unmanaged setting changed during idempotent pass: {second_values!r}")
+        print("  exact request retained its fingerprint and produced no mutation ✓")
 
-        print("\n[5/5] invalid selector smoke check")
+        print("\n[5/6] drift one managed setting and repair it")
+        _bm018d_external_write("Navigation.OnBack", "Home", "string")
+        drifted = _bm020a_observe()
+        if drifted.get("Navigation.OnBack") != "Home":
+            raise RuntimeError(f"managed drift was not observable: {drifted!r}")
+        repaired = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
+        if not repaired.get("ok") or not repaired.get("success"):
+            raise RuntimeError(f"BM-020A drift repair failed: {repaired!r}")
+        if repaired.get("desired_fingerprint") != first.get("desired_fingerprint"):
+            raise RuntimeError("drift repair changed the desired-state fingerprint")
+        repair_summary = repaired.get("configuration_summary") or {}
+        if repair_summary.get("changed_targets") != [
+            f"skin:{_BM018D_SKIN_ID}/Navigation.OnBack"
+        ]:
+            raise RuntimeError(f"unexpected drift repair targets: {repair_summary!r}")
+        repaired_values = _bm020a_observe()
+        if {
+            key: repaired_values.get(key) for key in expected_values
+        } != expected_values:
+            raise RuntimeError(f"production drift repair read-back mismatch: {repaired_values!r}")
+        if repaired_values.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError("unmanaged setting changed during drift repair")
+        print("  managed drift repaired; all 16 values and unmanaged preservation verified ✓")
+
+        print("\n[6/6] invalid selector smoke check")
         unchanged_before = inspect()
         invalid = _bm020a_run_job(device_profile_id="does-not-exist")
         unchanged_after = inspect()
@@ -5705,6 +5888,11 @@ def validate_build_manager() -> None:
                 f"invalid selector did not fail closed without mutation: {invalid!r}"
             )
         print("  invalid selector failed in resolve phase; disposable state unchanged ✓")
+        print("\n[6/6] combined evidence boundary")
+        print(
+            "  live executor composition proven here; repository/add-on installation "
+            "and dedicated AF3/configuration behavior remain covered by existing gates ✓"
+        )
     finally:
         print("\nstop disposable Kodi")
         try:
