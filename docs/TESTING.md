@@ -29,6 +29,7 @@ The test suite covers:
 | `test_config.py` | Configuration package deployment (BM-015) | 226 |
 | `test_restart.py` | Typed restart-requirement aggregation (BM-019) | 13 |
 | `test_restart_coordinator.py` | Restart capability and manual handoff (BM-020C1) | 13 |
+| `test_resume.py` | Post-restart resume orchestration (BM-020C) | 14 |
 
 ## Disposable Kodi harness
 
@@ -516,6 +517,24 @@ new session is classified `READY_FOR_RESUME` with attempt count `0`, proves
 that resume has not yet run, and explicitly clears the transaction. All
 profile and add-on work is confined to `.kodi-test`; the real Kodi profile is
 checked for unchanged modification time.
+
+### BM-020C automatic post-restart resume
+
+`validate-build-manager-resume` extends the manual handoff gate using only
+`.kodi-test`. It runs the real BM-020A fixture once, passes a synthetic typed
+`KODI_RESTART` trigger through the production BM-020C1 coordinator, and
+restarts disposable Kodi through the harness. It does not call the resume
+coordinator manually after restart: the installed `xbmc.service` entrypoint
+detects `READY_FOR_RESUME`, previews and fingerprints the persisted request,
+claims `RESUMING`, runs the normal BuildManager reconciliation, and clears the
+transaction on matching `NONE` success.
+
+The gate observes bounded service outcome properties and durable transaction
+state, verifies the new session, final fingerprint, `RestartRequirement.NONE`,
+all 16 AF3 managed settings, no second handoff, and a later
+`NO_TRANSACTION` startup. Unmanaged-setting preservation remains covered by
+the BM-020A gate because this AF3 runtime normalizes the selected unmanaged
+schema entry during process restart. The real Kodi profile remains read-only.
 
 ### Out of scope for BM-009 through BM-018D
 

@@ -295,6 +295,15 @@ def _config_declarations_payload(desired: ResolvedBuild) -> Optional[dict]:
     }
 
 
+@dataclass(frozen=True)
+class _PreparedReconciliation:
+    desired: ResolvedBuild
+    effective: Optional[EffectiveConfiguration]
+    fingerprint: str
+    protected_dependency_ids: frozenset
+    plan: object
+
+
 class BuildManager:
     """Stable production entrypoint for one complete reconciliation run."""
 
@@ -316,49 +325,15 @@ class BuildManager:
 
     def reconcile(self, request: ReconcileRequest) -> ReconcileResult:
         """Run load → inspect → resolve → preflight → plan → execute → validate."""
-        if not isinstance(request, ReconcileRequest):
-            return self._failed(
-                None, ReconcilePhase.REQUEST, "INVALID_REQUEST",
-                "request must be a ReconcileRequest",
-            )
-
-        try:
-            manifest = self._owners.manifest_loader(request.manifest_path)
-        except Exception as exc:
-            return self._failed(request, ReconcilePhase.LOAD, "MANIFEST_LOAD_FAILED", exc)
-
-        try:
-            actual = self._owners.inspector.inspect()
-        except Exception as exc:
-            return self._failed(request, ReconcilePhase.INSPECT, "INSPECTION_FAILED", exc)
-
-        try:
-            desired = self._owners.resolver(manifest, request.device_profile_id)
-        except Exception as exc:
-            return self._failed(request, ReconcilePhase.RESOLVE, "RESOLUTION_FAILED", exc)
-
-        try:
-            effective = self._owners.config_loader.resolve(desired.config)
-            fingerprint = fingerprint_resolved_build(desired, effective)
-            dependency_closure = self._preflight_dependencies(desired, actual)
-            protected = frozenset(
-                node.addon_id
-                for node in dependency_closure.nodes
-                if node.status in (
-                    DependencyStatus.SATISFIED,
-                    DependencyStatus.INSTALLED_DISABLED,
-                )
-            )
-        except Exception as exc:
-            return self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
-
-        try:
-            plan = plan_changes(desired, actual)
-        except Exception as exc:
-            return self._failed(
-                request, ReconcilePhase.PLAN, "PLANNING_FAILED", exc,
-                desired_fingerprint=fingerprint,
-            )
+        prepared, failure = self._prepare(request)
+        if failure is not None:
+            return failure
+        assert prepared is not None
+        desired = prepared.desired
+        effective = prepared.effective
+        fingerprint = prepared.fingerprint
+        protected = prepared.protected_dependency_ids
+        plan = prepared.plan
 
         action_results = []
         reports = []
@@ -444,6 +419,80 @@ class BuildManager:
             restart_report=aggregate_restart_reports(reports),
             validation_report=validation,
         )
+
+    def preview(self, request: ReconcileRequest) -> ReconcileResult:
+        """Resolve and plan desired state without invoking any mutating owner."""
+        prepared, failure = self._prepare(request)
+        if failure is not None:
+            return failure
+        assert prepared is not None
+        return ReconcileResult(
+            success=True,
+            request=request,
+            desired_fingerprint=prepared.fingerprint,
+            planned_actions=prepared.plan.actions,
+        )
+
+    def _prepare(self, request: ReconcileRequest):
+        """Build the shared read-only reconciliation preparation."""
+        if not isinstance(request, ReconcileRequest):
+            return None, self._failed(
+                None, ReconcilePhase.REQUEST, "INVALID_REQUEST",
+                "request must be a ReconcileRequest",
+            )
+
+        try:
+            manifest = self._owners.manifest_loader(request.manifest_path)
+        except Exception as exc:
+            return None, self._failed(request, ReconcilePhase.LOAD, "MANIFEST_LOAD_FAILED", exc)
+
+        try:
+            actual = self._owners.inspector.inspect()
+        except Exception as exc:
+            return None, self._failed(request, ReconcilePhase.INSPECT, "INSPECTION_FAILED", exc)
+
+        try:
+            desired = self._owners.resolver(manifest, request.device_profile_id)
+        except Exception as exc:
+            return None, self._failed(request, ReconcilePhase.RESOLVE, "RESOLUTION_FAILED", exc)
+
+        try:
+            effective = self._owners.config_loader.resolve(desired.config)
+            fingerprint = fingerprint_resolved_build(desired, effective)
+            dependency_closure = self._preflight_dependencies(desired, actual)
+            protected = frozenset(
+                node.addon_id
+                for node in dependency_closure.nodes
+                if node.status in (
+                    DependencyStatus.SATISFIED,
+                    DependencyStatus.INSTALLED_DISABLED,
+                )
+            )
+        except Exception as exc:
+            return None, self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
+
+        try:
+            plan = plan_changes(desired, actual)
+        except Exception as exc:
+            return None, self._failed(
+                request, ReconcilePhase.PLAN, "PLANNING_FAILED", exc,
+                desired_fingerprint=fingerprint,
+            )
+
+        for action in plan.actions:
+            if action.kind not in self.ACTION_KINDS:
+                return None, self._failed(
+                    request, ReconcilePhase.PLAN, "UNKNOWN_ACTION_KIND",
+                    f"unsupported planner action kind {action.kind!r}",
+                    desired_fingerprint=fingerprint,
+                )
+        return _PreparedReconciliation(
+            desired=desired,
+            effective=effective,
+            fingerprint=fingerprint,
+            protected_dependency_ids=protected,
+            plan=plan,
+        ), None
 
     def _preflight_dependencies(self, desired: ResolvedBuild, actual: KodiState):
         installed_ids = {addon.addon_id for addon in actual.addons}
