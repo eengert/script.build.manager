@@ -28,6 +28,7 @@ The test suite covers:
 | `test_validator.py` | Post-operation state validation (BM-014) | 105 |
 | `test_config.py` | Configuration package deployment (BM-015) | 226 |
 | `test_restart.py` | Typed restart-requirement aggregation (BM-019) | 13 |
+| `test_restart_coordinator.py` | Restart capability and manual handoff (BM-020C1) | 13 |
 
 ## Disposable Kodi harness
 
@@ -499,6 +500,22 @@ focused on the BM-018D backend. The checked-in `validate-af3-package` command
 separately resolves and applies the production `af3-common` descriptor and
 all 16 owned targets in the same disposable environment; it does not copy the
 real profile into the disposable harness.
+
+### BM-020C1 manual restart handoff
+
+`validate-build-manager-manual-restart` is a disposable macOS validation of
+the BM-020C1 manual capability path. It uses the real BM-020A fixture,
+resolver, planner, executor, and fingerprint, then supplies only the typed
+`KODI_RESTART` result as a synthetic trigger because no production operation
+currently invokes a restart. The production coordinator persists and
+read-backs `AWAITING_RESTART` with `restart_attempt_count = 0`, keeps Kodi in
+the same process, and does not call an automatic restart adapter.
+
+The harness performs the required process boundary externally, verifies the
+new session is classified `READY_FOR_RESUME` with attempt count `0`, proves
+that resume has not yet run, and explicitly clears the transaction. All
+profile and add-on work is confined to `.kodi-test`; the real Kodi profile is
+checked for unchanged modification time.
 
 ### Out of scope for BM-009 through BM-018D
 

@@ -35,6 +35,7 @@ Commands
   validate-af3-package BM-018E live validation: production AF3 package
   validate-build-manager BM-020A live validation: production executor
   validate-build-manager-transaction BM-020B live validation: transaction startup
+  validate-build-manager-manual-restart BM-020C1 live validation: manual restart handoff
 """
 
 from __future__ import annotations
@@ -4008,6 +4009,56 @@ def main():
             payload = {
                 "transaction": transaction.to_dict() if transaction else None,
             }
+        elif job.get("mode") == "restart_manual_trigger":
+            from resources.lib.build_manager import BuildManager, ReconcileRequest, ReconcileResult
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.restart_coordinator import (
+                RestartCapabilityResolver,
+                RestartCoordinator,
+            )
+            from resources.lib.session import get_current_kodi_session_id
+
+            manifest_path = os.path.join(
+                addon_root, "resources", "builds", "examples",
+                job.get("manifest_filename", "bm020a-executor.example.json"),
+            )
+            request = ReconcileRequest(
+                manifest_path=manifest_path,
+                device_profile_id=job.get("device_profile_id", "bm020a-disposable"),
+            )
+            manager = BuildManager()
+            real_result = manager.reconcile(request)
+            if not real_result.success or not real_result.desired_fingerprint:
+                payload = {
+                    "real_result": real_result.to_dict(),
+                    "coordinator": None,
+                    "session_id": get_current_kodi_session_id(),
+                }
+            else:
+                # This typed result is the test-only hypothetical trigger. The
+                # request and fingerprint are real; only the restart requirement
+                # is synthetic because no current production operation needs it.
+                trigger = ReconcileResult(
+                    success=True,
+                    request=request,
+                    desired_fingerprint=real_result.desired_fingerprint,
+                    restart_report=RestartReport(
+                        RestartRequirement.KODI_RESTART, 1, 0
+                    ),
+                )
+                coordinator = RestartCoordinator(
+                    manager,
+                    capability_resolver=RestartCapabilityResolver(
+                        platform_id=job.get("platform", "macos")
+                    ),
+                )
+                coordinated = coordinator.handle_result(request, trigger)
+                payload = {
+                    "real_result": real_result.to_dict(),
+                    "trigger": trigger.to_dict(),
+                    "coordinator": coordinated.to_dict(),
+                    "session_id": get_current_kodi_session_id(),
+                }
         else:
             payload = _run_apply(config, manifest, job)
         payload["ok"] = True
@@ -5736,6 +5787,22 @@ def _bm020b_run_job(mode: str, **kwargs) -> Dict[str, Any]:
     return _bm015_run_job({"mode": mode, **kwargs}, timeout=30.0)
 
 
+def _bm020c1_wait_startup_classification(
+    expected: str, *, timeout: float = 30.0
+) -> Dict[str, Any]:
+    """Wait for service classification, not merely JSON-RPC readiness."""
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = _bm020b_run_job("transaction_startup_property")
+        if last.get("classification") == expected:
+            return last
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"startup classification did not become {expected!r}: {last!r}"
+    )
+
+
 def _bm020b_log_text() -> str:
     if not KODI_LOG_FILE.is_file():
         return ""
@@ -5871,6 +5938,134 @@ def validate_build_manager_transaction() -> None:
 
     print("  production BuildManager did not restart Kodi or resume reconciliation ✓")
     print("\n=== BM-020B transaction validation PASSED (9/9) ===\n")
+
+
+def validate_build_manager_manual_restart() -> None:
+    """Prove BM-020C1's manual restart handoff across disposable processes."""
+    print("=== Build Manager BM-020C1 live validation: manual restart handoff ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/8] reset disposable profile and prepare the real BM-020A fixture")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _install_bm015_config_runner()
+        configure_webserver()
+
+        print("\n[2/8] launch Kodi and enable the production service add-on")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020b_enable_production_addon()
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm020a_ensure_runner_enabled()
+        _bm018d_warm_af3_runtime()
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm020c1_wait_startup_classification("no_transaction")
+        first_session = _bm020b_run_job("transaction_session")
+        if not first_session.get("ok") or not first_session.get("session_id"):
+            raise RuntimeError(f"could not obtain first Kodi session: {first_session}")
+        first_session_id = first_session["session_id"]
+        first_pid = status().get("pid")
+        print(f"  first session={first_session_id}; pid={first_pid} ✓")
+
+        print("\n[3/8] run real reconciliation and pass the typed manual trigger")
+        triggered = _bm020b_run_job(
+            "restart_manual_trigger",
+            manifest_filename=_BM020A_FIXTURE,
+            device_profile_id=_BM020A_PROFILE,
+            platform="macos",
+        )
+        if not triggered.get("ok"):
+            raise RuntimeError(f"manual trigger runner failed: {triggered}")
+        real_result = triggered.get("real_result") or {}
+        coordinator = triggered.get("coordinator") or {}
+        transaction = coordinator.get("transaction") or {}
+        if (
+            not real_result.get("success")
+            or not real_result.get("desired_fingerprint")
+            or coordinator.get("outcome") != "manual_restart_required"
+            or coordinator.get("capability") != "manual_app_restart_required"
+            or transaction.get("phase") != "awaiting_restart"
+            or transaction.get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"manual handoff contract failed: {triggered}")
+        if status().get("pid") != first_pid or not status().get("running"):
+            raise RuntimeError("manual coordinator unexpectedly stopped Kodi")
+        print("  real fingerprint persisted with AWAITING_RESTART/count=0 ✓")
+        print("  Kodi remained in the same process; no production restart invoked ✓")
+
+        print("\n[4/8] prove same-session behavior")
+        same = _bm020b_run_job(
+            "transaction_classify", session_id=first_session_id
+        )
+        if (
+            not same.get("ok")
+            or same.get("classification") != "same_session_awaiting_restart"
+            or same.get("eligible_for_resume")
+            or (same.get("transaction") or {}).get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"same-session manual handoff failed: {same}")
+        print("  SAME_SESSION classification preserved count=0 and did not resume ✓")
+
+        print("\n[5/8] externally restart disposable Kodi through the harness only")
+        restart()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        second_session = _bm020b_run_job("transaction_session")
+        if (
+            not second_session.get("ok")
+            or second_session.get("session_id") == first_session_id
+        ):
+            raise RuntimeError(f"manual restart did not create a new session: {second_session}")
+        second_session_id = second_session["session_id"]
+        print(f"  new session={second_session_id} differs from the first ✓")
+
+        print("\n[6/8] prove BM-020B handoff readiness without resume yet")
+        _bm020c1_wait_startup_classification("ready_for_resume")
+        ready = _bm020b_run_job(
+            "transaction_classify", session_id=second_session_id
+        )
+        if (
+            not ready.get("ok")
+            or ready.get("classification") != "ready_for_resume"
+            or not ready.get("eligible_for_resume")
+            or (ready.get("transaction") or {}).get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"manual new-session handoff failed: {ready}")
+        print("  READY_FOR_RESUME accepted with manual count=0; no reconcile yet ✓")
+
+        print("\n[7/8] explicitly clear the BM-020C1 handoff")
+        cleared = _bm020b_run_job("transaction_clear")
+        if not cleared.get("ok") or not cleared.get("cleared"):
+            raise RuntimeError(f"manual handoff clear failed: {cleared}")
+        inspected = _bm020b_run_job("transaction_inspect")
+        if not inspected.get("ok") or inspected.get("transaction") is not None:
+            raise RuntimeError(f"manual handoff remained after clear: {inspected}")
+        print("  explicit clear removed the pending transaction ✓")
+    finally:
+        print("\n[8/8] stop disposable Kodi and verify the real profile")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+            if current_mtime_ns != real_mtime_ns:
+                raise RuntimeError(
+                    f"Validation FAILED: real profile mtime changed! "
+                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
+                )
+        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-020C1 manual restart validation PASSED (8/8) ===\n")
 
 
 def _bm020a_observe() -> Dict[str, Any]:
@@ -6167,6 +6362,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-skin-config", help="BM-018D live validation: typed AF3 skin configuration")
     sub.add_parser("validate-build-manager", help="BM-020A live validation: production executor")
     sub.add_parser("validate-build-manager-transaction", help="BM-020B live validation: transaction startup")
+    sub.add_parser("validate-build-manager-manual-restart", help="BM-020C1 live validation: manual restart handoff")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -6215,6 +6411,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_build_manager()
         elif cmd == "validate-build-manager-transaction":
             validate_build_manager_transaction()
+        elif cmd == "validate-build-manager-manual-restart":
+            validate_build_manager_manual_restart()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -1,8 +1,9 @@
-# BM-020B restart transactions
+# BM-020B/C1 restart transactions and manual handoff
 
-BM-020B provides the durable handoff foundation for a later BM-020C restart
-and resume implementation. It does not restart Kodi, rerun reconciliation, or
-claim that a restart completed.
+BM-020B provides the durable handoff foundation. BM-020C1 adds the typed
+capability decision and manual-restart caller contract; it does not yet resume
+reconciliation. No current project platform has an approved automatic Kodi
+application-restart adapter.
 
 ## Storage and schema
 
@@ -30,7 +31,7 @@ credentials, tokens, passwords, and private overlays are not serialized.
 The phase enum is deliberately small:
 
 ```text
-AWAITING_RESTART → BM-020C handoff point
+  AWAITING_RESTART → manual/automatic handoff point
 RESUMING         → reserved for BM-020C
 NEEDS_ATTENTION   → explicit recovery/diagnostic state
 ```
@@ -41,8 +42,31 @@ NEEDS_ATTENTION   → explicit recovery/diagnostic state
 record only when reconciliation succeeded, the typed restart requirement is
 `KODI_RESTART`, the fingerprint and request are valid, and no active record
 already exists. `NONE` creates no record. A failed reconciliation never creates
-an automatic-restart transaction, even if an earlier operation reported a
-restart requirement.
+a restart transaction, even if an earlier operation reported a restart
+requirement.
+
+`RestartCapabilityResolver` maps the currently supported platform identities
+(`macos`, `android`, `shield`, `fire_os`, and `tvos`) conservatively to
+`MANUAL_APP_RESTART_REQUIRED`; unknown identities use the same conservative
+default. The resolver is injectable so a separately approved automatic adapter
+can be added later without scattering platform conditionals through the
+coordinator.
+
+`RestartCoordinator` is the production caller seam. A successful
+`RestartRequirement.NONE` result returns `COMPLETE` and creates no transaction.
+A failed reconciliation returns `FAILED` and never prepares a transaction. A
+successful `KODI_RESTART` result on the current manual capability creates and
+read-backs `AWAITING_RESTART`, then returns `MANUAL_RESTART_REQUIRED` with the
+safe guidance `Restart Kodi completely to continue.` It never quits, restarts,
+or invokes host process management. Repeated same-session calls reuse the
+matching durable handoff without reconciling again or creating a duplicate.
+
+The transaction's `restart_attempt_count` counts automatic restart attempts,
+not observed process boundaries. The manual path creates the record with count
+`0` and leaves it at `0`; a later session change is sufficient evidence that a
+genuine new Kodi process exists. BM-020C resume work must accept that
+`AWAITING_RESTART` plus a different session and count `0` is
+`READY_FOR_RESUME`.
 
 Writes use a same-directory temporary file, flush and file `fsync`, validated
 JSON, and atomic `os.replace`. The existing record is not removed before the
@@ -95,6 +119,6 @@ are not automatically deleted; `TransactionStore.clear()` is an explicit
 abandon/clear operation.
 
 BM-020A remains complete. BM-020B supplies transaction storage, validation,
-locking, session identity, and startup classification. BM-020C owns production
-restart invocation, resume reconciliation, restart-loop prevention, and
-recovery after resume failures.
+locking, session identity, and startup classification. BM-020C still owns
+pre-resume fingerprint validation, `RESUMING` claim, resumed reconciliation,
+success clearing, restart-loop prevention, and recovery after resume failures.
