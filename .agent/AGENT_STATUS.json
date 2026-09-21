@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-020C1",
-  "reason": "BM-020C1 typed restart capability model and manual restart handoff are complete and integrated. Current target platforms conservatively require manual Kodi restart; BM-020C resume/re-entry remains incomplete. BM-017 and family-room distribution/source work remain deferred.",
-  "last_commit": "bcaf2ca",
-  "matrix_sha": "bcaf2ca",
+  "task": "BM-020C",
+  "reason": "BM-020C guarded post-restart resume orchestration is complete, supervisor-approved, and integrated. BM-020A, BM-020B, BM-020C1, and BM-020 overall are complete; supported platforms still require a manual full Kodi restart and post-restart resume is automatic. BM-017 and family-room distribution/source work remain deferred.",
+  "last_commit": "091cfe9",
+  "matrix_sha": "091cfe9",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }

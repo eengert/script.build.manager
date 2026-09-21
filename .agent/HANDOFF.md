@@ -1,5 +1,35 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-020C integration complete
+
+BM-020C is complete, supervisor-approved, and integrated on protected
+`matrix`; matrix is neutral with `active_agent: none`. The matrix-side
+substantive commits are `81ba44b` and `091cfe9`. Codex worker metadata was not
+copied.
+
+The guarded resume coordinator now re-reads the durable request after a new
+Kodi session, previews the exact request and fingerprint before mutation,
+claims `AWAITING_RESTART` atomically as `RESUMING`, runs normal
+`BuildManager.reconcile()`, verifies the final fingerprint and `NONE`, and
+clears the expected transaction atomically. Preview/fingerprint/reconcile
+failures, claim/clear conflicts, exceptions, repeated restart requirements,
+and later `RESUMING` or `NEEDS_ATTENTION` states fail closed. The service does
+not restart Kodi or a host process; current supported platforms require a
+manual full Kodi restart, after which resume is automatic.
+
+Integrated validation passed focused tests **465/465**, disposable BM-020C
+resume gate **8/8** with AF3 dependency closure **18/18**, full suite
+**1536/1536**, and `git diff --check`. The gate proved service automatic
+resume, authoritative read-back, fingerprint equality, `NONE`, no duplicate
+handoff, later no transaction, and real Kodi profile immutability. AF3
+generated first-run runtime state was bootstrapped only in `.kodi-test`; the
+AF3 unmanaged probe is intentionally owned by BM-020A because AF3 normalizes
+that entry across restart. Pristine first-ever AF3 provisioning is not claimed.
+
+BM-020 overall is complete. BM-017 and family-room distribution/source work
+remain deferred. The smallest next step is supervisor direction on those
+separate concerns; no next milestone was started.
+
 ## BM-020C1 integration complete
 
 BM-020C1 is complete, supervisor-approved, and integrated on protected

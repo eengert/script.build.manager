@@ -1,5 +1,37 @@
 # Current Task
 
+## BM-020C — guarded post-restart resume integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`.
+
+Substantive integration commits: `81ba44b` (`feat(BM-020C): add guarded
+post-restart resume`) and `091cfe9` (`docs(BM-020C): document service readiness
+boundary`). Codex worker metadata was excluded.
+
+BM-020C completes the guarded post-restart resume path. Startup accepts only a
+new-session `READY_FOR_RESUME` transaction, re-reads and previews the original
+request, verifies the desired fingerprint, atomically claims `AWAITING` as
+`RESUMING`, runs the normal `BuildManager.reconcile()` path, verifies the final
+fingerprint and `RestartRequirement.NONE`, then atomically clears the expected
+transaction. Preview, fingerprint, reconciliation, claim/clear conflicts,
+exceptions, repeated `KODI_RESTART`, and later `RESUMING` or
+`NEEDS_ATTENTION` states fail closed with bounded diagnostics. The service
+remains thin: it does not restart Kodi or a host process, and current supported
+platforms still require a manual full Kodi restart before automatic resume.
+
+Integrated validation passed focused BM-020C/BM-020B/BM-020C1/BM-020A/BM-019
+tests **465/465**, the disposable BM-020C gate **8/8** with AF3 dependency
+closure **18/18**, the full suite **1536/1536**, and `git diff --check`.
+The gate proved a new session, service-driven automatic resume, authoritative
+read-back, final fingerprint equality, `NONE`, no second handoff, later no
+transaction, and real Kodi profile immutability. AF3 generated first-run state
+was bootstrapped only inside `.kodi-test`; the selected AF3 unmanaged probe is
+owned by the BM-020A gate because AF3 normalizes that entry across restart.
+
+BM-020 overall is complete. BM-017 and family-room distribution/source work
+remain deferred. No next milestone was started.
+
 ## BM-020C1 — typed restart capability model and manual-restart handoff integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
