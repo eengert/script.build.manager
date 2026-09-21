@@ -1,24 +1,42 @@
 # Current Task
 
-## BM-020B — durable restart transaction and startup re-entry foundation
+## BM-020B — durable restart transaction and startup re-entry foundation integrated
 
-**Status**: Complete on `agent/codex`; not integrated to `matrix`.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`. `active_agent` is `none`; matrix remains neutral.
 
-Commit `eef187e` adds the versioned profile-local transaction store at
-`special://profile/addon_data/script.build.manager/restart_transaction.json`,
-atomic validated writes, explicit clear/update APIs, portable `fcntl.flock`
-locking, Kodi global-window session identity, startup classification, and the
-thin `xbmc.service` entrypoint. It does not restart Kodi or resume
-reconciliation.
+Substantive integration commit: `f3ccf2a` (`feat(BM-020B): add durable restart
+transaction foundation`). Worker-only `.agent/*` metadata was not copied.
 
-The disposable BM-020B process-boundary gate passed 9/9. Full validation passed
-1504/1504; the focused BM-020B transaction suite passed 32/32; and
-`git diff --check` passed. BM-020C owns production restart invocation, resume
-reconciliation, retry/loop prevention, and recovery after resume failures.
+BM-020B adds a profile-local schema-v1 restart transaction record containing
+only the safe request, desired fingerprint, restart requirement, originating
+Kodi session UUID, and explicit transaction phase. It uses atomic staged
+writes with flush/fsync/replace, read-after-write validation, fail-closed
+corrupt or unsupported records, explicit clear, and a nonblocking POSIX
+`fcntl.flock` sidecar lock with automatic release. The session UUID is stored
+in the Kodi home-window property
+`script.build.manager.kodi_session_id`.
 
-The separate family-room distribution/source concern remains outside this
-milestone. BM-017 and BM-020C remain unstarted.
+The thin `xbmc.service` entrypoint classifies startup only: no transaction,
+same-session awaiting restart, ready for resume, needs attention, invalid
+transaction, or inspection failure. It does not restart Kodi, reconcile, or
+resume work; BM-020C owns those actions.
 
+Validation from this integrated tree: BM-020B transaction tests **32/32**;
+the disposable process-boundary gate **9/9**; full suite **1504/1504**; and
+`git diff --check` clean. The disposable gate proved service startup on
+normal launch, same-session protection, durable state across an external Kodi
+restart, ready-for-resume classification, explicit clear, and the returned
+no-transaction path. The first gate attempt exposed only a timing race
+between JSON-RPC readiness and automatic service execution; the unchanged
+retry passed. The real Kodi profile remained read-only and no device or
+Apple TV was accessed.
+
+BM-020C and BM-017 remain deferred. Cross-device lock behavior is an
+architecture selection for supported POSIX-like Kodi targets, not a live
+claim beyond the disposable macOS validation. No next milestone was started.
+
+## BM-020A — production reconciliation executor integrated
 ## BM-020A — production reconciliation executor integrated
 
 Substantive integration commits: `eeafc1c`, `0ed2c35`, `821e69e`, `0fb0bd5`,

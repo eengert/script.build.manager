@@ -1,9 +1,9 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
-## BM-020B complete on Codex
+## BM-020B complete and synchronized on Codex
 
-BM-020B is complete on `agent/codex` in commit `eef187e`; it has not been
-integrated to `matrix`. The implementation stores only a versioned safe
+BM-020B is complete and integrated on protected `matrix`; the substantive
+commit is `f3ccf2a`. The implementation stores only a versioned safe
 `ReconcileRequest`, desired fingerprint, typed restart requirement, originating
 Kodi session UUID, phase, and bounded diagnostics under the Kodi profile.
 Writes are validated and atomic; locking uses OS-backed `fcntl.flock` and fails
@@ -20,8 +20,45 @@ Disposable BM-020B validation passed 9/9 across an external Kodi stop/relaunch;
 the service ran automatically in both processes, distinguished session IDs,
 and never restarted Kodi or invoked `BuildManager.reconcile()`. Focused
 transaction/session/service tests passed 32/32, the full suite passed
-1504/1504, and `git diff --check` passed. BM-020C, BM-017, and family-room
-distribution/source work remain outside scope.
+1504/1504, and `git diff --check` passed. Codex is synchronized/idle/ready
+for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
+outside scope.
+
+## BM-020B integration complete
+
+BM-020B is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix state is neutral with `active_agent: none`. The clean
+matrix-side substantive integration commit is `f3ccf2a`. Worker-specific
+Codex metadata was not copied.
+
+The durable foundation is profile-local and schema-versioned. It records only
+the safe request, desired fingerprint, restart requirement, originating Kodi
+session UUID, and transaction phase. Writes are staged in the same directory,
+flushed and fsynced, atomically replaced, read back, and rejected if corrupt
+or unsupported. An explicit clear removes the record safely. A profile-local
+sidecar uses nonblocking `fcntl.flock`; lock ownership is released by the OS
+when the process exits. The current Kodi session UUID is held in the home
+window property `script.build.manager.kodi_session_id`.
+
+`service.py` is a thin `xbmc.service` startup entrypoint. It classifies the
+record and publishes the bounded result without restarting Kodi, reconciling,
+resuming, or claiming a transaction. BM-020C owns actual resume/re-entry
+execution.
+
+The integrated disposable gate passed **9/9**: service fast path, session
+identity, production preparation without restart, same-session protection,
+external process boundary, automatic ready-for-resume classification, clear,
+returned fast path, and real-profile immutability. Transaction tests passed
+**32/32**, the full suite passed **1504/1504**, and `git diff --check` passed.
+The first gate invocation observed only a startup-readiness race and was not
+used as evidence of a code failure; the unchanged retry passed all 9 checks.
+The real Kodi profile, Apple TV, and all devices remained untouched.
+
+BM-020C and BM-017 remain unstarted. No next milestone was started. The
+smallest next step is supervisor direction on BM-020C's resume/re-entry
+policy; no worker handoff is implied by this matrix record.
+
+## Prior integrated state
 
 ## BM-020A integration complete
 
@@ -49,7 +86,7 @@ failed closed before mutation. The `kodi.resource` system-dependency fix was
 minimal and regression-tested.
 
 Codex worker synchronization completed by normal merge from protected matrix;
-the worker remains idle/ready for BM-020B and the external active-worker
+the worker remains idle/ready for BM-020C and the external active-worker
 pointer remains `build-manager -> codex`.
 
 Focused integrated validation passed 1458/1458; full suite passed 1472/1472;
