@@ -3,7 +3,7 @@
   "status": "complete",
   "task": "BM-021B",
   "reason": "BM-021B frozen artifact store, exact artifact capture, dependency closure, manifest v1, deterministic incomplete results, and global updater-guard proof are complete. BM-021A and BM-020 remain complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending.",
-  "last_commit": "89525bd",
+  "last_commit": "a706134",
   "matrix_sha": "26e7cd2",
   "next_agent": "human",
   "updated_at": "2026-09-21"
