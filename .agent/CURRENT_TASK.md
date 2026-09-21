@@ -1,34 +1,45 @@
 # Current Task
 
-## BM-020A1 — action-ownership prerequisites integrated
+## BM-020A — production reconciliation executor integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
 `matrix`. `active_agent` is `none`; matrix remains neutral.
 
-Substantive integration commit: `e0c8536`.
+Substantive integration commits: `eeafc1c`, `0ed2c35`, `821e69e`, `0fb0bd5`,
+and `1ad0fdb`.
 
-The supported add-on contract is now `enabled` / `disabled`; omitted add-ons
-are unmanaged, and `absent` is rejected before planning or mutation because
-Kodi does not expose a supported unattended removal API suitable for Build
-Manager. `ENSURE_ABSENT` and its unreachable planner contract were removed.
+BM-020A establishes the callable `BuildManager.reconcile()` contract: typed
+serializable request/result models; load → inspect → resolve → preflight → plan
+→ execute → validate orchestration; planner-authoritative owner dispatch;
+deterministic desired-state fingerprints; ordered fail-closed execution; and
+BM-019 `RestartReport` aggregation. No restart execution, transaction
+persistence, resume, locking, or restart-loop behavior was added.
 
-Each target install operation owns required dependency preflight and
-reconciliation through `DependencyAwareInstaller`. Complete target metadata is
-required in fail-closed preflight mode; explicit desired-disabled required
-dependencies fail before mutation; dependency failures prevent target
-installation; optional dependencies remain optional; and no global executor
-dependency phase or removal/pruning path was introduced.
+The disposable `validate-build-manager` gate passed from this integrated tree.
+It used the self-contained `bm020a-executor.example.json` / `bm020a-disposable`
+fixture and the checked-in production `af3-common` package. The real AF3
+dependency closure was healthy at 18/18; the first pass exercised `SET_SKIN`
+through `SkinActivator` and `CONFIGURE` through `ConfigurationManager`, read
+back all 16 typed settings with `files=[]`, and reported
+`RestartRequirement.NONE`. The identical second pass retained fingerprint
+`sha256:05f278188815d3900760d7b3d4d82c31e6e50324128a3e45031cca9ee8606d86`
+and made no mutations. Managed `Navigation.OnBack` drift was repaired while
+unmanaged `TMDbHelper.Corner.Radius` remained unchanged. An invalid device
+selector failed in resolve with disposable state unchanged.
 
-Nested `AddonInstallResult` and `RestartReport` values propagate through
-dependency actions/results and the enclosing install result using BM-019's
-typed monotonic restart aggregation.
+The narrow `kodi.resource` system-dependency classification correction is
+included and covered by focused tests. The real family-room distribution and
+source coverage gap remains separate: BM-020A does not claim fresh-installable
+coverage for POV, Red Light, Umbrella, MyAccounts, AF3, or the production
+repository bootstrap/source binding.
 
-Focused manifest/planner/dependency/add-on/restart/BM-018 tests passed
-988/988. Full suite passed 1462/1462. `git diff --check` passed. Real Kodi
-profile, Apple TV, and all devices remained untouched. BM-020A, BM-020B/C,
-BM-017, and later milestones were not started.
+Focused integrated validation passed 1458/1458; the full suite passed
+1472/1472; and `git diff --check` passed. The real Kodi profile, Apple TV, and
+all devices remained untouched. BM-020B/C and BM-017 remain unstarted.
 
-Next task: BM-020A remains deferred until separately authorized.
+## BM-020A1 — action-ownership prerequisites integrated
+
+BM-020A1 remains complete and is included in the BM-020A integration history.
 
 ## BM-019 — restart-requirement aggregation integrated
 

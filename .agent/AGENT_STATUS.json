@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-020A1",
-  "reason": "BM-020A1 action-ownership prerequisites are complete and integrated; matrix remains neutral. BM-020A executor work and BM-020B/C remain deferred.",
-  "last_commit": "e0c8536",
-  "matrix_sha": "e0c8536",
+  "task": "BM-020A",
+  "reason": "BM-020A production reconciliation executor and disposable gate are complete and integrated; matrix remains neutral. BM-020B/C and BM-017 remain deferred.",
+  "last_commit": "1ad0fdb",
+  "matrix_sha": "1ad0fdb",
   "next_agent": "human",
-  "updated_at": "2026-09-20"
+  "updated_at": "2026-09-21"
 }

@@ -1,24 +1,35 @@
-# Agent Handoff — BM-020A1 integrated
+# Agent Handoff — BM-020A integrated
 
-## BM-020A1 integration complete
+## BM-020A integration complete
 
-BM-020A1 is complete, supervisor-approved, and integrated on protected
-`matrix`; the matrix state is neutral with `active_agent: none`. The
-substantive integration commit is `e0c8536` (`feat(BM-020A1): integrate action
-ownership prerequisites`). Worker-specific Codex metadata was not copied.
+BM-020A is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix state is neutral with `active_agent: none`. The clean
+matrix-side substantive commits are `eeafc1c`, `0ed2c35`, `821e69e`,
+`0fb0bd5`, and `1ad0fdb`. Worker-specific Codex metadata was not copied.
 
-The supported add-on states are `enabled` and `disabled`; omission is
-unmanaged; `absent` is rejected with the public-Kodi-API limitation; and
-`ENSURE_ABSENT` is removed. Required dependency closure is owned by the target
-install operation, preflighted before mutation, and returned as a nested
-aggregate result. Explicit desired-disabled required dependencies fail closed,
-dependency failures prevent target installation, optional dependencies remain
-optional, and BM-019 restart requirements propagate through the nested result.
+The callable contract now available to BM-020B is
+`BuildManager.reconcile(ReconcileRequest) -> ReconcileResult`. It owns the
+load/inspect/resolve/preflight/plan/ordered execution/post-validation flow,
+returns the safe request, deterministic desired fingerprint, ordered action
+results, structured failure, validation report, and aggregated BM-019
+`RestartReport`. It does not restart Kodi, persist transactions, resume after
+restart, lock, or handle restart loops.
 
-Validation from the integrated tree: focused tests **988/988**, full suite
-**1462/1462**, and `git diff --check` clean. The real Kodi profile, Apple TV,
-and all devices remained untouched. BM-020A production executor work,
-BM-020B/C, BM-017, and later milestones remain unstarted.
+The integrated disposable `validate-build-manager` gate passed using the
+self-contained AF3 fixture and production `af3-common` package: 18/18 AF3
+closure entries healthy, `SET_SKIN` → `SkinActivator`, `CONFIGURE` →
+`ConfigurationManager`, all 16 settings read back, `files=[]`, and
+`RestartRequirement.NONE`. The second identical request retained the same
+fingerprint and made no mutations. Managed `Navigation.OnBack` drift was
+repaired; unmanaged `TMDbHelper.Corner.Radius` was preserved; invalid selector
+failed closed before mutation. The `kodi.resource` system-dependency fix was
+minimal and regression-tested.
+
+Focused integrated validation passed 1458/1458; full suite passed 1472/1472;
+`git diff --check` passed. The family-room production source/distribution gap
+remains a separate pending concern and is not claimed by BM-020A. The real
+Kodi profile, Apple TV, and all devices remained untouched. BM-020B/C and
+BM-017 were not started.
 
 ## Prior integrated state
 
