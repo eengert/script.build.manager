@@ -1,10 +1,11 @@
 # BM-021A — Frozen build capture feasibility and provenance audit
 
-Status: complete as a read-only feasibility audit. This document records what
-Kodi 21.1 and the current Build Manager implementation expose, what was
-observed in the disposable `.kodi-test` profile, and the minimum safe design
-boundary for BM-021B/BM-022. It does not implement frozen capture, an artifact
-store, freshness enforcement, or frozen installation.
+Status: BM-021A feasibility audit plus BM-021B capture-core architecture and
+proof. This document records what Kodi 21.1 and the current Build Manager
+implementation expose, what was observed in the disposable `.kodi-test`
+profile, and the safe design boundary for BM-022. BM-021B implements capture
+core, but does not implement frozen installation, retention, pinning,
+scheduling, freshness enforcement, or artifact garbage collection.
 
 The real Kodi profile, Family Rm, Apple TV, and all other devices were not
 accessed or modified. The only mutable runtime used by this audit was the
@@ -338,11 +339,22 @@ an explicit `scope: addon` form for a platform that proves such a capability,
 but the current Kodi implementation must use `scope: global` or
 `unsupported`.
 
-**Unknown / needs testing.** The audit read the setting and inspected Kodi's
-updater source. It did not claim a production live proof that a setting change
-made through JSON-RPC remains effective across every restart/update race. That
-must be a focused BM-021B disposable test, including a setting read-back,
-restart, repository refresh attempt, and restoration of the original value.
+**Verified by BM-021B disposable proof.** `Settings.GetSettingValue` reads
+`general.addonupdates`, and `Settings.SetSettingValue` changes it immediately
+without direct database writes. Setting `NEVER_CHECK` was read back, Kodi was
+restarted, and the setting was observed as `AUTOMATIC` rather than persisted.
+The guard deterministically reasserted `NEVER_CHECK` before any capture
+mutation. No scheduled repository-update activity appeared while the guard was
+active. The original `AUTOMATIC` value was restored and survived the second
+restart in the disposable profile.
+
+This proves a restart-safe reassertion protocol, not persistence of the
+`NEVER_CHECK` value itself. BM-022 must store enough transaction state to
+reassert and verify the guard before every resumed mutation. It must fail
+closed if reassertion or read-back fails. The proof distinguishes the global
+policy from repository metadata refresh, update detection, package download,
+and installation; it does not claim that `NEVER_CHECK` disables an explicit
+repository refresh or an explicit installation request.
 
 **Rejected.** A per-add-on fallback that installs while the global updater is
 left active is unsafe. There is no supported per-add-on lock exposed to the
@@ -461,10 +473,42 @@ fail before publishing a manifest that looks complete.
 | Installed-directory ZIP | Kodi native ZIP behavior plus provenance analysis | Importability is possible in narrow cases; reproducible provenance is not; reject as capture fallback |
 | Global update control | Kodi 21.1 settings definition and updater source | Three-state global policy exists; exact restart/race proof deferred to BM-021B |
 
-## 14. BM-021B scope recommendation
+## 14. BM-021B implementation and disposable proof
 
-BM-021B should be limited to the smallest disposable proof of the capture
-contract:
+BM-021B adds three isolated stdlib-only modules:
+
+- `resources/lib/artifacts.py` — exact ZIP validation, SHA-256 identity,
+  atomic write-once content-addressed storage, immutable JSON metadata,
+  read-back verification, and duplicate-byte reuse;
+- `resources/lib/frozen.py` — typed installed inventory, direct/transitive
+  dependency edges, exact system classification, cache/repository acquisition
+  priority, honest provenance status, versioned manifest v1, deterministic
+  software fingerprint, and incomplete-capture results;
+- `resources/lib/update_guard.py` — the explicit `general.addonupdates`
+  guard using supported Settings JSON-RPC, with capture/reassert/verify/
+  restore operations and no implicit restoration on failure.
+
+The disposable harness adds `validate-frozen-capture` and
+`validate-updater-guard`. The capture proof used only `.kodi-test`, verified
+the AF3 3.2.19 closure as **18/18** healthy third-party add-ons plus the
+system boundary, recorded exact installed versions and dependency edges, and
+reported `incomplete_artifact` because no exact package-cache ZIP was
+available after the isolated reset. No installed directory was zipped and no
+`COMPLETE` result was claimed. The updater proof passed the supported API
+read/set/verify path, restart reassertion, no observed scheduled updater
+activity while guarded, explicit restoration, and restoration verification
+after restart.
+
+Repository acquisition is represented as an explicit backend capability. The
+disposable Kodi adapter does not guess a repository URL or fetch the latest
+version; when an exact repository provider is unavailable, the node remains
+`incomplete_artifact`. A future repository adapter must supply exact bytes
+that pass the same ID/version/layout/hash checks.
+
+## 15. BM-021B scope recommendation
+
+The implemented BM-021B core is limited to the smallest disposable proof of
+the capture contract:
 
 - content-addressed import and rehash of a repository ZIP;
 - versioned manifest serialization and fail-closed incomplete states;
@@ -475,10 +519,10 @@ contract:
 - provenance confidence and stale/fresh metadata;
 - no real-profile access and no device work.
 
-It should not yet implement a general frozen-build installer or migrate
-existing profile configuration.
+It does not implement a general frozen-build installer or migrate existing
+profile configuration.
 
-## 15. BM-022 scope recommendation
+## 16. BM-022 scope recommendation
 
 BM-022 can consume a completed BM-021B manifest/store contract to implement
 the production frozen-build installation/reconciliation path. It must preserve
@@ -487,17 +531,18 @@ content-addressed artifacts, validate closure before mutation, and leave a
 recoverable `needs_attention` state on failure. BM-022 is not started by this
 audit.
 
-## 16. Explicit non-goals and deferrals
+## 17. Explicit non-goals and deferrals
 
-- No full frozen capture implementation was added.
-- No artifact store was created.
-- No frozen-build installer or update guard was added to production code.
+- No frozen-build installer was added.
+- No retention, pinning, scheduling, freshness UI, or artifact garbage
+  collection was added.
+- The implemented artifact store is capture-only; it is not an installer.
 - No real Kodi profile or Apple TV was accessed.
 - BM-020 remains complete.
 - BM-017 remains deferred.
 - BM-021B and BM-022 were not started.
 
-## 17. Sources and checked-in evidence
+## 18. Sources and checked-in evidence
 
 Primary Kodi references used for the audit:
 
