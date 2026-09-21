@@ -1,9 +1,20 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-021A audit in progress
+
+BM-021A is the active Codex task on a worker synchronized to current protected
+`matrix` at `34fbd7b`. The task is a read-only feasibility audit for frozen
+build capture, artifact provenance, exact dependency closure, package-cache
+recovery, and Kodi update-control safety. It must not implement frozen capture,
+artifact retention, freshness warnings, or frozen installation. BM-021B, BM-022,
+and BM-017 are not started; the real Kodi profile, devices, and other workers
+remain untouched.
+
 ## BM-020C — post-restart resume orchestration complete
 
-BM-020C is complete on `agent/codex` in implementation commit `69b8e6f` and
-remains intentionally unintegrated to protected `matrix`.
+BM-020C is complete, supervisor-approved, and integrated on protected `matrix`.
+The worker is synchronized to the integrated state; its substantive matrix
+commits are `81ba44b` and `091cfe9`.
 
 The implementation adds the read-only `BuildManager.preview()` seam,
 `resources/lib/resume.py`, expected-state transaction transitions and bounded
@@ -29,10 +40,10 @@ probe is covered by the BM-020A gate because this runtime normalizes that
 schema entry across process restart. The real Kodi profile, Apple TV, and all
 devices remained untouched.
 
-BM-020C and BM-020 overall are complete on the worker. Current supported
-platforms still require a manual full-Kodi restart; Build Manager does not
-automatically relaunch Kodi. BM-017 and family-room distribution/source work
-remain deferred. The next step is supervisor integration only.
+BM-020C and BM-020 overall are complete. Current supported platforms still
+require a manual full-Kodi restart; Build Manager does not automatically
+relaunch Kodi. BM-017 and family-room distribution/source work remain
+deferred. The next step is the BM-021A audit documented above.
 
 ## BM-020C1 — typed capability model and manual restart handoff complete
 
@@ -120,6 +131,36 @@ transaction/session/service tests passed 32/32, the full suite passed
 1504/1504, and `git diff --check` passed. Codex is synchronized/idle/ready
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
+
+## BM-020C integration complete
+
+BM-020C is complete, supervisor-approved, and integrated on protected
+`matrix`; matrix is neutral with `active_agent: none`. The matrix-side
+substantive commits are `81ba44b` and `091cfe9`. Codex worker metadata was not
+copied.
+
+The guarded resume coordinator now re-reads the durable request after a new
+Kodi session, previews the exact request and fingerprint before mutation,
+claims `AWAITING_RESTART` atomically as `RESUMING`, runs normal
+`BuildManager.reconcile()`, verifies the final fingerprint and `NONE`, and
+clears the expected transaction atomically. Preview/fingerprint/reconcile
+failures, claim/clear conflicts, exceptions, repeated restart requirements,
+and later `RESUMING` or `NEEDS_ATTENTION` states fail closed. The service does
+not restart Kodi or a host process; current supported platforms require a
+manual full Kodi restart, after which resume is automatic.
+
+Integrated validation passed focused tests **465/465**, disposable BM-020C
+resume gate **8/8** with AF3 dependency closure **18/18**, full suite
+**1536/1536**, and `git diff --check`. The gate proved service automatic
+resume, authoritative read-back, fingerprint equality, `NONE`, no duplicate
+handoff, later no transaction, and real Kodi profile immutability. AF3
+generated first-run runtime state was bootstrapped only in `.kodi-test`; the
+AF3 unmanaged probe is intentionally owned by BM-020A because AF3 normalizes
+that entry across restart. Pristine first-ever AF3 provisioning is not claimed.
+
+BM-020 overall is complete. BM-017 and family-room distribution/source work
+remain deferred. The smallest next step is supervisor direction on those
+separate concerns; no next milestone was started.
 
 ## BM-020C1 integration complete
 

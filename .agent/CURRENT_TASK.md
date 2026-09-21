@@ -1,9 +1,24 @@
 # Current Task
 
-## BM-020C — post-restart resume orchestration complete
+## BM-021A — frozen build capture feasibility audit in progress
 
-**Status**: Complete on `agent/codex` in implementation commit `69b8e6f`;
-not integrated to protected `matrix`.
+**Status**: Active on `agent/codex`; synchronized with protected `matrix` by
+normal merge. BM-020 remains complete. BM-021B, BM-022, and BM-017 have not
+started.
+
+This read-only audit covers installed add-on metadata, repository provenance,
+Kodi package-cache behavior, exact-version recovery, dependency closure,
+repository add-ons, installed-directory ZIP safety, auto-update semantics,
+global/per-add-on update inhibition, repository enablement guards, immutable
+artifact-store design, and a versioned frozen-build manifest. Work is limited
+to disposable/test-safe state; the real Kodi profile and devices remain
+untouched. No frozen capture or installation implementation is authorized by
+this task.
+
+## BM-020C — guarded post-restart resume integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the worker is synchronized to that state.
 
 BM-020C adds `BuildManager.preview()` for shared, read-only desired-state
 resolution/fingerprinting and a dedicated `ResumeCoordinator`. After a new
@@ -30,10 +45,10 @@ verified all 16 managed AF3 settings, prevented a second handoff, and later
 returned to `NO_TRANSACTION`. The real Kodi profile and devices remained
 untouched.
 
-BM-020C and BM-020 overall are complete on this worker. Current supported
-platforms still require a manual full-Kodi restart; only post-restart resume
-is automatic. BM-017 and family-room distribution/source work remain
-deferred. No next milestone was started.
+BM-020C and BM-020 overall are complete. Current supported platforms still
+require a manual full-Kodi restart; only post-restart resume is automatic.
+BM-017 and family-room distribution/source work remain deferred. No next
+milestone was started.
 
 ## BM-020C1 — typed restart capability model and manual-restart handoff integrated
 
