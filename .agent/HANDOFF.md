@@ -1,5 +1,33 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-020C audit stop — production restart primitive not established
+
+BM-020C was started on Codex and stopped at its mandatory read-only restart
+mechanism audit. No production code, tests, harness, or matrix content was
+changed. The worker remains based on matrix `98e897347` at `bd1c804`.
+
+Kodi Omega's official built-in reference lists `RestartApp` as implemented
+only under Windows and Linux. `Quit` is an application exit, not an automatic
+relaunch. JSON-RPC provides quit/restart notifications, not a supported
+add-on/Python operation that guarantees a new Kodi process. Kodi's Android
+source contains internal restart-exit handling, but that does not establish a
+public add-on/Python restart contract; no equivalent supported primitive was
+established for macOS, Fire OS, Shield, or Apple TV/tvOS.
+
+The required BM-020C lifecycle cannot safely claim a new session without a
+genuine new Kodi process. Host shell/process management, GUI automation,
+`System.Exec`, or a `Quit` plus assumed external relaunch would violate the
+task boundary. The disposable harness may control Kodi externally, but that
+cannot substitute for the missing production mechanism.
+
+Recommended smallest next step: supervisor approval of an explicit platform
+capability model and relaunch authority. Until then, do not add a restart
+coordinator, alter BM-020A/B, or run the BM-020C process-level gate.
+
+BM-020C and BM-020 overall are not complete. BM-017, matrix integration, and
+all other worker branches remain untouched. The real Kodi profile and devices
+remain untouched.
+
 ## BM-020B complete and synchronized on Codex
 
 BM-020B is complete and integrated on protected `matrix`; the substantive

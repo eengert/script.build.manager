@@ -1,8 +1,8 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-020B",
-  "reason": "Codex is synchronized with protected matrix after BM-020B integration. BM-020C and BM-017 remain unstarted; the family-room distribution/source concern remains separate.",
+  "status": "active",
+  "task": "BM-020C",
+  "reason": "BM-020C read-only restart-mechanism audit found no supported full Kodi process-restart primitive for the supported macOS, Android/Shield, Fire OS, and Apple TV/tvOS classes through the add-on/Python interfaces. Implementation is stopped pending an approved platform capability model; BM-020B remains intact and BM-017 remains deferred.",
   "last_commit": "f3ccf2a",
   "matrix_sha": "f3ccf2a",
   "next_agent": "human",

@@ -1,5 +1,35 @@
 # Current Task
 
+## BM-020C — restart/resume lifecycle audit blocked before implementation
+
+**Status**: Active audit stopped at the required read-only restart-mechanism
+gate. No BM-020C production implementation has been made.
+
+The Codex worker is at `bd1c804`, based on protected matrix
+`98e897347`. The BM-020A executor and BM-020B transaction/session/service
+foundations remain unchanged. BM-020C implementation requires a genuine new
+Kodi process, not a skin reload, application exit, host kill, GUI click, or
+harness relaunch.
+
+The official Kodi Omega built-in reference documents `RestartApp` as
+implemented only on Windows and Linux. `Quit` exits Kodi without an automatic
+relaunch, and the JSON-RPC surface exposes quit/restart notifications rather
+than a supported add-on/Python application-relaunch operation. The existing
+project has no approved platform capability model or host relaunch mechanism.
+Therefore the required production restart primitive is not established for
+macOS, Android/Shield, Fire OS, or Apple TV/tvOS, and BM-020C is stopped
+before production edits or disposable restart testing.
+
+Recommended next step: define and supervisor-approve a platform capability
+model specifying which supported platform classes can provide a genuine
+application relaunch and how that relaunch is authorized. Do not implement a
+fallback using `System.Exec`, shell process management, GUI automation, or an
+unverified `Quit`-then-relaunch assumption.
+
+BM-020C, BM-020 overall, and BM-017 remain incomplete/deferred. The
+family-room distribution/source concern remains separate. No matrix or other
+worker branch was modified, and no real Kodi profile or device was accessed.
+
 ## BM-020B — durable restart transaction and startup re-entry foundation integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
