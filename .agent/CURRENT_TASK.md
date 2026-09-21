@@ -1,35 +1,22 @@
 # Current Task
 
-## BM-021A — frozen build capture feasibility audit complete
+## BM-021B — frozen artifact store and capture core in progress
 
-**Status**: Complete on `agent/codex`; the worker was synchronized with
-protected `matrix` by normal merge. BM-020 remains complete. BM-021B, BM-022,
-and BM-017 have not started.
+**Status**: Active on `agent/codex`; synchronized with protected `matrix` at
+`26e7cd2` by normal merge. BM-021A and BM-020 remain complete. BM-022 has not
+started; BM-017 remains deferred. Family-room source/distribution concerns
+remain pending until frozen installation is proven.
 
-This read-only audit covered installed add-on metadata, repository provenance,
-Kodi package-cache behavior, exact-version recovery, dependency closure,
-repository add-ons, installed-directory ZIP safety, auto-update semantics,
-global/per-add-on update inhibition, repository enablement guards, immutable
-artifact-store design, and a versioned frozen-build manifest. Work was limited
-to disposable/test-safe state; the real Kodi profile and devices remained
-untouched. No frozen capture or installation implementation was added.
+BM-021B implements only the content-addressed artifact store, exact ZIP
+validation/import, installed add-on/dependency inventory, supported exact
+artifact acquisition, frozen-build manifest v1, deterministic capture
+results, and the smallest reusable global Kodi updater-guard abstraction if
+the disposable proof is safe. It must not implement frozen installation,
+retention, pinning, scheduling, freshness UI, real-profile capture, or device
+testing.
 
-The result is documented in `docs/FROZEN_BUILD_CAPTURE.md`. Kodi exposes
-installed identity, state, and declared dependencies publicly, while origin,
-package-cache mappings, and update rules are internal database evidence.
-Kodi's cache is bounded and incomplete, repository history is not guaranteed,
-and an installed-directory ZIP is rejected as a provenance-safe artifact
-fallback. A future content-addressed Build Manager store and versioned
-manifest are feasible, with exact third-party dependency closure and the
-current global updater guard carried through the transaction. Per-add-on
-automatic-update control was not established. BM-021B must prove the global
-guard's restart/race behavior in a disposable profile before production work.
-
-Evidence: BM-011 disposable repository/add-on validation **19/19**; BM-020A
-disposable AF3 dependency closure **18/18**; Kodi 21.1 JSON-RPC/settings and
-source audit; package-cache identity/hash inspection; real Kodi profile and
-devices read-only. No production capture code, artifact store, frozen
-installer, or update guard was implemented.
+BM-021A's feasibility findings remain in `docs/FROZEN_BUILD_CAPTURE.md` and
+are the architecture boundary for this work.
 
 ## BM-020C — guarded post-restart resume integrated
 

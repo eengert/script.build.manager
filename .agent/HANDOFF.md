@@ -155,6 +155,19 @@ transaction/session/service tests passed 32/32, the full suite passed
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
 
+## BM-021A integration complete
+
+BM-021A is complete, supervisor-approved, and integrated on protected `matrix`.
+The substantive audit commit is `b32369e`; no worker-specific metadata was
+copied. `docs/FROZEN_BUILD_CAPTURE.md` records the exact artifact/provenance,
+dependency-closure, updater-policy, immutable-store, and freshness conclusions
+for future BM-021B/BM-022 work. It explicitly rejects installed-directory
+zipping and undocumented per-addon auto-update assumptions.
+
+BM-021B and BM-022 remain unstarted. BM-020 remains complete, BM-017 remains
+deferred, and family-room source/distribution concerns are not independently
+marked solved. Matrix remains neutral with `active_agent: none`.
+
 ## BM-020C integration complete
 
 BM-020C is complete, supervisor-approved, and integrated on protected

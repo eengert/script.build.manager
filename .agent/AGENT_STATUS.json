@@ -2,9 +2,9 @@
   "active_agent": "codex",
   "status": "complete",
   "task": "BM-021A",
-  "reason": "BM-021A read-only frozen build capture feasibility, artifact provenance, dependency closure, package-cache, and add-on update-control audit is complete. BM-020 remains complete; BM-021B and BM-022 are not started; BM-017 remains deferred.",
-  "last_commit": "3c93b59",
-  "matrix_sha": "34fbd7b",
+  "reason": "BM-021B frozen artifact store, exact artifact capture, dependency closure, manifest, and global updater-guard proof are in progress. BM-021A and BM-020 remain complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending.",
+  "last_commit": "26e7cd2",
+  "matrix_sha": "26e7cd2",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }
