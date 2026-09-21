@@ -34,6 +34,7 @@ Commands
   validate-config BM-015 live validation: configuration package deployment
   validate-af3-package BM-018E live validation: production AF3 package
   validate-build-manager BM-020A live validation: production executor
+  validate-build-manager-transaction BM-020B live validation: transaction startup
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ KODI = Path("/Applications/Kodi.app/Contents/MacOS/Kodi")
 KODI_SYSTEM_ADDONS_DIR = KODI.parent.parent / "Resources" / "Kodi" / "addons"
 
 ADDON_ID = "script.build.manager"
-ADDON_INCLUDE: frozenset = frozenset({"addon.xml", "default.py", "resources"})
+ADDON_INCLUDE: frozenset = frozenset({"addon.xml", "default.py", "service.py", "resources"})
 
 WEBSERVER_PORT = 8920
 WEBSERVER_USERNAME = "bm-test"
@@ -3936,6 +3937,77 @@ def main():
             payload = {"written": list(commands)}
         elif job.get("mode") == "build_manager":
             payload = _run_build_manager(addon_root, job)
+        elif job.get("mode") == "transaction_prepare":
+            from resources.lib.build_manager import ReconcileRequest, ReconcileResult
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.transaction import (
+                TransactionStore,
+                prepare_restart_transaction,
+            )
+            request = ReconcileRequest(
+                manifest_path="/harness/bm020b-selector-only.json",
+                device_profile_id="bm020b-disposable",
+            )
+            reconcile_result = ReconcileResult(
+                success=True,
+                request=request,
+                desired_fingerprint="sha256:" + "b" * 64,
+                restart_report=RestartReport(
+                    RestartRequirement.KODI_RESTART, 1, 0
+                ),
+            )
+            prepared = prepare_restart_transaction(
+                request,
+                reconcile_result,
+                job["session_id"],
+                store=TransactionStore(),
+            )
+            payload = {
+                "created": prepared.created,
+                "succeeded": prepared.succeeded,
+                "failure": (
+                    {"code": prepared.failure.code, "message": prepared.failure.message}
+                    if prepared.failure else None
+                ),
+                "transaction": (
+                    prepared.transaction.to_dict() if prepared.transaction else None
+                ),
+            }
+        elif job.get("mode") == "transaction_session":
+            from resources.lib.session import get_current_kodi_session_id
+            payload = {"session_id": get_current_kodi_session_id()}
+        elif job.get("mode") == "transaction_startup_property":
+            import xbmcgui
+            from resources.lib.startup import STARTUP_CLASSIFICATION_PROPERTY
+            payload = {
+                "classification": xbmcgui.Window(10000).getProperty(
+                    STARTUP_CLASSIFICATION_PROPERTY
+                )
+            }
+        elif job.get("mode") == "transaction_classify":
+            from resources.lib.startup import classify_startup_transaction
+            from resources.lib.transaction import TransactionStore
+            status = classify_startup_transaction(
+                job["session_id"], store=TransactionStore()
+            )
+            payload = {
+                "classification": status.classification.value,
+                "eligible_for_resume": status.eligible_for_resume,
+                "code": status.code,
+                "message": status.message,
+                "transaction": (
+                    status.transaction.to_dict() if status.transaction else None
+                ),
+            }
+        elif job.get("mode") == "transaction_clear":
+            from resources.lib.transaction import TransactionStore
+            payload = {"cleared": TransactionStore().clear()}
+        elif job.get("mode") == "transaction_inspect":
+            from resources.lib.transaction import TransactionStore
+            transaction = TransactionStore().inspect()
+            payload = {
+                "transaction": transaction.to_dict() if transaction else None,
+            }
         else:
             payload = _run_apply(config, manifest, job)
         payload["ok"] = True
@@ -5659,6 +5731,148 @@ def _bm020a_run_job(
     }, timeout=120.0)
 
 
+def _bm020b_run_job(mode: str, **kwargs) -> Dict[str, Any]:
+    """Invoke a narrowly scoped BM-020B harness seam inside disposable Kodi."""
+    return _bm015_run_job({"mode": mode, **kwargs}, timeout=30.0)
+
+
+def _bm020b_log_text() -> str:
+    if not KODI_LOG_FILE.is_file():
+        return ""
+    return KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+
+
+def _bm020b_enable_production_addon() -> None:
+    """Enable the copied production add-on before its next Kodi startup."""
+    detail = jsonrpc("Addons.GetAddonDetails", {
+        "addonid": ADDON_ID,
+        "properties": ["enabled"],
+    })
+    addon = detail.get("addon") if isinstance(detail, dict) else None
+    if not isinstance(addon, dict):
+        raise RuntimeError(f"Build Manager add-on was not discovered: {detail!r}")
+    if addon.get("enabled") is not True:
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": ADDON_ID,
+            "enabled": True,
+        })
+    print("  disposable Build Manager service add-on enabled ✓")
+
+
+def validate_build_manager_transaction() -> None:
+    """Prove BM-020B transaction classification across a real Kodi restart."""
+    print("=== Build Manager BM-020B live validation: transaction startup ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/9] reset, install, configure, and install the harness runner")
+        reset()
+        install(source=PROJECT)
+        configure_webserver()
+        _install_bm015_config_runner()
+
+        print("\n[2/9] enable the service add-on and prove its startup fast path")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020b_enable_production_addon()
+        # A copied add-on is initially disabled in a fresh disposable profile.
+        # Restarting after the explicit enable mirrors normal installation of an
+        # enabled production package and proves Kodi's automatic service load.
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        initial_status = _bm020b_run_job("transaction_startup_property")
+        if initial_status.get("classification") != "no_transaction":
+            raise RuntimeError("BM-020B service did not report the no-transaction fast path")
+        print("  xbmc.service startup fast path reported no transaction ✓")
+        first_session = _bm020b_run_job("transaction_session")
+        if not first_session.get("ok") or not first_session.get("session_id"):
+            raise RuntimeError(f"could not obtain first Kodi session: {first_session}")
+        session_id = first_session["session_id"]
+        print("  first process session identity obtained ✓")
+
+        print("\n[3/9] create a real awaiting-restart transaction through production storage")
+        prepared = _bm020b_run_job("transaction_prepare", session_id=session_id)
+        if not prepared.get("ok") or not prepared.get("succeeded") or not prepared.get("created"):
+            raise RuntimeError(f"transaction preparation failed: {prepared}")
+        print("  AWAITING_RESTART transaction created without invoking restart ✓")
+
+        print("\n[4/9] classify the pending transaction in the same Kodi process")
+        same = _bm020b_run_job("transaction_classify", session_id=session_id)
+        if (
+            not same.get("ok")
+            or same.get("classification") != "same_session_awaiting_restart"
+            or same.get("eligible_for_resume")
+        ):
+            raise RuntimeError(f"same-session classification failed: {same}")
+        print("  SAME_SESSION classification preserved the transaction and did not resume ✓")
+
+        print("\n[5/9] externally stop and relaunch disposable Kodi")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        second_session = _bm020b_run_job("transaction_session")
+        if not second_session.get("ok") or second_session.get("session_id") == session_id:
+            raise RuntimeError(f"Kodi process did not receive a new session ID: {second_session}")
+        print("  external process boundary produced a different session identity ✓")
+
+        print("\n[6/9] prove automatic service classification after restart")
+        restarted_status = _bm020b_run_job("transaction_startup_property")
+        if restarted_status.get("classification") != "ready_for_resume":
+            raise RuntimeError("service did not automatically report READY_FOR_RESUME after restart")
+        ready = _bm020b_run_job(
+            "transaction_classify", session_id=second_session["session_id"]
+        )
+        if (
+            not ready.get("ok")
+            or ready.get("classification") != "ready_for_resume"
+            or not ready.get("eligible_for_resume")
+        ):
+            raise RuntimeError(f"new-session classification failed: {ready}")
+        print("  service reported READY_FOR_RESUME; transaction remained durable ✓")
+
+        print("\n[7/9] explicitly clear the transaction through the recovery API")
+        cleared = _bm020b_run_job("transaction_clear")
+        if not cleared.get("ok") or not cleared.get("cleared"):
+            raise RuntimeError(f"explicit transaction clear failed: {cleared}")
+        inspected = _bm020b_run_job("transaction_inspect")
+        if not inspected.get("ok") or inspected.get("transaction") is not None:
+            raise RuntimeError(f"cleared transaction is still present: {inspected}")
+        print("  explicit clear removed the pending transaction ✓")
+
+        print("\n[8/9] verify normal startup returns to the fast path")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        final_status = _bm020b_run_job("transaction_startup_property")
+        if final_status.get("classification") != "no_transaction":
+            raise RuntimeError("service did not return to the no-transaction fast path")
+        print("  no-transaction startup remained silent and did not create a record ✓")
+    finally:
+        print("\n[9/9] stop disposable Kodi and verify the real profile")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+            if current_mtime_ns != real_mtime_ns:
+                raise RuntimeError(
+                    f"Validation FAILED: real profile mtime changed! "
+                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
+                )
+        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("  production BuildManager did not restart Kodi or resume reconciliation ✓")
+    print("\n=== BM-020B transaction validation PASSED (9/9) ===\n")
+
+
 def _bm020a_observe() -> Dict[str, Any]:
     result = _bm018d_run_job({
         "mode": "observe",
@@ -5952,6 +6166,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-af3-package", help="BM-018E live validation: production AF3 package")
     sub.add_parser("validate-skin-config", help="BM-018D live validation: typed AF3 skin configuration")
     sub.add_parser("validate-build-manager", help="BM-020A live validation: production executor")
+    sub.add_parser("validate-build-manager-transaction", help="BM-020B live validation: transaction startup")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -5998,6 +6213,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_af3_package()
         elif cmd == "validate-build-manager":
             validate_build_manager()
+        elif cmd == "validate-build-manager-transaction":
+            validate_build_manager_transaction()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
