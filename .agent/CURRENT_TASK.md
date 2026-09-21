@@ -1,5 +1,24 @@
 # Current Task
 
+## BM-020B — durable restart transaction and startup re-entry foundation
+
+**Status**: Complete on `agent/codex`; not integrated to `matrix`.
+
+Commit `eef187e` adds the versioned profile-local transaction store at
+`special://profile/addon_data/script.build.manager/restart_transaction.json`,
+atomic validated writes, explicit clear/update APIs, portable `fcntl.flock`
+locking, Kodi global-window session identity, startup classification, and the
+thin `xbmc.service` entrypoint. It does not restart Kodi or resume
+reconciliation.
+
+The disposable BM-020B process-boundary gate passed 9/9. Full validation passed
+1504/1504; the focused BM-020B transaction suite passed 32/32; and
+`git diff --check` passed. BM-020C owns production restart invocation, resume
+reconciliation, retry/loop prevention, and recovery after resume failures.
+
+The separate family-room distribution/source concern remains outside this
+milestone. BM-017 and BM-020C remain unstarted.
+
 ## BM-020A — production reconciliation executor integrated
 
 Substantive integration commits: `eeafc1c`, `0ed2c35`, `821e69e`, `0fb0bd5`,

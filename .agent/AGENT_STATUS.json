@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "ready",
-  "task": "BM-020A",
-  "reason": "Codex is synchronized with protected matrix after BM-020A integration. BM-020B/C and BM-017 remain unstarted; the family-room distribution/source concern remains separate.",
-  "last_commit": "92a959c",
+  "status": "complete",
+  "task": "BM-020B",
+  "reason": "BM-020B durable restart-transaction and startup re-entry foundation is complete on agent/codex. BM-020C and BM-017 remain deferred; the family-room distribution/source concern remains separate.",
+  "last_commit": "eef187e",
   "matrix_sha": "92a959ccef15d2fc6f0da0f11e4240484e59b351",
   "next_agent": "human",
   "updated_at": "2026-09-21"

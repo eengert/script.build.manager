@@ -1,5 +1,28 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-020B complete on Codex
+
+BM-020B is complete on `agent/codex` in commit `eef187e`; it has not been
+integrated to `matrix`. The implementation stores only a versioned safe
+`ReconcileRequest`, desired fingerprint, typed restart requirement, originating
+Kodi session UUID, phase, and bounded diagnostics under the Kodi profile.
+Writes are validated and atomic; locking uses OS-backed `fcntl.flock` and fails
+closed if unavailable. Kodi's global home-window property supplies a process
+session identity, and `service.py` performs one startup classification pass.
+
+The service fast path reports no transaction without reconciliation. Same-
+session `AWAITING_RESTART` remains intact and ineligible for resume. A
+different Kodi process is classified `READY_FOR_RESUME` while the transaction
+remains durable for BM-020C. Corruption, unsupported versions, invalid fields,
+and persistence/lock failures fail closed; clear is explicit only.
+
+Disposable BM-020B validation passed 9/9 across an external Kodi stop/relaunch;
+the service ran automatically in both processes, distinguished session IDs,
+and never restarted Kodi or invoked `BuildManager.reconcile()`. Focused
+transaction/session/service tests passed 32/32, the full suite passed
+1504/1504, and `git diff --check` passed. BM-020C, BM-017, and family-room
+distribution/source work remain outside scope.
+
 ## BM-020A integration complete
 
 BM-020A is complete, supervisor-approved, and integrated on protected
