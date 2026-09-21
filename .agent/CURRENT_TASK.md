@@ -1,5 +1,34 @@
 # Current Task
 
+## BM-021B — Frozen artifact capture core integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
+
+The reviewed BM-021B substantive commit was reconstructed from the approved
+worker endpoint as `2ee040c` (`feat(BM-021B): add frozen artifact capture
+core`). It adds the SHA-256 content-addressed, atomic write-once artifact
+store; exact ZIP validation and read-back; typed installed inventory with
+direct/transitive dependency edges and the `xbmc.gui`, `xbmc.python`, and
+`kodi.resource` system boundary; honest provenance and incomplete-capture
+manifest states; exact cache/repository acquisition ordering; and the
+supported Settings JSON-RPC updater guard. It does not add frozen installation,
+retention, pinning, scheduling, freshness enforcement, or garbage collection.
+
+The disposable proof recorded the AF3 3.2.19 closure as 18 healthy
+third-party add-ons plus the system boundary, exact versions and dependency
+edges, and an honest `incomplete_artifact` result after the reset had no exact
+package-cache ZIPs. No installed directory was zipped, no false `COMPLETE`
+claim was made, and no real Kodi profile or Apple TV was accessed. The updater
+proof verified read/set/read-back, restart reassertion because `NEVER_CHECK`
+does not persist across restart, no observed scheduled updater activity while
+guarded, explicit restoration, and restoration after a second restart. A
+resumed transaction must reassert and verify the guard before every mutation.
+
+BM-020, BM-021A, and BM-021B are complete. BM-022 has not started; BM-017
+remains deferred; family-room source/distribution concerns remain pending.
+No next milestone was started.
+
 ## BM-021A — Frozen Build Capture audit integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

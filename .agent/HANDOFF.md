@@ -1,5 +1,41 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-021B integration complete
+
+BM-021B is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`. The reviewed
+substantive endpoint was reconstructed as `2ee040c` (`feat(BM-021B): add
+frozen artifact capture core`); worker-specific `.agent/*` files were not
+copied.
+
+The capture core provides a SHA-256 content-addressed, atomic write-once
+artifact store with immutable sidecar metadata and read-back verification;
+exact ZIP/package validation without execution or installed-directory
+synthesis; typed installed inventory, transitive dependency closure, exact
+system boundary, honest provenance, deterministic manifest/fingerprint, and
+fail-closed incomplete states; plus exact store/cache/repository acquisition
+ordering. The updater guard uses supported Settings JSON-RPC, captures and
+restores the global policy explicitly, and must reassert/read-back
+`NEVER_CHECK` before each resumed mutation because that setting does not
+persist across restart.
+
+The disposable gate proved 18/18 AF3 third-party closure entries healthy plus
+the system boundary, exact installed versions and edges, and an honest
+`incomplete_artifact` result when exact package-cache ZIPs were unavailable.
+It did not claim a complete build, installed-directory provenance, frozen
+installation, retention, pinning, scheduling, freshness enforcement, or
+garbage collection. The updater proof passed read/set/read-back, restart
+reassertion, no observed scheduled updater activity while guarded, explicit
+restoration, and second-restart restoration. Focused validation passed
+372/372 tests and the full suite passed 1557/1557; `git diff --check` is
+clean. The live proof used only the disposable `.kodi-test` profile; no real
+Kodi profile or Apple TV was accessed.
+
+BM-020 and BM-021A/B are complete. BM-022 has not started, BM-017 remains
+deferred, and family-room source/distribution concerns remain pending. The
+smallest next step is supervisor direction on those separate concerns; no
+next milestone was started.
+
 ## BM-021A integration complete
 
 BM-021A is complete, supervisor-approved, and integrated on protected `matrix`.
