@@ -1,5 +1,24 @@
 # Current Task
 
+## BM-021A — Frozen Build Capture audit integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`.
+
+Substantive commit: `b32369e` (`docs(BM-021A): record frozen build capture
+audit`). The audit establishes exact reproducible artifact requirements,
+verified artifact acquisition priority, bounded/non-authoritative Kodi cache
+semantics, rejection of installed-directory zipping, frozen third-party
+dependency closure, repository artifact/provenance handling, Kodi's global
+three-state updater policy, the absence of a solved per-addon auto-update API,
+and a SHA-256 content-addressed immutable artifact-store model. Freshness
+checks warn without substituting newer package versions. Updater inhibition
+restart/race behavior remains for BM-021B.
+
+BM-021B and BM-022 have not started. BM-020 remains complete and BM-017
+remains deferred. Family-room source/distribution concerns are being absorbed
+by BM-021/BM-022 and are not independently marked solved.
+
 ## BM-020C — guarded post-restart resume integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

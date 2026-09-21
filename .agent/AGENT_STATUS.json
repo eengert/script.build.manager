@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-020C",
-  "reason": "BM-020C guarded post-restart resume orchestration is complete, supervisor-approved, and integrated. BM-020A, BM-020B, BM-020C1, and BM-020 overall are complete; supported platforms still require a manual full Kodi restart and post-restart resume is automatic. BM-017 and family-room distribution/source work remain deferred.",
-  "last_commit": "091cfe9",
-  "matrix_sha": "091cfe9",
+  "task": "BM-021A",
+  "reason": "BM-021A Frozen Build Capture audit is complete and integrated. BM-021B and BM-022 have not started; BM-020 remains complete; BM-017 remains deferred. Family-room source/distribution concerns are being absorbed by BM-021/BM-022 and are not independently marked solved.",
+  "last_commit": "b32369e",
+  "matrix_sha": "b32369e",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }
