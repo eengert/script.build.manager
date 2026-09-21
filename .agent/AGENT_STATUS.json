@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-020A",
-  "reason": "BM-020A production reconciliation executor and disposable gate are complete and integrated; matrix remains neutral. BM-020B/C and BM-017 remain deferred.",
-  "last_commit": "1ad0fdb",
-  "matrix_sha": "1ad0fdb",
+  "task": "BM-020B",
+  "reason": "BM-020B durable restart transaction and startup re-entry foundation is complete, supervisor-approved, and integrated; matrix remains neutral. BM-020C and BM-017 remain deferred.",
+  "last_commit": "f3ccf2a",
+  "matrix_sha": "f3ccf2a",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }
