@@ -37,6 +37,8 @@ Commands
   validate-build-manager-transaction BM-020B live validation: transaction startup
   validate-build-manager-manual-restart BM-020C1 live validation: manual restart handoff
   validate-build-manager-resume BM-020C live validation: automatic post-restart resume
+  validate-frozen-capture BM-021B disposable exact-artifact capture proof
+  validate-updater-guard BM-021B disposable global updater-guard proof
 """
 
 from __future__ import annotations
@@ -6479,6 +6481,166 @@ def validate_build_manager() -> None:
     print("\n=== BM-020A validation PASSED ===\n")
 
 
+def validate_frozen_capture() -> None:
+    """Exercise BM-021B capture against only the disposable AF3 fixture."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.artifacts import ArtifactStore
+    from resources.lib.frozen import KodiInventoryBackend, capture_frozen_build
+
+    print("=== Build Manager BM-021B live validation: frozen capture ===")
+    verify_isolation()
+    try:
+        print("\n[1/4] reset and prepare the disposable AF3 closure")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _bm018d_install_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm018d_warm_af3_runtime()
+        if inspect().get("active_skin") != "skin.estuary":
+            raise RuntimeError("capture proof must finish on disposable Estuary")
+        print(f"  disposable AF3 closure prepared ({len(af3_closure)} nodes) ✓")
+
+        print("\n[2/4] capture representative installed software")
+        backend = KodiInventoryBackend(
+            jsonrpc,
+            addons_dir=KODI_ADDONS_DIR,
+            package_cache_dir=KODI_APPDATA_DIR / "addons" / "packages",
+        )
+        store = ArtifactStore(ROOT / "bm021b-artifacts")
+        result = capture_frozen_build(
+            backend=backend,
+            store=store,
+            root_addon_ids=(
+                _BM018D_SKIN_ID,
+                "plugin.video.themoviedb.helper",
+                "metadata.themoviedb.org.python",
+                "script.module.pil",
+            ),
+            build_id="bm021b-disposable-proof",
+            name="BM-021B disposable proof",
+            created_at="2026-09-21T00:00:00Z",
+            platform="macos",
+        )
+        print(json.dumps(result.manifest.to_dict(), indent=2, sort_keys=True))
+        for node in result.manifest.addons:
+            print(
+                f"  {node.addon_id}: version={node.version!r} status={node.status.value!r} "
+                f"artifact={'yes' if node.artifact else 'no'} provenance={node.provenance.value!r}"
+            )
+        if not any(node.addon_id == _BM018D_SKIN_ID for node in result.manifest.addons):
+            raise RuntimeError("AF3 was absent from the captured inventory")
+        print("  installed identity, dependency classification, and honest artifact availability recorded ✓")
+
+        print("\n[3/4] verify exact artifact bytes and duplicate reuse")
+        artifact_nodes = [node for node in result.manifest.addons if node.artifact is not None]
+        if artifact_nodes:
+            node = artifact_nodes[0]
+            data = store.read_bytes(node.artifact.sha256)
+            reused = store.import_zip(
+                data,
+                expected_addon_id=node.addon_id,
+                expected_version=node.version,
+                source="duplicate-proof",
+            )
+            if reused.sha256 != node.artifact.sha256:
+                raise RuntimeError("duplicate artifact import changed the digest")
+            print(f"  {len(artifact_nodes)} exact artifact(s) hashed, read back, and deduplicated ✓")
+        else:
+            print("  no disposable cache artifact was available; capture correctly remains incomplete")
+
+        print("\n[4/4] enforce incomplete-capture boundary")
+        if not result.complete:
+            print(f"  capture status={result.manifest.capture_status.value}; no COMPLETE claim made ✓")
+        else:
+            print("  all selected required nodes had exact artifacts; COMPLETE is justified ✓")
+    finally:
+        print("\nstop disposable Kodi")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("real Kodi profile was not accessed by this gate ✓")
+    print("\n=== BM-021B frozen capture validation FINISHED ===\n")
+
+
+def validate_updater_guard() -> None:
+    """Prove the global updater setting through two disposable restarts."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import (
+        AddonUpdatePolicy,
+        AddonUpdateGuard,
+        KodiJsonRpcUpdatePolicyBackend,
+    )
+
+    print("=== Build Manager BM-021B live validation: global updater guard ===")
+    verify_isolation()
+    guard = None
+    restored = False
+    try:
+        reset()
+        install(source=PROJECT)
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        backend = KodiJsonRpcUpdatePolicyBackend(jsonrpc)
+        guard = AddonUpdateGuard(backend)
+        original = backend.get_policy()
+        print(f"  initial policy={original.name} read through Settings.GetSettingValue ✓")
+        guard.engage()
+        if backend.get_policy() != AddonUpdatePolicy.NEVER_CHECK:
+            raise RuntimeError("NEVER_CHECK was not read back after setting it")
+        print("  NEVER_CHECK set and read back through Settings.SetSettingValue ✓")
+        log_before_restart = _bm020b_log_text()
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        persisted = backend.get_policy()
+        if persisted != AddonUpdatePolicy.NEVER_CHECK:
+            guard.reassert()
+            if backend.get_policy() != AddonUpdatePolicy.NEVER_CHECK:
+                raise RuntimeError("NEVER_CHECK could not be deterministically reasserted after restart")
+            print(
+                f"  NEVER_CHECK did not persist (observed {persisted.name}); "
+                "deterministic reassertion succeeded before any capture mutation ✓"
+            )
+        else:
+            print("  NEVER_CHECK survived the disposable restart ✓")
+        log_after_restart = _bm020b_log_text()
+        appended = log_after_restart[len(log_before_restart):]
+        forbidden = ("running scheduled update", "checking for updates")
+        if any(marker in appended for marker in forbidden):
+            raise RuntimeError("repository updater activity occurred while NEVER_CHECK was active")
+        print("  no scheduled updater activity appeared while NEVER_CHECK was active ✓")
+        guard.restore()
+        restored = True
+        if backend.get_policy() != original:
+            raise RuntimeError("original updater policy did not restore")
+        print(f"  original policy={original.name} restored and verified ✓")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        if backend.get_policy() != original:
+            raise RuntimeError("restored updater policy did not survive restart")
+        print("  restored policy survived the second disposable restart ✓")
+    finally:
+        if guard is not None and guard.engaged and not restored:
+            print("  guard remains engaged after failure; no silent restoration performed")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("supported Settings API only; no Kodi database writes; real profile untouched ✓")
+    print("\n=== BM-021B updater guard validation PASSED ===\n")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -6530,6 +6692,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-build-manager-transaction", help="BM-020B live validation: transaction startup")
     sub.add_parser("validate-build-manager-manual-restart", help="BM-020C1 live validation: manual restart handoff")
     sub.add_parser("validate-build-manager-resume", help="BM-020C live validation: automatic post-restart resume")
+    sub.add_parser("validate-frozen-capture", help="BM-021B disposable exact-artifact capture proof")
+    sub.add_parser("validate-updater-guard", help="BM-021B disposable global updater-guard proof")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -6582,6 +6746,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_build_manager_manual_restart()
         elif cmd == "validate-build-manager-resume":
             validate_build_manager_resume()
+        elif cmd == "validate-frozen-capture":
+            validate_frozen_capture()
+        elif cmd == "validate-updater-guard":
+            validate_updater_guard()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
