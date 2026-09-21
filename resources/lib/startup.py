@@ -27,6 +27,9 @@ class StartupClassification(str, Enum):
 
 
 STARTUP_CLASSIFICATION_PROPERTY = "script.build.manager.startup_classification"
+RESUME_OUTCOME_PROPERTY = "script.build.manager.resume_outcome"
+RESUME_FINGERPRINT_PROPERTY = "script.build.manager.resume_fingerprint"
+RESUME_REQUIREMENT_PROPERTY = "script.build.manager.resume_requirement"
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,7 @@ class StartupStatus:
     transaction: Optional[RestartTransaction] = None
     code: str = ""
     message: str = ""
+    resume_result: Optional[object] = None
 
     @property
     def eligible_for_resume(self) -> bool:
@@ -73,8 +77,11 @@ def classify_startup_transaction(
         return StartupStatus(
             StartupClassification.NEEDS_ATTENTION,
             transaction=transaction,
-            code="TRANSACTION_PHASE_REQUIRES_ATTENTION",
-            message=f"transaction is in phase {transaction.phase.value}",
+            code=(transaction.status_code or "TRANSACTION_PHASE_REQUIRES_ATTENTION"),
+            message=(
+                transaction.status_message
+                or f"transaction is in phase {transaction.phase.value}"
+            ),
         )
     if transaction.originating_kodi_session_id == current_session_id:
         return StartupStatus(
@@ -91,8 +98,12 @@ def classify_startup_transaction(
     )
 
 
-def run_startup(*, store: Optional[TransactionStore] = None) -> StartupStatus:
-    """Obtain session identity and classify once; never reconcile or restart."""
+def run_startup(
+    *,
+    store: Optional[TransactionStore] = None,
+    resume_coordinator=None,
+) -> StartupStatus:
+    """Classify once and invoke resume only for a new-session handoff."""
     try:
         current_session_id = get_current_kodi_session_id()
     except SessionIdentityError as exc:
@@ -101,4 +112,50 @@ def run_startup(*, store: Optional[TransactionStore] = None) -> StartupStatus:
             code="SESSION_IDENTITY_UNAVAILABLE",
             message=str(exc),
         )
-    return classify_startup_transaction(current_session_id, store=store)
+    target = store or TransactionStore()
+    status = classify_startup_transaction(current_session_id, store=target)
+    if not status.eligible_for_resume or status.transaction is None:
+        return status
+
+    try:
+        if resume_coordinator is None:
+            from resources.lib.resume import ResumeCoordinator
+            resume_coordinator = ResumeCoordinator(store=target)
+        result = resume_coordinator.resume(
+            status.transaction, current_session_id=current_session_id
+        )
+    except Exception:
+        return StartupStatus(
+            StartupClassification.NEEDS_ATTENTION,
+            transaction=status.transaction,
+            code="RESUME_COORDINATOR_FAILED",
+            message="resume coordinator failed closed",
+        )
+    if result.succeeded:
+        return StartupStatus(
+            StartupClassification.NO_TRANSACTION,
+            code="RESUME_COMPLETE",
+            message="resume reconciliation completed and transaction was cleared",
+            resume_result=result,
+        )
+
+    try:
+        current = target.inspect()
+    except TransactionError:
+        current = None
+    if current is not None and current.phase is TransactionPhase.NEEDS_ATTENTION:
+        return StartupStatus(
+            StartupClassification.NEEDS_ATTENTION,
+            transaction=current,
+            code=(current.status_code or "RESUME_NEEDS_ATTENTION"),
+            message=(current.status_message or "resume requires explicit recovery"),
+            resume_result=result,
+        )
+    failure = result.failure
+    return StartupStatus(
+        StartupClassification.READY_FOR_RESUME,
+        transaction=current or status.transaction,
+        code=(failure.code if failure else "RESUME_FAILED"),
+        message=(failure.message if failure else "resume did not complete"),
+        resume_result=result,
+    )

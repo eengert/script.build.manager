@@ -172,6 +172,42 @@ class TestBuildManager(unittest.TestCase):
         self.assertEqual(first.desired_fingerprint, second.desired_fingerprint)
         self.assertEqual(owners.dependency_resolver.calls[-1][1], {"require_root_metadata": True})
 
+    def test_preview_matches_reconcile_fingerprint_without_owner_mutation(self):
+        desired = _desired((AddonEntry("plugin.example", "enabled"),))
+        owners = _Owners(
+            desired,
+            [_state(InstalledAddon("plugin.example", True, "1.0"))],
+            ("plugin.example",),
+            {},
+        )
+        manager = BuildManager(owners.owners)
+        request = ReconcileRequest("manifest.json", "dev")
+
+        preview = manager.preview(request)
+        reconciled = manager.reconcile(request)
+
+        self.assertTrue(preview.success)
+        self.assertTrue(reconciled.success)
+        self.assertEqual(preview.desired_fingerprint, reconciled.desired_fingerprint)
+        self.assertEqual(owners.dependency_installer.calls, [])
+        self.assertEqual(owners.sets, [])
+
+    def test_preview_failure_is_structured(self):
+        desired = _desired()
+        owners = _Owners(desired, [_state()], (), {})
+
+        def fail(_path):
+            raise ValueError("private manifest token should not escape")
+
+        owners.owners = replace(owners.owners, manifest_loader=fail)
+        result = BuildManager(owners.owners).preview(
+            ReconcileRequest("manifest.json", "dev")
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure.phase.value, "load")
+        self.assertEqual(result.failure.code, "MANIFEST_LOAD_FAILED")
+        self.assertLessEqual(len(result.failure.message), 500)
+
     def test_executes_in_plan_order_and_preserves_restart_before_failure(self):
         desired = _desired((
             AddonEntry("plugin.a", "enabled"),

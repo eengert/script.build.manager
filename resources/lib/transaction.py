@@ -29,6 +29,7 @@ TRANSACTION_FILENAME = "restart_transaction.json"
 LOCK_FILENAME = "restart_transaction.lock"
 _FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_DIAGNOSTIC = 512
+_MAX_STATUS_CODE = 96
 
 
 class TransactionError(Exception):
@@ -59,6 +60,10 @@ class TransactionUnsupportedSchema(TransactionError):
 
 class TransactionPersistenceError(TransactionError):
     code = "TRANSACTION_PERSISTENCE_FAILED"
+
+
+class TransactionStateConflict(TransactionError):
+    code = "TRANSACTION_STATE_CONFLICT"
 
 
 class TransactionPhase(str, Enum):
@@ -106,6 +111,8 @@ class RestartTransaction:
     restart_attempt_count: int = 0
     created_at: str = ""
     updated_at: str = ""
+    status_code: str = ""
+    status_message: str = ""
 
     schema_version = SCHEMA_VERSION
 
@@ -129,6 +136,16 @@ class RestartTransaction:
             value = getattr(self, field)
             if not isinstance(value, str) or not value or len(value) > 64:
                 raise ValueError(f"{field} must be a bounded non-empty string")
+        if (
+            not isinstance(self.status_code, str)
+            or len(self.status_code) > _MAX_STATUS_CODE
+        ):
+            raise ValueError("status_code must be a bounded string")
+        if (
+            not isinstance(self.status_message, str)
+            or len(self.status_message) > _MAX_DIAGNOSTIC
+        ):
+            raise ValueError("status_message must be a bounded string")
 
     def to_dict(self) -> dict:
         """Return only stable selectors and typed transaction metadata."""
@@ -143,6 +160,8 @@ class RestartTransaction:
             "restart_attempt_count": self.restart_attempt_count,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "status_code": self.status_code,
+            "status_message": self.status_message,
         }
 
     def to_json(self) -> str:
@@ -158,8 +177,11 @@ class RestartTransaction:
             "originating_kodi_session_id", "restart_attempt_count",
             "created_at", "updated_at",
         }
-        if set(value) != required:
+        optional = {"status_code", "status_message"}
+        if set(value) - required - optional:
             raise TransactionCorrupt("transaction fields are not exactly supported")
+        if not required.issubset(value):
+            raise TransactionCorrupt("transaction is missing required fields")
         if value["schema_version"] != SCHEMA_VERSION:
             raise TransactionUnsupportedSchema(
                 f"unsupported transaction schema {value['schema_version']!r}"
@@ -186,6 +208,8 @@ class RestartTransaction:
                 restart_attempt_count=value["restart_attempt_count"],
                 created_at=value["created_at"],
                 updated_at=value["updated_at"],
+                status_code=value.get("status_code", ""),
+                status_message=value.get("status_message", ""),
             )
         except TransactionError:
             raise
@@ -194,6 +218,21 @@ class RestartTransaction:
 
     def with_phase(self, phase: TransactionPhase) -> "RestartTransaction":
         return replace(self, phase=phase, updated_at=_utc_now())
+
+    def with_status(
+        self,
+        *,
+        phase: Optional[TransactionPhase] = None,
+        status_code: str = "",
+        status_message: str = "",
+    ) -> "RestartTransaction":
+        return replace(
+            self,
+            phase=phase or self.phase,
+            status_code=status_code,
+            status_message=status_message,
+            updated_at=_utc_now(),
+        )
 
 
 class TransactionLock:
@@ -322,6 +361,65 @@ class TransactionStore:
             updated = current.with_phase(phase)
             self._write_unlocked(updated, previous_bytes=self._read_bytes())
             return updated
+
+    def transition_expected(
+        self,
+        *,
+        transaction_id: str,
+        expected_phase: TransactionPhase,
+        new_phase: TransactionPhase,
+        status_code: str = "",
+        status_message: str = "",
+    ) -> RestartTransaction:
+        """Atomically transition only the expected durable transaction state."""
+        if not isinstance(expected_phase, TransactionPhase):
+            raise TransactionPersistenceError("expected phase has an invalid type")
+        if not isinstance(new_phase, TransactionPhase):
+            raise TransactionPersistenceError("new phase has an invalid type")
+        with self.locked():
+            current = self._read_unlocked()
+            if current is None:
+                raise TransactionStateConflict("no active transaction exists")
+            if (
+                current.transaction_id != transaction_id
+                or current.phase is not expected_phase
+            ):
+                raise TransactionStateConflict(
+                    "transaction identity or phase changed before transition"
+                )
+            updated = current.with_status(
+                phase=new_phase,
+                status_code=status_code,
+                status_message=status_message,
+            )
+            self._write_unlocked(updated, previous_bytes=self._read_bytes())
+            return updated
+
+    def clear_expected(
+        self, *, transaction_id: str, expected_phase: TransactionPhase
+    ) -> bool:
+        """Clear only an unchanged transaction identity and phase."""
+        if not isinstance(expected_phase, TransactionPhase):
+            raise TransactionPersistenceError("expected phase has an invalid type")
+        with self.locked():
+            current = self._read_unlocked()
+            if current is None:
+                raise TransactionStateConflict("no active transaction exists")
+            if (
+                current.transaction_id != transaction_id
+                or current.phase is not expected_phase
+            ):
+                raise TransactionStateConflict(
+                    "transaction identity or phase changed before clear"
+                )
+            try:
+                os.remove(self.transaction_path)
+                self._fsync_directory(self.directory)
+                return True
+            except OSError as exc:
+                raise TransactionPersistenceError(
+                    "could not clear the completed transaction"
+                ) from exc
 
     def clear(self) -> bool:
         """Explicitly abandon the record; never called by startup inspection."""

@@ -18,6 +18,7 @@ from resources.lib.transaction import (
     TransactionCorrupt,
     TransactionLockBusy,
     TransactionPhase,
+    TransactionStateConflict,
     TransactionStore,
     TransactionUnsupportedSchema,
     prepare_restart_transaction,
@@ -181,6 +182,45 @@ class TestTransactionStore(StoreTestCase):
         updated = self.store.update_phase(TransactionPhase.NEEDS_ATTENTION)
         self.assertEqual(updated.phase, TransactionPhase.NEEDS_ATTENTION)
         self.assertEqual(self.store.inspect().phase, TransactionPhase.NEEDS_ATTENTION)
+
+    def test_expected_transition_requires_matching_identity_and_phase(self):
+        transaction = _transaction()
+        self.store.create(transaction)
+        updated = self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=TransactionPhase.AWAITING_RESTART,
+            new_phase=TransactionPhase.RESUMING,
+        )
+        self.assertEqual(updated.phase, TransactionPhase.RESUMING)
+        with self.assertRaises(TransactionStateConflict):
+            self.store.transition_expected(
+                transaction_id=transaction.transaction_id,
+                expected_phase=TransactionPhase.AWAITING_RESTART,
+                new_phase=TransactionPhase.NEEDS_ATTENTION,
+            )
+
+    def test_expected_clear_requires_matching_identity_and_phase(self):
+        transaction = _transaction(phase=TransactionPhase.RESUMING)
+        self.store.create(transaction)
+        with self.assertRaises(TransactionStateConflict):
+            self.store.clear_expected(
+                transaction_id=transaction.transaction_id,
+                expected_phase=TransactionPhase.AWAITING_RESTART,
+            )
+        self.assertTrue(self.store.clear_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=TransactionPhase.RESUMING,
+        ))
+
+    def test_old_v1_record_without_status_fields_remains_readable(self):
+        transaction = _transaction().to_dict()
+        transaction.pop("status_code")
+        transaction.pop("status_message")
+        Path(self.store.directory).mkdir(parents=True)
+        Path(self.store.transaction_path).write_text(json.dumps(transaction), encoding="utf-8")
+        loaded = self.store.inspect()
+        self.assertEqual(loaded.status_code, "")
+        self.assertEqual(loaded.status_message, "")
 
 
 class TestPrepareRestartTransaction(StoreTestCase):
