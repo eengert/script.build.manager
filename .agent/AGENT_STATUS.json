@@ -3,8 +3,8 @@
   "status": "complete",
   "task": "BM-021B",
   "reason": "BM-021B frozen artifact store, exact artifact capture core, dependency/provenance manifest, and updater guard are complete, supervisor-approved, and integrated. BM-020 and BM-021A/B are complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending and are not independently marked solved.",
-  "last_commit": "pending",
-  "matrix_sha": "pending",
+  "last_commit": "e64f138",
+  "matrix_sha": "e64f138",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }
