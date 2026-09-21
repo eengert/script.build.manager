@@ -1,5 +1,32 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-020C1 integration complete
+
+BM-020C1 is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix state is neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `bcaf2ca`. Codex worker metadata was not
+copied.
+
+The integration adds the typed capability resolver and manual restart
+coordinator, with current and unknown platforms conservatively mapped to
+`MANUAL_APP_RESTART_REQUIRED`. Successful `KODI_RESTART` handoff preparation
+persists and read-backs `AWAITING_RESTART` with attempt count `0`, never
+restarts or quits Kodi, and returns structured manual guidance. Failed runs
+create no transaction, `NONE` completes without one, same-session requests do
+not re-run reconciliation, and a new session with count `0` is ready for the
+later resume phase. No automatic adapter or resumed reconciliation is
+claimed.
+
+Matrix validation passed focused tests **63/63**, disposable manual gate
+**8/8** with AF3 closure **18/18**, full suite **1517/1517**, and
+`git diff --check`. The gate used only `.kodi-test`; the real Kodi profile,
+Apple TV, and all devices remained untouched.
+
+BM-020C resume work remains incomplete: fingerprint revalidation, `RESUMING`,
+resumed reconciliation, success clear, loop prevention, and failure/recovery
+semantics. Do not begin that work, BM-017, or family-room distribution/source
+work as part of this integration record.
+
 ## BM-020B integration complete
 
 BM-020B is complete, supervisor-approved, and integrated on protected

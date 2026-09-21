@@ -1,5 +1,36 @@
 # Current Task
 
+## BM-020C1 — typed restart capability model and manual-restart handoff integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`.
+
+Substantive integration commit: `bcaf2ca` (`feat(BM-020C1): add manual restart
+capability handoff`). Worker-specific Codex metadata was excluded.
+
+BM-020C1 establishes a typed restart capability seam and conservative platform
+policy. macOS, Android/Shield, Fire OS, Apple TV/tvOS, and unknown platforms
+resolve to `MANUAL_APP_RESTART_REQUIRED`. A successful typed `KODI_RESTART`
+result persists and verifies `AWAITING_RESTART` with
+`restart_attempt_count = 0`, returns structured manual guidance, and does not
+restart or quit Kodi. Failed reconciliation creates no transaction; `NONE`
+completes without one; same-session calls reuse the handoff without a second
+reconciliation; and a new session with count `0` is `READY_FOR_RESUME`.
+Explicit automatic capability selection fails closed because no approved
+production adapter exists.
+
+Integrated validation passed: focused BM-020C1/BM-020B/BM-020A/BM-019 tests
+**63/63**; disposable manual handoff gate **8/8**, including AF3 dependency
+closure **18/18**; full suite **1517/1517**; and `git diff --check` clean.
+The disposable gate used only `.kodi-test`, proved the harness-controlled
+process boundary, and confirmed the real Kodi profile remained unchanged.
+
+BM-020 overall remains incomplete. Remaining work is read-only fingerprint
+revalidation, `RESUMING` claim, normal BuildManager resumed reconciliation,
+success clearing, repeated-restart loop prevention, and resume-failure/
+recovery semantics. BM-017 and family-room distribution/source work remain
+deferred. No next milestone was started.
+
 ## BM-020B — durable restart transaction and startup re-entry foundation integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
