@@ -1,14 +1,37 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
-## BM-021A audit in progress
+## BM-021A audit complete
 
-BM-021A is the active Codex task on a worker synchronized to current protected
-`matrix` at `34fbd7b`. The task is a read-only feasibility audit for frozen
-build capture, artifact provenance, exact dependency closure, package-cache
-recovery, and Kodi update-control safety. It must not implement frozen capture,
-artifact retention, freshness warnings, or frozen installation. BM-021B, BM-022,
-and BM-017 are not started; the real Kodi profile, devices, and other workers
-remain untouched.
+BM-021A completed a read-only feasibility audit on the Codex worker after a
+normal synchronization merge with protected `matrix` at `34fbd7b`. The full
+findings and proposed BM-021B/BM-022 boundary are in
+`docs/FROZEN_BUILD_CAPTURE.md`.
+
+Verified: Kodi 21.1 public add-on metadata exposes identity, version, type,
+path, enabled/installed/broken state, and declared dependency edges, but not
+provenance or per-addon update policy. The disposable profile's internal
+database showed origin, package-cache, repository, and update-rule evidence;
+the cache was bounded and did not contain every installed third-party package,
+and some cached versions differed from installed versions. AF3 3.2.19's
+closure was 21 nodes (18 third-party, 3 Kodi/system), with BM-020A dependency
+health **18/18**. BM-011 repository/add-on validation passed **19/19**.
+
+Decision: exact version recovery is feasible only from a verified immutable
+artifact, an exact cache hit, or a still-available repository package. A ZIP
+made from an installed directory is rejected as a reproducible artifact
+fallback. A future manifest must carry SHA-256 identity, exact ID/version,
+dependency edges, enabled state, provenance confidence, and freshness metadata;
+system dependencies are constraints rather than frozen artifacts. Kodi has a
+global three-state updater setting and source-level suppression for `never`,
+but no supported per-addon automatic-update boolean was established. BM-021B
+must prove global guard persistence/race behavior and offline exact installation
+in a disposable profile.
+
+Not done: no capture implementation, artifact store, freshness enforcement,
+frozen installer, or production update guard. BM-021B, BM-022, and BM-017 were
+not started. The real Kodi profile, Apple TV, devices, and other workers were
+untouched. The smallest next step is supervisor direction on BM-021B's
+disposable proof scope.
 
 ## BM-020C — post-restart resume orchestration complete
 
