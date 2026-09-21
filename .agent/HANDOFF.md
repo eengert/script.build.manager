@@ -1,5 +1,39 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-020C1 — typed capability model and manual restart handoff complete
+
+BM-020C1 is complete on `agent/codex` in implementation commit `a6bf902` and
+remains intentionally unintegrated to protected `matrix`. The implementation adds
+`resources/lib/restart_coordinator.py`, focused coverage in
+`tests/test_restart_coordinator.py`, the disposable
+`validate-build-manager-manual-restart` gate, and the BM-020B/C1 transaction
+documentation.
+
+The capability resolver maps macOS, Android/Shield, Fire OS, Apple TV/tvOS,
+and unknown platforms to `MANUAL_APP_RESTART_REQUIRED`. A successful typed
+`KODI_RESTART` result creates and read-backs `AWAITING_RESTART` with attempt
+count `0`, returns `MANUAL_RESTART_REQUIRED`, and leaves Kodi running. Failed
+reconciliation and `NONE` are fail-closed/no-transaction paths. A matching
+same-session call reuses the durable record without a second reconciliation;
+a changed session is `READY_FOR_RESUME` with count `0`, while BM-020C resume is
+not implemented. Automatic capability selection fails closed because no
+approved automatic adapter exists.
+
+Evidence: focused BM-020C1/BM-020B/BM-020A/BM-019 tests **63/63**,
+disposable manual gate **8/8**, full suite **1517/1517**, and
+`git diff --check` clean. The gate used the real BM-020A fixture and
+fingerprint, with only the restart requirement synthesized to exercise this
+contract. It used only `.kodi-test`; the real Kodi profile, Apple TV, and all
+devices remained untouched. The gate also proved AF3's disposable dependency
+closure, same-process manual behavior, new-session classification, no resume,
+and explicit clear.
+
+Remaining BM-020C work is pre-resume fingerprint validation, `RESUMING`,
+resumed reconciliation, success clear, restart-loop prevention, and recovery
+after resume failure. Do not begin that work, BM-017, or device work as part
+of this handoff. The smallest next step is supervisor direction on the later
+resume contract.
+
 ## BM-020C audit stop — production restart primitive not established
 
 BM-020C was started on Codex and stopped at its mandatory read-only restart

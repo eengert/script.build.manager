@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
   "status": "active",
-  "task": "BM-020C",
-  "reason": "BM-020C read-only restart-mechanism audit found no supported full Kodi process-restart primitive for the supported macOS, Android/Shield, Fire OS, and Apple TV/tvOS classes through the add-on/Python interfaces. Implementation is stopped pending an approved platform capability model; BM-020B remains intact and BM-017 remains deferred.",
-  "last_commit": "f3ccf2a",
-  "matrix_sha": "f3ccf2a",
+  "task": "BM-020C1",
+  "reason": "BM-020C1 capability model and manual restart handoff are complete on the Codex worker. Current platform classes conservatively require manual Kodi restart; BM-020C resume/re-entry, fingerprint revalidation, success clear, and loop prevention remain for the later BM-020C scope. Matrix remains unchanged and BM-017 remains deferred.",
+  "last_commit": "a6bf902",
+  "matrix_sha": "98e8973",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }

@@ -1,5 +1,37 @@
 # Current Task
 
+## BM-020C1 — typed restart capability model and manual-restart handoff
+
+**Status**: Complete on `agent/codex`; implementation commit `a6bf902`; not
+integrated to protected `matrix`.
+
+BM-020C1 adds the typed platform capability seam and production manual
+handoff coordinator. macOS, Android/Shield, Fire OS, Apple TV/tvOS, and
+unknown platform identities conservatively resolve to
+`MANUAL_APP_RESTART_REQUIRED`. The coordinator accepts a successful typed
+`KODI_RESTART` result, persists and read-backs a valid BM-020B
+`AWAITING_RESTART` transaction with `restart_attempt_count = 0`, and returns
+bounded guidance without quitting, restarting, or invoking host process
+management. Failed reconciliation creates no transaction; `NONE` completes
+without one; repeated same-session calls reuse the existing handoff without
+reconciling again. A new session is classified `READY_FOR_RESUME` with count
+`0`, but no resume is performed yet. An explicitly selected automatic
+capability fails closed because no approved production adapter exists.
+
+Validation is complete: BM-020C1 focused tests **63/63**, disposable manual
+handoff gate **8/8**, full suite **1517/1517**, and `git diff --check` clean.
+The gate used the real BM-020A fixture and fingerprint, a synthetic typed
+restart trigger only, and an external disposable-harness process boundary;
+the real Kodi profile remained read-only and no device or Apple TV was
+accessed. The harness confirmed AF3 dependency closure health, same-process
+manual handoff, changed-session readiness, no resume, and explicit clear.
+
+BM-020C1 is complete. Remaining BM-020C work is pre-resume fingerprint
+revalidation, `RESUMING` claim, resumed reconciliation, success clearing,
+restart-loop prevention, and recovery after resume failure. BM-017 and all
+device/family-room work remain deferred. The next step requires supervisor
+direction on that later resume scope; no matrix integration is implied here.
+
 ## BM-020C — restart/resume lifecycle audit blocked before implementation
 
 **Status**: Active audit stopped at the required read-only restart-mechanism
