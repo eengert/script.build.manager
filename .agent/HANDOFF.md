@@ -1,5 +1,39 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-020C — post-restart resume orchestration complete
+
+BM-020C is complete on `agent/codex` in implementation commit `69b8e6f` and
+remains intentionally unintegrated to protected `matrix`.
+
+The implementation adds the read-only `BuildManager.preview()` seam,
+`resources/lib/resume.py`, expected-state transaction transitions and bounded
+status diagnostics, automatic `service.py` delegation for `READY_FOR_RESUME`,
+focused resume tests, and the disposable `validate-build-manager-resume` gate.
+
+The coordinator re-reads the persisted record, verifies a new session,
+previews the desired state before mutation, requires an exact fingerprint
+match, atomically claims `RESUMING`, and runs the normal BuildManager
+reconciliation from the beginning. It clears only an unchanged `RESUMING`
+record after success + matching final fingerprint + `NONE`. Failures,
+fingerprint drift, repeated restart requirements, claim conflicts, and clear
+conflicts fail closed into preserved `NEEDS_ATTENTION` state. Existing
+`RESUMING` and `NEEDS_ATTENTION` records are not retried automatically.
+
+Evidence: focused tests **465/465**, disposable BM-020C gate **8/8** with AF3
+closure **18/18**, full suite **1536/1536**, and `git diff --check` clean. The
+live gate proved automatic service-driven resume after a harness-only Kodi
+restart, normal reconciliation with matching fingerprint and
+`RestartRequirement.NONE`, automatic transaction clear, all 16 managed AF3
+settings, no second handoff, and later `NO_TRANSACTION`. The unmanaged AF3
+probe is covered by the BM-020A gate because this runtime normalizes that
+schema entry across process restart. The real Kodi profile, Apple TV, and all
+devices remained untouched.
+
+BM-020C and BM-020 overall are complete on the worker. Current supported
+platforms still require a manual full-Kodi restart; Build Manager does not
+automatically relaunch Kodi. BM-017 and family-room distribution/source work
+remain deferred. The next step is supervisor integration only.
+
 ## BM-020C1 — typed capability model and manual restart handoff complete
 
 BM-020C1 is complete and integrated on protected `matrix`; its substantive

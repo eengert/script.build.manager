@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "ready",
+  "status": "active",
   "task": "BM-020C",
-  "reason": "Codex is synchronized with protected matrix after BM-020C1 integration. BM-020C remains incomplete: read-only fingerprint revalidation, RESUMING claim, resumed reconciliation, success clearing, repeated-restart loop prevention, and resume failure/recovery remain. BM-017 and family-room distribution/source work remain deferred.",
-  "last_commit": "bcaf2ca",
-  "matrix_sha": "bcaf2ca",
+  "reason": "BM-020C post-restart resume orchestration is complete on the Codex worker: read-only preview/fingerprint validation, atomic RESUMING claim, normal reconciliation, guarded clear, loop prevention, and NEEDS_ATTENTION recovery are implemented and live-proven in .kodi-test. Awaiting supervisor integration; matrix remains unchanged and BM-017 remains deferred.",
+  "last_commit": "69b8e6f",
+  "matrix_sha": "2127f1d",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }

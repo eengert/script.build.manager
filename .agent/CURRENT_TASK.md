@@ -1,5 +1,40 @@
 # Current Task
 
+## BM-020C — post-restart resume orchestration complete
+
+**Status**: Complete on `agent/codex` in implementation commit `69b8e6f`;
+not integrated to protected `matrix`.
+
+BM-020C adds `BuildManager.preview()` for shared, read-only desired-state
+resolution/fingerprinting and a dedicated `ResumeCoordinator`. After a new
+Kodi session, the service re-reads and validates the durable transaction,
+previews the persisted request before mutation, requires an exact fingerprint
+match, and atomically claims `AWAITING_RESTART → RESUMING` using transaction
+identity plus expected phase. It then calls the ordinary
+`BuildManager.reconcile(persisted_request)` from the beginning.
+
+Only success + matching final fingerprint + `RestartRequirement.NONE` clears
+the unchanged `RESUMING` transaction. Preview failure, desired-state drift,
+reconcile failure, final fingerprint change, a repeated `KODI_RESTART`, or a
+state/clear conflict preserves bounded diagnostics in `NEEDS_ATTENTION`.
+Existing `RESUMING` and `NEEDS_ATTENTION` records are inert on later startup;
+there is no automatic retry or automatic Kodi restart. Transaction status
+diagnostics remain backward-compatible with existing schema-v1 records.
+
+Validation: focused BM-020C/BM-020B/BM-020A/BM-019/BM-018 tests **465/465**;
+disposable automatic-resume gate **8/8** with AF3 closure **18/18**; full
+suite **1536/1536**; `git diff --check` clean. The gate proved that the
+installed `service.py` automatically resumed after a harness-only process
+restart, returned matching fingerprint and `NONE`, cleared the transaction,
+verified all 16 managed AF3 settings, prevented a second handoff, and later
+returned to `NO_TRANSACTION`. The real Kodi profile and devices remained
+untouched.
+
+BM-020C and BM-020 overall are complete on this worker. Current supported
+platforms still require a manual full-Kodi restart; only post-restart resume
+is automatic. BM-017 and family-room distribution/source work remain
+deferred. No next milestone was started.
+
 ## BM-020C1 — typed restart capability model and manual-restart handoff integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
