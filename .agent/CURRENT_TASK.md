@@ -1,13 +1,13 @@
 # Current Task
 
-## BM-021B — frozen artifact store and capture core in progress
+## BM-021B — frozen artifact store and capture core complete
 
-**Status**: Active on `agent/codex`; synchronized with protected `matrix` at
+**Status**: Complete on `agent/codex`; synchronized with protected `matrix` at
 `26e7cd2` by normal merge. BM-021A and BM-020 remain complete. BM-022 has not
 started; BM-017 remains deferred. Family-room source/distribution concerns
 remain pending until frozen installation is proven.
 
-BM-021B implements only the content-addressed artifact store, exact ZIP
+BM-021B implemented only the content-addressed artifact store, exact ZIP
 validation/import, installed add-on/dependency inventory, supported exact
 artifact acquisition, frozen-build manifest v1, deterministic capture
 results, and the smallest reusable global Kodi updater-guard abstraction if
@@ -16,7 +16,19 @@ retention, pinning, scheduling, freshness UI, real-profile capture, or device
 testing.
 
 BM-021A's feasibility findings remain in `docs/FROZEN_BUILD_CAPTURE.md` and
-are the architecture boundary for this work.
+are the architecture boundary for BM-022.
+
+Implementation commit: `89525bd`.
+
+Evidence: new BM-021B tests **21/21**; combined focused artifact/guard/capture,
+dependency, repository, and harness tests **370/370**; full suite **1557/1557**;
+disposable global updater-guard proof passed; disposable AF3 capture proof
+recorded the 21-node graph and correctly returned `incomplete_artifact` because
+no exact package-cache ZIP was available after reset. `NEVER_CHECK` did not
+persist across Kodi restart, but supported API reassertion succeeded before
+capture mutation; restoration survived restart. No installed-directory ZIP was
+created, no real profile/device was touched, and no COMPLETE result was claimed
+for unavailable artifacts.
 
 ## BM-020C — guarded post-restart resume integrated
 

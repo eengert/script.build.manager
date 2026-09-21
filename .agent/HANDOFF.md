@@ -1,11 +1,15 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
-## BM-021A audit complete
+## BM-021B capture core complete
 
-BM-021A completed a read-only feasibility audit on the Codex worker after a
-normal synchronization merge with protected `matrix` at `34fbd7b`. The full
-findings and proposed BM-021B/BM-022 boundary are in
+BM-021B is complete on `agent/codex`, synchronized with protected `matrix` at
+`26e7cd2` by normal merge. BM-021A is complete and its findings remain in
 `docs/FROZEN_BUILD_CAPTURE.md`.
+
+Implementation commit: `89525bd`. The implementation is limited to exact artifact capture, dependency-aware
+inventory, manifest v1, deterministic incomplete results, and the independent
+global updater guard. It does not install frozen builds or implement retention,
+pinning, scheduling, freshness UI, garbage collection, BM-017, or device work.
 
 Verified: Kodi 21.1 public add-on metadata exposes identity, version, type,
 path, enabled/installed/broken state, and declared dependency edges, but not
@@ -19,19 +23,23 @@ health **18/18**. BM-011 repository/add-on validation passed **19/19**.
 Decision: exact version recovery is feasible only from a verified immutable
 artifact, an exact cache hit, or a still-available repository package. A ZIP
 made from an installed directory is rejected as a reproducible artifact
-fallback. A future manifest must carry SHA-256 identity, exact ID/version,
-dependency edges, enabled state, provenance confidence, and freshness metadata;
-system dependencies are constraints rather than frozen artifacts. Kodi has a
-global three-state updater setting and source-level suppression for `never`,
-but no supported per-addon automatic-update boolean was established. BM-021B
-must prove global guard persistence/race behavior and offline exact installation
-in a disposable profile.
+fallback. The BM-021B manifest carries SHA-256 identity, exact ID/version,
+dependency edges, enabled state, provenance confidence, and capture status;
+system dependencies are constraints rather than frozen artifacts. Kodi's
+global updater setting was proven through the supported Settings API; the
+`NEVER_CHECK` value did not persist across restart, but deterministic guard
+reassertion succeeded before capture mutation and no scheduled updater activity
+appeared while guarded.
 
-Not done: no capture implementation, artifact store, freshness enforcement,
-frozen installer, or production update guard. BM-021B, BM-022, and BM-017 were
-not started. The real Kodi profile, Apple TV, devices, and other workers were
-untouched. The smallest next step is supervisor direction on BM-021B's
-disposable proof scope.
+The representative disposable capture correctly returned `incomplete_artifact`
+because no exact package-cache ZIP was available after reset; no installed
+directory was zipped and no COMPLETE result was claimed. Evidence: BM-021B
+focused tests **21/21**; combined focused tests **370/370**; full suite
+**1557/1557**; updater-guard disposable proof passed. `NEVER_CHECK` did not
+persist across restart, but deterministic reassertion succeeded before capture
+mutation and original-policy restoration survived restart. BM-022 and BM-017
+have not started. The real Kodi profile, Apple TV, devices, and other workers
+remain untouched.
 
 ## BM-020C — post-restart resume orchestration complete
 

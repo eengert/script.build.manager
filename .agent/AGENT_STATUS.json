@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
   "status": "complete",
-  "task": "BM-021A",
-  "reason": "BM-021B frozen artifact store, exact artifact capture, dependency closure, manifest, and global updater-guard proof are in progress. BM-021A and BM-020 remain complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending.",
-  "last_commit": "26e7cd2",
+  "task": "BM-021B",
+  "reason": "BM-021B frozen artifact store, exact artifact capture, dependency closure, manifest v1, deterministic incomplete results, and global updater-guard proof are complete. BM-021A and BM-020 remain complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending.",
+  "last_commit": "89525bd",
   "matrix_sha": "26e7cd2",
   "next_agent": "human",
   "updated_at": "2026-09-21"
