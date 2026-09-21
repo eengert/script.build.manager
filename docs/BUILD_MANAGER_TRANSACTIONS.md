@@ -113,7 +113,12 @@ not persisted outside the transaction's originating-session field.
 `service.py` obtains the session identity and delegates to the startup
 foundation. It performs one classification pass. Only `READY_FOR_RESUME` is
 handed to `ResumeCoordinator`; all other classifications exit without
-reconciliation. The service has no restart or host-process control.
+reconciliation. Kodi's loaded `xbmc.service` add-on runtime is the available
+in-process readiness boundary; there is no stronger supported public signal
+for all reconciliation subsystems. Resume therefore performs one bounded
+preview/reconcile attempt, uses no arbitrary sleep, and persists
+`NEEDS_ATTENTION` if a required API or subsystem is unavailable. The service
+has no restart or host-process control.
 
 With no transaction, startup takes the no-transaction fast path and creates no
 transaction record. An `AWAITING_RESTART` record from the same session is
