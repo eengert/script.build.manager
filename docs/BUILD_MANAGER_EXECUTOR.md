@@ -51,7 +51,9 @@ serialized.
 
 BM-020A deliberately does not restart Kodi, persist transaction files, resume
 after restart, manage session identity, handle restart loops, or acquire a
-process-wide lock. Those concerns remain later BM-020 scope.
+process-wide lock. BM-020B supplies the durable transaction and startup
+classification foundation; production restart and resume behavior remain
+BM-020C scope.
 
 Validation uses the existing BM-014 validator and BM-015 validation snapshot;
 it does not add a second desired-state or configuration implementation.
