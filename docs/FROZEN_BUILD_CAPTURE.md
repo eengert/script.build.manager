@@ -540,7 +540,7 @@ audit.
 - No real Kodi profile or Apple TV was accessed.
 - BM-020 remains complete.
 - BM-017 remains deferred.
-- BM-021B and BM-022 were not started.
+- BM-021B capture core is complete and integrated; BM-022 has not started.
 
 ## 18. Sources and checked-in evidence
 

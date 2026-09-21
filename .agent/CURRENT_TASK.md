@@ -1,69 +1,84 @@
 # Current Task
 
-## BM-021B — frozen artifact store and capture core complete
+## BM-021B — Frozen artifact capture core integrated
 
-**Status**: Complete on `agent/codex`; synchronized with protected `matrix` at
-`26e7cd2` by normal merge. BM-021A and BM-020 remain complete. BM-022 has not
-started; BM-017 remains deferred. Family-room source/distribution concerns
-remain pending until frozen installation is proven.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; this Codex worker is synchronized, idle, and ready for BM-022.
 
-BM-021B implemented only the content-addressed artifact store, exact ZIP
-validation/import, installed add-on/dependency inventory, supported exact
-artifact acquisition, frozen-build manifest v1, deterministic capture
-results, and the smallest reusable global Kodi updater-guard abstraction if
-the disposable proof is safe. It must not implement frozen installation,
-retention, pinning, scheduling, freshness UI, real-profile capture, or device
-testing.
+The reviewed BM-021B substantive commit was reconstructed from the approved
+worker endpoint as `2ee040c` (`feat(BM-021B): add frozen artifact capture
+core`). It adds the SHA-256 content-addressed, atomic write-once artifact
+store; exact ZIP validation and read-back; typed installed inventory with
+direct/transitive dependency edges and the `xbmc.gui`, `xbmc.python`, and
+`kodi.resource` system boundary; honest provenance and incomplete-capture
+manifest states; exact cache/repository acquisition ordering; and the
+supported Settings JSON-RPC updater guard. It does not add frozen installation,
+retention, pinning, scheduling, freshness enforcement, or garbage collection.
 
-BM-021A's feasibility findings remain in `docs/FROZEN_BUILD_CAPTURE.md` and
-are the architecture boundary for BM-022.
+The disposable proof recorded the AF3 3.2.19 closure as 18 healthy
+third-party add-ons plus the system boundary, exact versions and dependency
+edges, and an honest `incomplete_artifact` result after the reset had no exact
+package-cache ZIPs. No installed directory was zipped, no false `COMPLETE`
+claim was made, and no real Kodi profile or Apple TV was accessed. The updater
+proof verified read/set/read-back, restart reassertion because `NEVER_CHECK`
+does not persist across restart, no observed scheduled updater activity while
+guarded, explicit restoration, and restoration after a second restart. A
+resumed transaction must reassert and verify the guard before every mutation.
 
-Implementation commit: `89525bd`.
+BM-020, BM-021A, and BM-021B are complete. BM-022 has not started; BM-017
+remains deferred; family-room source/distribution concerns remain pending.
+No next milestone was started.
 
-Evidence: new BM-021B tests **21/21**; combined focused artifact/guard/capture,
-dependency, repository, and harness tests **370/370**; full suite **1557/1557**;
-disposable global updater-guard proof passed; disposable AF3 capture proof
-recorded the 21-node graph and correctly returned `incomplete_artifact` because
-no exact package-cache ZIP was available after reset. `NEVER_CHECK` did not
-persist across Kodi restart, but supported API reassertion succeeded before
-capture mutation; restoration survived restart. No installed-directory ZIP was
-created, no real profile/device was touched, and no COMPLETE result was claimed
-for unavailable artifacts.
+## BM-021A — Frozen Build Capture audit integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`.
+
+Substantive commit: `b32369e` (`docs(BM-021A): record frozen build capture
+audit`). The audit establishes exact reproducible artifact requirements,
+verified artifact acquisition priority, bounded/non-authoritative Kodi cache
+semantics, rejection of installed-directory zipping, frozen third-party
+dependency closure, repository artifact/provenance handling, Kodi's global
+three-state updater policy, the absence of a solved per-addon auto-update API,
+and a SHA-256 content-addressed immutable artifact-store model. Freshness
+checks warn without substituting newer package versions. Updater inhibition
+restart/race behavior remains for BM-021B.
+
+BM-021B is complete and integrated. BM-022 has not started. BM-020 remains
+complete and BM-017 remains deferred. Family-room source/distribution concerns are being absorbed
+by BM-021/BM-022 and are not independently marked solved.
 
 ## BM-020C — guarded post-restart resume integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
-`matrix`; the worker is synchronized to that state.
+`matrix`; the matrix remains neutral with `active_agent: none`.
 
-BM-020C adds `BuildManager.preview()` for shared, read-only desired-state
-resolution/fingerprinting and a dedicated `ResumeCoordinator`. After a new
-Kodi session, the service re-reads and validates the durable transaction,
-previews the persisted request before mutation, requires an exact fingerprint
-match, and atomically claims `AWAITING_RESTART → RESUMING` using transaction
-identity plus expected phase. It then calls the ordinary
-`BuildManager.reconcile(persisted_request)` from the beginning.
+Substantive integration commits: `81ba44b` (`feat(BM-020C): add guarded
+post-restart resume`) and `091cfe9` (`docs(BM-020C): document service readiness
+boundary`). Codex worker metadata was excluded.
 
-Only success + matching final fingerprint + `RestartRequirement.NONE` clears
-the unchanged `RESUMING` transaction. Preview failure, desired-state drift,
-reconcile failure, final fingerprint change, a repeated `KODI_RESTART`, or a
-state/clear conflict preserves bounded diagnostics in `NEEDS_ATTENTION`.
-Existing `RESUMING` and `NEEDS_ATTENTION` records are inert on later startup;
-there is no automatic retry or automatic Kodi restart. Transaction status
-diagnostics remain backward-compatible with existing schema-v1 records.
+BM-020C completes the guarded post-restart resume path. Startup accepts only a
+new-session `READY_FOR_RESUME` transaction, re-reads and previews the original
+request, verifies the desired fingerprint, atomically claims `AWAITING` as
+`RESUMING`, runs the normal `BuildManager.reconcile()` path, verifies the final
+fingerprint and `RestartRequirement.NONE`, then atomically clears the expected
+transaction. Preview, fingerprint, reconciliation, claim/clear conflicts,
+exceptions, repeated `KODI_RESTART`, and later `RESUMING` or
+`NEEDS_ATTENTION` states fail closed with bounded diagnostics. The service
+remains thin: it does not restart Kodi or a host process, and current supported
+platforms still require a manual full Kodi restart before automatic resume.
 
-Validation: focused BM-020C/BM-020B/BM-020A/BM-019/BM-018 tests **465/465**;
-disposable automatic-resume gate **8/8** with AF3 closure **18/18**; full
-suite **1536/1536**; `git diff --check` clean. The gate proved that the
-installed `service.py` automatically resumed after a harness-only process
-restart, returned matching fingerprint and `NONE`, cleared the transaction,
-verified all 16 managed AF3 settings, prevented a second handoff, and later
-returned to `NO_TRANSACTION`. The real Kodi profile and devices remained
-untouched.
+Integrated validation passed focused BM-020C/BM-020B/BM-020C1/BM-020A/BM-019
+tests **465/465**, the disposable BM-020C gate **8/8** with AF3 dependency
+closure **18/18**, the full suite **1536/1536**, and `git diff --check`.
+The gate proved a new session, service-driven automatic resume, authoritative
+read-back, final fingerprint equality, `NONE`, no second handoff, later no
+transaction, and real Kodi profile immutability. AF3 generated first-run state
+was bootstrapped only inside `.kodi-test`; the selected AF3 unmanaged probe is
+owned by the BM-020A gate because AF3 normalizes that entry across restart.
 
-BM-020C and BM-020 overall are complete. Current supported platforms still
-require a manual full-Kodi restart; only post-restart resume is automatic.
-BM-017 and family-room distribution/source work remain deferred. No next
-milestone was started.
+BM-020 overall is complete. BM-017 and family-room distribution/source work
+remain deferred. No next milestone was started.
 
 ## BM-020C1 — typed restart capability model and manual-restart handoff integrated
 
@@ -133,7 +148,9 @@ architecture selection for supported POSIX-like Kodi targets, not a live
 claim beyond the disposable macOS validation. No next milestone was started.
 
 ## BM-020A — production reconciliation executor integrated
-## BM-020A — production reconciliation executor integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`. `active_agent` is `none`; matrix remains neutral.
 
 Substantive integration commits: `eeafc1c`, `0ed2c35`, `821e69e`, `0fb0bd5`,
 and `1ad0fdb`.
