@@ -2,8 +2,8 @@
 
 ## BM-020C1 — typed capability model and manual restart handoff complete
 
-BM-020C1 is complete on `agent/codex` in implementation commit `a6bf902` and
-remains intentionally unintegrated to protected `matrix`. The implementation adds
+BM-020C1 is complete and integrated on protected `matrix`; its substantive
+implementation commit is `bcaf2ca` (worker implementation `a6bf902`). The implementation adds
 `resources/lib/restart_coordinator.py`, focused coverage in
 `tests/test_restart_coordinator.py`, the disposable
 `validate-build-manager-manual-restart` gate, and the BM-020B/C1 transaction
@@ -37,8 +37,9 @@ resume contract.
 ## BM-020C audit stop — production restart primitive not established
 
 BM-020C was started on Codex and stopped at its mandatory read-only restart
-mechanism audit. No production code, tests, harness, or matrix content was
-changed. The worker remains based on matrix `98e897347` at `bd1c804`.
+mechanism audit before the later BM-020C1 capability/manual-handoff work.
+That audit remains historical context; the integrated BM-020C1 endpoint does
+not claim that resume/re-entry is complete.
 
 Kodi Omega's official built-in reference lists `RestartApp` as implemented
 only under Windows and Linux. `Quit` is an application exit, not an automatic
@@ -58,9 +59,9 @@ Recommended smallest next step: supervisor approval of an explicit platform
 capability model and relaunch authority. Until then, do not add a restart
 coordinator, alter BM-020A/B, or run the BM-020C process-level gate.
 
-BM-020C and BM-020 overall are not complete. BM-017, matrix integration, and
-all other worker branches remain untouched. The real Kodi profile and devices
-remain untouched.
+BM-020C and BM-020 overall remain incomplete. BM-017, the remaining resume
+implementation, and all device/family-room work remain deferred. The real Kodi
+profile and devices remain untouched.
 
 ## BM-020B complete and synchronized on Codex
 
@@ -85,6 +86,33 @@ transaction/session/service tests passed 32/32, the full suite passed
 1504/1504, and `git diff --check` passed. Codex is synchronized/idle/ready
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
+
+## BM-020C1 integration complete
+
+BM-020C1 is complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix state is neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `bcaf2ca`. Codex worker metadata was not
+copied.
+
+The integration adds the typed capability resolver and manual restart
+coordinator, with current and unknown platforms conservatively mapped to
+`MANUAL_APP_RESTART_REQUIRED`. Successful `KODI_RESTART` handoff preparation
+persists and read-backs `AWAITING_RESTART` with attempt count `0`, never
+restarts or quits Kodi, and returns structured manual guidance. Failed runs
+create no transaction, `NONE` completes without one, same-session requests do
+not re-run reconciliation, and a new session with count `0` is ready for the
+later resume phase. No automatic adapter or resumed reconciliation is
+claimed.
+
+Matrix validation passed focused tests **63/63**, disposable manual gate
+**8/8** with AF3 closure **18/18**, full suite **1517/1517**, and
+`git diff --check`. The gate used only `.kodi-test`; the real Kodi profile,
+Apple TV, and all devices remained untouched.
+
+BM-020C resume work remains incomplete: fingerprint revalidation, `RESUMING`,
+resumed reconciliation, success clear, loop prevention, and failure/recovery
+semantics. Do not begin that work, BM-017, or family-room distribution/source
+work as part of this integration record.
 
 ## BM-020B integration complete
 

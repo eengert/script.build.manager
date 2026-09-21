@@ -1,66 +1,35 @@
 # Current Task
 
-## BM-020C1 — typed restart capability model and manual-restart handoff
+## BM-020C1 — typed restart capability model and manual-restart handoff integrated
 
-**Status**: Complete on `agent/codex`; implementation commit `a6bf902`; not
-integrated to protected `matrix`.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; the matrix remains neutral with `active_agent: none`.
 
-BM-020C1 adds the typed platform capability seam and production manual
-handoff coordinator. macOS, Android/Shield, Fire OS, Apple TV/tvOS, and
-unknown platform identities conservatively resolve to
-`MANUAL_APP_RESTART_REQUIRED`. The coordinator accepts a successful typed
-`KODI_RESTART` result, persists and read-backs a valid BM-020B
-`AWAITING_RESTART` transaction with `restart_attempt_count = 0`, and returns
-bounded guidance without quitting, restarting, or invoking host process
-management. Failed reconciliation creates no transaction; `NONE` completes
-without one; repeated same-session calls reuse the existing handoff without
-reconciling again. A new session is classified `READY_FOR_RESUME` with count
-`0`, but no resume is performed yet. An explicitly selected automatic
-capability fails closed because no approved production adapter exists.
+Substantive integration commit: `bcaf2ca` (`feat(BM-020C1): add manual restart
+capability handoff`). Worker-specific Codex metadata was excluded.
 
-Validation is complete: BM-020C1 focused tests **63/63**, disposable manual
-handoff gate **8/8**, full suite **1517/1517**, and `git diff --check` clean.
-The gate used the real BM-020A fixture and fingerprint, a synthetic typed
-restart trigger only, and an external disposable-harness process boundary;
-the real Kodi profile remained read-only and no device or Apple TV was
-accessed. The harness confirmed AF3 dependency closure health, same-process
-manual handoff, changed-session readiness, no resume, and explicit clear.
+BM-020C1 establishes a typed restart capability seam and conservative platform
+policy. macOS, Android/Shield, Fire OS, Apple TV/tvOS, and unknown platforms
+resolve to `MANUAL_APP_RESTART_REQUIRED`. A successful typed `KODI_RESTART`
+result persists and verifies `AWAITING_RESTART` with
+`restart_attempt_count = 0`, returns structured manual guidance, and does not
+restart or quit Kodi. Failed reconciliation creates no transaction; `NONE`
+completes without one; same-session calls reuse the handoff without a second
+reconciliation; and a new session with count `0` is `READY_FOR_RESUME`.
+Explicit automatic capability selection fails closed because no approved
+production adapter exists.
 
-BM-020C1 is complete. Remaining BM-020C work is pre-resume fingerprint
-revalidation, `RESUMING` claim, resumed reconciliation, success clearing,
-restart-loop prevention, and recovery after resume failure. BM-017 and all
-device/family-room work remain deferred. The next step requires supervisor
-direction on that later resume scope; no matrix integration is implied here.
+Integrated validation passed: focused BM-020C1/BM-020B/BM-020A/BM-019 tests
+**63/63**; disposable manual handoff gate **8/8**, including AF3 dependency
+closure **18/18**; full suite **1517/1517**; and `git diff --check` clean.
+The disposable gate used only `.kodi-test`, proved the harness-controlled
+process boundary, and confirmed the real Kodi profile remained unchanged.
 
-## BM-020C — restart/resume lifecycle audit blocked before implementation
-
-**Status**: Active audit stopped at the required read-only restart-mechanism
-gate. No BM-020C production implementation has been made.
-
-The Codex worker is at `bd1c804`, based on protected matrix
-`98e897347`. The BM-020A executor and BM-020B transaction/session/service
-foundations remain unchanged. BM-020C implementation requires a genuine new
-Kodi process, not a skin reload, application exit, host kill, GUI click, or
-harness relaunch.
-
-The official Kodi Omega built-in reference documents `RestartApp` as
-implemented only on Windows and Linux. `Quit` exits Kodi without an automatic
-relaunch, and the JSON-RPC surface exposes quit/restart notifications rather
-than a supported add-on/Python application-relaunch operation. The existing
-project has no approved platform capability model or host relaunch mechanism.
-Therefore the required production restart primitive is not established for
-macOS, Android/Shield, Fire OS, or Apple TV/tvOS, and BM-020C is stopped
-before production edits or disposable restart testing.
-
-Recommended next step: define and supervisor-approve a platform capability
-model specifying which supported platform classes can provide a genuine
-application relaunch and how that relaunch is authorized. Do not implement a
-fallback using `System.Exec`, shell process management, GUI automation, or an
-unverified `Quit`-then-relaunch assumption.
-
-BM-020C, BM-020 overall, and BM-017 remain incomplete/deferred. The
-family-room distribution/source concern remains separate. No matrix or other
-worker branch was modified, and no real Kodi profile or device was accessed.
+BM-020 overall remains incomplete. Remaining work is read-only fingerprint
+revalidation, `RESUMING` claim, normal BuildManager resumed reconciliation,
+success clearing, repeated-restart loop prevention, and resume-failure/
+recovery semantics. BM-017 and family-room distribution/source work remain
+deferred. No next milestone was started.
 
 ## BM-020B — durable restart transaction and startup re-entry foundation integrated
 

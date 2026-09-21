@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "active",
-  "task": "BM-020C1",
-  "reason": "BM-020C1 capability model and manual restart handoff are complete on the Codex worker. Current platform classes conservatively require manual Kodi restart; BM-020C resume/re-entry, fingerprint revalidation, success clear, and loop prevention remain for the later BM-020C scope. Matrix remains unchanged and BM-017 remains deferred.",
-  "last_commit": "a6bf902",
-  "matrix_sha": "98e8973",
+  "status": "ready",
+  "task": "BM-020C",
+  "reason": "Codex is synchronized with protected matrix after BM-020C1 integration. BM-020C remains incomplete: read-only fingerprint revalidation, RESUMING claim, resumed reconciliation, success clearing, repeated-restart loop prevention, and resume failure/recovery remain. BM-017 and family-room distribution/source work remain deferred.",
+  "last_commit": "bcaf2ca",
+  "matrix_sha": "bcaf2ca",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }
