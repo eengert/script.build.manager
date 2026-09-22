@@ -3,7 +3,7 @@
   "status": "blocked",
   "task": "BM-017B",
   "reason": "BM-017B read-only inventory found required non-default private provider state in Red Light's opaque mixed settings.db, which BM-017A typed overlays cannot represent safely. No arbitrary file copier or declarations were added. Raw evidence was deleted; source remained unchanged; real-device installation was not attempted.",
-  "last_commit": "4611f83",
+  "last_commit": "82ce461",
   "matrix_sha": "4611f83",
   "next_agent": "human",
   "updated_at": "2026-09-22"
