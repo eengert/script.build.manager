@@ -1,5 +1,37 @@
 # Current Task
 
+## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. The reviewed
+substantive integration commit is `56ea26a`, reconstructed from worker
+commit `27f4215`. Worker `.agent/*` metadata was excluded.
+
+BM-022 installs only complete BM-021B manifests backed by immutable exact
+artifacts. It validates SHA-256, size, ZIP identity, exact add-on ID/version,
+dependency edges, system boundaries, and deterministic topological order. It
+reuses the reviewed BM-011 staged-package boundary with atomic staging,
+`UpdateLocalAddons`, exact-version verification, and fail-closed
+replacement/downgrade behavior.
+
+The durable frozen-install transaction captures the original global updater
+policy before mutation, owns `NEVER_CHECK` through installation,
+configuration, restart/resume, and final validation, reasserts and verifies
+the guard before BM-020 startup mutation, restores the original policy only
+after successful final validation, and preserves diagnosable
+`NEEDS_ATTENTION` state on failure. Existing Build Manager configuration and
+BM-020 restart/resume remain the owners of those operations. Explicit abandon
+restores policy and clears the transaction without claiming software rollback.
+
+Integrated validation was rerun: focused BM-022/BM-021B/BM-020/dependency/
+repository regressions **639/639**; disposable `validate-frozen-install`
+passed; full suite **1573/1573**; and `git diff --check` passed. The live
+proof used only `.kodi-test` and did not claim complete real Family Room
+capture/install or real-device validation.
+
+BM-020, BM-021A, BM-021B, and BM-022 are complete. BM-017 remains deferred;
+no next milestone was started.
+
 ## BM-021B — Frozen artifact capture core integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
