@@ -1,5 +1,31 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-023A — macOS frozen-install validation preflight blocked
+
+BM-017D tracking is integrated on protected matrix at `5a3598f`; Codex is
+synchronized by normal merge at `bcd0fe5`. BM-023A stopped before Kodi launch
+or disposable-profile mutation because the exact retained Family Room frozen
+manifest/artifact-store pair is incomplete despite its top-level complete
+status: 37 graph nodes, 32 non-system nodes, but only 30 artifacts. The
+required `plugin.video.youtube` `7.4.4+unofficial.2` node and
+`script.module.pysocks` `not-installed` node are incomplete, and
+`validate_frozen_manifest` rejected the candidate.
+
+Read-only typed validation of the protected Red Light overlay passed; its
+target fingerprint matches the frozen graph and its ten field identifiers
+were present. Values were not displayed. No test app launch, wipe, install,
+settings/add-on mutation, reconciliation, restart, or other Kodi action was
+performed. The bundled disposable profile already contains Kodi data and was
+left untouched. The exact frozen artifacts must be recovered from existing
+retained capture outputs; do not recapture Family Room or substitute newer
+packages. If unavailable, request supervisor direction. No BM-017E or other
+milestone was started.
+
+### Smallest next step
+
+Recover and validate the exact two missing frozen artifact nodes from the
+approved capture, without accessing Family Room; otherwise stop for direction.
+
 ## BM-017D — Real Family Room structured private-resource capture complete
 
 BM-017D is complete on `agent/codex`. Matrix remains unchanged at `2374ee5`;

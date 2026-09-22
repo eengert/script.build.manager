@@ -1,8 +1,8 @@
 {
   "active_agent": "codex",
-  "status": "active",
+  "status": "complete",
   "task": "BM-023A",
-  "reason": "BM-017D tracking is integrated on protected matrix at 5a3598f; Codex is synchronized by normal merge. Starting BM-023A isolated macOS frozen-install validation. Source desired state is complete, but the disposable Kodi isolation, complete artifact availability, target compatibility, and private overlay preflight must pass before any test-profile mutation.",
+  "reason": "BM-023A preflight validation is complete with result BLOCKED_MISSING_FROZEN_ARTIFACTS. The exact Family Room manifest/store pair has two non-installable non-system nodes and only 30 artifacts for 32 non-system nodes; validate_frozen_manifest rejects it. No Kodi launch or disposable-profile mutation occurred. The protected Red Light overlay schema and target fingerprint binding validate. Resume only if the exact approved frozen artifact set is recovered from retained outputs; do not recapture Family Room or substitute newer packages.",
   "last_commit": "5a3598f",
   "matrix_sha": "5a3598f",
   "next_agent": "human",

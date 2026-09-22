@@ -1,5 +1,39 @@
 # Current Task
 
+## BM-023A — Isolated macOS frozen-install validation preflight blocked
+
+**Status**: Complete as a validation task with result
+`BLOCKED_MISSING_FROZEN_ARTIFACTS`. BM-017D tracking was integrated on
+protected `matrix` at `5a3598f`, and Codex was synchronized by normal merge
+at `bcd0fe5`. Kodi was not launched and the authorized disposable profile was
+not mutated.
+
+Read-only validation of the exact candidate manifest at
+`/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json` and
+its paired artifact store found software fingerprint
+`8ce7d2daf131f6c1bbcdf152c02c15745f9c52eac34480ee43e9f7af093e035`, 37 graph
+nodes, and `capture_status=complete`; however, two of 32 non-system nodes are
+not installable: `plugin.video.youtube` `7.4.4+unofficial.2` and
+`script.module.pysocks` `not-installed`. Only 30 artifacts are present.
+`validate_frozen_manifest` therefore fails closed with an incomplete-required-
+artifact error. This exact artifact set does not satisfy BM-023A's frozen
+install gate. Do not recapture from Family Room or substitute newer packages.
+
+The protected `family-room-redlight-2.6.8` overlay was read via
+`PrivateOverlayStore`; typed overlay/resource validation passed, all ten
+declared field identifiers were present, and its target fingerprint matches
+the frozen software fingerprint. Private values were not displayed. The
+existing bundled portable profile contains prior Kodi data, but no cleanup,
+wipe, launch, install, reconciliation, or other test-profile mutation was
+performed. No ordinary Kodi process enumeration was needed after the frozen
+artifact gate failed.
+
+No BM-023A live gate or tests were run. Smallest next step: recover the exact
+approved missing frozen artifacts/evidence from existing retained capture
+outputs, then rerun read-only manifest validation. If those exact artifacts
+are unavailable, stop for supervisor direction. No Family Room recapture,
+newer-package substitution, Apple TV access, or next milestone is authorized.
+
 ## BM-017D — Real Family Room structured private-resource capture complete
 
 **Status**: Complete and recorded for protected `matrix`; matrix remains
