@@ -1,8 +1,8 @@
 {
   "active_agent": "codex",
-  "status": "ready",
+  "status": "blocked",
   "task": "BM-017B",
-  "reason": "BM-017A is complete and integrated on matrix. BM-017B is authorized for narrow read-only Family Room private-state inventory and overlay capture/import validation. Source mutation, Kodi control, device installation, and unrelated profile scraping remain prohibited.",
+  "reason": "BM-017B read-only inventory found required non-default private provider state in Red Light's opaque mixed settings.db, which BM-017A typed overlays cannot represent safely. No arbitrary file copier or declarations were added. Raw evidence was deleted; source remained unchanged; real-device installation was not attempted.",
   "last_commit": "4611f83",
   "matrix_sha": "4611f83",
   "next_agent": "human",

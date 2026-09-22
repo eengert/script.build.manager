@@ -2,11 +2,12 @@
 
 ## BM-017B — Real Family Room private overlay capture/import validation
 
-**Status**: Active on `agent/codex`; current `origin/matrix` was merged
-normally before work began. BM-017A is complete and integrated. The required
-Family Room software capture remains **COMPLETE**; ready-to-use configuration
-is being evaluated through this narrowly authorized read-only task; real-device
-frozen installation remains **NOT VALIDATED**.
+**Status**: Blocked by unsupported private state on `agent/codex`; current
+`origin/matrix` was merged normally before work began. BM-017A is complete and
+integrated. The required Family Room software capture remains **COMPLETE**;
+private overlay capture is **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**;
+captured desired state is **INCOMPLETE**; real-device frozen installation
+remains **NOT VALIDATED**.
 
 Scope is limited to relevant add-on schemas/source ownership review, approved
 read-only Family Room file listing/receive, secret-blind extraction of only
@@ -23,8 +24,15 @@ permissions and must be deleted after validated extraction. Opaque private
 state that cannot be represented by BM-017A typed settings is an architectural
 blocker, not a reason to add arbitrary file copying.
 
-The smallest next step is the non-secret inventory of relevant add-on schemas,
-installed metadata, and ownership before receiving any private source file.
+The non-secret inventory and narrow read-only inspection completed. Red Light
+owns a mixed opaque `databases/settings.db` settings layer; secret-blind
+comparison found non-default provider/account fields, but Red Light's Kodi
+settings schema does not expose them through BM-015's typed backend. MyAccounts
+source exposes provider-auth setting operations, but its addon_data directory
+was empty; no duplicate owner was inferred. No private declarations or overlay
+were created, no raw values were emitted, and all temporary evidence was
+deleted. A future dedicated structured private-resource design is required
+before capture/import can proceed.
 
 ## BM-017A — Private/auth overlay foundation complete
 

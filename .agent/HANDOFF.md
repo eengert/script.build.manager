@@ -1,5 +1,49 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-017B — Private overlay capture blocked by opaque Red Light state
+
+BM-017B performed the authorized narrow read-only Family Room inventory using
+paired-device `devicectl` against the Kodi app-data container. Device listing,
+names-only relevant-directory inspection, and specifically justified metadata
+and source receives succeeded. No source-profile write, Kodi control, add-on
+state change, restart, repository operation, database write, Backup Pro
+operation, reconciliation, installation, or unrelated profile scrape occurred.
+
+The installed Red Light `2.6.8` source exposes a custom settings layer and its
+`databases/settings.db` table is the owner of the observed private provider
+state. Secret-blind schema/presence/default comparison found non-default
+private-state fields in the `mdblist`, `pm`, `tb`, and `trakt` categories,
+including refresh/token/account/user/expiry field IDs. Red Light's Kodi
+`settings.xml` exposes only informational/action entries, so these values
+cannot be represented by BM-017A's typed Kodi-setting backend. The database
+also mixes ordinary preferences and generated/runtime state; copying or
+replacing the whole file is explicitly unsafe.
+
+MyAccounts `2.1.2` source exposes provider-auth setting operations for several
+providers, but its Family Room addon_data directory was empty and no separate
+user-state file was identified. POV and Umbrella source also contain provider
+integrations, but no duplicate owner was inferred from the file evidence.
+
+Result: frozen software capture remains **COMPLETE** with software fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+Private overlay capture is **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**; no typed
+declarations, required/optional overlay entries, overlay file, or overlay
+fingerprint were created. Captured desired state is **INCOMPLETE** and
+real-device frozen installation remains **NOT VALIDATED**.
+
+The final targeted secret-blind leak scan returned `leak_detected=false` for
+repository files. All raw received database/source/metadata evidence was
+deleted from the disposable directory and its absence was verified. No real
+private value appears in tracking, documentation, logs, results, or Git.
+
+### Smallest next step
+
+Design and review a dedicated structured private-resource boundary for Red
+Light's mixed settings database, including field-level ownership and safe
+lifecycle/application semantics. Do not add an arbitrary file copier, capture
+real private state again, or begin destination installation without that
+review.
+
 ## BM-017A — Private/auth overlay foundation complete
 
 BM-017A is complete on `agent/codex`. The worker first synchronized current
