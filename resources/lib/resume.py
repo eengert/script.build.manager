@@ -141,6 +141,23 @@ class ResumeCoordinator:
                 "FINGERPRINT_MISMATCH",
                 "desired-state fingerprint changed before resume",
             )
+        preview_overlay = preview.private_overlay
+        if (
+            (preview_overlay is None) != (not current.private_overlay_id)
+            or (
+                preview_overlay is not None
+                and (
+                    preview_overlay.overlay_id != current.private_overlay_id
+                    or preview_overlay.fingerprint != current.private_overlay_fingerprint
+                    or preview_overlay.required != current.private_overlay_required
+                )
+            )
+        ):
+            return self._needs_attention(
+                current,
+                "PRIVATE_OVERLAY_FINGERPRINT_MISMATCH",
+                "private overlay identity changed before resume",
+            )
 
         try:
             claimed = self._store.transition_expected(
@@ -185,6 +202,24 @@ class ResumeCoordinator:
                 claimed,
                 "FINAL_FINGERPRINT_MISMATCH",
                 "desired-state fingerprint changed during resume",
+                reconcile_result=result,
+            )
+        result_overlay = result.private_overlay
+        if (
+            (result_overlay is None) != (not current.private_overlay_id)
+            or (
+                result_overlay is not None
+                and (
+                    result_overlay.overlay_id != current.private_overlay_id
+                    or result_overlay.fingerprint != current.private_overlay_fingerprint
+                    or result_overlay.required != current.private_overlay_required
+                )
+            )
+        ):
+            return self._needs_attention(
+                claimed,
+                "PRIVATE_OVERLAY_FINGERPRINT_MISMATCH",
+                "private overlay identity changed during resume",
                 reconcile_result=result,
             )
         if result.restart_report.requirement is RestartRequirement.KODI_RESTART:

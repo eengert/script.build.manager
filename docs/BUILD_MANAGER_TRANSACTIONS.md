@@ -28,7 +28,11 @@ state. Schema version `1` is explicit and currently contains only:
   `status_code`/`status_message` recovery diagnostics.
 
 Resolved Kodi state, plan actions, runtime objects, configuration contents,
-credentials, tokens, passwords, and private overlays are not serialized.
+credentials, tokens, passwords, and private overlay values are not serialized.
+When a declared private overlay participates, only its non-secret
+`overlay_id`, SHA-256 fingerprint, and required flag are persisted. Resume
+reopens the profile-local overlay through BM-017A and fails closed on absence
+or fingerprint drift.
 
 The phase enum is deliberately small:
 

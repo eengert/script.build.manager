@@ -127,6 +127,9 @@ class FrozenInstallTransaction:
     updated_at: str = ""
     status_code: str = ""
     status_message: str = ""
+    private_overlay_id: str = ""
+    private_overlay_fingerprint: str = ""
+    private_overlay_required: bool = False
 
     def __post_init__(self) -> None:
         _valid_uuid(self.transaction_id, "transaction_id")
@@ -154,6 +157,14 @@ class FrozenInstallTransaction:
             raise FrozenInstallValidationError("status_code is invalid")
         if not isinstance(self.status_message, str) or len(self.status_message) > _MAX_MESSAGE:
             raise FrozenInstallValidationError("status_message is invalid")
+        if not isinstance(self.private_overlay_id, str) or len(self.private_overlay_id) > 64:
+            raise FrozenInstallValidationError("private_overlay_id is invalid")
+        if self.private_overlay_fingerprint and not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", self.private_overlay_fingerprint
+        ):
+            raise FrozenInstallValidationError("private_overlay_fingerprint is invalid")
+        if not isinstance(self.private_overlay_required, bool):
+            raise FrozenInstallValidationError("private_overlay_required is invalid")
 
     def to_dict(self) -> dict:
         return {
@@ -172,6 +183,9 @@ class FrozenInstallTransaction:
             "updated_at": self.updated_at,
             "status_code": self.status_code,
             "status_message": self.status_message,
+            "private_overlay_id": self.private_overlay_id,
+            "private_overlay_fingerprint": self.private_overlay_fingerprint,
+            "private_overlay_required": self.private_overlay_required,
         }
 
     @classmethod
@@ -185,7 +199,11 @@ class FrozenInstallTransaction:
             "updater_guard_required", "restart_transaction_id", "created_at",
             "updated_at", "status_code", "status_message",
         }
-        if set(value) != required:
+        optional = {
+            "private_overlay_id", "private_overlay_fingerprint",
+            "private_overlay_required",
+        }
+        if set(value) - required - optional or not required.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction fields are unsupported")
         if value["schema_version"] != _TRANSACTION_SCHEMA:
             raise FrozenInstallPersistenceError("unsupported frozen transaction schema")
@@ -205,6 +223,9 @@ class FrozenInstallTransaction:
                 updated_at=value["updated_at"],
                 status_code=value["status_code"],
                 status_message=value["status_message"],
+                private_overlay_id=value.get("private_overlay_id", ""),
+                private_overlay_fingerprint=value.get("private_overlay_fingerprint", ""),
+                private_overlay_required=value.get("private_overlay_required", False),
             )
         except (KeyError, TypeError, ValueError, FrozenInstallError) as exc:
             if isinstance(exc, FrozenInstallError):
@@ -218,6 +239,9 @@ class FrozenInstallTransaction:
         status_code: str = "",
         status_message: str = "",
         restart_transaction_id: Optional[str] = None,
+        private_overlay_id: Optional[str] = None,
+        private_overlay_fingerprint: Optional[str] = None,
+        private_overlay_required: Optional[bool] = None,
     ) -> "FrozenInstallTransaction":
         return replace(
             self,
@@ -227,6 +251,18 @@ class FrozenInstallTransaction:
             restart_transaction_id=(
                 self.restart_transaction_id
                 if restart_transaction_id is None else restart_transaction_id
+            ),
+            private_overlay_id=(
+                self.private_overlay_id
+                if private_overlay_id is None else private_overlay_id
+            ),
+            private_overlay_fingerprint=(
+                self.private_overlay_fingerprint
+                if private_overlay_fingerprint is None else private_overlay_fingerprint
+            ),
+            private_overlay_required=(
+                self.private_overlay_required
+                if private_overlay_required is None else private_overlay_required
             ),
             updated_at=_utc_now(),
         )
@@ -313,6 +349,9 @@ class FrozenInstallStore:
         status_code: str = "",
         status_message: str = "",
         restart_transaction_id: Optional[str] = None,
+        private_overlay_id: Optional[str] = None,
+        private_overlay_fingerprint: Optional[str] = None,
+        private_overlay_required: Optional[bool] = None,
     ) -> FrozenInstallTransaction:
         with self.locked():
             current = self._read_unlocked()
@@ -325,6 +364,9 @@ class FrozenInstallStore:
                 status_code=status_code,
                 status_message=status_message,
                 restart_transaction_id=restart_transaction_id,
+                private_overlay_id=private_overlay_id,
+                private_overlay_fingerprint=private_overlay_fingerprint,
+                private_overlay_required=private_overlay_required,
             )
             self._write_unlocked(updated)
             return updated
@@ -868,6 +910,15 @@ class FrozenInstallCoordinator:
 
     def _handle_configuration_result(self, transaction, result):
         outcome = getattr(getattr(result, "outcome", None), "value", getattr(result, "outcome", ""))
+        overlay = getattr(result, "private_overlay", None)
+        if overlay is None:
+            reconcile_result = getattr(result, "reconcile_result", None)
+            overlay = getattr(reconcile_result, "private_overlay", None)
+        overlay_kwargs = {
+            "private_overlay_id": overlay.overlay_id if overlay else "",
+            "private_overlay_fingerprint": overlay.fingerprint if overlay else "",
+            "private_overlay_required": overlay.required if overlay else False,
+        }
         if outcome in ("manual_restart_required", "awaiting_restart"):
             restart_tx = getattr(result, "transaction", None)
             restart_id = getattr(restart_tx, "transaction_id", "")
@@ -876,13 +927,20 @@ class FrozenInstallCoordinator:
                 expected_phase=FrozenInstallPhase.CONFIGURING,
                 new_phase=FrozenInstallPhase.AWAITING_RESTART,
                 restart_transaction_id=restart_id,
+                **overlay_kwargs,
             )
             return updated, FrozenInstallResult("awaiting_restart", transaction=updated, code="AWAITING_RESTART", message="restart Kodi completely to continue frozen installation")
         if outcome in ("failed", "needs_attention"):
             raise FrozenInstallError("configuration/restart handoff failed")
         if hasattr(result, "success") and not result.success:
             raise FrozenInstallError("configuration reconciliation failed")
-        return transaction, None
+        updated = self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=FrozenInstallPhase.CONFIGURING,
+            new_phase=FrozenInstallPhase.CONFIGURING,
+            **overlay_kwargs,
+        )
+        return updated, None
 
     def _finalize(self, transaction, plan, guard) -> FrozenInstallResult:
         transaction = self.store.transition_expected(

@@ -332,6 +332,7 @@ class RestartCoordinator:
                     and existing.request == request
                     and existing.desired_state_fingerprint
                     == reconcile_result.desired_fingerprint
+                    and _same_private_overlay_identity(existing, reconcile_result)
                     and existing.restart_attempt_count == 0
                 ):
                     transaction = existing
@@ -411,6 +412,18 @@ class RestartCoordinator:
             failure=RestartCoordinatorFailure(code, _bounded_message(message)),
             message="restart handoff failed",
         )
+
+
+def _same_private_overlay_identity(transaction: RestartTransaction, result: ReconcileResult) -> bool:
+    overlay = result.private_overlay
+    if not transaction.private_overlay_id:
+        return overlay is None
+    return (
+        overlay is not None
+        and overlay.overlay_id == transaction.private_overlay_id
+        and overlay.fingerprint == transaction.private_overlay_fingerprint
+        and overlay.required == transaction.private_overlay_required
+    )
 
 
 def reconcile_with_restart(

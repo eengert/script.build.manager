@@ -41,6 +41,7 @@ from resources.lib.manifest import (
     ManagedSettingScope,
     Manifest,
     OptionalGroup,
+    PrivateSettingDeclaration,
     PrivateOverlayRef,
     ProfileLayer,
     Repository,
@@ -244,6 +245,7 @@ def _merge_config(
     - managed_settings: per (target kind, addon_id), keys unioned in
       first-seen order, scope order is first-seen
     - managed_files: union in first-seen order, no duplicates
+    - private_settings: union by exact target; conflicting declarations fail
 
     Returns None when every supplied layer has no config.
     """
@@ -256,6 +258,9 @@ def _merge_config(
 
     file_seen: set = set()
     files: List[str] = []
+
+    private_order: List[Tuple[object, str, str]] = []
+    private_map: Dict[Tuple[object, str, str], PrivateSettingDeclaration] = {}
 
     any_config = False
     for cfg in layers:
@@ -284,6 +289,23 @@ def _merge_config(
                 file_seen.add(path)
                 files.append(path)
 
+        for declaration in cfg.private_settings:
+            identity = (
+                declaration.target_kind,
+                declaration.addon_id,
+                declaration.key,
+            )
+            previous = private_map.get(identity)
+            if previous is not None and previous != declaration:
+                raise ManifestResolutionError(
+                    "conflicting private setting declaration for "
+                    f"{declaration.target_kind.value}:{declaration.addon_id}/"
+                    f"{declaration.key}"
+                )
+            if previous is None:
+                private_order.append(identity)
+                private_map[identity] = declaration
+
     if not any_config:
         return None
 
@@ -298,4 +320,5 @@ def _merge_config(
             for target_kind, addon_id in ms_order
         ),
         managed_files=tuple(files),
+        private_settings=tuple(private_map[item] for item in private_order),
     )

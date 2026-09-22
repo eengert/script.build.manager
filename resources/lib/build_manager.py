@@ -28,6 +28,12 @@ from resources.lib.config import (
     KodiRuntimeConfigurationBackend,
     default_packages_root,
 )
+from resources.lib.private_overlay import (
+    ConfigurationApplyBundle,
+    PrivateOverlayManager,
+    PrivateOverlayMetadata,
+    PreparedPrivateOverlay,
+)
 from resources.lib.dependencies import (
     DependencyAwareInstaller,
     DependencyResolver,
@@ -134,6 +140,7 @@ class ReconcileResult:
     restart_report: RestartReport = RestartReport()
     failure: Optional[ReconcileFailure] = None
     validation_report: Optional[ValidationReport] = None
+    private_overlay: Optional[PrivateOverlayMetadata] = None
 
     @property
     def changed(self) -> bool:
@@ -162,6 +169,9 @@ class ReconcileResult:
                 self.validation_report.passed
                 if self.validation_report is not None else None
             ),
+            "private_overlay": (
+                self.private_overlay.to_dict() if self.private_overlay else None
+            ),
         }
 
 
@@ -179,6 +189,7 @@ class BuildManagerOwners:
     skin_activator: object
     config_loader: object
     config_manager: object
+    private_overlay_manager: object = None
 
 
 def _runtime_addon_state_backend():
@@ -189,6 +200,7 @@ def _runtime_addon_state_backend():
 def _default_owners() -> BuildManagerOwners:
     """Construct production owners lazily, outside Kodi or test imports."""
     dependency_resolver = DependencyResolver(KodiRuntimeDependencyBackend())
+    config_manager = ConfigurationManager(KodiRuntimeConfigurationBackend())
     return BuildManagerOwners(
         inspector=KodiStateInspector(KodiRuntimeBackend()),
         manifest_loader=load_manifest_file,
@@ -202,7 +214,8 @@ def _default_owners() -> BuildManagerOwners:
         addon_state_reconciler=AddonStateReconciler(_runtime_addon_state_backend()),
         skin_activator=SkinActivator(KodiRuntimeSkinBackend()),
         config_loader=ConfigPackageLoader(default_packages_root()),
-        config_manager=ConfigurationManager(KodiRuntimeConfigurationBackend()),
+        config_manager=config_manager,
+        private_overlay_manager=PrivateOverlayManager(config_manager),
     )
 
 
@@ -292,6 +305,17 @@ def _config_declarations_payload(desired: ResolvedBuild) -> Optional[dict]:
             for scope in config.managed_settings
         ],
         "managed_files": list(config.managed_files),
+        "private_settings": [
+            {
+                "target_kind": _enum_value(declaration.target_kind),
+                "addon_id": declaration.addon_id,
+                "key": declaration.key,
+                "type": declaration.setting_type,
+                "required": declaration.required,
+                "sensitivity": declaration.sensitivity,
+            }
+            for declaration in config.private_settings
+        ],
     }
 
 
@@ -302,6 +326,7 @@ class _PreparedReconciliation:
     fingerprint: str
     protected_dependency_ids: frozenset
     plan: object
+    private_prepared: Optional[PreparedPrivateOverlay] = None
 
 
 class BuildManager:
@@ -334,6 +359,10 @@ class BuildManager:
         fingerprint = prepared.fingerprint
         protected = prepared.protected_dependency_ids
         plan = prepared.plan
+        private_metadata = (
+            prepared.private_prepared.metadata
+            if prepared.private_prepared is not None else None
+        )
 
         action_results = []
         reports = []
@@ -350,10 +379,13 @@ class BuildManager:
                     action_results=tuple(action_results),
                     restart_report=aggregate_restart_reports(reports),
                     failure=failure,
+                    private_overlay=private_metadata,
                 )
 
             try:
-                result = self._dispatch_action(action, desired, effective, protected)
+                result = self._dispatch_action(
+                    action, desired, effective, protected, prepared.private_prepared
+                )
             except Exception as exc:
                 result = ActionExecutionResult(
                     action=action,
@@ -373,6 +405,7 @@ class BuildManager:
                     failure=ReconcileFailure(
                         ReconcilePhase.EXECUTE, "ACTION_FAILED", result.message,
                     ),
+                    private_overlay=private_metadata,
                 )
 
         try:
@@ -395,6 +428,7 @@ class BuildManager:
                 failure=ReconcileFailure(
                     ReconcilePhase.VALIDATE, "VALIDATION_FAILED", _message(exc),
                 ),
+                private_overlay=private_metadata,
             )
 
         if not validation.passed:
@@ -409,6 +443,7 @@ class BuildManager:
                     "resolved desired state did not pass complete validation",
                 ),
                 validation_report=validation,
+                private_overlay=private_metadata,
             )
 
         return ReconcileResult(
@@ -418,6 +453,7 @@ class BuildManager:
             action_results=tuple(action_results),
             restart_report=aggregate_restart_reports(reports),
             validation_report=validation,
+            private_overlay=private_metadata,
         )
 
     def preview(self, request: ReconcileRequest) -> ReconcileResult:
@@ -431,6 +467,10 @@ class BuildManager:
             request=request,
             desired_fingerprint=prepared.fingerprint,
             planned_actions=prepared.plan.actions,
+            private_overlay=(
+                prepared.private_prepared.metadata
+                if prepared.private_prepared is not None else None
+            ),
         )
 
     def _prepare(self, request: ReconcileRequest):
@@ -458,6 +498,16 @@ class BuildManager:
 
         try:
             effective = self._owners.config_loader.resolve(desired.config)
+            private_prepared = None
+            if desired.private_overlay is not None:
+                manager = self._owners.private_overlay_manager
+                if manager is None:
+                    raise ValueError("private overlay support is unavailable")
+                private_prepared = manager.prepare(
+                    desired.private_overlay,
+                    desired.config.private_settings if desired.config is not None else (),
+                    build_id=desired.build.id,
+                )
             fingerprint = fingerprint_resolved_build(desired, effective)
             dependency_closure = self._preflight_dependencies(desired, actual)
             protected = frozenset(
@@ -492,6 +542,7 @@ class BuildManager:
             fingerprint=fingerprint,
             protected_dependency_ids=protected,
             plan=plan,
+            private_prepared=private_prepared,
         ), None
 
     def _preflight_dependencies(self, desired: ResolvedBuild, actual: KodiState):
@@ -530,9 +581,14 @@ class BuildManager:
         for result in results:
             if isinstance(result.owner_result, ConfigApplyResult):
                 return result.owner_result.validation_state
+            if isinstance(result.owner_result, ConfigurationApplyBundle):
+                return result.owner_result.public_result.validation_state
         return None
 
-    def _dispatch_action(self, action, desired, effective, protected_dependency_ids):
+    def _dispatch_action(
+        self, action, desired, effective, protected_dependency_ids,
+        private_prepared: Optional[PreparedPrivateOverlay] = None,
+    ):
         if action.kind == INSTALL_REPOSITORY:
             repository = next(
                 (item for item in desired.repositories if item.addon_id == action.addon_id),
@@ -589,7 +645,19 @@ class BuildManager:
             )
 
         if action.kind == CONFIGURE:
-            return _action_from_owner(action, self._owners.config_manager.apply(effective))
+            public_result = self._owners.config_manager.apply(effective)
+            if not public_result.all_applied:
+                return _action_from_owner(action, public_result)
+            private_result = None
+            if private_prepared is not None:
+                manager = self._owners.private_overlay_manager
+                if manager is None:
+                    return _failed_action(action, "private overlay support is unavailable")
+                private_result = manager.apply(private_prepared)
+            return _action_from_owner(
+                action,
+                ConfigurationApplyBundle(public_result, private_result),
+            )
 
         return _failed_action(action, f"unsupported planner action kind {action.kind!r}")
 

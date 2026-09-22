@@ -1376,6 +1376,26 @@ class ConfigurationManager:
             effective_identity=effective.identity,
         )
 
+    def apply_settings(
+        self,
+        settings: Tuple[ConfigSetting, ...],
+        *,
+        effective_identity: str,
+    ) -> ConfigApplyResult:
+        """Apply an already-authorized typed setting sequence.
+
+        BM-017 uses this narrow seam after public BM-015 configuration has
+        completed.  It reuses the same backend, typed accessors, read-back,
+        idempotency, and restart aggregation; it does not parse packages or
+        create a second settings engine.  Private callers must validate
+        ownership before invoking this method.
+        """
+        results = tuple(self._apply_setting(setting) for setting in settings)
+        return ConfigApplyResult(
+            results=results,
+            effective_identity=effective_identity,
+        )
+
     # -- settings -----------------------------------------------------------
 
     def _apply_setting(self, setting: ConfigSetting) -> ConfigOperationResult:

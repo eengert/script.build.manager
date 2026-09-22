@@ -104,10 +104,27 @@ class ManagedSettingScope:
 
 
 @dataclass(frozen=True)
+class PrivateSettingDeclaration:
+    """Public declaration for one private setting target.
+
+    Only target identity, type, requirement, and sensitivity classification are
+    public. The corresponding value is supplied by a separate private overlay.
+    """
+
+    addon_id: str
+    key: str
+    setting_type: str
+    required: bool = True
+    sensitivity: str = "private_identifier"
+    target_kind: SettingTargetKind = SettingTargetKind.ADDON
+
+
+@dataclass(frozen=True)
 class ConfigDeclarations:
     packages: Tuple[str, ...] = ()
     managed_settings: Tuple[ManagedSettingScope, ...] = ()
     managed_files: Tuple[str, ...] = ()
+    private_settings: Tuple[PrivateSettingDeclaration, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -143,6 +160,8 @@ class PrivateOverlayRef:
     type: str
     path_hint: str = ""
     description: str = ""
+    overlay_id: str = "default"
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -196,12 +215,13 @@ _BUILD_KEYS             = frozenset({"id", "version", "name", "description"})
 _REPO_KEYS              = frozenset({"addon_id", "bootstrap_url", "required"})
 _ADDON_KEYS             = frozenset({"addon_id", "state", "note"})
 _SKIN_KEYS              = frozenset({"addon_id", "config_packages"})
-_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files"})
+_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files", "private_settings"})
 _MANAGED_SETTING_KEYS   = frozenset({"target", "addon_id", "keys"})
+_PRIVATE_SETTING_KEYS   = frozenset({"target", "addon_id", "key", "type", "required", "sensitivity"})
 _PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional"})
 _DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional"})
 _OPTIONAL_GROUP_KEYS    = frozenset({"id", "label", "description", "addons", "config"})
-_OVERLAY_KEYS           = frozenset({"type", "path_hint", "description"})
+_OVERLAY_KEYS           = frozenset({"type", "path_hint", "description", "overlay_id", "required"})
 _RESTART_POLICY_KEYS    = frozenset({"allow_skin_reload", "allow_kodi_restart"})
 
 
@@ -580,10 +600,31 @@ def _parse_config(raw: object, *, label: str) -> Optional[ConfigDeclarations]:
             mf_list.append(normalized)
         managed_files = tuple(mf_list)
 
+    private_settings: Tuple[PrivateSettingDeclaration, ...] = ()
+    if "private_settings" in raw:
+        ps_raw = raw["private_settings"]
+        if not isinstance(ps_raw, list):
+            raise ManifestValidationError(f"{label}.private_settings: must be an array")
+        seen_private: set = set()
+        private_list = []
+        for j, declaration in enumerate(ps_raw):
+            dlbl = f"{label}.private_settings[{j}]"
+            parsed = _parse_private_setting_declaration(declaration, label=dlbl)
+            identity = (parsed.target_kind, parsed.addon_id, parsed.key)
+            if identity in seen_private:
+                raise ManifestValidationError(
+                    f"{dlbl}: duplicate private setting target "
+                    f"{parsed.target_kind.value}:{parsed.addon_id}/{parsed.key}"
+                )
+            seen_private.add(identity)
+            private_list.append(parsed)
+        private_settings = tuple(private_list)
+
     return ConfigDeclarations(
         packages=packages,
         managed_settings=managed_settings,
         managed_files=managed_files,
+        private_settings=private_settings,
     )
 
 
@@ -614,6 +655,45 @@ def _parse_managed_setting_scope(raw: object, *, label: str) -> ManagedSettingSc
     return ManagedSettingScope(
         addon_id=addon_id,
         keys=tuple(keys_raw),
+        target_kind=target_kind,
+    )
+
+
+def _parse_private_setting_declaration(
+    raw: object, *, label: str
+) -> PrivateSettingDeclaration:
+    if not isinstance(raw, dict):
+        raise ManifestValidationError(f"{label}: must be an object")
+    _reject_unknown(raw, _PRIVATE_SETTING_KEYS, label)
+
+    target_kind = _parse_setting_target_kind(raw.get("target", "addon"), label=label)
+    addon_id = _require_str(raw, "addon_id", label)
+    if not _RE_ADDON_ID.match(addon_id):
+        raise ManifestValidationError(f"{label}.addon_id: invalid add-on ID {addon_id!r}")
+    key = _require_str(raw, "key", label)
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", key):
+        raise ManifestValidationError(f"{label}.key: invalid setting key")
+    setting_type = _require_str(raw, "type", label)
+    if setting_type not in {"string", "bool", "int", "number"}:
+        raise ManifestValidationError(
+            f"{label}.type: unsupported setting type {setting_type!r}"
+        )
+    required = raw.get("required", True)
+    if not isinstance(required, bool):
+        raise ManifestValidationError(f"{label}.required: must be boolean")
+    sensitivity = raw.get("sensitivity", "private_identifier")
+    if not isinstance(sensitivity, str) or sensitivity not in {
+        "secret", "credential", "token", "private_identifier"
+    }:
+        raise ManifestValidationError(
+            f"{label}.sensitivity: unsupported private sensitivity class"
+        )
+    return PrivateSettingDeclaration(
+        addon_id=addon_id,
+        key=key,
+        setting_type=setting_type,
+        required=required,
+        sensitivity=sensitivity,
         target_kind=target_kind,
     )
 
@@ -862,7 +942,22 @@ def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
             )
         overlay_desc = dv
 
-    return PrivateOverlayRef(type=ov_type, path_hint=path_hint, description=overlay_desc)
+    overlay_id = raw.get("overlay_id", "default")
+    if not isinstance(overlay_id, str) or not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", overlay_id):
+        raise ManifestValidationError(
+            "private_overlay.overlay_id: must be a safe lower-case identifier"
+        )
+    required = raw.get("required", False)
+    if not isinstance(required, bool):
+        raise ManifestValidationError("private_overlay.required: must be boolean")
+
+    return PrivateOverlayRef(
+        type=ov_type,
+        path_hint=path_hint,
+        description=overlay_desc,
+        overlay_id=overlay_id,
+        required=required,
+    )
 
 
 # ---------------------------------------------------------------------------
