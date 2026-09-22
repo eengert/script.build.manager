@@ -1,5 +1,43 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-017A integration complete
+
+BM-017A is complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `321fee8`, reconstructed from worker
+implementation commit `ebd4c61`. Worker tracking metadata was excluded.
+
+The integrated foundation defines explicit public private-setting ownership,
+typed version-1 overlay entries, build/overlay identity, canonical SHA-256
+fingerprinting, duplicate/undeclared/type/completeness rejection, and
+fail-closed missing-required behavior. Active storage is profile-local under
+`addon_data/script.build.manager/private_overlays`, written atomically with
+restrictive permissions where supported. It is protected local plaintext;
+encryption at rest is not provided or claimed, and no custom cryptography is
+used.
+
+The existing BM-015 typed configuration backend remains the only settings
+engine. Public configuration is applied first and validated private settings
+second through the same typed write/read-back path. Private values are not
+included in public artifacts, logs, results, `.agent/*`, or durable BM-020 /
+BM-022 state. Durable state carries only overlay ID, fingerprint, and required
+flag. Optional absence is a safe no-op; required absence and fingerprint drift
+fail closed.
+
+Integrated validation passed private-overlay **14/14**, BM-015/BM-020/BM-022
+regressions **588/588**, full suite **1591/1591**, and `git diff --check`.
+The real Family Room private profile, credentials, Kodi profile, Apple TV,
+and other devices were not accessed or mutated. Required Family Room frozen
+software capture remains complete, but ready-to-use configuration still
+requires a separately authorized real private overlay capture/import, and
+real-device frozen installation is not validated. BM-017B has not started.
+
+### Smallest next step
+
+Supervisor review and explicit authorization of any future BM-017B private
+capture/import work. Do not access real private Family Room state or begin
+another milestone from this handoff.
+
 ## BM-022V / BM-022V-R integration complete
 
 BM-022V and BM-022V-R are complete, supervisor-approved, and integrated on

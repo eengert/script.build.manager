@@ -1,5 +1,45 @@
 # Current Task
 
+## BM-017A — Private/auth overlay foundation integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
+
+The reviewed substantive matrix commit is `321fee8`, reconstructed by
+cherry-picking worker implementation commit `ebd4c61`. The worker tracking
+commit and all worker `.agent/*` metadata were excluded. BM-020, BM-021A/B,
+BM-022, and BM-022V/BM-022V-R remain complete. Required Family Room frozen
+software capture is **COMPLETE**; ready-to-use configuration remains
+**PENDING REAL PRIVATE OVERLAY CAPTURE / IMPORT**; real-device frozen
+installation remains **NOT VALIDATED**.
+
+BM-017A provides explicit public private-setting declarations with target
+namespace, setting ID, type, required/optional status, sensitivity class, and
+deterministic ownership. Version-1 overlays contain typed entries, build and
+overlay identity, duplicate/undeclared/type/completeness checks, and a
+canonical SHA-256 fingerprint. Active storage is
+`special://profile/addon_data/script.build.manager/private_overlays/`, with
+atomic writes and restrictive `0700`/`0600` permissions where supported.
+The current backend is protected local plaintext: encryption at rest is not
+claimed and no custom cryptography is used.
+
+BM-015 remains the sole typed settings backend. Public configuration is
+applied first, then validated private values through the same typed
+write/read-back/verification path. Private values stay outside public
+manifests, packages, frozen artifacts, logs, `.agent/*`, and BM-020/BM-022
+durable state; those transactions persist only overlay ID, fingerprint, and
+required flag. Missing required overlays and fingerprint drift fail closed;
+optional absence is a safe no-op.
+
+Integrated validation passed private-overlay tests **14/14**, the
+BM-015/BM-020/BM-022 regression group **588/588**, the full suite
+**1591/1591**, and `git diff --check`. No implementation or test accessed
+real Family Room private data, credentials, a real Kodi profile, Apple TV,
+or another device. BM-017B real private capture/import has not started.
+
+No next milestone was started. The smallest next step is supervisor direction
+and explicit authorization for any future private-state capture/import work.
+
 ## BM-022V / BM-022V-R — Frozen Family Room software capture integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

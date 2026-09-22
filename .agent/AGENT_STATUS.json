@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-022V-R",
-  "reason": "BM-022V and BM-022V-R are complete, supervisor-approved, and integrated. Frozen Family Room software capture is complete, but ready-to-use configuration remains incomplete and blocked by BM-017; real-device frozen installation is not validated. Matrix remains neutral and no next milestone was started.",
-  "last_commit": "31b8f9d",
-  "matrix_sha": "31b8f9d",
+  "task": "BM-017A",
+  "reason": "BM-017A is complete, supervisor-approved, and integrated. Private overlay schema, restrictive local plaintext storage, BM-015 typed-backend reuse, safe transaction identity, and fail-closed application semantics are documented and tested. Real Family Room private-state capture/import has not started; ready-to-use configuration remains pending, real-device frozen installation remains unvalidated, and no next milestone was started.",
+  "last_commit": "321fee8",
+  "matrix_sha": "321fee8",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
