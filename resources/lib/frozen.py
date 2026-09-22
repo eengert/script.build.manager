@@ -94,6 +94,17 @@ class AddonCaptureNode:
     def optional_dependency_ids(self) -> Tuple[str, ...]:
         return tuple(edge.addon_id for edge in self.dependency_edges if edge.optional)
 
+    @property
+    def is_absent_optional_dependency(self) -> bool:
+        """Whether this node records an optional dependency absent at capture."""
+        return (
+            not self.system
+            and self.optional
+            and self.status is CaptureStatus.MISSING
+            and not self.desired_enabled
+            and self.artifact is None
+        )
+
     def to_dict(self) -> dict:
         result = {
             "addon_id": self.addon_id,
@@ -262,10 +273,25 @@ def _node_from_dict(value: object) -> AddonCaptureNode:
     if set(value) - required - optional or not required.issubset(value):
         raise CaptureError("frozen manifest add-on node fields are not supported")
     addon_id = _manifest_string(value, "addon_id")
-    version = _manifest_string(value, "version")
-    addon_type = _manifest_string(value, "addon_type")
+    try:
+        status = CaptureStatus(value["capture_status"])
+    except (TypeError, ValueError) as exc:
+        raise CaptureError("frozen manifest add-on capture status is invalid") from exc
+    version = value["version"]
+    addon_type = value["addon_type"]
+    if not isinstance(version, str):
+        raise CaptureError("frozen manifest add-on version is malformed")
+    if status is CaptureStatus.MISSING:
+        if version not in ("", "not-installed"):
+            raise CaptureError("missing frozen manifest add-on has a version")
+    elif not version:
+        raise CaptureError("frozen manifest add-on version is malformed")
+    if not isinstance(addon_type, str) or (not addon_type and status is not CaptureStatus.MISSING):
+        raise CaptureError("frozen manifest add-on type is malformed")
     if not isinstance(value["desired_enabled"], bool):
         raise CaptureError("frozen manifest desired_enabled must be boolean")
+    if status is CaptureStatus.MISSING and value["desired_enabled"]:
+        raise CaptureError("missing frozen manifest add-on cannot be enabled")
     detail = value["provenance_detail"]
     if not isinstance(detail, dict) or any(
         not isinstance(k, str) or not isinstance(v, str)
@@ -343,7 +369,7 @@ def _node_from_dict(value: object) -> AddonCaptureNode:
         dependency_edges=tuple(edges),
         system=value["system"],
         optional=value["optional"],
-        status=CaptureStatus(value["capture_status"]),
+        status=status,
         error=error,
     )
 
@@ -713,10 +739,16 @@ def capture_frozen_build(
             error=acquisition.error,
         )
         nodes.append(node)
-        if status != CaptureStatus.COMPLETE and not node.optional:
+        if status != CaptureStatus.COMPLETE:
             errors.append(f"{addon_id}: {status.value}: {acquisition.error}")
 
-    blocking = [node for node in nodes if not node.system and not node.optional and node.status != CaptureStatus.COMPLETE]
+    blocking = [
+        node
+        for node in nodes
+        if not node.system
+        and node.status is not CaptureStatus.COMPLETE
+        and not node.is_absent_optional_dependency
+    ]
     if blocking:
         overall = next(
             (node.status for node in blocking if node.status in set(CaptureStatus)),
