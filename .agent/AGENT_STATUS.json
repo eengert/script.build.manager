@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "ready",
+  "status": "complete",
   "task": "BM-017A",
-  "reason": "BM-022V and BM-022V-R are complete and integrated on matrix. Required Family Room frozen software capture is complete, ready-to-use configuration remains incomplete and blocked by BM-017, and real-device frozen installation remains unvalidated. Codex is beginning BM-017A private/auth overlay architecture without accessing real private Family Room state.",
-  "last_commit": "6d9af93",
+  "reason": "BM-017A private/auth overlay architecture and secure application foundation is complete. Generic BM-015 typed backend reuse, explicit public declarations, restrictive profile-local plaintext storage, canonical fingerprints, safe transaction identity, fail-closed validation, public-first/private-second application, and sanitized verification are implemented and tested. No real Family Room private state or device was accessed; capture/import remains a future authorized step and BM-017 is not fully closed.",
+  "last_commit": "ebd4c61",
   "matrix_sha": "6d9af93",
   "next_agent": "human",
   "updated_at": "2026-09-22"

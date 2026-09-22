@@ -1,5 +1,43 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-017A — Private/auth overlay foundation complete
+
+BM-017A is complete on `agent/codex`. The worker first synchronized current
+`origin/matrix` by normal merge (`a1ceab1`); the protected matrix and other
+worker branches were not modified.
+
+The implementation adds explicit public `config.private_settings`
+declarations and a version-1 local private overlay with typed values,
+required/optional ownership, sensitivity classification, build/overlay
+identity, canonical JSON fingerprinting, and duplicate/undeclared/type/
+completeness validation. Storage is profile-local, atomically written, and
+permission-restricted (`0700` directory / `0600` file where supported). It is
+intentionally restrictive plaintext: there is no encryption-at-rest claim,
+custom cryptography, cloud sync, or secret-bearing public artifact.
+
+The existing BM-015 `ConfigurationManager` remains the sole typed settings
+backend. Build Manager applies public settings first and validated private
+settings second, with typed authoritative read-back. Private values are not
+returned in results, errors, logs, manifests, packages, `.agent/*`, or
+BM-020/BM-022 durable transactions. Only overlay ID, fingerprint, and
+required flag cross restart/frozen-install boundaries. Required absence and
+identity drift fail closed; optional absence is a safe no-op.
+
+Tests passed: private-overlay **14/14**, combined BM-015/BM-020/BM-022
+regressions **588/588**, full suite **1591/1591**, and `git diff --check`.
+Disposable fixtures used temporary storage only. No real Family Room private
+files, credentials, Kodi profile, Apple TV, or other device were accessed.
+The software foundation is ready for a separately authorized capture/import
+workflow; real private capture and real-device frozen installation were not
+performed. BM-017A is complete, BM-017 remains scoped to future authorized
+capture/application work, and no next milestone was started.
+
+### Smallest next step
+
+Supervisor review the BM-017A foundation and explicitly authorize any future
+private-state capture/import task. Do not access the real Family Room profile
+or begin another milestone from this handoff.
+
 ## BM-022V-R — Family Room exact-artifact blocker resolution complete
 
 BM-022V-R is complete on `agent/codex`. The BM-022V checkpoint was published

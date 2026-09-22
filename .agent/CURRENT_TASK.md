@@ -1,5 +1,43 @@
 # Current Task
 
+## BM-017A — Private/auth overlay foundation complete
+
+**Status**: Complete on `agent/codex`; synchronization to the current matrix
+tip was performed by normal merge as `a1ceab1`. No matrix, Claude, or
+Antigravity branch was modified.
+
+BM-017A adds the secure application foundation without accessing real Family
+Room private state. Public manifests now declare explicit private targets,
+typed values, required/optional ownership, sensitivity class, and an overlay
+identity. The separate version-1 overlay is canonicalized and fingerprinted;
+private values remain outside public manifests, packages, artifacts, logs,
+`.agent/*`, and durable BM-020/BM-022 records. The initial storage backend is
+restrictive profile-local plaintext JSON with atomic writes, `0700` directory
+and `0600` file permissions where supported; no encryption-at-rest claim or
+custom cryptography is made.
+
+Private application reuses the existing BM-015 typed backend rather than
+creating a parallel settings engine. Public configuration is applied first,
+then validated private settings through the same typed read/write/read-back
+path. Undeclared, duplicate, wrong-type, missing-required, mismatched-build,
+malformed, and fingerprint-drift cases fail closed before private mutation.
+Results and restart/frozen-install transactions carry only safe overlay
+identity/fingerprint/required metadata. Optional absence is a safe no-op;
+required absence is `PRIVATE_OVERLAY_REQUIRED`.
+
+Validation: new private-overlay tests **14/14**; BM-015/BM-020/BM-022
+regression group **588/588**; full suite **1591/1591**; and
+`git diff --check` passed. The disposable fixtures used temporary profile
+storage and a fake typed backend. No real Family Room private files,
+credentials, Kodi profile, Apple TV, or other device were accessed or
+mutated. BM-017A provides software ready-to-use support pending a future
+explicit capture/import workflow; real private capture and device frozen
+installation remain unvalidated. No next milestone was started.
+
+The smallest next step is supervisor review and authorization of any future
+private-state capture/import work. Do not infer that authorization from this
+foundation task.
+
 ## BM-022V-R — Family Room exact-artifact blocker resolution complete
 
 **Status**: Complete on `agent/codex`; BM-022V remains complete. No BM-017 or
