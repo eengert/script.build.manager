@@ -1,6 +1,25 @@
+# Agent Handoff — BM-023B in progress
+
+**Scope**: explicit frozen-artifact fallback and installation recoverability.
+The BM-023A-H tracking integration is pushed to matrix as `b82885a`; this
+normal merge preserves the complete worker H record and usage row, adding one
+matrix integration row. BM-023B implementation has not yet started.
+
+**Boundaries**: no BM-023A installation resume, Kodi Test.app launch, Family
+Room/device access, portable profile mutation, or private-overlay value
+inspection/rebinding. Use disposable isolated evidence only.
+
+**Smallest next step**: map exact frozen validation, plan/action model,
+repository identity and supported install route, and durable transaction
+recovery before changing code.
+
+---
+
 # Agent Handoff — BM-023A-H exact historical artifact recovery
 
 **Result**: `EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED`.
+**Tracking synchronization**: sanitized worker completion commit `49791ea` is recorded on protected matrix at `b82885a` and is being merged normally into `agent/codex`; the worker H record remains intact.
+
 The matrix integration is at `a51a84d`; Codex was synchronized by normal merge
 `e08fe24`. Worker history and the single existing BM-023A-R usage entry were
 preserved. BM-023A-H changed only sanitized tracking.

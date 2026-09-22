@@ -1,5 +1,34 @@
 # Current Task
 
+## BM-023B — Frozen Artifact Fallback & Install Recoverability
+
+**Status**: In progress on `agent/codex`. BM-023A-H completion tracking was
+integrated into protected `matrix` as `b82885a`, pushed, and is being brought
+back by a normal merge. The worker's detailed BM-023A-H evidence and usage row
+remain preserved.
+
+Implement explicit per-addon install resolution for exact frozen artifacts,
+repository-current fallback, and allowed skip. Keep captured desired state and
+its fingerprint immutable; track operator resolution separately and derive a
+separate resolved-software fingerprint. Preserve exact-first validation,
+dependency safety, durable transaction recovery, truthful readiness, and
+explicit unattended `USER_RESOLUTION_REQUIRED` behavior. Repository fallback
+must use trustworthy concrete identity and execute through a supported Kodi /
+Build Manager path. Keep all choices explicit in the plan and UI; do not infer
+fallback from add-on names, optional edges, or missing artifact state.
+
+Scope is architecture, implementation, tests, and disposable validation only.
+Do not resume BM-023A installation, launch Kodi Test.app, access Family Room or
+any device, touch the portable profile, or inspect/rebind private-overlay
+values. Validate only with disposable isolated state. The Family Room YouTube
+policy may skip or use an explicitly proven current repository package; do not
+invent repository identity or claim that the captured `7.4.4+unofficial.2`
+artifact is available.
+
+**Smallest next step**: inspect the frozen manifest, planner, install executor,
+repository provenance, durable transaction, and UI contracts; then settle the
+smallest generalized resolution model before editing production code.
+
 ## BM-023A-H — Historical Exact Artifact Recovery
 
 **Status**: Complete with result

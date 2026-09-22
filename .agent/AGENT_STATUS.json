@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-023A-H",
-  "reason": "EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED. Public upstream/repository metadata searches found no exact .2 package reference, URL, checksum, or .2-specific source commit. No ZIP was downloaded, imported, substituted, or repackaged. Production validate_frozen_manifest rejects the retained candidate only for installed plugin.video.youtube 7.4.4+unofficial.2; absent optional pysocks remains artifactless and excluded. The unchanged manifest fingerprint remains sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035. Focused frozen tests passed 25/25. No Family Room/device, Kodi, portable profile, or private overlay was accessed or modified.",
+  "status": "in_progress",
+  "task": "BM-023B",
+  "reason": "BM-023A-H completion tracking commit 49791ea was preserved on worker and its sanitized neutral matrix tracking was pushed as b82885a and is being merged normally. BM-023B is authorized on agent/codex: implement explicit exact-artifact fallback and install recoverability while preserving immutable capture fingerprints, truthful readiness, safe durable resolution, and the stated no-device/no-profile/no-overlay boundaries.",
   "last_commit": "a8d4b71",
-  "matrix_sha": "a51a84d",
-  "next_agent": "human",
+  "matrix_sha": "b82885a",
+  "next_agent": "codex",
   "updated_at": "2026-09-22"
 }
