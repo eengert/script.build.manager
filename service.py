@@ -15,6 +15,19 @@ def main() -> None:
             run_startup,
         )
         status = run_startup()
+        try:
+            from resources.lib.frozen_install import run_frozen_install_startup
+            frozen_result = run_frozen_install_startup(bm020_status=status)
+            if frozen_result is not None and not frozen_result.succeeded:
+                xbmc.log(
+                    f"Build Manager BM-022 startup: {frozen_result.outcome}",
+                    xbmc.LOGERROR,
+                )
+        except Exception:
+            xbmc.log(
+                "[script.build.manager] BM-022 startup/resume unavailable",
+                xbmc.LOGERROR,
+            )
     except Exception:  # Kodi must retain a bounded, fail-closed service.
         xbmc.log("[script.build.manager] BM-020C startup/resume unavailable", xbmc.LOGERROR)
         return

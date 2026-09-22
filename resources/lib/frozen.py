@@ -168,6 +168,69 @@ class FrozenBuildManifest:
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, indent=2) + "\n"
 
+    @classmethod
+    def from_dict(cls, value: object) -> "FrozenBuildManifest":
+        """Parse the exact manifest-v1 representation emitted by ``to_dict``.
+
+        The installer accepts only the typed, versioned representation.  It
+        does not interpret arbitrary runtime state or silently fill in missing
+        artifact identity fields.
+        """
+        if not isinstance(value, dict):
+            raise CaptureError("frozen manifest must be an object")
+        required = {
+            "schema_version", "build_id", "name", "created_at", "source",
+            "software_fingerprint", "capture_status", "addons",
+            "configuration_packages",
+        }
+        if set(value) != required:
+            raise CaptureError("frozen manifest fields are not exactly supported")
+        if value["schema_version"] != 1:
+            raise CaptureError("unsupported frozen manifest schema")
+        source = value["source"]
+        if not isinstance(source, dict) or set(source) != {
+            "kodi_version", "platform", "metadata"
+        }:
+            raise CaptureError("frozen manifest source is malformed")
+        metadata = source["metadata"]
+        if not isinstance(metadata, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str)
+            for k, v in metadata.items()
+        ):
+            raise CaptureError("frozen manifest source metadata is malformed")
+        addons = value["addons"]
+        if not isinstance(addons, list):
+            raise CaptureError("frozen manifest addons must be a list")
+        nodes = tuple(_node_from_dict(item) for item in addons)
+        packages = value["configuration_packages"]
+        if not isinstance(packages, list) or any(
+            not isinstance(item, str) or not item for item in packages
+        ):
+            raise CaptureError("frozen manifest configuration packages are malformed")
+        manifest = cls(
+            schema_version=1,
+            build_id=_manifest_string(value, "build_id"),
+            name=_manifest_string(value, "name"),
+            created_at=_manifest_string(value, "created_at"),
+            kodi_version=_manifest_string(source, "kodi_version"),
+            platform=_manifest_string(source, "platform"),
+            capture_status=CaptureStatus(value["capture_status"]),
+            addons=nodes,
+            configuration_packages=tuple(packages),
+            source_metadata=dict(metadata),
+        )
+        if value["software_fingerprint"] != manifest.fingerprint():
+            raise CaptureError("frozen manifest fingerprint does not match content")
+        return manifest
+
+    @classmethod
+    def from_json(cls, text: str) -> "FrozenBuildManifest":
+        try:
+            value = json.loads(text)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise CaptureError("frozen manifest JSON is invalid") from exc
+        return cls.from_dict(value)
+
 
 @dataclass(frozen=True)
 class FrozenBuildCaptureResult:
@@ -177,6 +240,112 @@ class FrozenBuildCaptureResult:
     @property
     def complete(self) -> bool:
         return self.manifest.capture_status == CaptureStatus.COMPLETE
+
+
+def _manifest_string(value: Mapping[str, object], field: str) -> str:
+    result = value.get(field)
+    if not isinstance(result, str) or not result:
+        raise CaptureError(f"frozen manifest {field} must be a non-empty string")
+    return result
+
+
+def _node_from_dict(value: object) -> AddonCaptureNode:
+    if not isinstance(value, dict):
+        raise CaptureError("frozen manifest add-on node must be an object")
+    required = {
+        "addon_id", "version", "addon_type", "desired_enabled", "provenance",
+        "provenance_detail", "artifact_sha256", "artifact_size",
+        "required_dependency_ids", "optional_dependency_ids", "dependency_edges",
+        "system", "optional", "capture_status",
+    }
+    optional = {"artifact_filename", "error"}
+    if set(value) - required - optional or not required.issubset(value):
+        raise CaptureError("frozen manifest add-on node fields are not supported")
+    addon_id = _manifest_string(value, "addon_id")
+    version = _manifest_string(value, "version")
+    addon_type = _manifest_string(value, "addon_type")
+    if not isinstance(value["desired_enabled"], bool):
+        raise CaptureError("frozen manifest desired_enabled must be boolean")
+    detail = value["provenance_detail"]
+    if not isinstance(detail, dict) or any(
+        not isinstance(k, str) or not isinstance(v, str)
+        for k, v in detail.items()
+    ):
+        raise CaptureError("frozen manifest provenance_detail is malformed")
+    required_ids = value["required_dependency_ids"]
+    optional_ids = value["optional_dependency_ids"]
+    if (
+        not isinstance(required_ids, list)
+        or not isinstance(optional_ids, list)
+        or any(not isinstance(item, str) or not item for item in required_ids + optional_ids)
+    ):
+        raise CaptureError("frozen manifest dependency IDs are malformed")
+    raw_edges = value["dependency_edges"]
+    if not isinstance(raw_edges, list):
+        raise CaptureError("frozen manifest dependency edges must be a list")
+    edges = []
+    for raw in raw_edges:
+        if not isinstance(raw, dict) or set(raw) != {
+            "addon_id", "min_version", "optional", "required_by"
+        }:
+            raise CaptureError("frozen manifest dependency edge is malformed")
+        required_by = raw["required_by"]
+        if (
+            not isinstance(raw["addon_id"], str) or not raw["addon_id"]
+            or not isinstance(raw["min_version"], str)
+            or not isinstance(raw["optional"], bool)
+            or not isinstance(required_by, list)
+            or any(not isinstance(item, str) or not item for item in required_by)
+        ):
+            raise CaptureError("frozen manifest dependency edge has invalid fields")
+        edges.append(DependencyEdge(
+            addon_id=raw["addon_id"],
+            min_version=raw["min_version"],
+            optional=raw["optional"],
+            required_by=tuple(required_by),
+        ))
+    artifact = None
+    if value["artifact_sha256"] is not None or value["artifact_size"] is not None:
+        if (
+            not isinstance(value["artifact_sha256"], str)
+            or not isinstance(value["artifact_size"], int)
+            or isinstance(value["artifact_size"], bool)
+            or value["artifact_size"] < 0
+            or not isinstance(value.get("artifact_filename"), str)
+            or not value["artifact_filename"]
+        ):
+            raise CaptureError("frozen manifest artifact metadata is malformed")
+        artifact = ArtifactMetadata(
+            sha256=value["artifact_sha256"],
+            size=value["artifact_size"],
+            addon_id=addon_id,
+            version=version,
+            filename=value["artifact_filename"],
+            source=str(detail.get("artifact_source", "")),
+        )
+    elif "artifact_filename" in value:
+        raise CaptureError("frozen manifest artifact filename has no artifact")
+    if value["system"] and artifact is not None:
+        raise CaptureError("system dependency cannot have a frozen artifact")
+    if not isinstance(value["system"], bool) or not isinstance(value["optional"], bool):
+        raise CaptureError("frozen manifest system/optional fields must be boolean")
+    error = value.get("error", "")
+    if not isinstance(error, str):
+        raise CaptureError("frozen manifest node error must be a string")
+    return AddonCaptureNode(
+        addon_id=addon_id,
+        version=version,
+        addon_type=addon_type,
+        desired_enabled=value["desired_enabled"],
+        provenance=ProvenanceStatus(value["provenance"]),
+        provenance_detail=dict(detail),
+        artifact=artifact,
+        dependency_edges=tuple(edges),
+        system=value["system"],
+        optional=value["optional"],
+        status=CaptureStatus(value["capture_status"]),
+        error=error,
+    )
 
 
 class InventoryBackend:

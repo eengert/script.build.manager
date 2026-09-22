@@ -33,8 +33,11 @@ FakeDependencyBackend: in-memory backend for all tests requiring a resolver.
     to simulate infrastructure failure (DependencyError or otherwise)
 """
 
+import sys
+import types
 import unittest
 from typing import Dict, List, Optional, Set, Tuple
+from unittest.mock import patch
 
 from resources.lib.addons import AddonInstallResult, AddonStatus, InstalledAddonInfo
 import json
@@ -1508,6 +1511,36 @@ class TestKodiRuntimeGetAddonDetails(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.addon_id, "my.addon")
         self.assertTrue(result.enabled)
+
+
+class TestKodiRuntimeAddonXmlFallback(unittest.TestCase):
+    """Freshly discovered disabled add-ons remain readable without mutation."""
+
+    def test_read_addon_xml_uses_direct_vfs_path_when_addon_handle_unavailable(self):
+        class _File:
+            def __init__(self, _path):
+                self._data = b'<addon id="fresh.addon" version="1.0.0"/>'
+
+            def read(self):
+                return self._data
+
+            def close(self):
+                return None
+
+        def _unavailable(_addon_id):
+            raise RuntimeError("disabled add-on handle is not ready")
+
+        fake_addon = types.SimpleNamespace(Addon=_unavailable)
+        fake_vfs = types.SimpleNamespace(
+            File=_File,
+            translatePath=lambda path: "/disposable/addons/fresh.addon",
+        )
+        with patch.dict(
+            sys.modules,
+            {"xbmcaddon": fake_addon, "xbmcvfs": fake_vfs},
+        ):
+            result = KodiRuntimeDependencyBackend().read_addon_xml("fresh.addon")
+        self.assertEqual(result, b'<addon id="fresh.addon" version="1.0.0"/>')
 
 
 # ---------------------------------------------------------------------------

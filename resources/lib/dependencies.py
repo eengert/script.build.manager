@@ -1315,7 +1315,18 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
         try:
             path = xbmcaddon.Addon(addon_id).getAddonInfo("path")
         except Exception:
-            return None
+            path = None
+        # Kodi can temporarily reject xbmcaddon.Addon() for a freshly
+        # discovered disabled add-on even though its validated directory is
+        # present. The direct VFS path is read-only and remains fail-closed:
+        # an absent or unreadable addon.xml still returns None below.
+        if not path:
+            try:
+                path = xbmcvfs.translatePath(
+                    f"special://home/addons/{addon_id}"
+                )
+            except Exception:
+                return None
         if not path:
             return None
         addon_xml_path = path.rstrip("/") + "/addon.xml"
