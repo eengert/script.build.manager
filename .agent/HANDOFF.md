@@ -1,4 +1,4 @@
-# Agent Handoff — BM-020A integrated Codex worker
+# Agent Handoff — synchronized Codex worker
 
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle complete
 
@@ -217,6 +217,45 @@ transaction/session/service tests passed 32/32, the full suite passed
 1504/1504, and `git diff --check` passed. Codex is synchronized/idle/ready
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
+
+## BM-022 integration complete
+
+BM-022 is complete, supervisor-approved, and integrated on protected `matrix`.
+The clean matrix-side substantive commit is `56ea26a`, a cherry-pick of
+worker commit `27f4215`. The worker tracking commit and all worker `.agent/*`
+metadata were excluded. Matrix remains neutral with `active_agent: none`.
+
+The integrated lifecycle consumes only complete BM-021B manifests and exact
+immutable artifacts, validates artifact identity and ZIP structure, installs
+the required third-party graph deterministically, and excludes Kodi/system
+dependencies from artifact installation. It reuses the reviewed BM-011
+staged-package boundary and does not create a second unrestricted installer.
+Wrong-version replacement, downgrade, broken state, missing metadata, and
+orphaned target directories fail closed.
+
+The durable frozen transaction captures build/manifest identity, phase,
+original updater policy, guard ownership, restart linkage, and bounded status.
+The updater guard is persisted before the first mutation, `NEVER_CHECK` is
+verified before installation and reasserted before BM-020 startup/resume, and
+release restores and verifies the original policy before clearing the frozen
+transaction. Failures remain diagnosable in `NEEDS_ATTENTION`; there is no
+silent completion or automatic software rollback. Explicit abandon is
+available and does not claim rollback.
+
+BM-022 composes with the existing Build Manager configuration and BM-020
+restart/resume lifecycle. The new read-only dependency metadata fallback only
+reads the known installed VFS path when Kodi cannot expose a freshly
+discovered disabled add-on handle; it does not mutate Kodi state or fabricate
+metadata.
+
+Rerun evidence: focused regressions **639/639**, disposable
+`validate-frozen-install` passed, full suite **1573/1573**, and
+`git diff --check` passed. The proof used only `.kodi-test`; complete real
+Family Room capture/install and real-device validation remain pending.
+
+BM-020, BM-021A, BM-021B, and BM-022 are complete. BM-017 remains deferred.
+No next milestone was started. The smallest next step is supervisor direction
+on the remaining real Family Room/device validation boundary.
 
 ## BM-021B integration complete
 

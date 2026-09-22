@@ -1,43 +1,41 @@
 # Current Task
 
-## BM-022 — Frozen Build Installation and Transaction Lifecycle
+## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
 
-**Status**: Complete on `agent/codex`; substantive implementation commit
-`27f4215` (`feat(BM-022): add frozen build installation lifecycle`). The
-worker remains separate from protected `matrix` (`7ab49f1`) and has not been
-integrated.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; this Codex worker is synchronized, idle, and ready for the next
+approved milestone. The reviewed substantive integration commit is `56ea26a`, reconstructed from worker
+commit `27f4215`. Worker `.agent/*` metadata was excluded.
 
-BM-022 now consumes only complete BM-021B manifests and immutable SHA-256
-artifacts, validates exact IDs/versions/hashes and the transitive dependency
-graph, installs in deterministic topological order through the previously
-reviewed staged-package boundary, and fails closed on incomplete captures,
-cycles, missing/mismatched artifacts, broken add-ons, or wrong-version
-replacement. It persists a profile-local frozen transaction before mutation,
-holds `NEVER_CHECK` through software/configuration/restart/resume/final
-validation, reasserts it before BM-020 startup, restores the original policy
-only after complete validation, and supports explicit abandon without
-pretending to roll back software. Existing Build Manager configuration and
-BM-020 restart/resume remain the owners of those operations.
+BM-022 installs only complete BM-021B manifests backed by immutable exact
+artifacts. It validates SHA-256, size, ZIP identity, exact add-on ID/version,
+dependency edges, system boundaries, and deterministic topological order. It
+reuses the reviewed BM-011 staged-package boundary with atomic staging,
+`UpdateLocalAddons`, exact-version verification, and fail-closed
+replacement/downgrade behavior.
 
-The new disposable `validate-frozen-install` gate passed end-to-end: exact
-repository → dependency → ordinary add-on order and SHA-256 artifact
-selection; BM-020 restart handoff; new-session guard reassertion before
-BM-020 startup; existing configuration path; final exact-state validation;
-policy restoration; BM-022/BM-020 transaction clearing; and real-profile
-immutability. The gate uses only `.kodi-test`; it does not claim pristine
-first-ever provisioning of arbitrary add-ons beyond the tested exact-artifact
-boundary.
+The durable frozen-install transaction captures the original global updater
+policy before mutation, owns `NEVER_CHECK` through installation,
+configuration, restart/resume, and final validation, reasserts and verifies
+the guard before BM-020 startup mutation, restores the original policy only
+after successful final validation, and preserves diagnosable
+`NEEDS_ATTENTION` state on failure. Existing Build Manager configuration and
+BM-020 restart/resume remain the owners of those operations. Explicit abandon
+restores policy and clears the transaction without claiming software rollback.
 
-Validation: focused BM-022/dependency/BM-021/BM-020 regressions **639/639**;
-full suite **1573/1573**; `git diff --check` clean. BM-017 remains deferred;
-no BM-023 or other next milestone was started. Codex usage telemetry is not
-available, so the BM-022 usage row records `unavailable` without fabricated
-figures.
+Integrated validation was rerun: focused BM-022/BM-021B/BM-020/dependency/
+repository regressions **639/639**; disposable `validate-frozen-install`
+passed; full suite **1573/1573**; and `git diff --check` passed. The live
+proof used only `.kodi-test` and did not claim complete real Family Room
+capture/install or real-device validation.
+
+BM-020, BM-021A, BM-021B, and BM-022 are complete. BM-017 remains deferred;
+no next milestone was started.
 
 ## BM-021B — Frozen artifact capture core integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
-`matrix`; this Codex worker is synchronized, idle, and ready for BM-022.
+`matrix`; matrix remains neutral with `active_agent: none`.
 
 The reviewed BM-021B substantive commit was reconstructed from the approved
 worker endpoint as `2ee040c` (`feat(BM-021B): add frozen artifact capture
@@ -78,8 +76,8 @@ and a SHA-256 content-addressed immutable artifact-store model. Freshness
 checks warn without substituting newer package versions. Updater inhibition
 restart/race behavior remains for BM-021B.
 
-BM-021B is complete and integrated. BM-022 has not started. BM-020 remains
-complete and BM-017 remains deferred. Family-room source/distribution concerns are being absorbed
+BM-021B and BM-022 have not started. BM-020 remains complete and BM-017
+remains deferred. Family-room source/distribution concerns are being absorbed
 by BM-021/BM-022 and are not independently marked solved.
 
 ## BM-020C — guarded post-restart resume integrated
