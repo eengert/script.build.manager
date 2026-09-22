@@ -1,6 +1,39 @@
 # Current Task
 
-## BM-017B — Real Family Room private overlay capture/import validation
+## BM-017C — Structured Private Resource Foundation
+
+**Status**: Active on `agent/codex` after normal synchronization with current
+protected `matrix` tip `6bd927c`. BM-017B is complete and supervisor-approved
+with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**.
+
+BM-017C is limited to non-private Red Light `2.6.8` source/frozen-artifact
+audit, a generic structured-private-resource foundation, a narrowly scoped
+Red Light schema/adapter, fake SQLite fixtures, disposable validation, and
+sanitized documentation. It must not retrieve the real Family Room
+`databases/settings.db`, capture private values, create the real overlay,
+write to Family Room, install to a real device, or begin retention, pinning,
+scheduling, or freshness work.
+
+## BM-017B — Private overlay capture blocker integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
+
+BM-017B result: **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**. Red Light `2.6.8`
+requires private/auth state in a mixed `databases/settings.db` resource outside
+the BM-017A typed Kodi-setting boundary. The sanitized read-only evidence is
+recorded in `docs/BM017B_PRIVATE_CAPTURE.md`; no private values were captured,
+no raw database was retained, no arbitrary private-file copier was added, and
+the Family Room source remained read-only. Frozen Family Room software remains
+**COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
+frozen installation remains **NOT VALIDATED**.
+
+BM-017C has not started. The next authorized step is the separate structured
+private-resource foundation on `agent/codex`; it must use non-private Red Light
+source/frozen artifacts and fake fixtures only, without retrieving the real
+Family Room `settings.db`.
+
+## BM-017A — Private/auth overlay foundation integrated
 
 **Status**: Blocked by unsupported private state on `agent/codex`; current
 `origin/matrix` was merged normally before work began. BM-017A is complete and

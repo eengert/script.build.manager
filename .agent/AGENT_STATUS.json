@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "blocked",
-  "task": "BM-017B",
-  "reason": "BM-017B read-only inventory found required non-default private provider state in Red Light's opaque mixed settings.db, which BM-017A typed overlays cannot represent safely. No arbitrary file copier or declarations were added. Raw evidence was deleted; source remained unchanged; real-device installation was not attempted.",
-  "last_commit": "82ce461",
-  "matrix_sha": "4611f83",
+  "status": "active",
+  "task": "BM-017C",
+  "reason": "BM-017C structured private-resource foundation is active on agent/codex after normal synchronization with matrix 6bd927c. BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE; its sanitized evidence is integrated. BM-017C uses non-private Red Light 2.6.8 source/frozen artifacts and fake fixtures only. No real Family Room settings.db, private values, device installation, retention, scheduling, or next milestone is authorized.",
+  "last_commit": "6bd927c",
+  "matrix_sha": "6bd927c",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }

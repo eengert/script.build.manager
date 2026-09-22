@@ -1,5 +1,24 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-017C — structured private-resource foundation active
+
+Codex is synchronized with protected `matrix` through `6bd927c` by a normal
+merge; matrix remains neutral and no other worker branch was modified. BM-017C
+is now active on `agent/codex`.
+
+BM-017B remains complete with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**.
+Its sanitized documentation is integrated on matrix. BM-017C will audit only
+non-private Red Light `2.6.8` source/frozen artifacts and use fake fixtures.
+It will not retrieve the real Family Room `settings.db`, capture private
+values, create the real overlay, write to Family Room, install on a real
+device, or start BM-017D/retention/scheduling work.
+
+### Smallest next step
+
+Audit the exact non-private Red Light source/frozen artifact for schema,
+initialization, locking, cache, and safe application behavior before designing
+the generic resource protocol or adapter.
+
 ## BM-017B — Private overlay capture blocked by opaque Red Light state
 
 BM-017B performed the authorized narrow read-only Family Room inventory using
@@ -403,6 +422,22 @@ transaction/session/service tests passed 32/32, the full suite passed
 1504/1504, and `git diff --check` passed. Codex is synchronized/idle/ready
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
+
+## BM-017B integration complete
+
+BM-017B is complete and supervisor-approved, with result
+**BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**. The reviewed sanitized evidence is
+`docs/BM017B_PRIVATE_CAPTURE.md`; it records that Red Light `2.6.8` stores
+required private/auth state in a mixed `databases/settings.db` resource outside
+the BM-017A typed Kodi-setting boundary. No private values were captured, no
+raw database was retained, no arbitrary private-file copier was added, and the
+Family Room source remained read-only.
+
+Frozen Family Room software remains **COMPLETE**; captured desired state is
+**INCOMPLETE**; real-device frozen installation is **NOT VALIDATED**. Matrix
+remains neutral with `active_agent: none`. BM-017C has not started; its next
+step is a separately authorized structured private-resource foundation using
+non-private Red Light source/frozen artifacts and fake fixtures only.
 
 ## BM-017A integration complete
 
