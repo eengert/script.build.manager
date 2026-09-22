@@ -1,5 +1,60 @@
 # Agent Handoff — BM-020A integrated Codex worker
 
+## BM-022 — Frozen Build Installation and Transaction Lifecycle complete
+
+BM-022 is complete on `agent/codex` in substantive commit `27f4215`. It is
+not integrated to `matrix`; protected matrix remains `7ab49f1`. No worker
+branch other than `agent/codex` was touched, and no next milestone was
+started.
+
+### What was done
+
+- Added strict schema-v1 frozen-manifest loading and validation, including
+  complete-capture status, exact artifact-store SHA-256/size/ZIP identity,
+  system-dependency boundaries, edge validation, and deterministic
+  topological installation order.
+- Added a durable profile-local frozen transaction with atomic writes and
+  locking; phases cover preparation, exact software installation,
+  configuration, restart handoff, resume, validation, completion, and
+  `needs_attention` recovery.
+- Extended the existing updater guard so the original global policy is
+  durably captured before mutation, `NEVER_CHECK` can be reasserted after a
+  process restart, and the original policy can be restored from durable state.
+- Reused the reviewed BM-011 staged-package boundary: validated ZIP content
+  is atomically staged, registered with `UpdateLocalAddons`, and verified at
+  the exact requested version; wrong-version replacement/downgrade is rejected.
+- Added BM-020 startup precondition/resume integration and a read-only VFS
+  fallback for installed dependency metadata when Kodi cannot open a freshly
+  discovered disabled add-on handle.
+- Added the BM-022 design document, a real ZIP/ArtifactStore disposable
+  fixture, focused tests, and the `validate-frozen-install` command.
+
+### Live and test evidence
+
+The disposable BM-022 gate passed completely in `.kodi-test`: exact artifact
+hash selection; repository → dependency → ordinary add-on ordering; durable
+BM-020 handoff; restart-time updater reassertion before BM-020 startup;
+existing Build Manager configuration; exact final state; original updater
+policy restoration; clearing of BM-022 and BM-020 transactions; and real Kodi
+profile immutability. The proof uses generated disposable runtime state only;
+pristine first-ever provisioning of arbitrary add-ons is not claimed.
+
+Focused regressions passed **639/639**. The full suite passed **1573/1573**.
+`git diff --check` passed. Codex usage start/end/delta are `unavailable` per
+the project rule; no telemetry was fabricated.
+
+### What was not done
+
+BM-022 has not been integrated to protected `matrix`. BM-017 remains deferred.
+No retention, pinning, scheduling, freshness enforcement, garbage collection,
+Apple TV action, real-profile mutation, or next milestone was started.
+
+### Smallest next step
+
+Supervisor review the BM-022 substantive commit and, if approved, perform the
+normal clean integration onto protected `matrix` without copying worker
+metadata wholesale.
+
 ## BM-021B capture core complete
 
 BM-021B is complete and integrated on protected `matrix`; this worker is

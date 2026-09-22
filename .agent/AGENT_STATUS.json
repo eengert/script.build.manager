@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "ready",
+  "status": "complete",
   "task": "BM-022",
-  "reason": "Synchronized worker after supervisor-approved BM-021B integration. BM-020, BM-021A, and BM-021B are complete; BM-022 has not started; BM-017 remains deferred. Family-room source/distribution concerns remain pending. BM-021B exact-artifact and incomplete-capture semantics are preserved, and NEVER_CHECK must be reasserted and verified after restart before mutation.",
-  "last_commit": "e64f138",
-  "matrix_sha": "e64f138",
+  "reason": "BM-022 frozen build installation and transaction lifecycle complete. Exact immutable artifacts, topological dependency installation, durable updater quarantine, BM-020 restart/resume handoff, existing Build Manager configuration, final validation, recovery semantics, and disposable Kodi proof are complete. BM-017 remains deferred; no next milestone started; real Kodi profile and devices remain untouched.",
+  "last_commit": "27f4215",
+  "matrix_sha": "7ab49f1",
   "next_agent": "human",
   "updated_at": "2026-09-21"
 }

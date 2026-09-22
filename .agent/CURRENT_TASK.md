@@ -1,5 +1,39 @@
 # Current Task
 
+## BM-022 — Frozen Build Installation and Transaction Lifecycle
+
+**Status**: Complete on `agent/codex`; substantive implementation commit
+`27f4215` (`feat(BM-022): add frozen build installation lifecycle`). The
+worker remains separate from protected `matrix` (`7ab49f1`) and has not been
+integrated.
+
+BM-022 now consumes only complete BM-021B manifests and immutable SHA-256
+artifacts, validates exact IDs/versions/hashes and the transitive dependency
+graph, installs in deterministic topological order through the previously
+reviewed staged-package boundary, and fails closed on incomplete captures,
+cycles, missing/mismatched artifacts, broken add-ons, or wrong-version
+replacement. It persists a profile-local frozen transaction before mutation,
+holds `NEVER_CHECK` through software/configuration/restart/resume/final
+validation, reasserts it before BM-020 startup, restores the original policy
+only after complete validation, and supports explicit abandon without
+pretending to roll back software. Existing Build Manager configuration and
+BM-020 restart/resume remain the owners of those operations.
+
+The new disposable `validate-frozen-install` gate passed end-to-end: exact
+repository → dependency → ordinary add-on order and SHA-256 artifact
+selection; BM-020 restart handoff; new-session guard reassertion before
+BM-020 startup; existing configuration path; final exact-state validation;
+policy restoration; BM-022/BM-020 transaction clearing; and real-profile
+immutability. The gate uses only `.kodi-test`; it does not claim pristine
+first-ever provisioning of arbitrary add-ons beyond the tested exact-artifact
+boundary.
+
+Validation: focused BM-022/dependency/BM-021/BM-020 regressions **639/639**;
+full suite **1573/1573**; `git diff --check` clean. BM-017 remains deferred;
+no BM-023 or other next milestone was started. Codex usage telemetry is not
+available, so the BM-022 usage row records `unavailable` without fabricated
+figures.
+
 ## BM-021B — Frozen artifact capture core integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
