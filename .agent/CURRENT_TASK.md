@@ -2,9 +2,12 @@
 
 ## BM-017D — Real Family Room structured private-resource capture complete
 
-**Status**: Complete on `agent/codex`; matrix remains unchanged at
-`2374ee5`, and the captured overlay is stored outside Git in protected local
-Build Manager storage.
+**Status**: Complete and recorded for protected `matrix`; matrix remains
+neutral with `active_agent: none`. The captured overlay remains outside Git
+in protected local Build Manager storage.
+
+Matrix tracking integration commit: `5a3598f`. Codex was synchronized to that
+tip by normal merge before BM-023A preflight began.
 
 Using the explicitly authorized read-only Xcode `devicectl` connection to
 `AppleTV - Family Room (4)` and bundle `com.eengert.koditvosnew`, the only
@@ -42,7 +45,7 @@ and verified absent. The secret-blind worktree scan reported
 Focused validation passed structured-resource/private-overlay tests **27/27**
 and the focused BM-017A/BM-017C/manifest/build-manager/BM-020/BM-022 group
 **386/386**. No production or test code changed, so the full suite was not
-rerun. `git diff --check` remains required before commit.
+rerun. The worker and matrix integration diff checks passed.
 
 Frozen Family Room software is **COMPLETE**; Family Room private overlay is
 **COMPLETE**; captured desired state is **COMPLETE**; real-device frozen
@@ -52,9 +55,6 @@ installation remains **NOT VALIDATED**. No next milestone was started.
 
 **Status**: Complete, supervisor-approved, and integrated on protected
 `matrix`; matrix remains neutral with `active_agent: none`.
-
-Codex is synchronized to matrix tip `2374ee5` by a normal merge; the worker
-identity remains `codex` and no other worker branch was modified.
 
 The reviewed substantive matrix commit is `dce8276`, reconstructed from worker
 implementation commit `8ba7bdc`; worker tracking and all worker `.agent/*`
@@ -95,8 +95,8 @@ the Family Room source remained read-only. Frozen Family Room software remains
 **COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
 frozen installation remains **NOT VALIDATED**.
 
-BM-017C is complete and integrated above. BM-017D is the separate future step
-for any real private-state capture/import and has not started.
+BM-017C is complete and integrated above. BM-017D is complete; its sanitized
+capture state is recorded at the top of this file. BM-023A is now in preflight.
 
 ## BM-017A — Private/auth overlay foundation integrated
 

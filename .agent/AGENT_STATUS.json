@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-017D",
-  "reason": "BM-017D is complete. The authorized read-only Family Room Red Light 2.6.8 settings.db snapshot passed exact schema, WAL, and integrity validation; all 10 declared optional private fields were captured and verified through the BM-017C adapter into protected local overlay storage. No source mutation, apply operation, real-device installation, raw evidence retention, or private-value exposure occurred. BM-017A/B/C remain complete, BM-017B retains historical result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE, and real-device installation remains NOT VALIDATED.",
-  "last_commit": "4702578",
-  "matrix_sha": "2374ee5",
+  "status": "active",
+  "task": "BM-023A",
+  "reason": "BM-017D tracking is integrated on protected matrix at 5a3598f; Codex is synchronized by normal merge. Starting BM-023A isolated macOS frozen-install validation. Source desired state is complete, but the disposable Kodi isolation, complete artifact availability, target compatibility, and private overlay preflight must pass before any test-profile mutation.",
+  "last_commit": "5a3598f",
+  "matrix_sha": "5a3598f",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
