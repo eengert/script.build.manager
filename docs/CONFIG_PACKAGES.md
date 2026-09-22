@@ -487,8 +487,10 @@ passwords, API keys, OAuth state, debrid credentials, Trakt credentials, or
 EasyNews credentials.
 
 BM-015 does not read `private_overlay` and has no notion of a secret value.
-Portable authentication state is the subject of BM-017, which will define it
-architecturally. There is deliberately **no heuristic secret detection** here —
+Portable authentication state is the subject of BM-017A. BM-017A applies
+validated private entries through the same `ConfigurationBackend` after this
+public manager completes; it does not create a parallel settings engine.
+There is deliberately **no heuristic secret detection** here —
 a scanner would be a poor substitute for keeping secrets out of the public
 package format in the first place.
 

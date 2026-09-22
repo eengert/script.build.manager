@@ -213,7 +213,7 @@ def _validate_config_declarations(config, *, label):
     _assert(isinstance(config, dict), f"{label}: must be an object")
     for key in config:
         _assert(
-            key in {"packages", "managed_settings", "managed_files"},
+            key in {"packages", "managed_settings", "managed_files", "private_settings"},
             f"{label}: unknown key {key!r}"
         )
     if "packages" in config:
@@ -236,6 +236,27 @@ def _validate_config_declarations(config, *, label):
                 isinstance(scope["keys"], list) and scope["keys"],
                 f"{label}.managed_settings[{i}]: 'keys' must be a non-empty array"
             )
+    if "private_settings" in config:
+        private = config["private_settings"]
+        _assert(isinstance(private, list), f"{label}: 'private_settings' must be an array")
+        seen = set()
+        for i, declaration in enumerate(private):
+            _assert(isinstance(declaration, dict), f"{label}.private_settings[{i}]: must be an object")
+            allowed = {"target", "addon_id", "key", "type", "required", "sensitivity"}
+            _assert(set(declaration) <= allowed, f"{label}.private_settings[{i}]: unknown key")
+            identity = (
+                declaration.get("target", "addon"),
+                declaration.get("addon_id"),
+                declaration.get("key"),
+            )
+            _assert(identity not in seen, f"{label}.private_settings[{i}]: duplicate target")
+            seen.add(identity)
+            _assert(isinstance(declaration.get("addon_id"), str), f"{label}.private_settings[{i}]: addon_id")
+            _assert(isinstance(declaration.get("key"), str), f"{label}.private_settings[{i}]: key")
+            _assert(declaration.get("type") in {"string", "bool", "int", "number"}, f"{label}.private_settings[{i}]: type")
+            _assert(declaration.get("sensitivity") in {"secret", "credential", "token", "private_identifier"}, f"{label}.private_settings[{i}]: sensitivity")
+            if "required" in declaration:
+                _assert(isinstance(declaration["required"], bool), f"{label}.private_settings[{i}]: required")
 
 
 def _validate_profile_layer(layer, *, label):
@@ -308,7 +329,7 @@ def _validate_private_overlay_ref(ref, *, label):
         ref["type"] in VALID_OVERLAY_TYPES,
         f"{label}: 'type' must be one of {VALID_OVERLAY_TYPES}, got {ref['type']!r}"
     )
-    allowed = {"type", "path_hint", "description"}
+    allowed = {"type", "path_hint", "description", "overlay_id", "required"}
     for key in ref:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
 
@@ -370,6 +391,7 @@ class TestSchemaFile(unittest.TestCase):
         for name in (
             "addon_state", "addon_entry", "addon_override", "repository",
             "skin_entry", "config_declarations", "managed_setting_scope",
+            "private_setting_declaration",
             "profile_layer", "device_profile", "optional_group",
             "private_overlay_ref", "restart_policy",
         ):

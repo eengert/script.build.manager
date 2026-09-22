@@ -113,6 +113,9 @@ class RestartTransaction:
     updated_at: str = ""
     status_code: str = ""
     status_message: str = ""
+    private_overlay_id: str = ""
+    private_overlay_fingerprint: str = ""
+    private_overlay_required: bool = False
 
     schema_version = SCHEMA_VERSION
 
@@ -146,6 +149,12 @@ class RestartTransaction:
             or len(self.status_message) > _MAX_DIAGNOSTIC
         ):
             raise ValueError("status_message must be a bounded string")
+        if not isinstance(self.private_overlay_id, str) or len(self.private_overlay_id) > 64:
+            raise ValueError("private_overlay_id must be a bounded string")
+        if self.private_overlay_fingerprint:
+            _valid_fingerprint(self.private_overlay_fingerprint)
+        if not isinstance(self.private_overlay_required, bool):
+            raise ValueError("private_overlay_required must be boolean")
 
     def to_dict(self) -> dict:
         """Return only stable selectors and typed transaction metadata."""
@@ -162,6 +171,9 @@ class RestartTransaction:
             "updated_at": self.updated_at,
             "status_code": self.status_code,
             "status_message": self.status_message,
+            "private_overlay_id": self.private_overlay_id,
+            "private_overlay_fingerprint": self.private_overlay_fingerprint,
+            "private_overlay_required": self.private_overlay_required,
         }
 
     def to_json(self) -> str:
@@ -177,7 +189,10 @@ class RestartTransaction:
             "originating_kodi_session_id", "restart_attempt_count",
             "created_at", "updated_at",
         }
-        optional = {"status_code", "status_message"}
+        optional = {
+            "status_code", "status_message", "private_overlay_id",
+            "private_overlay_fingerprint", "private_overlay_required",
+        }
         if set(value) - required - optional:
             raise TransactionCorrupt("transaction fields are not exactly supported")
         if not required.issubset(value):
@@ -210,6 +225,9 @@ class RestartTransaction:
                 updated_at=value["updated_at"],
                 status_code=value.get("status_code", ""),
                 status_message=value.get("status_message", ""),
+                private_overlay_id=value.get("private_overlay_id", ""),
+                private_overlay_fingerprint=value.get("private_overlay_fingerprint", ""),
+                private_overlay_required=value.get("private_overlay_required", False),
             )
         except TransactionError:
             raise
@@ -591,6 +609,18 @@ def prepare_restart_transaction(
             originating_kodi_session_id=session_id,
             created_at=_utc_now(),
             updated_at=_utc_now(),
+            private_overlay_id=(
+                reconcile_result.private_overlay.overlay_id
+                if reconcile_result.private_overlay else ""
+            ),
+            private_overlay_fingerprint=(
+                reconcile_result.private_overlay.fingerprint
+                if reconcile_result.private_overlay else ""
+            ),
+            private_overlay_required=(
+                reconcile_result.private_overlay.required
+                if reconcile_result.private_overlay else False
+            ),
         )
         (store or TransactionStore()).create(transaction)
         return PrepareTransactionResult(created=True, transaction=transaction)

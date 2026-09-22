@@ -209,6 +209,12 @@
           "items": { "type": "string" },
           "description": "Relative Kodi userdata paths that Build Manager owns and may overwrite. Paths are relative to the Kodi userdata directory. Path traversal sequences are forbidden.",
           "default": []
+        },
+        "private_settings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/private_setting_declaration" },
+          "description": "Public declarations for private setting targets. Names, types, requirement, and sensitivity are public; values are supplied only by a separate private overlay.",
+          "default": []
         }
       }
     },
@@ -234,6 +240,40 @@
           "items": { "type": "string" },
           "minItems": 1,
           "description": "Setting key names owned by this build for the given add-on."
+        }
+      }
+    },
+
+    "private_setting_declaration": {
+      "type": "object",
+      "required": ["addon_id", "key", "type", "sensitivity"],
+      "additionalProperties": false,
+      "description": "Public declaration of one private setting target. It contains no private value.",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["addon", "skin"],
+          "default": "addon"
+        },
+        "addon_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "bool", "int", "number"]
+        },
+        "required": {
+          "type": "boolean",
+          "default": true
+        },
+        "sensitivity": {
+          "type": "string",
+          "enum": ["secret", "credential", "token", "private_identifier"]
         }
       }
     },
@@ -356,6 +396,17 @@
         "description": {
           "type": "string",
           "description": "Human-readable description of what the private overlay contains."
+        },
+        "overlay_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "default": "default",
+          "description": "Stable non-secret identifier for the profile-local active overlay."
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether absence of this overlay blocks ready-to-use completion."
         }
       }
     },

@@ -31,7 +31,7 @@ The supported planner action mapping is:
 | `INSTALL_ADDON` | `DependencyAwareInstaller` |
 | `ENABLE_ADDON` / `DISABLE_ADDON` | `AddonStateReconciler` |
 | `SET_SKIN` | `SkinActivator` |
-| `CONFIGURE` | `ConfigurationManager` |
+| `CONFIGURE` | `ConfigurationManager` (public first, BM-017A private overlay second) |
 
 Unknown action kinds fail closed. Execution stops at the first failed action;
 earlier action results and restart requirements remain in the aggregate. A
@@ -44,10 +44,12 @@ The result includes the safe request, ordered plan/action results, a structured
 phase failure when applicable, and the aggregated BM-019 `RestartReport`.
 The desired-state fingerprint is a SHA-256 over canonical normalized resolved
 state. It includes build/profile/repository/add-on/skin/config declaration
-identity and restart policy, but excludes current Kodi state and
-`private_overlay`. Configuration values and managed file contents enter only
-through BM-015's content identity; raw private/authentication values are not
-serialized.
+identity and restart policy, but excludes current Kodi state and private
+values. Public private-setting declarations are included by target/type/
+requirement/classification; the active private overlay contributes only a safe
+ID and fingerprint in the result. Configuration values and managed file
+contents enter only through BM-015's content identity; raw private/authentication
+values are not serialized.
 
 BM-020A deliberately does not restart Kodi, persist transaction files, resume
 after restart, manage session identity, handle restart loops, or acquire a

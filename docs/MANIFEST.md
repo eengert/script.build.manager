@@ -371,17 +371,25 @@ Named optional component groups. Activated by platform or device profiles via
 ```json
 "private_overlay": {
   "type": "local_file",
-  "path_hint": "~/.config/kodi-private/eric-main-private.json",
-  "description": "Portable auth state for Real-Debrid, Trakt, EasyNews."
+  "overlay_id": "family-room-private",
+  "required": true,
+  "path_hint": "~/.config/kodi-private/family-room-private.json",
+  "description": "Portable auth state supplied separately by the user."
 }
 ```
 
-A reference to a private overlay file. The engine locates this file at runtime
-on the target device. If absent or missing, the engine continues without it.
+A public reference to a separately supplied private overlay. `overlay_id` is the
+stable profile-local identity and `required` distinguishes a missing required
+overlay from an optional one. `path_hint` is an import hint only; the active
+overlay is reopened through profile-local Build Manager storage.
 
 **The private overlay must never be committed to the public repository.**
 
 `type` must be `"local_file"` in v1. Future versions may support other types.
+BM-017A stores the active file under
+`special://profile/addon_data/script.build.manager/private_overlays/` with
+restrictive permissions where supported. The initial backend is plaintext
+JSON, not encrypted storage; no custom cryptography is used.
 
 ### `restart_policy` *(optional)*
 
@@ -427,15 +435,16 @@ must be rejected.
 - `bootstrap_url` values are used only for initial repository bootstrap. The
   engine must validate downloaded artifacts before installation.
 - The `private_overlay` field contains only a reference. Credential values live
-  in the private overlay file, which is never parsed by this schema.
+  in the private overlay file, which is validated separately by BM-017A.
 
 ---
 
 ## Unresolved questions for BM-005+
 
-1. **Private overlay schema**: The format of the private overlay file is not
-   defined in v1. A dedicated task should define it before authentication work
-   begins.
+1. ~~**Private overlay schema**~~ — **Defined by BM-017A.** Values are
+   validated against public `config.private_settings` declarations and remain
+   outside the public manifest and packages. See
+   [`docs/PRIVATE_OVERLAYS.md`](PRIVATE_OVERLAYS.md).
 
 2. ~~**Config package format**~~ — **Resolved by BM-015.** A package is a
    directory under `resources/config/packages/<package-id>/` containing a
