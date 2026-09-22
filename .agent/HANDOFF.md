@@ -1,5 +1,38 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-017D — Real Family Room structured private-resource capture integrated
+
+BM-017D is complete and its sanitized tracking is integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. Only tracking from
+worker commit `d585fd8` was integrated. The protected overlay remains outside
+Git in local Build Manager storage.
+
+The authorized read-only receive targeted the Family Room Kodi app-data
+container and only Red Light `databases/settings.db`. Names-only inspection
+found no matching settings database WAL/SHM sidecars. Exact Red Light 2.6.8
+owner/version/schema, WAL mode, and integrity checks passed. The ten declared
+optional provider/auth fields were captured and verified through BM-017C;
+ordinary preferences, generated state, caches, and unrelated rows were not
+captured. No values or overlay contents are recorded here.
+
+Sanitized overlay identity: `family-room-redlight-2.6.8`, fingerprint
+`sha256:a82915f7ae6017b497f4c8c16070420b0ab375b180a23a8cac5f9c119d85c295`,
+bound to frozen software fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+Frozen Family Room software, private overlay, and captured desired state are
+**COMPLETE**. Real-device frozen installation remains **NOT VALIDATED**.
+BM-017B retains its historical result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**.
+
+The source remained read-only; no apply or device installation occurred. The
+temporary raw database and local SQLite sidecars were deleted and verified
+absent. The secret-blind scan reported `leak_detected=false`. Focused tests
+passed **27/27** and **386/386**; no production/test code changed.
+
+### Smallest next step
+
+Supervisor review. Do not start real-device installation without its separate
+authorization.
+
 ## BM-017C integration complete
 
 BM-017C is complete, supervisor-approved, and integrated on protected

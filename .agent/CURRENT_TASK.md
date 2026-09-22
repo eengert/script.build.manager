@@ -1,5 +1,53 @@
 # Current Task
 
+## BM-017D — Real Family Room structured private-resource capture complete
+
+**Status**: Complete and recorded for protected `matrix`; matrix remains
+neutral with `active_agent: none`. The captured overlay remains outside Git
+in protected local Build Manager storage.
+
+Using the explicitly authorized read-only Xcode `devicectl` connection to
+`AppleTV - Family Room (4)` and bundle `com.eengert.koditvosnew`, the only
+received resource was
+`Library/Caches/Kodi/userdata/addon_data/plugin.video.redlight/databases/settings.db`.
+The names-only directory check found no `settings.db-wal` or `settings.db-shm`
+sidecars, so the authorized main-database snapshot was sufficient. Unrelated
+cache database sidecars were not retrieved.
+
+The BM-017C Red Light adapter validated owner/path contract
+`plugin.video.redlight`, version contract `2.6.8`, resource
+`redlight.settings`, schema `redlight-settings-v1`, exact four-column text
+schema, WAL mode, and SQLite integrity. The ten reviewed field-level
+allowlist entries were all optional private/auth candidates and were captured
+and verified: `mdblist.refresh`, `mdblist.token`, `mdblist.user`,
+`pm.account_id`, `pm.token`, `tb.token`, `trakt.expires`, `trakt.refresh`,
+`trakt.token`, and `trakt.user`. No required fields were declared or missing;
+all 10 optional fields were present. Derived/generated, ordinary preference,
+cache, and unrelated rows remained intentionally unmanaged.
+
+The protected overlay is `family-room-redlight-2.6.8` at
+`/Users/eengert/Library/Application Support/Build Manager/addon_data/script.build.manager/private_overlays/family-room-redlight-2.6.8.json`,
+with fingerprint
+`sha256:a82915f7ae6017b497f4c8c16070420b0ab375b180a23a8cac5f9c119d85c295`.
+It is protected plaintext with `0600` file permissions; encryption at rest is
+not claimed. The overlay is bound to frozen software fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+
+No structured-resource apply path was called. No Red Light/Kodi setting,
+database, add-on state, repository, device, or source profile was modified.
+The raw database snapshot and locally generated SQLite sidecars were deleted
+and verified absent. The secret-blind worktree scan reported
+`leak_detected=false`.
+
+Focused validation passed structured-resource/private-overlay tests **27/27**
+and the focused BM-017A/BM-017C/manifest/build-manager/BM-020/BM-022 group
+**386/386**. No production or test code changed, so the full suite was not
+rerun. `git diff --check` remains required before commit.
+
+Frozen Family Room software is **COMPLETE**; Family Room private overlay is
+**COMPLETE**; captured desired state is **COMPLETE**; real-device frozen
+installation remains **NOT VALIDATED**. No next milestone was started.
+
 ## BM-017C — Structured private resource foundation integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
@@ -44,8 +92,8 @@ the Family Room source remained read-only. Frozen Family Room software remains
 **COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
 frozen installation remains **NOT VALIDATED**.
 
-BM-017C is complete and integrated above. BM-017D is the separate future step
-for any real private-state capture/import and has not started.
+BM-017C is complete and integrated above. BM-017D is complete; its sanitized
+capture state is recorded at the top of this file.
 
 ## BM-017A — Private/auth overlay foundation integrated
 

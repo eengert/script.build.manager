@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-017C",
-  "reason": "BM-017C is complete and integrated. It provides a structured private-resource foundation with explicit field ownership and an exact Red Light 2.6.8 adapter; BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. No private values were captured, no real Family Room private source was accessed, frozen software remains COMPLETE, captured desired state remains INCOMPLETE, and real-device installation remains NOT VALIDATED. BM-017D has not started.",
-  "last_commit": "dce8276",
-  "matrix_sha": "dce8276",
+  "task": "BM-017D",
+  "reason": "BM-017D is complete and its sanitized tracking is integrated on protected matrix. The authorized read-only Family Room Red Light 2.6.8 settings.db snapshot passed exact schema, WAL, and integrity validation; all 10 declared optional private fields were captured and verified into protected local overlay storage. Family Room frozen software, private overlay, and captured desired state are COMPLETE; real-device installation remains NOT VALIDATED. No source mutation, apply operation, raw evidence retention, or private-value exposure occurred. BM-017B retains historical result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE.",
+  "last_commit": "d585fd8",
+  "matrix_sha": "2374ee5",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
