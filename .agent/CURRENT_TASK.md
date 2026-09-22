@@ -1,5 +1,35 @@
 # Current Task
 
+## BM-017C — Structured private resource foundation integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
+
+The reviewed substantive matrix commit is `dce8276`, reconstructed from worker
+implementation commit `8ba7bdc`; worker tracking and all worker `.agent/*`
+metadata were excluded. BM-017C provides generic structured private-resource
+declarations, typed protected-overlay values, explicit field ownership,
+secret-safe results, and manifest/schema/resolver/build-manager integration.
+The Red Light 2.6.8 adapter is exact-version and exact-schema, requires an
+existing WAL database and quiesced runtime, updates only declared string rows
+inside a bounded `BEGIN IMMEDIATE` transaction, verifies each row before
+commit, preserves unrelated rows, and reports an explicit restart/reload
+requirement. It never replaces the mixed database, creates missing state, or
+accepts arbitrary SQL, paths, or wildcard fields.
+
+Validation rerun on the integrated tree passed structured-resource tests
+**27/27**, the focused BM-017A/BM-017C/manifest/build-manager/BM-020/BM-022
+regression group **386/386**, the full suite **1604/1604**, and
+`git diff --check`. Tests use fake Red Light SQLite fixtures only; no real
+Family Room private database, credentials, Kodi profile, Apple TV, or other
+device was accessed or mutated. BM-017B remains complete with historical
+result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**; frozen Family Room software
+is **COMPLETE**, captured desired state is **INCOMPLETE**, and real-device
+frozen installation is **NOT VALIDATED**. BM-017D has not started.
+
+No next milestone was started. The smallest next step is supervisor direction
+and separate authorization for BM-017D's real private-state capture work.
+
 ## BM-017B — Private overlay capture blocker integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
@@ -14,10 +44,8 @@ the Family Room source remained read-only. Frozen Family Room software remains
 **COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
 frozen installation remains **NOT VALIDATED**.
 
-BM-017C has not started. The next authorized step is the separate structured
-private-resource foundation on `agent/codex`; it must use non-private Red Light
-source/frozen artifacts and fake fixtures only, without retrieving the real
-Family Room `settings.db`.
+BM-017C is complete and integrated above. BM-017D is the separate future step
+for any real private-state capture/import and has not started.
 
 ## BM-017A — Private/auth overlay foundation integrated
 

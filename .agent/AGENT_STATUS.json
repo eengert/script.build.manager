@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-017B",
-  "reason": "BM-017B is complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. Red Light 2.6.8 required private/auth state in a mixed databases/settings.db resource outside the BM-017A typed Kodi-setting boundary. No private values were captured, no raw database was retained, no arbitrary copier was added, Family Room remained read-only, frozen software remains COMPLETE, captured desired state remains INCOMPLETE, and real-device installation remains NOT VALIDATED. BM-017C has not started.",
-  "last_commit": "a2df7a0",
-  "matrix_sha": "a2df7a0",
+  "task": "BM-017C",
+  "reason": "BM-017C is complete and integrated. It provides a structured private-resource foundation with explicit field ownership and an exact Red Light 2.6.8 adapter; BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. No private values were captured, no real Family Room private source was accessed, frozen software remains COMPLETE, captured desired state remains INCOMPLETE, and real-device installation remains NOT VALIDATED. BM-017D has not started.",
+  "last_commit": "dce8276",
+  "matrix_sha": "dce8276",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
