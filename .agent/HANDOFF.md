@@ -1,5 +1,52 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-022V — Real Family Room frozen-capture validation complete
+
+BM-022V is complete on `agent/codex` as read-only evidence validation. No
+production code or documentation was added; no source Kodi profile, database,
+settings, package cache, or device state was mutated; and no next milestone
+was started.
+
+The authorized `Addons33.db` was received into temporary evidence storage and
+parsed with a read-only SQLite connection. The requested `guisettings.xml`
+could not be received because no file with that name exists at the authorized
+path or elsewhere in the Kodi app-data Library; no alternate file was used.
+The raw database was deleted after parsing. The candidate FrozenManifest v1
+was generated only in disposable temporary storage with fingerprint
+`sha256:8807efedc3814b3c460761b8dc44466ae4e6d6f5dbe099f1a3cfb0a1a192660b`.
+
+Evidence summary:
+
+- Graph: 37 observed nodes; 70 edges; 67 required and 3 optional.
+- ArtifactStore: 28 exact validated artifacts, 28 unique identities,
+  141,987,267 unique bytes, disposable only.
+- Software capture: **INCOMPLETE**, blocked by two required exact artifacts:
+  `script.module.dropbox` `10.3.1+matrix.1` and
+  `resource.font.robotocjksc` `0.0.3`.
+- The Robotocjksc cached ZIP is malformed (`resource.font.robotcjksc` top-level
+  directory) and was not repaired, renamed, or repackaged.
+- Optional YouTube artifact evidence is incomplete; optional metadata remains
+  unresolved for `script.module.inputstreamhelper` and
+  `script.module.pysocks`.
+- The database showed captured add-ons enabled except
+  `service.skinsettings.backup` (disabled reason `1`). No explicit broken
+  state is represented in the inspected database schema, so none is claimed.
+- `general.addonupdates` is **UNAVAILABLE** because the authorized settings
+  file was absent.
+- Ready-to-use configuration is **INCOMPLETE / BLOCKED_BY_BM017** because
+  private/authenticated configuration was not captured.
+
+Validation: relevant BM-021B artifact/frozen/frozen-install tests **30/30**;
+`git diff --check` passed. Codex usage values are unavailable under the
+project's documented rules. BM-017, retention, pinning, scheduling, freshness
+UI, and real frozen installation were not started.
+
+### Smallest next step
+
+Supervisor review the BM-022V evidence report and separately authorize any
+future exact-artifact recovery or BM-017 private-state work. Do not install the
+candidate build or begin another milestone from this handoff.
+
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle complete
 
 BM-022 is complete on `agent/codex` in substantive commit `27f4215`. It is

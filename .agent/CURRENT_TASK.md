@@ -1,5 +1,52 @@
 # Current Task
 
+## BM-022V — Real Family Room frozen-capture validation complete
+
+**Status**: Complete on `agent/codex`; this was a read-only evidence and
+validation task. No production code, source-profile, package-cache, database,
+settings, or device mutation occurred, and no next milestone was started.
+
+The authorized Family Room evidence scope was respected. `Addons33.db` was
+received into disposable temporary storage and parsed through a read-only
+SQLite connection for installed identity, enabled state, disabled reason, and
+recorded origin. The requested `guisettings.xml` was not present at the
+authorized path or elsewhere in the Kodi app-data Library when checked by a
+filename-only filtered listing; it was not retrieved or substituted. The raw
+database copy was deleted immediately after parsing, and no raw private
+evidence was committed or retained in project tracking.
+
+The observed candidate graph contains 37 nodes and 70 dependency edges (67
+required, 3 optional): 30 captured third-party nodes, two unresolved optional
+metadata nodes, and five runtime/system nodes. The diagnostic FrozenManifest v1
+fingerprint was `sha256:8807efedc3814b3c460761b8dc44466ae4e6d6f5dbe099f1a3cfb0a1a192660b`.
+The temporary ArtifactStore contains 28 exact validated artifacts, 28 unique
+SHA-256 identities, and 141,987,267 unique bytes; it is disposable evidence,
+not a repository artifact.
+
+Frozen Family Room software capture is **INCOMPLETE**. The two blocking
+required artifacts are the exact installed `script.module.dropbox`
+`10.3.1+matrix.1` artifact and the exact installed
+`resource.font.robotocjksc` `0.0.3` artifact. The cached Robotocjksc ZIP has
+the malformed top-level directory `resource.font.robotcjksc` and was not
+renamed or repackaged. The optional YouTube artifact is also incomplete, while
+the unresolved optional metadata findings are `script.module.inputstreamhelper`
+and `script.module.pysocks`.
+
+The database showed all observed captured add-ons enabled except
+`service.skinsettings.backup`, which was disabled with disabled reason `1`.
+`Addons33.db` has no explicit broken-state table or column, so broken status is
+not claimed from this evidence. The `general.addonupdates` source value is
+**UNAVAILABLE** because the authorized settings file was absent. Ready-to-use
+configuration is **INCOMPLETE / BLOCKED_BY_BM017**: private/authenticated
+configuration was not captured, and no one-click Family Room readiness claim
+is made. BM-017, retention, pinning, scheduling, freshness UI, and real frozen
+installation remain deferred.
+
+Relevant BM-021B artifact/frozen/frozen-install tests passed **30/30** and
+`git diff --check` passed. Codex usage start/end/delta are unavailable; no
+telemetry was fabricated. The worker remains clean and matrix remains
+`f1c23eb`.
+
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
