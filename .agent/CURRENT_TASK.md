@@ -1,5 +1,24 @@
 # Current Task
 
+## BM-017B — Private overlay capture blocker integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
+
+BM-017B result: **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**. Red Light `2.6.8`
+requires private/auth state in a mixed `databases/settings.db` resource outside
+the BM-017A typed Kodi-setting boundary. The sanitized read-only evidence is
+recorded in `docs/BM017B_PRIVATE_CAPTURE.md`; no private values were captured,
+no raw database was retained, no arbitrary private-file copier was added, and
+the Family Room source remained read-only. Frozen Family Room software remains
+**COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
+frozen installation remains **NOT VALIDATED**.
+
+BM-017C has not started. The next authorized step is the separate structured
+private-resource foundation on `agent/codex`; it must use non-private Red Light
+source/frozen artifacts and fake fixtures only, without retrieving the real
+Family Room `settings.db`.
+
 ## BM-017A — Private/auth overlay foundation integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

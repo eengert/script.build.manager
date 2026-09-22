@@ -1,5 +1,21 @@
 # Agent Handoff — BM-020A integrated
 
+## BM-017B integration complete
+
+BM-017B is complete and supervisor-approved, with result
+**BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**. The reviewed sanitized evidence is
+`docs/BM017B_PRIVATE_CAPTURE.md`; it records that Red Light `2.6.8` stores
+required private/auth state in a mixed `databases/settings.db` resource outside
+the BM-017A typed Kodi-setting boundary. No private values were captured, no
+raw database was retained, no arbitrary private-file copier was added, and the
+Family Room source remained read-only.
+
+Frozen Family Room software remains **COMPLETE**; captured desired state is
+**INCOMPLETE**; real-device frozen installation is **NOT VALIDATED**. Matrix
+remains neutral with `active_agent: none`. BM-017C has not started; its next
+step is a separately authorized structured private-resource foundation using
+non-private Red Light source/frozen artifacts and fake fixtures only.
+
 ## BM-017A integration complete
 
 BM-017A is complete, supervisor-approved, and integrated on protected
