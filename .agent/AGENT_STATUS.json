@@ -1,8 +1,8 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A-R",
-  "reason": "BM-023A-R is complete on protected matrix. Reviewed worker implementation a8d4b71 is integrated as ff5c000. Every installed non-system frozen node requires its exact artifact even through an optional edge; absent optional pysocks remains artifactless and excluded from installation; system nodes remain artifactless. BM-023A remains historically BLOCKED_MISSING_FROZEN_ARTIFACTS. Exact remaining artifact gap: plugin.video.youtube 7.4.4+unofficial.2. Frozen capture/install tests 25/25, dependency regressions 147/147, full suite 1607/1607, diff check clean. No Kodi launch, portable-profile mutation, Family Room/device access, or private-overlay access occurred.",
+  "task": "BM-023A-H",
+  "reason": "EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED. Public upstream and repository metadata searches found no exact .2 package reference, URL, checksum, archived asset, or .2-specific source commit. No ZIP was downloaded, imported, substituted, or repackaged. The retained manifest/store remain unchanged and production validation still rejects installed plugin.video.youtube 7.4.4+unofficial.2; absent optional pysocks remains artifactless and excluded. BM-023A remains historically BLOCKED_MISSING_FROZEN_ARTIFACTS. Matrix tracking is neutral; no Family Room/device, Kodi, portable profile, or private overlay was accessed or modified. Sanitized worker tracking commit 49791ea is recorded here; reviewed implementation a8d4b71 remains integrated as ff5c000.",
   "last_commit": "ff5c000",
   "matrix_sha": "ff5c000",
   "next_agent": "human",
