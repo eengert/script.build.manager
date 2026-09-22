@@ -1,38 +1,37 @@
 # Current Task
 
-## BM-017C — Structured Private Resource Foundation
+## BM-017C — Structured private resource foundation integrated
 
-**Status**: Complete on `agent/codex` in substantive commit `8ba7bdc` after
-normal synchronization with protected `matrix` tip `6bd927c`. BM-017B is
-complete and supervisor-approved with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
 
-BM-017C is limited to non-private Red Light `2.6.8` source/frozen-artifact
-audit, a generic structured-private-resource foundation, a narrowly scoped
-Red Light schema/adapter, fake SQLite fixtures, disposable validation, and
-sanitized documentation. It must not retrieve the real Family Room
-`databases/settings.db`, capture private values, create the real overlay,
-write to Family Room, install to a real device, or begin retention, pinning,
-scheduling, or freshness work.
+Codex is synchronized to matrix tip `2374ee5` by a normal merge; the worker
+identity remains `codex` and no other worker branch was modified.
 
-Validation passed BM-017C structured-resource tests **27/27**, the focused
-BM-017A/BM-017C and manifest/build-manager regression group **386/386**, the
-full repository suite **1604/1604**, and `git diff --check`. The full suite's
-expected negative harness output included an intentional invalid-command error
-before the final unittest result `OK`.
+The reviewed substantive matrix commit is `dce8276`, reconstructed from worker
+implementation commit `8ba7bdc`; worker tracking and all worker `.agent/*`
+metadata were excluded. BM-017C provides generic structured private-resource
+declarations, typed protected-overlay values, explicit field ownership,
+secret-safe results, and manifest/schema/resolver/build-manager integration.
+The Red Light 2.6.8 adapter is exact-version and exact-schema, requires an
+existing WAL database and quiesced runtime, updates only declared string rows
+inside a bounded `BEGIN IMMEDIATE` transaction, verifies each row before
+commit, preserves unrelated rows, and reports an explicit restart/reload
+requirement. It never replaces the mixed database, creates missing state, or
+accepts arbitrary SQL, paths, or wildcard fields.
 
-The exact public Red Light 2.6.8 package was inspected read-only from the
-published repository; no real Family Room private file was retrieved. The
-adapter requires exact version/schema, an existing WAL database, declared
-string rows only, a quiesced Red Light lifecycle, bounded `BEGIN IMMEDIATE`,
-transactional read-back, and explicit restart/reload. Missing initialization,
-unknown schema/version, active runtime, locks, or undeclared state fail closed.
-No whole-file target, arbitrary SQL, wildcard field, custom cryptography, or
-plaintext rollback journal was added.
+Validation rerun on the integrated tree passed structured-resource tests
+**27/27**, the focused BM-017A/BM-017C/manifest/build-manager/BM-020/BM-022
+regression group **386/386**, the full suite **1604/1604**, and
+`git diff --check`. Tests use fake Red Light SQLite fixtures only; no real
+Family Room private database, credentials, Kodi profile, Apple TV, or other
+device was accessed or mutated. BM-017B remains complete with historical
+result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**; frozen Family Room software
+is **COMPLETE**, captured desired state is **INCOMPLETE**, and real-device
+frozen installation is **NOT VALIDATED**. BM-017D has not started.
 
-No real overlay was created; frozen Family Room software remains **COMPLETE**,
-captured desired state remains **INCOMPLETE**, and real-device frozen
-installation remains **NOT VALIDATED**. BM-017D is the next possible separately
-authorized real structured-private capture task and was not started.
+No next milestone was started. The smallest next step is supervisor direction
+and separate authorization for BM-017D's real private-state capture work.
 
 ## BM-017B — Private overlay capture blocker integrated
 
@@ -48,178 +47,86 @@ the Family Room source remained read-only. Frozen Family Room software remains
 **COMPLETE**, captured desired state remains **INCOMPLETE**, and real-device
 frozen installation remains **NOT VALIDATED**.
 
-BM-017C is complete on `agent/codex`; its implementation and sanitized audit
-are documented in `docs/BM017C_PRIVATE_RESOURCES.md`.
+BM-017C is complete and integrated above. BM-017D is the separate future step
+for any real private-state capture/import and has not started.
 
 ## BM-017A — Private/auth overlay foundation integrated
 
-**Status**: Blocked by unsupported private state on `agent/codex`; current
-`origin/matrix` was merged normally before work began. BM-017A is complete and
-integrated. The required Family Room software capture remains **COMPLETE**;
-private overlay capture is **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**;
-captured desired state is **INCOMPLETE**; real-device frozen installation
-remains **NOT VALIDATED**.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`.
 
-Scope is limited to relevant add-on schemas/source ownership review, approved
-read-only Family Room file listing/receive, secret-blind extraction of only
-declared private settings, protected local overlay creation, structural
-validation, and sanitized evidence. No source-profile writes, Kodi settings
-changes, add-on state changes, restarts, repository operations, database
-writes, Backup Pro operations, reconciliation, installation, or broad profile
-scraping are authorized.
+The reviewed substantive matrix commit is `321fee8`, reconstructed by
+cherry-picking worker implementation commit `ebd4c61`. The worker tracking
+commit and all worker `.agent/*` metadata were excluded. BM-020, BM-021A/B,
+BM-022, and BM-022V/BM-022V-R remain complete. Required Family Room frozen
+software capture is **COMPLETE**; ready-to-use configuration remains
+**PENDING REAL PRIVATE OVERLAY CAPTURE / IMPORT**; real-device frozen
+installation remains **NOT VALIDATED**.
 
-No raw private values may appear in terminal output, logs, errors, reports,
-Git, `.agent/*`, documentation, public manifests, or durable transactions.
-Temporary raw evidence must stay outside the repository with restrictive
-permissions and must be deleted after validated extraction. Opaque private
-state that cannot be represented by BM-017A typed settings is an architectural
-blocker, not a reason to add arbitrary file copying.
+BM-017A provides explicit public private-setting declarations with target
+namespace, setting ID, type, required/optional status, sensitivity class, and
+deterministic ownership. Version-1 overlays contain typed entries, build and
+overlay identity, duplicate/undeclared/type/completeness checks, and a
+canonical SHA-256 fingerprint. Active storage is
+`special://profile/addon_data/script.build.manager/private_overlays/`, with
+atomic writes and restrictive `0700`/`0600` permissions where supported.
+The current backend is protected local plaintext: encryption at rest is not
+claimed and no custom cryptography is used.
 
-The non-secret inventory and narrow read-only inspection completed. Red Light
-owns a mixed opaque `databases/settings.db` settings layer; secret-blind
-comparison found non-default provider/account fields, but Red Light's Kodi
-settings schema does not expose them through BM-015's typed backend. MyAccounts
-source exposes provider-auth setting operations, but its addon_data directory
-was empty; no duplicate owner was inferred. No private declarations or overlay
-were created, no raw values were emitted, and all temporary evidence was
-deleted. A future dedicated structured private-resource design is required
-before capture/import can proceed.
+BM-015 remains the sole typed settings backend. Public configuration is
+applied first, then validated private values through the same typed
+write/read-back/verification path. Private values stay outside public
+manifests, packages, frozen artifacts, logs, `.agent/*`, and BM-020/BM-022
+durable state; those transactions persist only overlay ID, fingerprint, and
+required flag. Missing required overlays and fingerprint drift fail closed;
+optional absence is a safe no-op.
 
-## BM-017A — Private/auth overlay foundation complete
+Integrated validation passed private-overlay tests **14/14**, the
+BM-015/BM-020/BM-022 regression group **588/588**, the full suite
+**1591/1591**, and `git diff --check`. No implementation or test accessed
+real Family Room private data, credentials, a real Kodi profile, Apple TV,
+or another device. BM-017B real private capture/import has not started.
 
-**Status**: Complete on `agent/codex`; synchronization to the current matrix
-tip was performed by normal merge as `a1ceab1`. No matrix, Claude, or
-Antigravity branch was modified.
+No next milestone was started. The smallest next step is supervisor direction
+and explicit authorization for any future private-state capture/import work.
 
-BM-017A adds the secure application foundation without accessing real Family
-Room private state. Public manifests now declare explicit private targets,
-typed values, required/optional ownership, sensitivity class, and an overlay
-identity. The separate version-1 overlay is canonicalized and fingerprinted;
-private values remain outside public manifests, packages, artifacts, logs,
-`.agent/*`, and durable BM-020/BM-022 records. The initial storage backend is
-restrictive profile-local plaintext JSON with atomic writes, `0700` directory
-and `0600` file permissions where supported; no encryption-at-rest claim or
-custom cryptography is made.
+## BM-022V / BM-022V-R — Frozen Family Room software capture integrated
 
-Private application reuses the existing BM-015 typed backend rather than
-creating a parallel settings engine. Public configuration is applied first,
-then validated private settings through the same typed read/write/read-back
-path. Undeclared, duplicate, wrong-type, missing-required, mismatched-build,
-malformed, and fingerprint-drift cases fail closed before private mutation.
-Results and restart/frozen-install transactions carry only safe overlay
-identity/fingerprint/required metadata. Optional absence is a safe no-op;
-required absence is `PRIVATE_OVERLAY_REQUIRED`.
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `31b8f9d`, reconstructed from the approved
+worker endpoint `784ea8f`; worker `.agent/*` metadata was excluded.
 
-Validation: new private-overlay tests **14/14**; BM-015/BM-020/BM-022
-regression group **588/588**; full suite **1591/1591**; and
-`git diff --check` passed. The disposable fixtures used temporary profile
-storage and a fake typed backend. No real Family Room private files,
-credentials, Kodi profile, Apple TV, or other device were accessed or
-mutated. BM-017A provides software ready-to-use support pending a future
-explicit capture/import workflow; real private capture and device frozen
-installation remain unvalidated. No next milestone was started.
-
-The smallest next step is supervisor review and authorization of any future
-private-state capture/import work. Do not infer that authorization from this
-foundation task.
-
-## BM-022V-R — Family Room exact-artifact blocker resolution complete
-
-**Status**: Complete on `agent/codex`; BM-022V remains complete. No BM-017 or
-other milestone was started, and the Family Room remained strictly read-only.
-The approved BM-022V-R substantive endpoint was integrated on protected
-`matrix` as `31b8f9d`; this worker retains its own metadata and is now
-starting BM-017A.
-
-The BM-022V checkpoint was published first as `f5a4415` to
-`origin/agent/codex`. Kodi Omega source confirms that native ZIP installation
-requires one safe top-level folder and a valid `addon.xml`, but does not
-require that folder name to equal the add-on ID. Kodi loads the descriptor from
-the sole folder and stages its contents under the requested add-on ID
-directory. Build Manager's previous root-equality check was therefore too
-strict for this generalized safe case.
-
-The smallest production correction now accepts exactly one safe top-level root,
-uses the `addon.xml` ID and exact version as authority, and normalizes that
-root's contents into the final requested add-on directory during staged
-extraction. Multiple roots, traversal, symlinks, missing or malformed
-`addon.xml`, ID mismatch, and version mismatch remain fail-closed. No package
-bytes are rewritten. There is no add-on-specific exception.
-
-The exact official Kodi Omega `script.module.dropbox` `10.3.1+matrix.1`
-package was recovered from the recorded Kodi mirror URL, validated, and
-immutably imported. SHA-256 is
-`5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6`, size
-667,538 bytes. The unchanged cached Robotocjksc ZIP also validates as the
-exact `resource.font.robotocjksc` `0.0.3` artifact despite its safe alternate
-root `resource.font.robotcjksc`; a temporary extraction proof placed its
-original bytes under the final add-on ID directory.
-
-The rerun candidate FrozenManifest v1 is **COMPLETE** for required software:
-37 nodes, 67 required edges, 3 optional edges, zero required missing
-artifacts, 30 exact artifact-backed nodes, 194,254,227 captured artifact
-bytes, and fingerprint
+BM-022V read-only validation and BM-022V-R exact-artifact recovery establish
+that Frozen Family Room software capture is **COMPLETE** for required
+software: 37 graph nodes, 67 required edges, 3 optional edges, zero required
+missing artifacts, 30 exact artifact-backed nodes, 194,254,227 captured
+artifact bytes, and candidate fingerprint
 `sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
-The optional YouTube node remains incomplete because installed
-`7.4.4+unofficial.2` is not the cached `7.4.4`; it does not block required
-capture completion. Ready-to-use configuration remains **BLOCKED_BY_BM017 /
-INCOMPLETE** because private/authenticated state was not captured.
+The optional YouTube artifact remains incomplete (`7.4.4+unofficial.2`
+installed versus cached `7.4.4`) but is non-blocking. The exact Dropbox
+`script.module.dropbox` `10.3.1+matrix.1` artifact is captured with SHA-256
+`5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6` and
+size 667,538 bytes. The unchanged Robotocjksc ZIP is accepted through the
+generalized one-safe-root validator and normalized only during staged
+extraction; package bytes were not rewritten.
 
-Focused artifact/repository/add-on/frozen tests passed **331/331**. The full
-Build Manager suite passed **1577/1577**. `git diff --check` passed. Codex
-usage start/end/delta are unavailable; no telemetry was fabricated.
+Ready-to-use configuration remains **INCOMPLETE / BLOCKED_BY_BM017** because
+private/authenticated state was not captured. Real-device frozen installation
+is **NOT YET VALIDATED**. Family Room evidence and software capture remained
+read-only: no install/update, enable/disable, repository refresh, restart,
+settings/database write, or reconciliation occurred. BM-017 remains deferred
+and no next milestone was started.
 
-## BM-022V — Real Family Room frozen-capture validation complete (initial checkpoint)
+Integrated validation passed focused artifact/repository/add-on/frozen tests
+**331/331**, the full Build Manager suite **1577/1577**, and
+`git diff --check`.
 
-**Status**: Complete on `agent/codex`; this was a read-only evidence and
-validation task. No production code, source-profile, package-cache, database,
-settings, or device mutation occurred, and no next milestone was started.
-
-The authorized Family Room evidence scope was respected. `Addons33.db` was
-received into disposable temporary storage and parsed through a read-only
-SQLite connection for installed identity, enabled state, disabled reason, and
-recorded origin. The requested `guisettings.xml` was not present at the
-authorized path or elsewhere in the Kodi app-data Library when checked by a
-filename-only filtered listing; it was not retrieved or substituted. The raw
-database copy was deleted immediately after parsing, and no raw private
-evidence was committed or retained in project tracking.
-
-The observed candidate graph contains 37 nodes and 70 dependency edges (67
-required, 3 optional): 30 captured third-party nodes, two unresolved optional
-metadata nodes, and five runtime/system nodes. The diagnostic FrozenManifest v1
-fingerprint was `sha256:8807efedc3814b3c460761b8dc44466ae4e6d6f5dbe099f1a3cfb0a1a192660b`.
-The temporary ArtifactStore contains 28 exact validated artifacts, 28 unique
-SHA-256 identities, and 141,987,267 unique bytes; it is disposable evidence,
-not a repository artifact.
-
-Frozen Family Room software capture is **INCOMPLETE**. The two blocking
-required artifacts are the exact installed `script.module.dropbox`
-`10.3.1+matrix.1` artifact and the exact installed
-`resource.font.robotocjksc` `0.0.3` artifact. The cached Robotocjksc ZIP has
-the malformed top-level directory `resource.font.robotcjksc` and was not
-renamed or repackaged. The optional YouTube artifact is also incomplete, while
-the unresolved optional metadata findings are `script.module.inputstreamhelper`
-and `script.module.pysocks`.
-
-The database showed all observed captured add-ons enabled except
-`service.skinsettings.backup`, which was disabled with disabled reason `1`.
-`Addons33.db` has no explicit broken-state table or column, so broken status is
-not claimed from this evidence. The `general.addonupdates` source value is
-**UNAVAILABLE** because the authorized settings file was absent. Ready-to-use
-configuration is **INCOMPLETE / BLOCKED_BY_BM017**: private/authenticated
-configuration was not captured, and no one-click Family Room readiness claim
-is made. BM-017, retention, pinning, scheduling, freshness UI, and real frozen
-installation remain deferred.
-
-Relevant BM-021B artifact/frozen/frozen-install tests passed **30/30** and
-`git diff --check` passed. Codex usage start/end/delta are unavailable; no
-telemetry was fabricated. The worker remains clean and matrix remains
-`f1c23eb`.
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected
-`matrix`; this Codex worker is synchronized, idle, and ready for the next
-approved milestone. The reviewed substantive integration commit is `56ea26a`, reconstructed from worker
+`matrix`; matrix remains neutral with `active_agent: none`. The reviewed
+substantive integration commit is `56ea26a`, reconstructed from worker
 commit `27f4215`. Worker `.agent/*` metadata was excluded.
 
 BM-022 installs only complete BM-021B manifests backed by immutable exact

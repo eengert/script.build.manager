@@ -1,27 +1,29 @@
 # Agent Handoff — synchronized Codex worker
 
-## BM-017C — structured private-resource foundation complete
+## BM-017C — structured private-resource foundation integrated and synchronized
 
-Codex is synchronized with protected `matrix` through `6bd927c` by a normal
-merge; matrix remains neutral and no other worker branch was modified. BM-017C
-is complete on `agent/codex` in substantive commit `8ba7bdc`.
+Codex is synchronized with protected `matrix` through `2374ee5` by a normal
+merge; matrix remains neutral, the worker identity remains `codex`, and no
+other worker branch was modified. BM-017C is complete and supervisor-approved
+on matrix. Its clean matrix-side substantive commit is `dce8276`, reconstructed
+from worker implementation commit `8ba7bdc`; worker tracking metadata was
+excluded from that substantive integration.
 
-BM-017B remains complete with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**;
-its sanitized documentation is integrated on matrix. BM-017C audited the
-public Red Light `2.6.8` package, added a generic structured-private-resource
-protocol, exact Red Light schema/version declarations, a quiesced row-scoped
-WAL adapter, protected-overlay coexistence, restart-safe metadata, fake SQLite
-fixtures, and sanitized documentation. It did not retrieve the real Family
-Room `settings.db`, capture private values, create the real overlay, write to
-Family Room, install on a real device, or start BM-017D/retention/scheduling.
+BM-017C provides a generic structured-private-resource protocol, exact Red
+Light schema/version declarations, a quiesced row-scoped WAL adapter,
+protected-overlay coexistence, restart-safe metadata, fake SQLite fixtures, and
+sanitized documentation. It did not retrieve the real Family Room `settings.db`,
+capture private values, create the real overlay, write to Family Room, install
+on a real device, or start BM-017D/retention/scheduling.
 
-Validation: structured-resource **27/27**, focused regression group **386/386**,
-full suite **1604/1604**, and `git diff --check` passed.
+Validation on the integrated matrix tree: structured-resource **27/27**,
+focused regression group **386/386**, full suite **1604/1604**, and
+`git diff --check` passed.
 
 ### Smallest next step
 
-Supervisor review of `8ba7bdc`. Any real Red Light private capture is a
-separate BM-017D authorization and must not be inferred from this foundation.
+Stop after synchronization. Any real Red Light private capture is a separate
+BM-017D authorization and must not be inferred from this foundation.
 
 ## BM-017B — Private overlay capture blocked by opaque Red Light state
 
@@ -427,6 +429,39 @@ transaction/session/service tests passed 32/32, the full suite passed
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
 
+## BM-017C integration complete
+
+BM-017C is complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `dce8276`, reconstructed from worker
+implementation commit `8ba7bdc`; worker tracking metadata was excluded.
+
+The structured private-resource foundation owns only explicitly declared typed
+fields inside a vetted resource. Public manifests contain safe adapter,
+version, schema, lifecycle, and field metadata; private values remain in the
+protected overlay and are omitted from results, logs, and durable restart
+metadata. The Red Light 2.6.8 adapter requires an existing exact-schema WAL
+database and quiesced runtime, performs bounded row-scoped transaction writes
+with per-field read-back, preserves unrelated rows, and requires explicit
+restart/reload. It does not replace the mixed settings database or support
+arbitrary paths, SQL, or wildcard ownership.
+
+Integrated validation passed structured-resource **27/27**, focused
+regressions **386/386**, full suite **1604/1604**, and `git diff --check`.
+Tests use fake fixtures only. No real Family Room private database, credential,
+Kodi profile, Apple TV, or other device was accessed or mutated.
+
+BM-017B remains complete with result
+**BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**; frozen Family Room software is
+**COMPLETE**, captured desired state is **INCOMPLETE**, and real-device frozen
+installation is **NOT VALIDATED**. BM-017D has not started.
+
+### Smallest next step
+
+Supervisor direction and separate authorization are required before any
+BM-017D real private-state capture/import work. Do not access the real Family
+Room private database or begin another milestone from this handoff.
+
 ## BM-017B integration complete
 
 BM-017B is complete and supervisor-approved, with result
@@ -439,9 +474,8 @@ Family Room source remained read-only.
 
 Frozen Family Room software remains **COMPLETE**; captured desired state is
 **INCOMPLETE**; real-device frozen installation is **NOT VALIDATED**. Matrix
-remains neutral with `active_agent: none`. BM-017C has not started; its next
-step is a separately authorized structured private-resource foundation using
-non-private Red Light source/frozen artifacts and fake fixtures only.
+remains neutral with `active_agent: none`. BM-017C is complete and integrated
+above; BM-017D remains separately authorized and not started.
 
 ## BM-017A integration complete
 

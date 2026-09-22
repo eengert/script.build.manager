@@ -2,9 +2,9 @@
   "active_agent": "codex",
   "status": "complete",
   "task": "BM-017C",
-  "reason": "BM-017C structured private-resource foundation is complete on agent/codex in 8ba7bdc. It audits public Red Light 2.6.8 source, adds exact-version/schema structured resource declarations, a declared-row transactional adapter with quiesced lifecycle, protected-overlay coexistence, restart-safe metadata, fake SQLite validation, and sanitized documentation. Full suite passed 1604/1604. BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. No real Family Room settings.db, private values, device installation, retention, scheduling, BM-017D, or next milestone was started.",
-  "last_commit": "8ba7bdc",
-  "matrix_sha": "6bd927c",
+  "reason": "BM-017C is complete and integrated on protected matrix at 2374ee5; Codex is synchronized through a normal merge and remains the worker identity. It provides a structured private-resource foundation with explicit field ownership and an exact Red Light 2.6.8 adapter; BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. No private values were captured, no real Family Room private source was accessed, frozen software remains COMPLETE, captured desired state remains INCOMPLETE, and real-device installation remains NOT VALIDATED. BM-017D has not started.",
+  "last_commit": "4702578",
+  "matrix_sha": "2374ee5",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
