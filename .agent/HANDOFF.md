@@ -1,3 +1,31 @@
+# Agent Handoff — BM-023A-R integrated on matrix
+
+**Result**: `MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS`.
+Substantive worker commit `a8d4b71` was reviewed and cherry-picked as matrix
+commit `ff5c000`; worker `.agent/*` history was not copied. Matrix tracking is
+neutral with `active_agent: none`.
+
+Installed non-system nodes require exact artifacts regardless of optional
+incoming edges. Absent optional `script.module.pysocks` stays missing,
+artifactless, and outside the install schedule. Installed and enabled
+`plugin.video.youtube` `7.4.4+unofficial.2` remains managed desired software
+and requires an exact artifact. System/runtime nodes remain artifactless.
+The exact remaining gap is YouTube `7.4.4+unofficial.2`. Historical BM-023A
+remains `BLOCKED_MISSING_FROZEN_ARTIFACTS`.
+
+Matrix validation: frozen capture/manifest/install **25/25**, dependency
+regressions **147/147**, full suite **1607/1607**, and `git diff --check`
+clean. These are automated tests; Kodi was not launched and no portable
+profile, Family Room/device, or private overlay was accessed.
+
+### Smallest next step
+
+Synchronize Codex normally, then continue BM-023A-H public historical artifact
+recovery. Do not resume BM-023A until the exact manifest passes production
+validation.
+
+---
+
 # Agent Handoff — BM-020A integrated
 
 ## BM-017D — Real Family Room structured private-resource capture integrated

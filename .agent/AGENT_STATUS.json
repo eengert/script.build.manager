@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-017D",
-  "reason": "BM-017D is complete and its sanitized tracking is integrated on protected matrix. The authorized read-only Family Room Red Light 2.6.8 settings.db snapshot passed exact schema, WAL, and integrity validation; all 10 declared optional private fields were captured and verified into protected local overlay storage. Family Room frozen software, private overlay, and captured desired state are COMPLETE; real-device installation remains NOT VALIDATED. No source mutation, apply operation, raw evidence retention, or private-value exposure occurred. BM-017B retains historical result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE.",
-  "last_commit": "d585fd8",
-  "matrix_sha": "2374ee5",
+  "task": "BM-023A-R",
+  "reason": "BM-023A-R is complete on protected matrix. Reviewed worker implementation a8d4b71 is integrated as ff5c000. Every installed non-system frozen node requires its exact artifact even through an optional edge; absent optional pysocks remains artifactless and excluded from installation; system nodes remain artifactless. BM-023A remains historically BLOCKED_MISSING_FROZEN_ARTIFACTS. Exact remaining artifact gap: plugin.video.youtube 7.4.4+unofficial.2. Frozen capture/install tests 25/25, dependency regressions 147/147, full suite 1607/1607, diff check clean. No Kodi launch, portable-profile mutation, Family Room/device access, or private-overlay access occurred.",
+  "last_commit": "ff5c000",
+  "matrix_sha": "ff5c000",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
