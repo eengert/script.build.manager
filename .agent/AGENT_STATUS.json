@@ -1,8 +1,8 @@
 {
   "active_agent": "codex",
   "status": "ready",
-  "task": "BM-022V",
-  "reason": "BM-022V read-only Family Room frozen-capture validation complete on this worker. Software capture remains incomplete because two required exact artifacts are unavailable; ready-to-use configuration remains incomplete and BM-017/private state is deferred. No source mutation, installation, device restart, or next milestone occurred.",
+  "task": "BM-022V-R",
+  "reason": "BM-022V-R complete. Kodi Omega evidence supports one safe package root with addon.xml ID authority; the generalized validator/staged-extraction correction is covered by tests. Exact Dropbox and Robotocjksc artifacts are captured, required software capture is complete, and BM-017/private configuration remains deferred. No Family Room mutation or next milestone occurred.",
   "last_commit": "be4a798",
   "matrix_sha": "f1c23eb",
   "next_agent": "human",

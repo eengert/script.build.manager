@@ -454,8 +454,18 @@ def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
 
+    roots = {
+        name.split("/", 1)[0]
+        for name in names
+        if name and not name.endswith("/")
+    }
     prefix = f"{addon_id}/"
     has_prefix = any(n.startswith(prefix) and n != prefix for n in names)
+    alternate_prefix = ""
+    if not has_prefix and len(roots) == 1:
+        candidate = next(iter(roots))
+        if any(n.startswith(f"{candidate}/") for n in names):
+            alternate_prefix = f"{candidate}/"
 
     target.mkdir(parents=True, exist_ok=True)
     target_resolved = target.resolve()
@@ -468,6 +478,8 @@ def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> 
                 if not name.startswith(prefix):
                     continue
                 rel = name[len(prefix):]
+            elif alternate_prefix:
+                rel = name[len(alternate_prefix):]
             else:
                 rel = name
             if not rel:

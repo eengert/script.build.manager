@@ -1,6 +1,63 @@
 # Agent Handoff — synchronized Codex worker
 
-## BM-022V — Real Family Room frozen-capture validation complete
+## BM-022V-R — Family Room exact-artifact blocker resolution complete
+
+BM-022V-R is complete on `agent/codex`. The BM-022V checkpoint was published
+first as `f5a4415` to `origin/agent/codex`. No BM-017 or other milestone was
+started, and the Family Room remained read-only.
+
+### Resolution
+
+Kodi Omega source supports a package with one safe top-level folder whose
+`addon.xml` declares the requested add-on ID, even when the folder name differs
+from that ID. Kodi stages the extracted contents under the requested ID. The
+previous Build Manager root-equality check was unnecessarily strict.
+
+The generalized correction is limited to `resources/lib/artifacts.py` and the
+shared staged extraction helper in `resources/lib/repository.py`. It accepts
+one safe root and keeps exact `addon.xml` ID/version authority while preserving
+rejection of multiple roots, traversal, symlinks, missing/malformed XML, ID
+mismatch, and version mismatch. No package bytes are rewritten, and there is
+no add-on-specific exception.
+
+The exact official Kodi Omega Dropbox package was recovered and imported:
+
+- ID/version: `script.module.dropbox` `10.3.1+matrix.1`
+- SHA-256: `5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6`
+- Size: 667,538 bytes
+- Source: recorded official Kodi Omega mirror URL
+
+The exact cached Robotocjksc ZIP now validates unchanged as
+`resource.font.robotocjksc` `0.0.3`; its alternate safe root is normalized only
+during staged extraction. A temporary proof confirmed the final target has
+the original `addon.xml` and payload bytes.
+
+### Final capture state
+
+- Required frozen software capture: **COMPLETE**.
+- Candidate manifest: 37 nodes; 67 required edges; 3 optional edges; zero
+  required missing artifacts.
+- Exact artifact-backed nodes: 30; captured artifact bytes: 194,254,227.
+- Candidate fingerprint:
+  `sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+- Optional YouTube remains incomplete because installed
+  `7.4.4+unofficial.2` differs from cached `7.4.4`; it does not block required
+  capture completion.
+- Ready-to-use configuration: **BLOCKED_BY_BM017 / INCOMPLETE**. Private/auth
+  state was not captured.
+
+Focused tests passed **331/331**; full suite passed **1577/1577**; and
+`git diff --check` passed. No Family Room installation, update, enable/disable,
+repository refresh, restart, settings write, database write, or reconciliation
+was performed. Codex usage values remain unavailable.
+
+### Smallest next step
+
+Supervisor review the BM-022V-R correction and, separately, authorize any
+future BM-017 private-state work. Do not install the candidate build or begin
+another milestone from this handoff.
+
+## BM-022V — Real Family Room frozen-capture validation complete (initial checkpoint)
 
 BM-022V is complete on `agent/codex` as read-only evidence validation. No
 production code or documentation was added; no source Kodi profile, database,

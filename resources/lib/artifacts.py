@@ -137,11 +137,12 @@ def validate_addon_zip(
             mode = (info.external_attr >> 16) & 0xFFFF
             if stat.S_IFMT(mode) == stat.S_IFLNK:
                 raise ArtifactValidationError("artifact contains a symbolic link")
-        if roots != {expected_addon_id}:
+        if len(roots) != 1:
             raise ArtifactValidationError(
                 "artifact must contain exactly one top-level add-on directory"
             )
-        xml_name = f"{expected_addon_id}/addon.xml"
+        addon_root = next(iter(roots))
+        xml_name = f"{addon_root}/addon.xml"
         if xml_name not in normalized_names:
             raise ArtifactValidationError("artifact is missing addon.xml")
         try:

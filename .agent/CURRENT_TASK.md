@@ -1,6 +1,49 @@
 # Current Task
 
-## BM-022V — Real Family Room frozen-capture validation complete
+## BM-022V-R — Family Room exact-artifact blocker resolution complete
+
+**Status**: Complete on `agent/codex`; BM-022V remains complete. No BM-017 or
+other milestone was started, and the Family Room remained strictly read-only.
+
+The BM-022V checkpoint was published first as `f5a4415` to
+`origin/agent/codex`. Kodi Omega source confirms that native ZIP installation
+requires one safe top-level folder and a valid `addon.xml`, but does not
+require that folder name to equal the add-on ID. Kodi loads the descriptor from
+the sole folder and stages its contents under the requested add-on ID
+directory. Build Manager's previous root-equality check was therefore too
+strict for this generalized safe case.
+
+The smallest production correction now accepts exactly one safe top-level root,
+uses the `addon.xml` ID and exact version as authority, and normalizes that
+root's contents into the final requested add-on directory during staged
+extraction. Multiple roots, traversal, symlinks, missing or malformed
+`addon.xml`, ID mismatch, and version mismatch remain fail-closed. No package
+bytes are rewritten. There is no add-on-specific exception.
+
+The exact official Kodi Omega `script.module.dropbox` `10.3.1+matrix.1`
+package was recovered from the recorded Kodi mirror URL, validated, and
+immutably imported. SHA-256 is
+`5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6`, size
+667,538 bytes. The unchanged cached Robotocjksc ZIP also validates as the
+exact `resource.font.robotocjksc` `0.0.3` artifact despite its safe alternate
+root `resource.font.robotcjksc`; a temporary extraction proof placed its
+original bytes under the final add-on ID directory.
+
+The rerun candidate FrozenManifest v1 is **COMPLETE** for required software:
+37 nodes, 67 required edges, 3 optional edges, zero required missing
+artifacts, 30 exact artifact-backed nodes, 194,254,227 captured artifact
+bytes, and fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+The optional YouTube node remains incomplete because installed
+`7.4.4+unofficial.2` is not the cached `7.4.4`; it does not block required
+capture completion. Ready-to-use configuration remains **BLOCKED_BY_BM017 /
+INCOMPLETE** because private/authenticated state was not captured.
+
+Focused artifact/repository/add-on/frozen tests passed **331/331**. The full
+Build Manager suite passed **1577/1577**. `git diff --check` passed. Codex
+usage start/end/delta are unavailable; no telemetry was fabricated.
+
+## BM-022V — Real Family Room frozen-capture validation complete (initial checkpoint)
 
 **Status**: Complete on `agent/codex`; this was a read-only evidence and
 validation task. No production code, source-profile, package-cache, database,

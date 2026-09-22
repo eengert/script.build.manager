@@ -1,6 +1,7 @@
 """Tests for BM-021B immutable exact add-on artifacts."""
 
 import io
+import stat
 import tempfile
 import unittest
 import zipfile
@@ -42,6 +43,21 @@ class TestAddonZipValidation(unittest.TestCase):
         with self.assertRaises(ArtifactValidationError):
             validate_addon_zip(data, expected_addon_id="plugin.example", expected_version="9.9.9")
 
+    def test_safe_alternate_root_uses_addon_xml_id_as_authority(self):
+        data = _zip({"renamed-root/addon.xml": _xml()})
+        metadata = validate_addon_zip(
+            data, expected_addon_id="plugin.example", expected_version="1.2.3"
+        )
+        self.assertEqual("plugin.example", metadata.addon_id)
+        self.assertEqual("1.2.3", metadata.version)
+
+    def test_alternate_root_with_wrong_addon_xml_id_is_rejected(self):
+        data = _zip({"renamed-root/addon.xml": _xml("plugin.other")})
+        with self.assertRaises(ArtifactValidationError):
+            validate_addon_zip(
+                data, expected_addon_id="plugin.example", expected_version="1.2.3"
+            )
+
     def test_malformed_zip_rejected(self):
         with self.assertRaises(ArtifactValidationError):
             validate_addon_zip(b"not a zip", expected_addon_id="plugin.example", expected_version="1.2.3")
@@ -56,6 +72,18 @@ class TestAddonZipValidation(unittest.TestCase):
             validate_addon_zip(
                 _zip({"plugin.example/addon.xml": _xml(), "other/file": b"x"}),
                 expected_addon_id="plugin.example", expected_version="1.2.3",
+            )
+
+    def test_symlink_is_rejected(self):
+        link = zipfile.ZipInfo("plugin.example/link")
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as archive:
+            archive.writestr("plugin.example/addon.xml", _xml())
+            archive.writestr(link, "target")
+        with self.assertRaises(ArtifactValidationError):
+            validate_addon_zip(
+                data.getvalue(), expected_addon_id="plugin.example", expected_version="1.2.3"
             )
 
     def test_no_installed_directory_fallback_is_possible(self):

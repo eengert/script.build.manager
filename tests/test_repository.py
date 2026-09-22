@@ -557,6 +557,18 @@ class TestExtractZipToDirectory(unittest.TestCase):
         _extract_zip_to_directory(zip_bytes, addon_id, target)
         self.assertTrue((target / "resources" / "data.xml").exists())
 
+    def test_alternate_safe_prefix_is_normalized_to_addon_target(self):
+        addon_id = "repository.test"
+        zip_bytes = _make_zip({
+            "renamed-root/addon.xml": _make_addon_xml(addon_id),
+            "renamed-root/icon.png": b"img",
+        })
+        target = Path(self.tmpdir) / addon_id
+        _extract_zip_to_directory(zip_bytes, addon_id, target)
+        self.assertEqual(_make_addon_xml(addon_id), (target / "addon.xml").read_bytes())
+        self.assertEqual(b"img", (target / "icon.png").read_bytes())
+        self.assertFalse((target / "renamed-root").exists())
+
 
 # ---------------------------------------------------------------------------
 # INSTALL -- happy path (all backend methods called, correct order)
