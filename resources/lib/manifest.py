@@ -40,6 +40,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
+from resources.lib.private_resource import (
+    PrivateResourceValidationError,
+    StructuredPrivateResourceDeclaration,
+    StructuredResourceFieldDeclaration,
+)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -125,6 +131,7 @@ class ConfigDeclarations:
     managed_settings: Tuple[ManagedSettingScope, ...] = ()
     managed_files: Tuple[str, ...] = ()
     private_settings: Tuple[PrivateSettingDeclaration, ...] = ()
+    structured_private_resources: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -215,7 +222,7 @@ _BUILD_KEYS             = frozenset({"id", "version", "name", "description"})
 _REPO_KEYS              = frozenset({"addon_id", "bootstrap_url", "required"})
 _ADDON_KEYS             = frozenset({"addon_id", "state", "note"})
 _SKIN_KEYS              = frozenset({"addon_id", "config_packages"})
-_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files", "private_settings"})
+_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files", "private_settings", "structured_private_resources"})
 _MANAGED_SETTING_KEYS   = frozenset({"target", "addon_id", "keys"})
 _PRIVATE_SETTING_KEYS   = frozenset({"target", "addon_id", "key", "type", "required", "sensitivity"})
 _PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional"})
@@ -620,11 +627,79 @@ def _parse_config(raw: object, *, label: str) -> Optional[ConfigDeclarations]:
             private_list.append(parsed)
         private_settings = tuple(private_list)
 
+    structured_private_resources: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
+    if "structured_private_resources" in raw:
+        resources_raw = raw["structured_private_resources"]
+        if not isinstance(resources_raw, list):
+            raise ManifestValidationError(f"{label}.structured_private_resources: must be an array")
+        resource_list = []
+        seen_resources = set()
+        for j, resource in enumerate(resources_raw):
+            rlabel = f"{label}.structured_private_resources[{j}]"
+            try:
+                parsed = _parse_structured_private_resource(resource, label=rlabel)
+            except PrivateResourceValidationError as exc:
+                raise ManifestValidationError(f"{rlabel}: {exc}") from exc
+            if parsed.resource_id in seen_resources:
+                raise ManifestValidationError(f"{rlabel}.resource_id: duplicate resource ID")
+            seen_resources.add(parsed.resource_id)
+            resource_list.append(parsed)
+        structured_private_resources = tuple(resource_list)
+
     return ConfigDeclarations(
         packages=packages,
         managed_settings=managed_settings,
         managed_files=managed_files,
         private_settings=private_settings,
+        structured_private_resources=structured_private_resources,
+    )
+
+
+def _parse_structured_private_resource(
+    raw: object, *, label: str
+) -> StructuredPrivateResourceDeclaration:
+    if not isinstance(raw, dict):
+        raise PrivateResourceValidationError("must be an object")
+    keys = {
+        "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+        "resource_id", "fields", "adapter_id", "lifecycle", "required",
+    }
+    unknown = set(raw) - keys
+    if unknown:
+        raise PrivateResourceValidationError("contains unsupported fields")
+    required_keys = {"resource_type", "owner_addon_id", "supported_versions", "schema_id", "resource_id", "fields", "adapter_id"}
+    if not required_keys.issubset(raw):
+        raise PrivateResourceValidationError("is missing required metadata")
+    fields_raw = raw["fields"]
+    if not isinstance(fields_raw, list):
+        raise PrivateResourceValidationError("fields must be an array")
+    fields = []
+    for index, field in enumerate(fields_raw):
+        if not isinstance(field, dict):
+            raise PrivateResourceValidationError(f"field {index} must be an object")
+        if set(field) - {"field_id", "type", "required", "sensitivity"}:
+            raise PrivateResourceValidationError(f"field {index} contains unsupported metadata")
+        if "field_id" not in field or "type" not in field:
+            raise PrivateResourceValidationError(f"field {index} is missing identity/type")
+        fields.append(StructuredResourceFieldDeclaration(
+            field_id=field["field_id"],
+            value_type=field["type"],
+            required=field.get("required", False),
+            sensitivity=field.get("sensitivity", "private_identifier"),
+        ))
+    versions = raw["supported_versions"]
+    if not isinstance(versions, list):
+        raise PrivateResourceValidationError("supported_versions must be an array")
+    return StructuredPrivateResourceDeclaration(
+        resource_type=raw["resource_type"],
+        owner_addon_id=raw["owner_addon_id"],
+        supported_versions=tuple(versions),
+        schema_id=raw["schema_id"],
+        resource_id=raw["resource_id"],
+        fields=tuple(fields),
+        adapter_id=raw["adapter_id"],
+        lifecycle=raw.get("lifecycle", "quiesced"),
+        required=raw.get("required", True),
     )
 
 

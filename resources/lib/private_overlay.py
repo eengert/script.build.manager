@@ -37,6 +37,13 @@ from resources.lib.manifest import (
     PrivateSettingDeclaration,
     SettingTargetKind,
 )
+from resources.lib.private_resource import (
+    PrivateResourceValidationError,
+    StructuredPrivateResourceDeclaration,
+    StructuredPrivateResourceOverlay,
+    StructuredPrivateResourceManager,
+    validate_resource_overlay,
+)
 
 
 SCHEMA_VERSION = 1
@@ -47,7 +54,7 @@ _SAFE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ENTRY_KEYS = frozenset({"target", "addon_id", "key", "type", "value"})
 _OVERLAY_KEYS = frozenset({
-    "schema_version", "overlay_id", "target_build_id", "entries",
+    "schema_version", "overlay_id", "target_build_id", "entries", "resources",
 })
 _SETTING_TYPES = frozenset(item.value for item in ConfigSettingType)
 _SENSITIVITIES = frozenset({
@@ -188,22 +195,29 @@ class PrivateOverlay:
     target_build_id: str
     entries: Tuple[PrivateOverlayEntry, ...]
     schema_version: int = SCHEMA_VERSION
+    resources: Tuple[StructuredPrivateResourceOverlay, ...] = ()
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "schema_version": self.schema_version,
             "overlay_id": self.overlay_id,
             "target_build_id": self.target_build_id,
             "entries": [entry.to_dict() for entry in self.entries],
         }
+        if self.resources:
+            result["resources"] = [resource.to_dict() for resource in self.resources]
+        return result
 
     def safe_dict(self) -> dict:
-        return {
+        result = {
             "schema_version": self.schema_version,
             "overlay_id": self.overlay_id,
             "target_build_id": self.target_build_id,
             "entries": [entry.safe_dict() for entry in self.entries],
         }
+        if self.resources:
+            result["resources"] = [resource.safe_dict() for resource in self.resources]
+        return result
 
     @property
     def fingerprint(self) -> str:
@@ -212,7 +226,9 @@ class PrivateOverlay:
 
     @classmethod
     def from_dict(cls, value: object) -> "PrivateOverlay":
-        if not isinstance(value, dict) or set(value) != _OVERLAY_KEYS:
+        if not isinstance(value, dict) or not _OVERLAY_KEYS.issuperset(value):
+            raise PrivateOverlayValidationError("private overlay fields are unsupported")
+        if set(value) not in (_OVERLAY_KEYS - {"resources"}, _OVERLAY_KEYS):
             raise PrivateOverlayValidationError("private overlay fields are unsupported")
         if value.get("schema_version") != SCHEMA_VERSION:
             raise PrivateOverlayValidationError("unsupported private overlay schema")
@@ -249,11 +265,21 @@ class PrivateOverlay:
                 value=typed_value,
                 target_kind=target_kind,
             ))
+        resources = []
+        if "resources" in value:
+            raw_resources = value["resources"]
+            if not isinstance(raw_resources, list):
+                raise PrivateOverlayValidationError("private resource overlays must be an array")
+            try:
+                resources = [StructuredPrivateResourceOverlay.from_dict(item) for item in raw_resources]
+            except PrivateResourceValidationError as exc:
+                raise PrivateOverlayValidationError("private resource overlay is malformed") from exc
         return cls(
             overlay_id=overlay_id,
             target_build_id=target_build_id,
             entries=tuple(entries),
             schema_version=SCHEMA_VERSION,
+            resources=tuple(resources),
         )
 
 
@@ -287,6 +313,7 @@ class PreparedPrivateOverlay:
     overlay: Optional[PrivateOverlay]
     metadata: Optional[PrivateOverlayMetadata]
     declarations: Tuple[PrivateSettingDeclaration, ...] = ()
+    resource_declarations: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -316,14 +343,19 @@ class PrivateOverlayApplyResult:
     outcome: PrivateOverlayOutcome
     metadata: Optional[PrivateOverlayMetadata]
     results: Tuple[PrivateSettingResult, ...] = ()
+    resource_results: tuple = ()
 
     @property
     def succeeded(self) -> bool:
-        return self.outcome is not PrivateOverlayOutcome.FAILED
+        return self.outcome is not PrivateOverlayOutcome.FAILED and all(
+            result.succeeded for result in self.resource_results
+        )
 
     @property
     def changed(self) -> bool:
-        return any(item.changed for item in self.results)
+        return any(item.changed for item in self.results) or any(
+            result.changed for result in self.resource_results
+        )
 
     @property
     def message(self) -> str:
@@ -338,6 +370,7 @@ class PrivateOverlayApplyResult:
             "outcome": self.outcome.value,
             "metadata": self.metadata.to_dict() if self.metadata else None,
             "results": [item.to_dict() for item in self.results],
+            "resource_results": [item.to_dict() for item in self.resource_results],
         }
 
 
@@ -487,6 +520,7 @@ def validate_private_overlay(
     *,
     expected_build_id: str = "",
     expected_overlay_id: str = "",
+    resource_declarations: Sequence[StructuredPrivateResourceDeclaration] = (),
 ) -> PrivateOverlay:
     """Validate explicit ownership, type, completeness, and target identity."""
     if not isinstance(overlay, PrivateOverlay):
@@ -514,6 +548,26 @@ def validate_private_overlay(
     ]
     if missing:
         raise PrivateOverlayValidationError("a required private setting is missing")
+    resource_map = {declaration.resource_id: declaration for declaration in resource_declarations}
+    if len(resource_map) != len(resource_declarations):
+        raise PrivateOverlayValidationError("private resource declarations contain duplicates")
+    overlay_resource_map = {resource.resource_id: resource for resource in overlay.resources}
+    if len(overlay_resource_map) != len(overlay.resources):
+        raise PrivateOverlayValidationError("private overlay contains duplicate resources")
+    for resource in overlay.resources:
+        declaration = resource_map.get(resource.resource_id)
+        if declaration is None:
+            raise PrivateOverlayValidationError("private overlay contains an undeclared resource")
+        try:
+            validate_resource_overlay(resource, declaration)
+        except PrivateResourceValidationError as exc:
+            raise PrivateOverlayValidationError(str(exc)) from exc
+    missing_resources = [
+        declaration.resource_id for declaration in resource_declarations
+        if declaration.required and declaration.resource_id not in overlay_resource_map
+    ]
+    if missing_resources:
+        raise PrivateOverlayValidationError("a required private resource is missing")
     return overlay
 
 
@@ -525,12 +579,14 @@ class PrivateOverlayManager:
         configuration_manager: ConfigurationManager,
         *,
         store: Optional[PrivateOverlayStore] = None,
+        structured_resource_manager: Optional[StructuredPrivateResourceManager] = None,
     ):
         self._configuration_manager = configuration_manager
         # Do not translate special://profile while merely importing or
         # constructing BuildManager outside Kodi.  The store is needed only
         # when a manifest actually references a private overlay.
         self._store = store
+        self._structured_resource_manager = structured_resource_manager
 
     @property
     def _active_store(self) -> PrivateOverlayStore:
@@ -538,30 +594,48 @@ class PrivateOverlayManager:
             self._store = PrivateOverlayStore()
         return self._store
 
+    @property
+    def _active_resource_manager(self) -> StructuredPrivateResourceManager:
+        if self._structured_resource_manager is None:
+            try:
+                from resources.lib.redlight_resource import RedLightSettingsAdapter
+                self._structured_resource_manager = StructuredPrivateResourceManager({
+                    RedLightSettingsAdapter.adapter_id: RedLightSettingsAdapter(
+                        _translate_profile_root("special://profile"),
+                    ),
+                })
+            except Exception:
+                # Outside Kodi, or without a translated profile, retain a
+                # registry that fails closed rather than inventing a path.
+                self._structured_resource_manager = StructuredPrivateResourceManager()
+        return self._structured_resource_manager
+
     def prepare(
         self,
         reference: Optional[PrivateOverlayRef],
         declarations: Sequence[PrivateSettingDeclaration],
         *,
         build_id: str = "",
+        resource_declarations: Sequence[StructuredPrivateResourceDeclaration] = (),
     ) -> PreparedPrivateOverlay:
         if reference is None:
             return PreparedPrivateOverlay(None, None, tuple(declarations))
         if reference.type != "local_file":
             raise PrivateOverlayValidationError("unsupported private overlay storage type")
-        if not declarations:
-            raise PrivateOverlayValidationError("private overlay has no public setting declarations")
+        if not declarations and not resource_declarations:
+            raise PrivateOverlayValidationError("private overlay has no public declarations")
         try:
             overlay = self._active_store.load(reference.overlay_id)
         except PrivateOverlayMissingError:
             if reference.required:
                 raise
-            return PreparedPrivateOverlay(None, None, tuple(declarations))
+            return PreparedPrivateOverlay(None, None, tuple(declarations), tuple(resource_declarations))
         validated = validate_private_overlay(
             overlay,
             declarations,
             expected_build_id=build_id,
             expected_overlay_id=reference.overlay_id,
+            resource_declarations=resource_declarations,
         )
         metadata = PrivateOverlayMetadata(
             validated.overlay_id,
@@ -569,7 +643,9 @@ class PrivateOverlayManager:
             reference.required,
             True,
         )
-        return PreparedPrivateOverlay(validated, metadata, tuple(declarations))
+        return PreparedPrivateOverlay(
+            validated, metadata, tuple(declarations), tuple(resource_declarations)
+        )
 
     def apply(self, prepared: PreparedPrivateOverlay) -> PrivateOverlayApplyResult:
         if prepared.overlay is None:
@@ -607,8 +683,17 @@ class PrivateOverlayManager:
             )
             for result in applied.settings
         )
+        resource_results = ()
+        if prepared.overlay.resources:
+            try:
+                resource_results = self._active_resource_manager.apply(
+                    prepared.resource_declarations, prepared.overlay.resources,
+                )
+            except Exception:
+                return PrivateOverlayApplyResult(PrivateOverlayOutcome.FAILED, prepared.metadata, results)
         return PrivateOverlayApplyResult(
             PrivateOverlayOutcome.APPLIED if applied.all_applied else PrivateOverlayOutcome.FAILED,
             prepared.metadata,
             results,
+            resource_results,
         )

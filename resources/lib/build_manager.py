@@ -316,6 +316,10 @@ def _config_declarations_payload(desired: ResolvedBuild) -> Optional[dict]:
             }
             for declaration in config.private_settings
         ],
+        "structured_private_resources": [
+            declaration.safe_dict()
+            for declaration in config.structured_private_resources
+        ],
     }
 
 
@@ -507,6 +511,10 @@ class BuildManager:
                     desired.private_overlay,
                     desired.config.private_settings if desired.config is not None else (),
                     build_id=desired.build.id,
+                    resource_declarations=(
+                        desired.config.structured_private_resources
+                        if desired.config is not None else ()
+                    ),
                 )
             fingerprint = fingerprint_resolved_build(desired, effective)
             dependency_closure = self._preflight_dependencies(desired, actual)

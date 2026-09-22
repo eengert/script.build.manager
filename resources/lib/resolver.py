@@ -246,6 +246,8 @@ def _merge_config(
       first-seen order, scope order is first-seen
     - managed_files: union in first-seen order, no duplicates
     - private_settings: union by exact target; conflicting declarations fail
+    - structured_private_resources: union by resource ID; conflicting
+      declarations fail
 
     Returns None when every supplied layer has no config.
     """
@@ -261,6 +263,9 @@ def _merge_config(
 
     private_order: List[Tuple[object, str, str]] = []
     private_map: Dict[Tuple[object, str, str], PrivateSettingDeclaration] = {}
+
+    resource_order: List[str] = []
+    resource_map = {}
 
     any_config = False
     for cfg in layers:
@@ -306,6 +311,17 @@ def _merge_config(
                 private_order.append(identity)
                 private_map[identity] = declaration
 
+        for declaration in cfg.structured_private_resources:
+            previous = resource_map.get(declaration.resource_id)
+            if previous is not None and previous != declaration:
+                raise ManifestResolutionError(
+                    "conflicting structured private resource declaration for "
+                    f"{declaration.resource_id!r}"
+                )
+            if previous is None:
+                resource_order.append(declaration.resource_id)
+                resource_map[declaration.resource_id] = declaration
+
     if not any_config:
         return None
 
@@ -321,4 +337,5 @@ def _merge_config(
         ),
         managed_files=tuple(files),
         private_settings=tuple(private_map[item] for item in private_order),
+        structured_private_resources=tuple(resource_map[item] for item in resource_order),
     )
