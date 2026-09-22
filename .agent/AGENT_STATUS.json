@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
   "status": "complete",
-  "task": "BM-023A",
-  "reason": "BM-023A preflight validation is complete with result BLOCKED_MISSING_FROZEN_ARTIFACTS. The exact Family Room manifest/store pair has two non-installable non-system nodes and only 30 artifacts for 32 non-system nodes; validate_frozen_manifest rejects it. No Kodi launch or disposable-profile mutation occurred. The protected Red Light overlay schema and target fingerprint binding validate. Resume only if the exact approved frozen artifact set is recovered from retained outputs; do not recapture Family Room or substitute newer packages.",
-  "last_commit": "5a3598f",
+  "task": "BM-023A-R",
+  "reason": "Completeness semantics were corrected and regression-tested: installed optional nodes require exact artifacts, absent optional dependencies remain missing and are not scheduled, and system nodes remain artifactless. Result MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS because no exact retained plugin.video.youtube 7.4.4+unofficial.2 artifact was found; the only local candidate is version 7.4.4. No Kodi launch, portable-profile mutation, Family Room access, or public-network lookup occurred. Await supervisor direction on exact historical-provider recovery or explicit YouTube exclusion.",
+  "last_commit": "a8d4b71",
   "matrix_sha": "5a3598f",
   "next_agent": "human",
   "updated_at": "2026-09-22"

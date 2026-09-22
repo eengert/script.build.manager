@@ -1,6 +1,85 @@
 # Current Task
 
-## BM-023A — Isolated macOS frozen-install validation preflight blocked
+## BM-023A-R — Frozen input completeness reconciliation
+
+**Status**: Complete with result
+`MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS`. The worker began on
+`agent/codex` at `093757bc3ebacbf4c554aea50b5810498d90f7d5`; protected
+`origin/matrix` remained `5a3598f565ad5b0c0164215eeefdf39b54a1d682`. The
+implementation is committed as `a8d4b71`. No matrix, Claude, or Antigravity
+branch was changed.
+
+### Completeness semantics
+
+- Every installed non-system node in the frozen desired software graph needs
+  an exact artifact, including a node reached only through optional edges.
+- An optional dependency absent at capture remains `capture_status: missing`,
+  disabled, and artifactless; it does not block completeness and is excluded
+  from installation order. System nodes remain artifactless declarations.
+- Capture and `validate_frozen_manifest` now enforce the same rule. The parser
+  accepts the capture-native empty version/type representation for missing
+  nodes and the retained `not-installed` marker; neither becomes package
+  identity.
+- Schema v1 has no implicit unmanaged/excluded state for an installed node.
+
+### Retained evidence and classifications
+
+The existing candidate at
+`/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json` has 37
+nodes and 32 non-system nodes. `script.module.pysocks` is a missing optional
+node, disabled and without an artifact. Its only parent is
+`plugin.video.youtube`, through an optional edge. The graph contains it because
+capture traverses declared optional imports and records dependencies absent
+from installed inventory. It needs no artifact and is no longer scheduled.
+Before this correction, validation rejected it under the blanket
+non-system-artifact rule; the old order builder also included every
+non-system node, but no schedule was returned because validation failed first.
+
+`plugin.video.youtube` is installed at `7.4.4+unofficial.2`, desired enabled,
+and reached from `plugin.video.umbrella` through an optional edge. It is part
+of the managed frozen software state because there is no explicit exclusion
+state. The candidate declares no configuration packages; the protected
+captured private overlay targets Red Light only. No captured public/private
+configuration dependency on YouTube was found. Excluding it would change the
+captured enabled software state and remove the add-on from the destination;
+specific runtime feature effects were not device-tested. Provenance is
+`repository_evidence`; `installed_origin` is only the placeholder `recorded`,
+so an exact provider ID is unavailable.
+
+Search stayed within retained local capture evidence and the named protected
+Build Manager storage location. The capture directory's `artifact-store`,
+`packages`, and `repository-candidates` were checked, along with matching
+filenames in the retained `source` and `evidence` directories. No exact
+YouTube `7.4.4+unofficial.2` artifact exists in the store or candidates. The
+only YouTube ZIP is `packages/plugin.video.youtube.zip`: production ZIP
+validation confirms ID `plugin.video.youtube`, embedded version `7.4.4`, SHA-256
+`d744e5ba2d2b50924a9fa5624f4d209c2be95b97ef1ad1682cafbed160fb428f`, size
+1,093,649 bytes. Validation rejects it for `7.4.4+unofficial.2`. It was not
+imported, normalized, or substituted. No public-network lookup or Family Room
+recapture was performed.
+
+Production changes are in `resources/lib/frozen.py` and
+`resources/lib/frozen_install.py`; regression tests and sanitized contracts
+were updated in `tests/test_frozen.py`, `tests/test_frozen_install.py`,
+`docs/FROZEN_BUILD_CAPTURE.md`, and `docs/FROZEN_BUILD_INSTALL.md`.
+
+Focused frozen capture/install tests passed **25/25**. The full suite passed
+**1607/1607**. `git diff --check` passed. No Kodi instance was launched, the
+portable test profile was not modified, and Family Room was not accessed.
+
+**Smallest next step**: supervisor decision on authorizing a separate exact
+historical-provider recovery step or explicitly excluding YouTube from the
+managed frozen state. Do not resume frozen installation or start another
+milestone before that decision.
+
+## BM-023A — Isolated macOS frozen-install validation preflight blocked (historical)
+
+BM-023A remains historically complete as a validation task with result
+`BLOCKED_MISSING_FROZEN_ARTIFACTS`; BM-023A-R corrects its interpretation of
+optional installed versus absent nodes without changing that historical
+result.
+
+### BM-023A preflight evidence (historical)
 
 **Status**: Complete as a validation task with result
 `BLOCKED_MISSING_FROZEN_ARTIFACTS`. BM-017D tracking was integrated on
@@ -192,6 +271,11 @@ installed versus cached `7.4.4`) but is non-blocking. The exact Dropbox
 size 667,538 bytes. The unchanged Robotocjksc ZIP is accepted through the
 generalized one-safe-root validator and normalized only during staged
 extraction; package bytes were not rewritten.
+
+BM-023A-R later established that optional incoming edges do not waive the
+artifact requirement for this installed, enabled node. The non-blocking
+classification above is preserved as historical BM-022V/R tracking and is
+superseded by the current completeness invariant.
 
 Ready-to-use configuration remains **INCOMPLETE / BLOCKED_BY_BM017** because
 private/authenticated state was not captured. Real-device frozen installation

@@ -1,6 +1,59 @@
 # Agent Handoff — synchronized Codex worker
 
-## BM-023A — macOS frozen-install validation preflight blocked
+## BM-023A-R — Frozen input completeness reconciliation
+
+**Result**: `MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS`.
+Implementation commit: `a8d4b71` on `agent/codex`. `origin/matrix` remains
+`5a3598f565ad5b0c0164215eeefdf39b54a1d682`. No protected or other worker
+branch was changed.
+
+Capture and install validation now share these rules: every installed
+non-system node needs an exact artifact even if its incoming dependency edge
+is optional; an absent optional dependency is recorded as `missing` with
+disabled desired state and no artifact and is omitted from install order; and
+system nodes remain declarations without artifacts. The installer validates
+these rules independently. Schema v1 does not imply exclusion/unmanaged state
+for installed optional nodes.
+
+The retained `script.module.pysocks` graph node is absent, disabled, and
+optional, reached only from YouTube through an optional edge. It exists because
+capture records traversed optional imports even when absent from installed
+inventory. It requires no artifact and is no longer scheduled. The previous
+installer rejected it under its blanket artifact rule before returning a
+schedule.
+
+YouTube is installed as `7.4.4+unofficial.2`, desired enabled, and is an
+optional dependency of `plugin.video.umbrella`. With no explicit exclusion
+model, it is managed frozen software. The manifest has no configuration
+packages; the protected private overlay targets Red Light only. No captured
+configuration dependency on YouTube was found. Excluding it changes the
+captured enabled software state. The `repository_evidence` provenance has only
+the `installed_origin` placeholder `recorded`; an exact provider ID is not
+present in retained evidence.
+
+Only the retained candidate directory
+`/private/tmp/bm022v-familyroom.ygB0t5` and named protected Build Manager
+artifact storage were searched. No exact `plugin.video.youtube`
+`7.4.4+unofficial.2` artifact was found. The retained package
+`packages/plugin.video.youtube.zip` validates as `7.4.4` (SHA-256
+`d744e5ba2d2b50924a9fa5624f4d209c2be95b97ef1ad1682cafbed160fb428f`,
+1,093,649 bytes); production validation rejects it for the installed version.
+No import, version normalization/substitution, network lookup, or recapture
+occurred.
+
+Focused frozen tests passed **25/25**, full suite **1607/1607**, and
+`git diff --check` passed. No Kodi launch, portable-profile mutation, or
+Family Room access occurred. BM-023A remains historically complete as a
+validation task with result `BLOCKED_MISSING_FROZEN_ARTIFACTS`.
+
+### Smallest next step
+
+Supervisor decides whether to authorize a separate exact historical-provider
+recovery step or explicitly exclude YouTube from the managed frozen state.
+Do not resume frozen installation or start another milestone before that
+decision.
+
+### BM-023A preflight details (historical)
 
 BM-017D tracking is integrated on protected matrix at `5a3598f`; Codex is
 synchronized by normal merge at `bcd0fe5`. BM-023A stopped before Kodi launch
@@ -224,6 +277,10 @@ the original `addon.xml` and payload bytes.
 - Optional YouTube remains incomplete because installed
   `7.4.4+unofficial.2` differs from cached `7.4.4`; it does not block required
   capture completion.
+- BM-023A-R later established that optional incoming edges do not waive the
+  artifact requirement for this installed, enabled node. The non-blocking
+  classification above is preserved as historical BM-022V/R tracking and is
+  superseded by the current completeness invariant.
 - Ready-to-use configuration: **BLOCKED_BY_BM017 / INCOMPLETE**. Private/auth
   state was not captured.
 
