@@ -1,23 +1,27 @@
 # Agent Handoff — synchronized Codex worker
 
-## BM-017C — structured private-resource foundation active
+## BM-017C — structured private-resource foundation complete
 
 Codex is synchronized with protected `matrix` through `6bd927c` by a normal
 merge; matrix remains neutral and no other worker branch was modified. BM-017C
-is now active on `agent/codex`.
+is complete on `agent/codex` in substantive commit `8ba7bdc`.
 
-BM-017B remains complete with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**.
-Its sanitized documentation is integrated on matrix. BM-017C will audit only
-non-private Red Light `2.6.8` source/frozen artifacts and use fake fixtures.
-It will not retrieve the real Family Room `settings.db`, capture private
-values, create the real overlay, write to Family Room, install on a real
-device, or start BM-017D/retention/scheduling work.
+BM-017B remains complete with result **BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE**;
+its sanitized documentation is integrated on matrix. BM-017C audited the
+public Red Light `2.6.8` package, added a generic structured-private-resource
+protocol, exact Red Light schema/version declarations, a quiesced row-scoped
+WAL adapter, protected-overlay coexistence, restart-safe metadata, fake SQLite
+fixtures, and sanitized documentation. It did not retrieve the real Family
+Room `settings.db`, capture private values, create the real overlay, write to
+Family Room, install on a real device, or start BM-017D/retention/scheduling.
+
+Validation: structured-resource **27/27**, focused regression group **386/386**,
+full suite **1604/1604**, and `git diff --check` passed.
 
 ### Smallest next step
 
-Audit the exact non-private Red Light source/frozen artifact for schema,
-initialization, locking, cache, and safe application behavior before designing
-the generic resource protocol or adapter.
+Supervisor review of `8ba7bdc`. Any real Red Light private capture is a
+separate BM-017D authorization and must not be inferred from this foundation.
 
 ## BM-017B — Private overlay capture blocked by opaque Red Light state
 
