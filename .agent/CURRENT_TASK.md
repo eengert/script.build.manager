@@ -4,6 +4,9 @@
 
 **Status**: Complete on `agent/codex`; BM-022V remains complete. No BM-017 or
 other milestone was started, and the Family Room remained strictly read-only.
+The approved BM-022V-R substantive endpoint was integrated on protected
+`matrix` as `31b8f9d`; this worker retains its own metadata and is now
+starting BM-017A.
 
 The BM-022V checkpoint was published first as `f5a4415` to
 `origin/agent/codex`. Kodi Omega source confirms that native ZIP installation
@@ -89,7 +92,6 @@ Relevant BM-021B artifact/frozen/frozen-install tests passed **30/30** and
 `git diff --check` passed. Codex usage start/end/delta are unavailable; no
 telemetry was fabricated. The worker remains clean and matrix remains
 `f1c23eb`.
-
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

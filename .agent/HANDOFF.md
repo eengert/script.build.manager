@@ -322,6 +322,36 @@ transaction/session/service tests passed 32/32, the full suite passed
 for BM-020C; BM-020C, BM-017, and family-room distribution/source work remain
 outside scope.
 
+## BM-022V / BM-022V-R integration complete
+
+BM-022V and BM-022V-R are complete, supervisor-approved, and integrated on
+protected `matrix`. The clean matrix-side substantive commit is `31b8f9d`,
+reconstructed from approved worker commit `784ea8f`; worker-only `.agent/*`
+metadata was not copied. Matrix remains neutral with `active_agent: none`.
+
+The read-only Family Room software capture is complete for required software:
+37 nodes; 67 required and 3 optional edges; zero required missing artifacts;
+30 exact artifact-backed nodes; 194,254,227 captured bytes; and fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+The exact Dropbox `10.3.1+matrix.1` artifact is present with SHA-256
+`5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6` and
+size 667,538 bytes. The cached Robotocjksc ZIP remains byte-for-byte
+unchanged; its single safe alternate root is accepted by the generalized
+validator and normalized during staged extraction. Optional YouTube remains
+non-blockingly incomplete because the installed and cached versions differ.
+
+Ready-to-use configuration is **INCOMPLETE / BLOCKED_BY_BM017** because
+private/authenticated state was not captured. Real-device frozen installation
+is **NOT YET VALIDATED**. The Family Room profile/evidence remained read-only;
+no installation, update, enable/disable, repository refresh, restart,
+settings/database write, or reconciliation occurred. BM-017 remains deferred
+and no next milestone was started.
+
+Validation from the integrated tree passed focused tests **331/331**, the
+full suite **1577/1577**, and `git diff --check`. The smallest next step is
+supervisor direction on the separate BM-017/private-state boundary; do not
+install the candidate build or begin another milestone from this record.
+
 ## BM-022 integration complete
 
 BM-022 is complete, supervisor-approved, and integrated on protected `matrix`.
