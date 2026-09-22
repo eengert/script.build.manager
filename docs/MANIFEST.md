@@ -436,15 +436,22 @@ must be rejected.
   engine must validate downloaded artifacts before installation.
 - The `private_overlay` field contains only a reference. Credential values live
   in the private overlay file, which is validated separately by BM-017A.
+- `config.structured_private_resources` contains only vetted resource metadata:
+  exact owner/version/schema, adapter identity, lifecycle, and field-level
+  types/ownership. It cannot contain values, SQL, table names, filesystem
+  paths, wildcard keys, or whole-file targets. Values remain in the protected
+  overlay and are applied only by the resource-specific adapter. See
+  [`docs/BM017C_PRIVATE_RESOURCES.md`](BM017C_PRIVATE_RESOURCES.md).
 
 ---
 
 ## Unresolved questions for BM-005+
 
-1. ~~**Private overlay schema**~~ — **Defined by BM-017A.** Values are
-   validated against public `config.private_settings` declarations and remain
-   outside the public manifest and packages. See
-   [`docs/PRIVATE_OVERLAYS.md`](PRIVATE_OVERLAYS.md).
+1. ~~**Private overlay schema**~~ — **Defined by BM-017A/BM-017C.** Values are
+   validated against public `config.private_settings` and structured-resource
+   declarations and remain outside the public manifest and packages. See
+   [`docs/PRIVATE_OVERLAYS.md`](PRIVATE_OVERLAYS.md) and
+   [`docs/BM017C_PRIVATE_RESOURCES.md`](BM017C_PRIVATE_RESOURCES.md).
 
 2. ~~**Config package format**~~ — **Resolved by BM-015.** A package is a
    directory under `resources/config/packages/<package-id>/` containing a

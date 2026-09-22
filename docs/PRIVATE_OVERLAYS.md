@@ -145,3 +145,19 @@ Future authorized capture from a Kodi profile and user-provided import both
 must produce this same validated overlay schema. BM-017A implements only the
 import/storage/application contract. It does not access private Family Room
 files, account data, tokens, credentials, or addon data.
+
+## Structured private resources (BM-017C)
+
+BM-017C extends the protected overlay with optional structured-resource entries.
+A structured resource is never a whole file or whole database: a public
+declaration names a vetted adapter, exact owner/version/schema, and explicit
+typed fields. The protected overlay may contain those values alongside normal
+BM-017A private-setting entries. Public manifests cannot provide SQL, table
+names, filesystem paths, or wildcard keys.
+
+Structured-resource results expose field IDs and sanitized status only. Durable
+transactions still carry only overlay identity and fingerprint. Red Light
+2.6.8 is the first adapter and requires an existing exact-schema database plus
+a quiesced owner and explicit reload/restart boundary; absent or unknown state
+fails closed. See `docs/BM017C_PRIVATE_RESOURCES.md` for the audited lifecycle,
+locking, transaction, and fake-fixture boundary.

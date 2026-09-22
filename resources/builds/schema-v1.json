@@ -215,6 +215,12 @@
           "items": { "$ref": "#/definitions/private_setting_declaration" },
           "description": "Public declarations for private setting targets. Names, types, requirement, and sensitivity are public; values are supplied only by a separate private overlay.",
           "default": []
+        },
+        "structured_private_resources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/structured_private_resource" },
+          "description": "Public metadata for vetted structured private resources. Field values remain in the protected private overlay.",
+          "default": []
         }
       }
     },
@@ -275,6 +281,38 @@
           "type": "string",
           "enum": ["secret", "credential", "token", "private_identifier"]
         }
+      }
+    },
+
+    "structured_private_resource": {
+      "type": "object",
+      "required": ["resource_type", "owner_addon_id", "supported_versions", "schema_id", "resource_id", "fields", "adapter_id"],
+      "additionalProperties": false,
+      "description": "Public declaration of one adapter-owned structured resource. It contains no private values, paths, SQL, or database contents.",
+      "properties": {
+        "resource_type": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "owner_addon_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$" },
+        "supported_versions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "schema_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "resource_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["field_id", "type"],
+            "additionalProperties": false,
+            "properties": {
+              "field_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+              "type": { "type": "string", "enum": ["string", "bool", "int", "number"] },
+              "required": { "type": "boolean", "default": false },
+              "sensitivity": { "type": "string", "enum": ["secret", "credential", "token", "private_identifier"], "default": "private_identifier" }
+            }
+          }
+        },
+        "adapter_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "lifecycle": { "type": "string", "enum": ["initialized_idle", "active", "quiesced", "restart_required"], "default": "quiesced" },
+        "required": { "type": "boolean", "default": true }
       }
     },
 
