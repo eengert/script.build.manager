@@ -1,3 +1,42 @@
+# Agent Handoff — BM-023A-H exact historical artifact recovery
+
+**Result**: `EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED`.
+The matrix integration is at `a51a84d`; Codex was synchronized by normal merge
+`e08fe24`. Worker history and the single existing BM-023A-R usage entry were
+preserved. BM-023A-H changed only sanitized tracking.
+
+Public exact-version searches covered the upstream v7.4.4 release and install
+guide, the upstream repository-generation workflow and `nexus-unofficial`
+metadata, OSMC unofficial-testing package listings and repository indexes,
+public GitHub search, Panicked references, and a Wayback CDX query. The official
+release assets show bare `7.4.4` and `7.4.4+unofficial.1`; checked current OSMC
+testing metadata shows betas and bare `7.4.4`; the current stable unofficial
+package index was also checked and has no `.2` entry:
+<https://ftp.fau.de/osmc/osmc/download/dev/anxdpanic/kodi/youtube/unofficial/zips/plugin.video.youtube/>.
+No public exact `.2` metadata, package URL, provider checksum, archived entry,
+forked package, or `.2`-specific source commit was located. The generic source-build process is known, but it
+does not identify the `.2` build. No package ZIP was downloaded; the known bare
+`7.4.4` candidate was not changed or substituted.
+
+Production validation of the unchanged retained manifest/store pair fails
+exactly for the installed managed YouTube `7.4.4+unofficial.2` artifact. Graph:
+37 total nodes; 31 installed managed non-system; 1 absent optional; 5 system or
+runtime; 30 artifact references, all present; 67 required edges; 3 optional
+edges; 1 missing managed artifact. `pysocks` remains absent/optional/artifactless
+and unscheduled. Canonical fingerprint is unchanged at
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`, the
+recorded private-overlay target. No overlay value was read or changed.
+
+Focused frozen tests: **25/25**. BM-023A-R matrix validation: **25/25** frozen,
+**147/147** dependency, **1607/1607** full suite, clean diff check. Family Room,
+all devices, Kodi, the portable profile, and private overlay remained untouched.
+
+**Smallest next step**: await supervisor direction on archival recovery versus
+an explicitly altered desired build or later authorized recapture. BM-023A
+remains historically `BLOCKED_MISSING_FROZEN_ARTIFACTS`; do not resume install.
+
+---
+
 # Agent Handoff — BM-023A-R matrix integration and Codex synchronization
 
 The protected matrix started at `5a3598f565ad5b0c0164215eeefdf39b54a1d682`.
@@ -13,9 +52,9 @@ regressions **147/147**, full suite **1607/1607**, and `git diff --check` clean.
 No Kodi launch, portable-profile mutation, Family Room/device access, or private
 overlay access occurred.
 
-**Smallest next step**: complete worker verification and push only
-`agent/codex`; then continue the explicitly authorized BM-023A-H public
-historical artifact recovery.
+**Checkpoint next step**: the normal worker push at `e08fe24` and BM-023A-H
+recovery result are recorded above. Await supervisor direction; do not resume
+BM-023A installation.
 
 ---
 

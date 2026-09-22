@@ -1,5 +1,82 @@
 # Current Task
 
+## BM-023A-H — Historical Exact Artifact Recovery
+
+**Status**: Complete with result
+`EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED`. Public exact-version metadata
+was searched before considering packages. No candidate ZIP was downloaded,
+imported, substituted, or repackaged.
+
+### Public search and provenance
+
+- The official v7.4.4 upstream release is commit `922cc0d` and publishes the
+  normal `7.4.4` package plus `7.4.4+unofficial.1`; it does not publish `.2`:
+  <https://github.com/anxdpanic/plugin.video.youtube/releases/tag/v7.4.4>.
+- The upstream installation guide lists the normal and `.unofficial.1` ZIP
+  variants and names `repository.yt.unofficial` and
+  `repository.yt.testing_unofficial`:
+  <https://github.com/anxdpanic/plugin.video.youtube/wiki/Installation>.
+- The upstream release workflow checks out `master` for official packages and
+  `nexus-unofficial` for unofficial packages, runs the repository generator,
+  and mirrors generated ZIPs and XML indexes to OSMC stable/testing paths:
+  <https://github.com/anxdpanic/plugin.video.youtube/blob/master/.github/workflows/release-development-repository.yml>.
+  This identifies a generic packaging path, but not a `.2` source commit or
+  build output.
+- Current upstream `nexus-unofficial/addon.xml` declares version `7.4.4`, not
+  `.2`:
+  <https://raw.githubusercontent.com/anxdpanic/plugin.video.youtube/nexus-unofficial/addon.xml>.
+- The checked OSMC unofficial-testing package index lists `7.4.4+beta.1` through
+  `beta.4` and bare `7.4.4`, with no `.unofficial.2` asset:
+  <https://ftp.fau.de/osmc/osmc/download/dev/anxdpanic/kodi/youtube/unofficial_testing/zips/plugin.video.youtube/>.
+  The OSMC repository download index exposes repository ZIPs but no historical
+  plugin package index:
+  <https://ftp.fau.de/osmc/osmc/download/dev/anxdpanic/repositories/>.
+- Exact-version and exact-filename searches across public GitHub, OSMC, and
+  Panicked references produced no `.2` metadata result. The Panicked repository
+  endpoints and Wayback CDX query were inaccessible through the available
+  research surface. No exact `addons.xml` entry, package URL, provider checksum,
+  public fork/cached package, or `.2`-specific source commit was located.
+
+Therefore no exact artifact could be validated or imported, and no comparison
+against upstream `.unofficial.1` was performed. The known retained local ZIP is
+still the inexact bare `7.4.4` artifact and was not changed.
+
+### Frozen input validation
+
+The retained manifest and artifact store were left unchanged. The graph reports
+37 nodes: 31 installed managed non-system nodes, 1 absent optional node, and 5
+system/runtime nodes. The earlier 32 non-system total consisted of 31 installed
+nodes plus absent optional `pysocks`; corrected semantics does not change the 37
+node graph but no longer treats `pysocks` as an installed artifact requirement.
+The manifest contains 30 artifact references, all 30 present in the store;
+required and optional edges are 67 and 3. Exactly one installed managed node
+lacks its artifact: `plugin.video.youtube` `7.4.4+unofficial.2`.
+
+`script.module.pysocks` remains absent on the source, optional, missing,
+disabled, artifactless, and excluded from installation order. YouTube remains
+installed, enabled, managed desired software, reached from Umbrella through an
+optional edge, and still requires its exact artifact.
+
+The retained manifest still declares `capture_status=complete`, but production
+`validate_frozen_manifest` rejects it with
+`installed add-on artifact is incomplete for plugin.video.youtube
+7.4.4+unofficial.2`. It is not a valid installable complete input. Its
+canonical fingerprint remains
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`,
+matching the previously recorded private-overlay target fingerprint. The
+private overlay itself was not read or changed.
+
+Focused frozen tests passed **25/25**. Matrix BM-023A-R validation passed
+frozen capture/manifest/install **25/25**, dependency regressions **147/147**,
+full suite **1607/1607**, and `git diff --check`. No production code changed.
+Family Room and devices were not accessed; Kodi was not launched; the portable
+test profile and private overlay were not touched.
+
+**Smallest next step**: supervisor chooses whether to pursue another archival
+source, accept an altered build, explicitly remove YouTube from managed desired
+state, or arrange a separately authorized recapture. Keep BM-023A's historical
+result `BLOCKED_MISSING_FROZEN_ARTIFACTS`; do not resume installation here.
+
 ## BM-023A-R — Frozen input completeness reconciliation
 
 **Status**: Complete with result
@@ -69,10 +146,9 @@ Focused frozen capture/install tests passed **25/25**. The full suite passed
 **1607/1607**. `git diff --check` passed. No Kodi instance was launched, the
 portable test profile was not modified, and Family Room was not accessed.
 
-**Smallest next step**: perform the separately authorized BM-023A-H public
-historical artifact recovery for the exact YouTube `7.4.4+unofficial.2`
-package. Do not resume frozen installation or start another milestone before
-that recovery has a supported result.
+**Checkpoint next step**: BM-023A-H is recorded above as
+`EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED`. The production validator still
+rejects the retained input; do not resume frozen installation.
 
 ## BM-023A — Isolated macOS frozen-install validation preflight blocked (historical)
 
