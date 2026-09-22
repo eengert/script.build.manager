@@ -1,5 +1,37 @@
 # Current Task
 
+## BM-022V / BM-022V-R — Frozen Family Room software capture integrated
+
+**Status**: Complete, supervisor-approved, and integrated on protected
+`matrix`; matrix remains neutral with `active_agent: none`. The clean
+matrix-side substantive commit is `31b8f9d`, reconstructed from the approved
+worker endpoint `784ea8f`; worker `.agent/*` metadata was excluded.
+
+BM-022V read-only validation and BM-022V-R exact-artifact recovery establish
+that Frozen Family Room software capture is **COMPLETE** for required
+software: 37 graph nodes, 67 required edges, 3 optional edges, zero required
+missing artifacts, 30 exact artifact-backed nodes, 194,254,227 captured
+artifact bytes, and candidate fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+The optional YouTube artifact remains incomplete (`7.4.4+unofficial.2`
+installed versus cached `7.4.4`) but is non-blocking. The exact Dropbox
+`script.module.dropbox` `10.3.1+matrix.1` artifact is captured with SHA-256
+`5a954c48be820fa3e5fee2bf29cdf3befd46b4b02c92de1a8f7f8231032424e6` and
+size 667,538 bytes. The unchanged Robotocjksc ZIP is accepted through the
+generalized one-safe-root validator and normalized only during staged
+extraction; package bytes were not rewritten.
+
+Ready-to-use configuration remains **INCOMPLETE / BLOCKED_BY_BM017** because
+private/authenticated state was not captured. Real-device frozen installation
+is **NOT YET VALIDATED**. Family Room evidence and software capture remained
+read-only: no install/update, enable/disable, repository refresh, restart,
+settings/database write, or reconciliation occurred. BM-017 remains deferred
+and no next milestone was started.
+
+Integrated validation passed focused artifact/repository/add-on/frozen tests
+**331/331**, the full Build Manager suite **1577/1577**, and
+`git diff --check`.
+
 ## BM-022 — Frozen Build Installation and Transaction Lifecycle integrated
 
 **Status**: Complete, supervisor-approved, and integrated on protected

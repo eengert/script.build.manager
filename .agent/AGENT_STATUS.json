@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-022",
-  "reason": "BM-022 frozen build installation and transaction lifecycle is complete, supervisor-approved, and integrated. Exact immutable artifacts, topological installation, durable updater quarantine, BM-020 restart/resume composition, configuration handoff, final validation, recovery semantics, and disposable Kodi proof are complete. BM-017 remains deferred; complete real Family Room capture/install and real-device validation remain pending.",
-  "last_commit": "56ea26a",
-  "matrix_sha": "56ea26a",
+  "task": "BM-022V-R",
+  "reason": "BM-022V and BM-022V-R are complete, supervisor-approved, and integrated. Frozen Family Room software capture is complete, but ready-to-use configuration remains incomplete and blocked by BM-017; real-device frozen installation is not validated. Matrix remains neutral and no next milestone was started.",
+  "last_commit": "31b8f9d",
+  "matrix_sha": "31b8f9d",
   "next_agent": "human",
-  "updated_at": "2026-09-21"
+  "updated_at": "2026-09-22"
 }
