@@ -1,4 +1,25 @@
-# Agent Handoff — synchronized Codex worker
+# Agent Handoff — BM-023A-R matrix integration and Codex synchronization
+
+The protected matrix started at `5a3598f565ad5b0c0164215eeefdf39b54a1d682`.
+Reviewed substantive worker commit `a8d4b71` was cherry-picked as matrix
+`ff5c000`; neutral tracking was committed as `a51a84d` and pushed to
+`origin/matrix`. Worker implementation and tracking history were preserved by a
+normal merge. Only `.agent/AGENT_STATUS.json`, `.agent/CURRENT_TASK.md`, and
+`.agent/HANDOFF.md` needed semantic conflict resolution; production changes
+merged without conflict. The existing BM-023A-R usage row is preserved once.
+
+Matrix validation: frozen capture/manifest/install **25/25**, dependency
+regressions **147/147**, full suite **1607/1607**, and `git diff --check` clean.
+No Kodi launch, portable-profile mutation, Family Room/device access, or private
+overlay access occurred.
+
+**Smallest next step**: complete worker verification and push only
+`agent/codex`; then continue the explicitly authorized BM-023A-H public
+historical artifact recovery.
+
+---
+
+## Existing worker handoff — synchronized Codex worker
 
 ## BM-023A-R — Frozen input completeness reconciliation
 

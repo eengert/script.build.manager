@@ -5,9 +5,11 @@
 **Status**: Complete with result
 `MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS`. The worker began on
 `agent/codex` at `093757bc3ebacbf4c554aea50b5810498d90f7d5`; protected
-`origin/matrix` remained `5a3598f565ad5b0c0164215eeefdf39b54a1d682`. The
-implementation is committed as `a8d4b71`. No matrix, Claude, or Antigravity
-branch was changed.
+`origin/matrix` was at the supplied starting SHA
+`5a3598f565ad5b0c0164215eeefdf39b54a1d682`. The implementation is committed
+as `a8d4b71`, integrated on matrix as `ff5c000`, and recorded by neutral matrix
+tracking commit `a51a84d`. Codex is synchronized by a normal merge that
+preserves worker history. Claude and Antigravity branches were not changed.
 
 ### Completeness semantics
 
@@ -67,10 +69,10 @@ Focused frozen capture/install tests passed **25/25**. The full suite passed
 **1607/1607**. `git diff --check` passed. No Kodi instance was launched, the
 portable test profile was not modified, and Family Room was not accessed.
 
-**Smallest next step**: supervisor decision on authorizing a separate exact
-historical-provider recovery step or explicitly excluding YouTube from the
-managed frozen state. Do not resume frozen installation or start another
-milestone before that decision.
+**Smallest next step**: perform the separately authorized BM-023A-H public
+historical artifact recovery for the exact YouTube `7.4.4+unofficial.2`
+package. Do not resume frozen installation or start another milestone before
+that recovery has a supported result.
 
 ## BM-023A — Isolated macOS frozen-install validation preflight blocked (historical)
 

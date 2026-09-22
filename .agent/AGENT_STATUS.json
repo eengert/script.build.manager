@@ -2,9 +2,9 @@
   "active_agent": "codex",
   "status": "complete",
   "task": "BM-023A-R",
-  "reason": "Completeness semantics were corrected and regression-tested: installed optional nodes require exact artifacts, absent optional dependencies remain missing and are not scheduled, and system nodes remain artifactless. Result MANIFEST_SEMANTICS_CORRECTED_BUT_ARTIFACT_GAP_REMAINS because no exact retained plugin.video.youtube 7.4.4+unofficial.2 artifact was found; the only local candidate is version 7.4.4. No Kodi launch, portable-profile mutation, Family Room access, or public-network lookup occurred. Await supervisor direction on exact historical-provider recovery or explicit YouTube exclusion.",
+  "reason": "BM-023A-R is complete on protected matrix. Reviewed worker implementation a8d4b71 is integrated as ff5c000, with neutral matrix tracking at a51a84d. Every installed non-system frozen node requires its exact artifact even through an optional edge; absent optional pysocks remains artifactless and excluded from installation; system nodes remain artifactless. BM-023A remains historically BLOCKED_MISSING_FROZEN_ARTIFACTS. Exact remaining artifact gap: plugin.video.youtube 7.4.4+unofficial.2. Matrix validation passed: focused 25/25, dependency regressions 147/147, full suite 1607/1607, diff check clean. No Kodi launch, portable-profile mutation, Family Room/device access, or private-overlay access occurred.",
   "last_commit": "a8d4b71",
-  "matrix_sha": "5a3598f",
+  "matrix_sha": "a51a84d",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }
