@@ -1,5 +1,53 @@
 # Agent Handoff — synchronized Codex worker
 
+## BM-017D — Real Family Room structured private-resource capture complete
+
+BM-017D is complete on `agent/codex`. Matrix remains unchanged at `2374ee5`;
+the real private overlay is stored only outside Git in protected local Build
+Manager storage. No other worker branch was modified.
+
+The explicitly authorized read-only Xcode `devicectl` receive targeted only
+`AppleTV - Family Room (4)`, bundle `com.eengert.koditvosnew`, and
+`Library/Caches/Kodi/userdata/addon_data/plugin.video.redlight/databases/settings.db`.
+The names-only directory check found no `settings.db-wal` or `settings.db-shm`
+sidecars. No unrelated cache sidecars were received.
+
+The BM-017C adapter validated the Red Light 2.6.8 contract, exact
+`settings(setting_id, setting_type, setting_default, setting_value)` text
+schema, WAL mode, and SQLite integrity. All ten optional reviewed fields were
+captured and verified: `mdblist.refresh`, `mdblist.token`, `mdblist.user`,
+`pm.account_id`, `pm.token`, `tb.token`, `trakt.expires`, `trakt.refresh`,
+`trakt.token`, and `trakt.user`. No required fields were missing. Ordinary,
+generated, cache, and unrelated rows were not captured.
+
+Overlay ID: `family-room-redlight-2.6.8`. Protected storage:
+`/Users/eengert/Library/Application Support/Build Manager/addon_data/script.build.manager/private_overlays/family-room-redlight-2.6.8.json`.
+Overlay fingerprint:
+`sha256:a82915f7ae6017b497f4c8c16070420b0ab375b180a23a8cac5f9c119d85c295`.
+Frozen software fingerprint:
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+
+The source remained read-only: no apply operation, Red Light/Kodi setting
+write, database mutation, restart/stop, add-on operation, repository refresh,
+Build Manager reconciliation, Backup Pro operation, or device installation
+was performed. The temporary raw database and locally generated sidecars were
+deleted and verified absent. The secret-blind worktree scan reported
+`leak_detected=false`.
+
+Validation passed focused tests **27/27** and **386/386**; no production/test
+code changed, so the full suite was not rerun. `git diff --check` must pass
+before the tracking commit.
+
+Frozen software is **COMPLETE**, the private overlay is **COMPLETE**, captured
+desired state is **COMPLETE**, and real-device frozen installation remains
+**NOT VALIDATED**.
+
+### Smallest next step
+
+Supervisor review of the sanitized BM-017D capture result. Do not apply the
+overlay to Family Room or any destination device, and do not start another
+milestone.
+
 ## BM-017C — structured private-resource foundation integrated and synchronized
 
 Codex is synchronized with protected `matrix` through `2374ee5` by a normal

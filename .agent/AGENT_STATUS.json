@@ -1,8 +1,8 @@
 {
   "active_agent": "codex",
   "status": "complete",
-  "task": "BM-017C",
-  "reason": "BM-017C is complete and integrated on protected matrix at 2374ee5; Codex is synchronized through a normal merge and remains the worker identity. It provides a structured private-resource foundation with explicit field ownership and an exact Red Light 2.6.8 adapter; BM-017B remains complete with result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE. No private values were captured, no real Family Room private source was accessed, frozen software remains COMPLETE, captured desired state remains INCOMPLETE, and real-device installation remains NOT VALIDATED. BM-017D has not started.",
+  "task": "BM-017D",
+  "reason": "BM-017D is complete. The authorized read-only Family Room Red Light 2.6.8 settings.db snapshot passed exact schema, WAL, and integrity validation; all 10 declared optional private fields were captured and verified through the BM-017C adapter into protected local overlay storage. No source mutation, apply operation, real-device installation, raw evidence retention, or private-value exposure occurred. BM-017A/B/C remain complete, BM-017B retains historical result BLOCKED_BY_UNSUPPORTED_PRIVATE_STATE, and real-device installation remains NOT VALIDATED.",
   "last_commit": "4702578",
   "matrix_sha": "2374ee5",
   "next_agent": "human",
