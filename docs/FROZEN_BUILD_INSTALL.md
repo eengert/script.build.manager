@@ -8,11 +8,21 @@ not ask Kodi to choose a newer repository version.
 ## Safety boundary
 
 The installer accepts only a typed schema-v1 manifest whose capture status is
-`COMPLETE`. Every non-system node must have a matching artifact-store record,
-verified ZIP identity, exact version, size, and SHA-256 digest. System
-dependencies remain declarations only. Missing artifacts, malformed ZIPs,
-duplicate nodes, invalid edges, cycles, and an existing wrong-version or
+`COMPLETE`. Every installed non-system node must have a matching
+artifact-store record, verified ZIP identity, exact version, size, and SHA-256
+digest, even when its incoming dependency edges are optional. An optional
+dependency captured as absent is represented by a node with
+`capture_status: missing`, disabled desired state, and no artifact; the
+validator retains that node for graph
+validation but excludes it from the installation order. System dependencies
+remain declarations only. Missing artifacts for installed nodes, malformed
+ZIPs, duplicate nodes, invalid edges, cycles, and an existing wrong-version or
 broken installation fail closed before the next mutation.
+
+Capture marks a manifest complete only when these same conditions hold, but
+the installer validates them independently. An optional edge never excuses a
+missing artifact for a node that was installed and included in the captured
+software state.
 
 Kodi 21 does not expose a non-interactive exact local-package install API for
 this workflow. BM-022 therefore reuses Build Manager's previously reviewed

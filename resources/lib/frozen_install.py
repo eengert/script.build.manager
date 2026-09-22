@@ -481,9 +481,11 @@ def validate_frozen_manifest(
             if node.artifact is not None:
                 raise FrozenInstallValidationError("system dependency has an artifact")
             continue
+        if node.is_absent_optional_dependency:
+            continue
         if node.status is not CaptureStatus.COMPLETE or node.artifact is None:
             raise FrozenInstallValidationError(
-                f"required artifact is incomplete for {node.addon_id} {node.version}"
+                f"installed add-on artifact is incomplete for {node.addon_id} {node.version}"
             )
         try:
             metadata = store.get_metadata(node.artifact.sha256)
@@ -515,11 +517,14 @@ def validate_frozen_manifest(
                 f"artifact unavailable for {node.addon_id} {node.version}"
             ) from exc
 
-    edges: Dict[str, set] = {addon_id: set() for addon_id, node in nodes.items() if not node.system}
+    install_nodes = {
+        addon_id: node
+        for addon_id, node in nodes.items()
+        if not node.system and not node.is_absent_optional_dependency
+    }
+    edges: Dict[str, set] = {addon_id: set() for addon_id in install_nodes}
     reverse: Dict[str, set] = {addon_id: set() for addon_id in edges}
-    for node in nodes.values():
-        if node.system:
-            continue
+    for node in install_nodes.values():
         for edge in node.dependency_edges:
             if edge.addon_id not in nodes:
                 if edge.optional:
@@ -529,6 +534,12 @@ def validate_frozen_manifest(
                 )
             if nodes[edge.addon_id].system:
                 continue
+            if nodes[edge.addon_id].is_absent_optional_dependency:
+                if edge.optional:
+                    continue
+                raise FrozenInstallValidationError(
+                    f"required dependency {edge.addon_id} is absent from frozen manifest"
+                )
             edges[node.addon_id].add(edge.addon_id)
             reverse[edge.addon_id].add(node.addon_id)
 

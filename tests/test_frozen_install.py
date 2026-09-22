@@ -110,7 +110,7 @@ class FrozenInstallTest(unittest.TestCase):
             if cycle else ()
         )
         app_edges = (
-            ()
+            (DependencyEdge("script.module.bm022.optional", "", True, (app_id,)),)
             if optional_missing
             else (DependencyEdge(dep_id, "1.0.0", False, (app_id,)),)
         )
@@ -134,6 +134,15 @@ class FrozenInstallTest(unittest.TestCase):
                 ProvenanceStatus.UNKNOWN, system=True,
             ),
         )
+        if optional_missing:
+            nodes += (
+                AddonCaptureNode(
+                    "script.module.bm022.optional", "", "", False,
+                    ProvenanceStatus.UNKNOWN,
+                    optional=True,
+                    status=CaptureStatus.MISSING,
+                ),
+            )
         if not complete:
             nodes = tuple(
                 AddonCaptureNode(
@@ -181,6 +190,16 @@ class FrozenInstallTest(unittest.TestCase):
     def test_system_dependencies_are_not_installed(self):
         plan = validate_frozen_manifest(self._manifest(), self.artifacts)
         self.assertNotIn("xbmc.python", [node.addon_id for node in plan.install_order])
+
+    def test_optional_dependency_absent_at_capture_is_not_installed(self):
+        manifest = self._manifest(optional_missing=True)
+        decoded = FrozenBuildManifest.from_json(manifest.to_json())
+        plan = validate_frozen_manifest(decoded, self.artifacts)
+        self.assertIn("script.module.bm022.optional", plan.nodes)
+        self.assertNotIn(
+            "script.module.bm022.optional",
+            [node.addon_id for node in plan.install_order],
+        )
 
     def test_incomplete_manifest_is_rejected_before_mutation(self):
         result = self._coordinator().install(

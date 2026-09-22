@@ -259,10 +259,19 @@ list:
 ]
 ```
 
-Required third-party nodes need exact artifacts. Optional nodes are recorded
-with `optional: true` and do not block a complete capture when absent, unless a
-future add-on-specific policy promotes them to required. System nodes get
-their required minimum version and Kodi compatibility constraint but no frozen
+An optional edge does not make an installed node optional to reproduce. Every
+installed third-party node in the captured graph is part of the frozen software
+state and needs an exact artifact, even when all incoming dependency edges are
+optional. If that artifact is unavailable, capture is incomplete.
+
+When an optional dependency is absent from the source, record it with
+`capture_status: missing`, `optional: true`, disabled desired state, no
+artifact, and no installed version or add-on type. It does not block
+completeness and is never scheduled for installation. Its version field is
+empty in newly captured manifests; the explicit `not-installed` marker is
+accepted for retained manifests and is never used as package identity. A
+required missing dependency remains incomplete. System nodes get their
+required minimum version and Kodi compatibility constraint but no frozen
 artifact. Cycles must be detected and reported rather than silently flattened.
 
 ## 8. Repository add-ons and repository enablement
@@ -541,6 +550,25 @@ audit.
 - BM-020 remains complete.
 - BM-017 remains deferred.
 - BM-021B capture core is complete and integrated; BM-022 has not started.
+
+## 17. BM-023A-R — completeness invariant
+
+Capture completeness and installer acceptance use the same node semantics:
+every installed non-system node must have a validated exact artifact; an
+optional dependency that was absent at capture may be represented with
+`capture_status: missing` and no artifact and is excluded from the install
+order; and system nodes remain declarations without artifacts. The installer
+independently enforces these conditions, so a contradictory complete manifest
+still fails closed.
+
+The `optional` node flag summarizes incoming dependency edges. It does not
+exclude an installed node from the frozen desired software state. Schema v1 has
+no implicit unmanaged or excluded state.
+
+This supersedes the BM-022V/BM-022V-R interpretation that treated the captured
+YouTube node as non-blocking: the retained source state shows it was installed,
+so its optional incoming edge does not waive the exact-artifact requirement.
+The original capture observations remain historical evidence.
 
 ## 18. Sources and checked-in evidence
 

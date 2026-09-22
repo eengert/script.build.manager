@@ -13,6 +13,10 @@ from resources.lib.frozen import (
     ProvenanceStatus,
     capture_frozen_build,
 )
+from resources.lib.frozen_install import (
+    FrozenInstallValidationError,
+    validate_frozen_manifest,
+)
 
 
 def _xml(addon_id, version="1.0.0", imports=()):
@@ -69,15 +73,94 @@ class TestFrozenCapture(unittest.TestCase):
         xml = {"plugin.root": _xml("plugin.root", imports=(("xbmc.python", "3.0.0", False),))}
         package = {("plugin.root", "1.0.0"): [("plugin.root.zip", _zip("plugin.root"))]}
         with tempfile.TemporaryDirectory() as directory:
+            store = ArtifactStore(Path(directory))
             result = capture_frozen_build(
                 backend=InMemoryInventoryBackend(addons, xml, package_cache=package),
-                store=ArtifactStore(Path(directory)), root_addon_ids=["plugin.root"],
+                store=store, root_addon_ids=["plugin.root"],
                 build_id="build-a", name="Example", created_at="now",
             )
+            plan = validate_frozen_manifest(result.manifest, store)
         system = next(node for node in result.manifest.addons if node.addon_id == "xbmc.python")
         self.assertEqual(CaptureStatus.SYSTEM, system.status)
         self.assertIsNone(system.artifact)
         self.assertTrue(result.complete)
+        self.assertNotIn("xbmc.python", [node.addon_id for node in plan.install_order])
+
+    def test_complete_capture_validates_and_skips_only_absent_optional_dependency(self):
+        addons = [
+            _addon("plugin.root", addon_type="xbmc.python.plugin.video"),
+            _addon("script.optional.installed"),
+        ]
+        xml = {
+            "plugin.root": _xml(
+                "plugin.root",
+                imports=(("script.optional.installed", "1.0.0", True),),
+            ),
+            "script.optional.installed": _xml(
+                "script.optional.installed",
+                imports=(("script.optional.absent", "1.0.0", True),),
+            ),
+        }
+        packages = {
+            (addon_id, "1.0.0"): [(f"{addon_id}.zip", _zip(addon_id))]
+            for addon_id in ("plugin.root", "script.optional.installed")
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = ArtifactStore(Path(directory))
+            result = capture_frozen_build(
+                backend=InMemoryInventoryBackend(addons, xml, package_cache=packages),
+                store=store,
+                root_addon_ids=["plugin.root"],
+                build_id="build-optional-absent",
+                name="Optional dependency fixture",
+                created_at="now",
+                kodi_version="21.1",
+                platform="macos",
+            )
+            decoded = type(result.manifest).from_json(result.manifest.to_json())
+            plan = validate_frozen_manifest(decoded, store)
+
+        absent = next(
+            node for node in result.manifest.addons
+            if node.addon_id == "script.optional.absent"
+        )
+        self.assertTrue(result.complete)
+        self.assertEqual(CaptureStatus.MISSING, absent.status)
+        self.assertEqual("", absent.version)
+        self.assertTrue(absent.optional)
+        self.assertFalse(absent.desired_enabled)
+        self.assertIsNone(absent.artifact)
+        self.assertEqual(
+            ["script.optional.installed", "plugin.root"],
+            [node.addon_id for node in plan.install_order],
+        )
+
+    def test_installed_optional_dependency_without_artifact_is_incomplete(self):
+        addons = [
+            _addon("plugin.root", addon_type="xbmc.python.plugin.video"),
+            _addon("script.optional.installed"),
+        ]
+        xml = {
+            "plugin.root": _xml(
+                "plugin.root",
+                imports=(("script.optional.installed", "1.0.0", True),),
+            ),
+            "script.optional.installed": _xml("script.optional.installed"),
+        }
+        packages = {("plugin.root", "1.0.0"): [("plugin.root.zip", _zip("plugin.root"))]}
+        with tempfile.TemporaryDirectory() as directory:
+            store = ArtifactStore(Path(directory))
+            result = capture_frozen_build(
+                backend=InMemoryInventoryBackend(addons, xml, package_cache=packages),
+                store=store,
+                root_addon_ids=["plugin.root"],
+                build_id="build-optional-installed-missing-artifact",
+                name="Optional installed fixture",
+                created_at="now",
+            )
+            self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.manifest.capture_status)
+            with self.assertRaises(FrozenInstallValidationError):
+                validate_frozen_manifest(result.manifest, store)
 
     def test_missing_exact_artifact_is_incomplete_and_not_latest_substituted(self):
         addons = [_addon("plugin.root")]
