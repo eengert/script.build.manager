@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-017A",
-  "reason": "BM-017A private/auth overlay architecture and secure application foundation is complete. Generic BM-015 typed backend reuse, explicit public declarations, restrictive profile-local plaintext storage, canonical fingerprints, safe transaction identity, fail-closed validation, public-first/private-second application, and sanitized verification are implemented and tested. No real Family Room private state or device was accessed; capture/import remains a future authorized step and BM-017 is not fully closed.",
-  "last_commit": "ebd4c61",
-  "matrix_sha": "6d9af93",
+  "status": "ready",
+  "task": "BM-017B",
+  "reason": "BM-017A is complete and integrated on matrix. BM-017B is authorized for narrow read-only Family Room private-state inventory and overlay capture/import validation. Source mutation, Kodi control, device installation, and unrelated profile scraping remain prohibited.",
+  "last_commit": "4611f83",
+  "matrix_sha": "4611f83",
   "next_agent": "human",
   "updated_at": "2026-09-22"
 }

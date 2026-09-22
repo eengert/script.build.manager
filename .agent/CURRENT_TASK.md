@@ -1,5 +1,31 @@
 # Current Task
 
+## BM-017B — Real Family Room private overlay capture/import validation
+
+**Status**: Active on `agent/codex`; current `origin/matrix` was merged
+normally before work began. BM-017A is complete and integrated. The required
+Family Room software capture remains **COMPLETE**; ready-to-use configuration
+is being evaluated through this narrowly authorized read-only task; real-device
+frozen installation remains **NOT VALIDATED**.
+
+Scope is limited to relevant add-on schemas/source ownership review, approved
+read-only Family Room file listing/receive, secret-blind extraction of only
+declared private settings, protected local overlay creation, structural
+validation, and sanitized evidence. No source-profile writes, Kodi settings
+changes, add-on state changes, restarts, repository operations, database
+writes, Backup Pro operations, reconciliation, installation, or broad profile
+scraping are authorized.
+
+No raw private values may appear in terminal output, logs, errors, reports,
+Git, `.agent/*`, documentation, public manifests, or durable transactions.
+Temporary raw evidence must stay outside the repository with restrictive
+permissions and must be deleted after validated extraction. Opaque private
+state that cannot be represented by BM-017A typed settings is an architectural
+blocker, not a reason to add arbitrary file copying.
+
+The smallest next step is the non-secret inventory of relevant add-on schemas,
+installed metadata, and ownership before receiving any private source file.
+
 ## BM-017A — Private/auth overlay foundation complete
 
 **Status**: Complete on `agent/codex`; synchronization to the current matrix
