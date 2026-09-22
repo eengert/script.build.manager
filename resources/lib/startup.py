@@ -102,8 +102,27 @@ def run_startup(
     *,
     store: Optional[TransactionStore] = None,
     resume_coordinator=None,
+    frozen_precondition=None,
 ) -> StartupStatus:
     """Classify once and invoke resume only for a new-session handoff."""
+    if frozen_precondition is None:
+        try:
+            from resources.lib.frozen_install import ensure_frozen_install_guard
+            frozen_precondition = ensure_frozen_install_guard
+        except Exception:
+            frozen_precondition = None
+    if frozen_precondition is not None:
+        try:
+            precondition = frozen_precondition()
+        except Exception:
+            precondition = None
+        if precondition is not None and not getattr(precondition, "allowed", False):
+            return StartupStatus(
+                StartupClassification.NEEDS_ATTENTION,
+                transaction=None,
+                code=getattr(precondition, "code", "FROZEN_STARTUP_BLOCKED"),
+                message=getattr(precondition, "message", "frozen installation startup precondition failed"),
+            )
     try:
         current_session_id = get_current_kodi_session_id()
     except SessionIdentityError as exc:

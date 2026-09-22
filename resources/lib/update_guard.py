@@ -64,6 +64,23 @@ class AddonUpdateGuard:
             self.reassert()
             return self._snapshot
         original = self._read_policy("read original updater policy")
+        return self.engage_with_original(original)
+
+    def engage_with_original(
+        self, original: AddonUpdatePolicy
+    ) -> UpdateGuardSnapshot:
+        """Acquire the guard after the caller durably records ``original``.
+
+        Frozen installation persists the original policy before changing Kodi.
+        This seam avoids a second, potentially different read between the
+        durable transaction write and the quarantine mutation.
+        """
+        original = _coerce_policy(original)
+        if self._snapshot is not None:
+            if self._snapshot.original != original:
+                raise UpdateGuardError("cannot replace an active updater snapshot")
+            self.reassert()
+            return self._snapshot
         try:
             self.backend.set_policy(AddonUpdatePolicy.NEVER_CHECK)
         except Exception as exc:
@@ -75,6 +92,15 @@ class AddonUpdateGuard:
     def reassert(self) -> None:
         if self._snapshot is None:
             raise UpdateGuardError("cannot reassert an updater guard that is not engaged")
+        self.reassert_required()
+
+    def reassert_required(self) -> None:
+        """Set and verify NEVER_CHECK using durable transaction ownership.
+
+        This operation intentionally does not require an in-memory snapshot;
+        startup after Kodi restart reconstructs ownership from the durable
+        frozen-install transaction.
+        """
         try:
             self.backend.set_policy(AddonUpdatePolicy.NEVER_CHECK)
         except Exception as exc:
@@ -85,12 +111,18 @@ class AddonUpdateGuard:
         if self._snapshot is None:
             raise UpdateGuardError("cannot restore an updater guard that is not engaged")
         original = self._snapshot.original
+        restored = self.restore_original(original)
+        self._snapshot = None
+        return restored
+
+    def restore_original(self, original: AddonUpdatePolicy) -> AddonUpdatePolicy:
+        """Restore a durably captured policy after a process restart."""
+        original = _coerce_policy(original)
         try:
             self.backend.set_policy(original)
         except Exception as exc:
             raise UpdateGuardError("failed to restore original updater policy") from exc
         self._verify(original, "verify restored updater policy")
-        self._snapshot = None
         return original
 
     def _read_policy(self, context: str) -> AddonUpdatePolicy:

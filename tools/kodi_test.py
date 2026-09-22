@@ -39,6 +39,7 @@ Commands
   validate-build-manager-resume BM-020C live validation: automatic post-restart resume
   validate-frozen-capture BM-021B disposable exact-artifact capture proof
   validate-updater-guard BM-021B disposable global updater-guard proof
+  validate-frozen-install BM-022 disposable exact frozen-install proof
 """
 
 from __future__ import annotations
@@ -87,6 +88,11 @@ ADDON_INCLUDE: frozenset = frozenset({"addon.xml", "default.py", "service.py", "
 WEBSERVER_PORT = 8920
 WEBSERVER_USERNAME = "bm-test"
 WEBSERVER_PASSWORD = "bm-test-only"
+
+_BM022_REPO_ID = "repository.bm022.fixture"
+_BM022_DEP_ID = "script.module.bm022.dep"
+_BM022_APP_ID = "plugin.video.bm022.fixture"
+_BM022_VERSION = "1.0.0"
 
 # The real Kodi profile — this harness must never overlap with it.
 NORMAL_APPDATA_DIR = Path.home() / "Library" / "Application Support" / "Kodi"
@@ -3941,6 +3947,132 @@ def main():
             payload = {"written": list(commands)}
         elif job.get("mode") == "build_manager":
             payload = _run_build_manager(addon_root, job)
+        elif job.get("mode") == "frozen_install":
+            from pathlib import Path
+            from resources.lib.artifacts import ArtifactStore
+            from resources.lib.build_manager import BuildManager, ReconcileRequest, ReconcileResult
+            from resources.lib.frozen import FrozenBuildManifest
+            from resources.lib.frozen_install import (
+                FrozenInstallCoordinator,
+                FrozenInstallStore,
+                KodiRuntimeFrozenArtifactBackend,
+            )
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.restart_coordinator import RestartCoordinator
+            from resources.lib.update_guard import KodiJsonRpcUpdatePolicyBackend
+
+            def _policy_rpc(method, params):
+                import xbmc
+                response = json.loads(xbmc.executeJSONRPC(json.dumps({
+                    "jsonrpc": "2.0", "method": method, "params": params, "id": 1,
+                })))
+                return response.get("result", response)
+
+            manifest_path = job["manifest_path"]
+            configuration_path = job["configuration_manifest_path"]
+            manifest = FrozenBuildManifest.from_json(
+                Path(manifest_path).read_text(encoding="utf-8")
+            )
+            manager = BuildManager()
+            request = ReconcileRequest(
+                manifest_path=configuration_path,
+                device_profile_id=job["device_profile_id"],
+            )
+            if job.get("force_restart"):
+                def _configure_then_request_restart(_request):
+                    real_result = manager.reconcile(request)
+                    if not real_result.success or not real_result.desired_fingerprint:
+                        failure = (
+                            real_result.failure.to_dict()
+                            if real_result.failure is not None
+                            else {"code": "UNKNOWN", "message": "no failure detail"}
+                        )
+                        failure["actions"] = [
+                            {
+                                "action": result.action.kind,
+                                "addon_id": result.action.addon_id,
+                                "succeeded": result.succeeded,
+                                "changed": result.changed,
+                                "message": result.message,
+                                "owner_failures": [
+                                    getattr(failed, "detail", "")
+                                    for failed in getattr(result.owner_result, "failed", ())
+                                ],
+                            }
+                            for result in real_result.action_results
+                        ]
+                        owner_failures = [
+                            getattr(failed, "detail", "")
+                            for result in real_result.action_results
+                            for failed in getattr(result.owner_result, "failed", ())
+                            if getattr(failed, "detail", "")
+                        ]
+                        if owner_failures:
+                            failure["message"] = owner_failures[0]
+                        raise RuntimeError(
+                            "BM-022 configuration failed: "
+                            f"{failure}"
+                        )
+                    trigger = ReconcileResult(
+                        success=True,
+                        request=request,
+                        desired_fingerprint=real_result.desired_fingerprint,
+                        restart_report=RestartReport(RestartRequirement.KODI_RESTART, 1, 0),
+                    )
+                    return RestartCoordinator(manager).handle_result(request, trigger)
+
+                configuration_runner = _configure_then_request_restart
+            else:
+                configuration_runner = lambda request: RestartCoordinator(manager).reconcile(request)
+            coordinator = FrozenInstallCoordinator(
+                store=FrozenInstallStore(),
+                artifact_store=ArtifactStore(Path(job["artifact_root"])),
+                policy_backend=KodiJsonRpcUpdatePolicyBackend(_policy_rpc),
+                installer=KodiRuntimeFrozenArtifactBackend(),
+                configuration_runner=configuration_runner,
+            )
+            result = coordinator.install(
+                manifest,
+                manifest_path=manifest_path,
+                device_profile_id=job["device_profile_id"],
+                configuration_manifest_path=configuration_path,
+            )
+            installed = {}
+            for node in manifest.addons:
+                if node.system:
+                    continue
+                detail = coordinator.installer.get_addon_details(node.addon_id)
+                installed[node.addon_id] = (
+                    {
+                        "version": detail.version,
+                        "enabled": detail.enabled,
+                        "broken": detail.broken,
+                    }
+                    if detail is not None else None
+                )
+            transaction = FrozenInstallStore().inspect()
+            policy_readback = _policy_rpc(
+                "Settings.GetSettingValue",
+                {"setting": "general.addonupdates"},
+            )
+            payload = {
+                "outcome": result.outcome,
+                "code": result.code,
+                "message": result.message,
+                "transaction": transaction.to_dict() if transaction else None,
+                "installed": installed,
+                "installation_order": list(coordinator.installer.install_order),
+                "policy": policy_readback.get("value") if isinstance(policy_readback, dict) else None,
+                "policy_readback": policy_readback,
+            }
+        elif job.get("mode") == "frozen_inspect":
+            from resources.lib.frozen_install import FrozenInstallStore
+            transaction = FrozenInstallStore().inspect()
+            payload = {"transaction": transaction.to_dict() if transaction else None}
+        elif job.get("mode") == "frozen_observe_setting":
+            import xbmcaddon
+            addon = xbmcaddon.Addon(job["addon_id"])
+            payload = {"value": addon.getSettingBool(job["key"])}
         elif job.get("mode") == "transaction_prepare":
             from resources.lib.build_manager import ReconcileRequest, ReconcileResult
             from resources.lib.restart import RestartReport, RestartRequirement
@@ -6642,6 +6774,333 @@ def validate_updater_guard() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BM-022: exact frozen installation
+# ---------------------------------------------------------------------------
+
+def _make_bm022_fixture_zip(
+    addon_id: str,
+    version: str,
+    *,
+    requires: Optional[List[tuple]] = None,
+    repository: bool = False,
+    setting: bool = False,
+) -> bytes:
+    """Create a real, self-contained Kodi ZIP for the BM-022 disposable gate."""
+    requires = requires or []
+    requires_xml = "".join(
+        f'<import addon="{addon}" version="{minimum}"/>'
+        for addon, minimum in requires
+    )
+    extension = (
+        '<extension point="xbmc.addon.repository">'
+        '<dir><info>http://127.0.0.1:9999/addons.xml</info>'
+        '<datadir zip="true">http://127.0.0.1:9999/</datadir></dir>'
+        '</extension>'
+        if repository else
+        '<extension point="xbmc.python.pluginsource" library="default.py"/>'
+    )
+    xml = (
+        f'<addon id="{addon_id}" name="{addon_id}" version="{version}" '
+        'provider-name="Build Manager">'
+        f'<requires>{requires_xml}</requires>{extension}'
+        '<extension point="xbmc.addon.metadata"><summary lang="en_gb">'
+        'BM-022 disposable fixture</summary><platform>all</platform></extension>'
+        '</addon>'
+    ).encode("utf-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{addon_id}/addon.xml", xml)
+        if repository:
+            archive.writestr(f"{addon_id}/icon.png", b"BM-022 repository fixture")
+        else:
+            archive.writestr(f"{addon_id}/default.py", b"# BM-022 fixture")
+            if setting:
+                archive.writestr(
+                    f"{addon_id}/resources/settings.xml",
+                    b'<settings version="1">'
+                    b'<section id="bm022"><category id="general" label="30000">'
+                    b'<group id="1" label="30000">'
+                    b'<setting id="bm022.enabled" type="boolean" label="30001">'
+                    b'<level>0</level><default>false</default>'
+                    b'<control type="toggle"/>'
+                    b'</setting></group></category></section></settings>',
+                )
+    return buf.getvalue()
+
+
+def _prepare_bm022_fixture() -> Dict[str, Path]:
+    """Build a complete fixture in the disposable profile's artifact store."""
+    from resources.lib.artifacts import ArtifactStore
+    from resources.lib.frozen import (
+        AddonCaptureNode,
+        CaptureStatus,
+        DependencyEdge,
+        FrozenBuildManifest,
+        ProvenanceStatus,
+    )
+
+    artifact_root = KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen-artifacts"
+    artifact_store = ArtifactStore(artifact_root)
+    definitions = (
+        (
+            _BM022_REPO_ID,
+            _make_bm022_fixture_zip(_BM022_REPO_ID, _BM022_VERSION, repository=True),
+            "xbmc.addon.repository",
+            False,
+            (),
+        ),
+        (
+            _BM022_DEP_ID,
+            _make_bm022_fixture_zip(_BM022_DEP_ID, _BM022_VERSION),
+            "xbmc.python.module",
+            True,
+            (),
+        ),
+        (
+            _BM022_APP_ID,
+            _make_bm022_fixture_zip(
+                _BM022_APP_ID,
+                _BM022_VERSION,
+                requires=((_BM022_DEP_ID, _BM022_VERSION),),
+                setting=True,
+            ),
+            "xbmc.python.pluginsource",
+            True,
+            (DependencyEdge(_BM022_DEP_ID, _BM022_VERSION, False, (_BM022_APP_ID,)),),
+        ),
+    )
+    nodes = []
+    hashes = {}
+    for addon_id, data, addon_type, enabled, edges in definitions:
+        metadata = artifact_store.import_zip(
+            data,
+            expected_addon_id=addon_id,
+            expected_version=_BM022_VERSION,
+            source="bm022-test-fixture",
+        )
+        hashes[addon_id] = metadata.sha256
+        nodes.append(AddonCaptureNode(
+            addon_id=addon_id,
+            version=_BM022_VERSION,
+            addon_type=addon_type,
+            desired_enabled=enabled,
+            provenance=ProvenanceStatus.MANUAL_OR_UNKNOWN,
+            provenance_detail={"fixture": "repository-owned-test-artifact"},
+            artifact=metadata,
+            dependency_edges=edges,
+            status=CaptureStatus.COMPLETE,
+        ))
+    nodes.append(AddonCaptureNode(
+        addon_id="xbmc.python",
+        version="3.0.1",
+        addon_type="system",
+        desired_enabled=True,
+        provenance=ProvenanceStatus.UNKNOWN,
+        system=True,
+        status=CaptureStatus.SYSTEM,
+    ))
+    manifest = FrozenBuildManifest(
+        schema_version=1,
+        build_id="bm022-disposable-fixture",
+        name="BM-022 complete disposable fixture",
+        created_at="2026-09-21T00:00:00Z",
+        kodi_version="21.1",
+        platform="macos",
+        capture_status=CaptureStatus.COMPLETE,
+        addons=tuple(nodes),
+        source_metadata={"fixture": "test-only-real-kodi-zips"},
+    )
+    manifest_path = ROOT / "bm022-frozen-manifest.json"
+    manifest_path.write_text(manifest.to_json(), encoding="utf-8")
+    configuration_path = ROOT / "bm022-configuration-manifest.json"
+    configuration_path.write_text(json.dumps({
+        "schema_version": 1,
+        "engine_min_version": "0.1.0",
+        "build": {
+            "id": "bm022-configuration-fixture",
+            "version": "1.0.0",
+            "name": "BM-022 configuration fixture",
+            "description": "Disposable test-only configuration binding.",
+        },
+        "addons": [{"addon_id": _BM022_APP_ID, "state": "enabled"}],
+        "config": {
+            "packages": ["bm022-fixture"],
+            "managed_settings": [{
+                "target": "addon",
+                "addon_id": _BM022_APP_ID,
+                "keys": ["bm022.enabled"],
+            }],
+            "managed_files": [],
+        },
+        "platform_profiles": {"disposable": {"label": "BM-022 disposable"}},
+        "device_profiles": {
+            "bm022-disposable": {
+                "label": "BM-022 disposable configuration",
+                "extends": "disposable",
+            }
+        },
+    }, indent=2) + "\n", encoding="utf-8")
+    return {
+        "artifact_root": artifact_root,
+        "manifest_path": manifest_path,
+        "configuration_path": configuration_path,
+        "hashes": hashes,
+    }
+
+
+def validate_frozen_install() -> None:
+    """Prove exact install, restart reassertion, configuration, and release."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import AddonUpdatePolicy, KodiJsonRpcUpdatePolicyBackend
+
+    print("=== Build Manager BM-022 live validation: frozen installation ===")
+    verify_isolation()
+    real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns if NORMAL_APPDATA_DIR.exists() else None
+    try:
+        print("\n[1/18] reset, install Build Manager, and prepare complete fixture")
+        reset()
+        install(source=PROJECT)
+        fixture = _prepare_bm022_fixture()
+        _install_bm015_config_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": ADDON_ID,
+            "enabled": True,
+        })
+        production_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(production_detail, dict)
+            and isinstance(production_detail.get("addon"), dict)
+            and production_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(
+                f"BM-022 production add-on could not be enabled: {production_detail!r}"
+            )
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "enabled": True,
+        })
+        runner_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(runner_detail, dict)
+            and isinstance(runner_detail.get("addon"), dict)
+            and runner_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(f"BM-022 runner could not be enabled: {runner_detail!r}")
+        original = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        print(f"  original global updater policy={original.name} ✓")
+        print("  complete fixture contains repository, dependency, ordinary add-on, and system boundary ✓")
+
+        print("\n[2/18] start production BM-022 coordinator and persist transaction")
+        started = _bm015_run_job({
+            "mode": "frozen_install",
+            "manifest_path": str(fixture["manifest_path"]),
+            "configuration_manifest_path": str(fixture["configuration_path"]),
+            "artifact_root": str(fixture["artifact_root"]),
+            "device_profile_id": "bm022-disposable",
+            "force_restart": True,
+        })
+        if not started.get("ok") or started.get("outcome") != "awaiting_restart":
+            raise RuntimeError(f"BM-022 coordinator did not reach restart handoff: {started}")
+        if started.get("policy") != int(AddonUpdatePolicy.NEVER_CHECK):
+            raise RuntimeError("BM-022 did not leave NEVER_CHECK active at restart handoff")
+        tx = started.get("transaction") or {}
+        if tx.get("phase") != "awaiting_restart":
+            raise RuntimeError(f"unexpected frozen transaction phase: {tx}")
+        print("  transaction persisted before mutation and phase=awaiting_restart ✓")
+        print("  NEVER_CHECK verified before exact package installation ✓")
+
+        print("\n[3/18] verify exact frozen versions and dependency ordering")
+        expected_versions = {
+            _BM022_REPO_ID: _BM022_VERSION,
+            _BM022_DEP_ID: _BM022_VERSION,
+            _BM022_APP_ID: _BM022_VERSION,
+        }
+        for addon_id, version in expected_versions.items():
+            detail = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id, "properties": ["enabled", "version"]
+            }).get("addon", {})
+            if detail.get("version") != version:
+                raise RuntimeError(f"wrong exact version for {addon_id}: {detail}")
+            print(f"  {addon_id} installed exactly at {version} ✓")
+        expected_order = [_BM022_REPO_ID, _BM022_DEP_ID, _BM022_APP_ID]
+        if started.get("installation_order") != expected_order:
+            raise RuntimeError(
+                "unexpected deterministic installation order: "
+                f"{started.get('installation_order')}"
+            )
+        print("  repository → dependency → ordinary add-on ordering verified ✓")
+
+        print("\n[4/18] verify BM-020 restart transaction and exact artifact selection")
+        bm020_tx = _bm015_run_job({"mode": "transaction_inspect"})
+        if not bm020_tx.get("ok") or not bm020_tx.get("transaction"):
+            raise RuntimeError(f"BM-020 transaction missing at restart boundary: {bm020_tx}")
+        for addon_id, digest in fixture["hashes"].items():
+            print(f"  {addon_id}: artifact_sha256={digest} exact fixture selected ✓")
+
+        print("\n[5/18] cross Kodi restart and allow startup coordinator to resume")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        deadline = time.time() + 60.0
+        final_tx = None
+        while time.time() < deadline:
+            final_tx = _bm015_run_job({"mode": "frozen_inspect"})
+            if final_tx.get("ok") and final_tx.get("transaction") is None:
+                break
+            time.sleep(0.5)
+        if final_tx.get("transaction") is not None:
+            raise RuntimeError(f"frozen transaction did not finalize after restart: {final_tx}")
+        print("  frozen transaction survived restart and later cleared after resume ✓")
+
+        log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        guard_marker = "BM-022 updater guard reasserted before BM-020 startup"
+        resume_marker = "Build Manager BM-020C startup"
+        guard_index = log_after.rfind(guard_marker)
+        resume_index = log_after.rfind(resume_marker)
+        if guard_index < 0 or resume_index < 0:
+            raise RuntimeError("restart log did not contain BM-022 guard and BM-020 startup evidence")
+        if guard_index > resume_index:
+            raise RuntimeError("BM-020 startup log preceded BM-022 guard reassertion")
+        print("  log ordering proves updater guard reasserted before BM-020 startup ✓")
+
+        print("\n[6/18] verify configuration, final state, and updater restoration")
+        setting = _bm015_run_job({
+            "mode": "frozen_observe_setting",
+            "addon_id": _BM022_APP_ID,
+            "key": "bm022.enabled",
+        })
+        if not setting.get("ok") or setting.get("value") is not True:
+            raise RuntimeError(f"configuration was not applied through Build Manager: {setting}")
+        final_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if final_policy != original:
+            raise RuntimeError(f"original updater policy was not restored: {final_policy.name}")
+        if _bm015_run_job({"mode": "transaction_inspect"}).get("transaction") is not None:
+            raise RuntimeError("BM-020 transaction remained after frozen completion")
+        print("  existing Build Manager configuration path succeeded ✓")
+        print(f"  original updater policy={original.name} restored and verified ✓")
+        print("  BM-020 transaction absent and final frozen release complete ✓")
+    finally:
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists() and NORMAL_APPDATA_DIR.stat().st_mtime_ns != real_mtime_ns:
+        raise RuntimeError("real Kodi profile mtime changed during BM-022 gate")
+    print("  real Kodi profile remained untouched ✓")
+    print("\n=== BM-022 frozen installation validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -6694,6 +7153,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-build-manager-resume", help="BM-020C live validation: automatic post-restart resume")
     sub.add_parser("validate-frozen-capture", help="BM-021B disposable exact-artifact capture proof")
     sub.add_parser("validate-updater-guard", help="BM-021B disposable global updater-guard proof")
+    sub.add_parser("validate-frozen-install", help="BM-022 disposable exact frozen-install proof")
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -6750,6 +7210,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_frozen_capture()
         elif cmd == "validate-updater-guard":
             validate_updater_guard()
+        elif cmd == "validate-frozen-install":
+            validate_frozen_install()
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
