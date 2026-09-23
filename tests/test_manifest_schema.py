@@ -213,7 +213,10 @@ def _validate_config_declarations(config, *, label):
     _assert(isinstance(config, dict), f"{label}: must be an object")
     for key in config:
         _assert(
-            key in {"packages", "managed_settings", "managed_files", "private_settings"},
+            key in {
+                "packages", "managed_settings", "managed_files", "private_settings",
+                "structured_private_resources",
+            },
             f"{label}: unknown key {key!r}"
         )
     if "packages" in config:
@@ -257,6 +260,50 @@ def _validate_config_declarations(config, *, label):
             _assert(declaration.get("sensitivity") in {"secret", "credential", "token", "private_identifier"}, f"{label}.private_settings[{i}]: sensitivity")
             if "required" in declaration:
                 _assert(isinstance(declaration["required"], bool), f"{label}.private_settings[{i}]: required")
+    if "structured_private_resources" in config:
+        resources = config["structured_private_resources"]
+        _assert(isinstance(resources, list), f"{label}: 'structured_private_resources' must be an array")
+        seen_resources = set()
+        for i, declaration in enumerate(resources):
+            resource_label = f"{label}.structured_private_resources[{i}]"
+            _assert(isinstance(declaration, dict), f"{resource_label}: must be an object")
+            allowed = {
+                "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+                "resource_id", "fields", "adapter_id", "lifecycle", "required",
+            }
+            _assert(set(declaration) <= allowed, f"{resource_label}: unknown key")
+            required_keys = {
+                "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+                "resource_id", "fields", "adapter_id",
+            }
+            _assert(required_keys <= set(declaration), f"{resource_label}: missing required keys")
+            for key in ("resource_type", "owner_addon_id", "schema_id", "resource_id", "adapter_id"):
+                _assert(isinstance(declaration[key], str) and declaration[key], f"{resource_label}.{key}: must be a non-empty string")
+            identity = (declaration["resource_type"], declaration["resource_id"])
+            _assert(identity not in seen_resources, f"{resource_label}: duplicate resource")
+            seen_resources.add(identity)
+            versions = declaration["supported_versions"]
+            _assert(isinstance(versions, list) and versions, f"{resource_label}.supported_versions: must be a non-empty array")
+            _assert(all(isinstance(version, str) and version for version in versions), f"{resource_label}.supported_versions: entries must be non-empty strings")
+            _assert(declaration.get("lifecycle", "quiesced") in {"initialized_idle", "active", "quiesced", "restart_required"}, f"{resource_label}.lifecycle: invalid lifecycle")
+            if "required" in declaration:
+                _assert(isinstance(declaration["required"], bool), f"{resource_label}.required: must be a boolean")
+            fields = declaration["fields"]
+            _assert(isinstance(fields, list) and fields, f"{resource_label}.fields: must be a non-empty array")
+            seen_fields = set()
+            for j, field in enumerate(fields):
+                field_label = f"{resource_label}.fields[{j}]"
+                _assert(isinstance(field, dict), f"{field_label}: must be an object")
+                _assert(set(field) <= {"field_id", "type", "required", "sensitivity"}, f"{field_label}: unknown key")
+                _assert({"field_id", "type"} <= set(field), f"{field_label}: missing required keys")
+                _assert(isinstance(field["field_id"], str) and field["field_id"], f"{field_label}.field_id: must be a non-empty string")
+                _assert(field["field_id"] not in seen_fields, f"{field_label}: duplicate field_id")
+                seen_fields.add(field["field_id"])
+                _assert(field["type"] in {"string", "bool", "int", "number"}, f"{field_label}.type: invalid type")
+                if "required" in field:
+                    _assert(isinstance(field["required"], bool), f"{field_label}.required: must be a boolean")
+                if "sensitivity" in field:
+                    _assert(field["sensitivity"] in {"secret", "credential", "token", "private_identifier"}, f"{field_label}.sensitivity: invalid sensitivity")
 
 
 def _validate_profile_layer(layer, *, label):
@@ -423,6 +470,7 @@ class TestSchemaFile(unittest.TestCase):
             "addon_state", "addon_entry", "addon_override", "repository",
             "skin_entry", "config_declarations", "managed_setting_scope",
             "private_setting_declaration",
+            "structured_private_resource",
             "profile_layer", "device_profile", "optional_group",
             "private_overlay_ref", "restart_policy",
         ):

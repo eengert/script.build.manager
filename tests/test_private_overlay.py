@@ -175,6 +175,23 @@ class PrivateOverlayTest(unittest.TestCase):
                 _overlay(include_required=False), _declarations()
             )
 
+    def test_frozen_source_fingerprint_binding_is_distinct_from_build_id(self):
+        source_fingerprint = "b" * 64
+        bound = PrivateOverlay(
+            "fixture-overlay", f"sha256:{source_fingerprint}", _overlay().entries
+        )
+        self.assertIsNotNone(validate_private_overlay(
+            bound, _declarations(), expected_build_id=BUILD_ID,
+            expected_source_software_fingerprint=source_fingerprint,
+            expected_overlay_id="fixture-overlay",
+        ))
+        with self.assertRaises(PrivateOverlayValidationError):
+            validate_private_overlay(
+                bound, _declarations(), expected_build_id=BUILD_ID,
+                expected_source_software_fingerprint="c" * 64,
+                expected_overlay_id="fixture-overlay",
+            )
+
     def test_optional_private_value_may_be_absent(self):
         declarations = _declarations()
         self.assertIsNotNone(validate_private_overlay(

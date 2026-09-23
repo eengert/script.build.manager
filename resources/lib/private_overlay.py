@@ -519,6 +519,7 @@ def validate_private_overlay(
     declarations: Sequence[PrivateSettingDeclaration],
     *,
     expected_build_id: str = "",
+    expected_source_software_fingerprint: str = "",
     expected_overlay_id: str = "",
     resource_declarations: Sequence[StructuredPrivateResourceDeclaration] = (),
 ) -> PrivateOverlay:
@@ -528,7 +529,16 @@ def validate_private_overlay(
     declaration_map = _declaration_map(declarations)
     if expected_overlay_id and overlay.overlay_id != expected_overlay_id:
         raise PrivateOverlayValidationError("private overlay identity does not match the manifest")
-    if expected_build_id and overlay.target_build_id not in ("", expected_build_id):
+    if expected_source_software_fingerprint:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_source_software_fingerprint):
+            raise PrivateOverlayValidationError(
+                "expected source software fingerprint is invalid"
+            )
+        if overlay.target_build_id != f"sha256:{expected_source_software_fingerprint}":
+            raise PrivateOverlayValidationError(
+                "private overlay source software fingerprint does not match"
+            )
+    elif expected_build_id and overlay.target_build_id not in ("", expected_build_id):
         raise PrivateOverlayValidationError("private overlay target build does not match")
     entries = {entry.target: entry for entry in overlay.entries}
     for entry in overlay.entries:
@@ -650,6 +660,7 @@ class PrivateOverlayManager:
         declarations: Sequence[PrivateSettingDeclaration],
         *,
         build_id: str = "",
+        source_software_fingerprint: str = "",
         resource_declarations: Sequence[StructuredPrivateResourceDeclaration] = (),
     ) -> PreparedPrivateOverlay:
         if reference is None:
@@ -667,7 +678,8 @@ class PrivateOverlayManager:
         validated = validate_private_overlay(
             overlay,
             declarations,
-            expected_build_id=build_id,
+            expected_build_id=build_id if not source_software_fingerprint else "",
+            expected_source_software_fingerprint=source_software_fingerprint,
             expected_overlay_id=reference.overlay_id,
             resource_declarations=resource_declarations,
         )

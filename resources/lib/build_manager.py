@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional, Tuple
@@ -89,6 +90,7 @@ class ReconcileRequest:
     manifest_path: str
     device_profile_id: str
     install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
+    source_software_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.manifest_path, str) or not self.manifest_path:
@@ -108,6 +110,12 @@ class ReconcileRequest:
             for record in self.install_resolutions
         ):
             raise ValueError("install_resolutions must contain only terminal resolutions")
+        if not isinstance(self.source_software_fingerprint, str):
+            raise ValueError("source_software_fingerprint must be a string")
+        if self.source_software_fingerprint and not re.fullmatch(
+            r"[0-9a-f]{64}", self.source_software_fingerprint
+        ):
+            raise ValueError("source_software_fingerprint must be a SHA-256 digest")
 
     def to_dict(self) -> dict:
         payload = {
@@ -119,6 +127,8 @@ class ReconcileRequest:
                 record.to_dict()
                 for record in sorted(self.install_resolutions, key=lambda item: item.addon_id)
             ]
+        if self.source_software_fingerprint:
+            payload["source_software_fingerprint"] = self.source_software_fingerprint
         return payload
 
     def to_json(self) -> str:
@@ -563,6 +573,7 @@ class BuildManager:
                         desired.config.structured_private_resources
                         if desired.config is not None else ()
                     ),
+                    source_software_fingerprint=request.source_software_fingerprint,
                 )
             fingerprint = fingerprint_resolved_build(desired, effective)
             if skipped_addon_ids:

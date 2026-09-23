@@ -159,6 +159,54 @@ class TestBuildManager(unittest.TestCase):
         self.assertEqual(record.to_dict(), request.to_dict()["install_resolutions"][0])
         self.assertEqual([], owners.dependency_installer.calls)
 
+    def test_source_software_fingerprint_is_forwarded_to_private_overlay(self):
+        from resources.lib.frozen_resolution import (
+            InstallResolution,
+            InstallResolutionRecord,
+            ResolutionState,
+        )
+
+        source_fingerprint = "a" * 64
+        calls = []
+
+        class _PrivateOverlayManager:
+            def prepare(self, *args, **kwargs):
+                calls.append(kwargs)
+                return object()
+
+        desired = _desired(
+            (AddonEntry("plugin.video.youtube", "enabled"),),
+            private=PrivateOverlayRef("local_file", overlay_id="fixture-overlay"),
+        )
+        owners = _Owners(desired, [_state()], (), {})
+        owners.owners = replace(
+            owners.owners, private_overlay_manager=_PrivateOverlayManager()
+        )
+        record = InstallResolutionRecord(
+            "plugin.video.youtube", "7.4.4+unofficial.2",
+            InstallResolution.SKIPPED, ResolutionState.SKIPPED,
+        )
+        request = ReconcileRequest(
+            "build.json", "family-room", install_resolutions=(record,),
+            source_software_fingerprint=source_fingerprint,
+        )
+
+        prepared, failure = BuildManager(owners.owners)._prepare(request)
+
+        self.assertIsNone(failure)
+        self.assertIsNotNone(prepared)
+        self.assertEqual(
+            source_fingerprint, calls[0]["source_software_fingerprint"]
+        )
+
+    def test_source_software_fingerprint_is_a_sha256_without_requiring_resolution(self):
+        request = ReconcileRequest(
+            "build.json", "family-room", source_software_fingerprint="a" * 64
+        )
+        self.assertEqual("a" * 64, request.source_software_fingerprint)
+        with self.assertRaises(ValueError):
+            ReconcileRequest("build.json", "family-room", source_software_fingerprint="A" * 64)
+
     def test_explicit_frozen_skip_fails_if_configuration_requires_dependency(self):
         from resources.lib.frozen_resolution import (
             InstallResolution,

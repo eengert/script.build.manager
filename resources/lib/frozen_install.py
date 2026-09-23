@@ -1645,6 +1645,7 @@ class FrozenInstallCoordinator:
                     install_resolutions=tuple(sorted(
                         record_map.values(), key=lambda record: record.addon_id
                     )),
+                    source_software_fingerprint=manifest.fingerprint(),
                 ))
                 transaction, awaiting = self._handle_configuration_result(transaction, result)
                 if awaiting is not None:
