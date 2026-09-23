@@ -29,8 +29,17 @@ from resources.lib.private_overlay import (
     PrivateOverlayOutcome,
     PrivateOverlayStore,
     PrivateOverlayValidationError,
+    PreparedPrivateOverlay,
     validate_private_overlay,
 )
+from resources.lib.private_resource import (
+    ResourceInitializationCause,
+    ResourceInitializationStage,
+    StructuredPrivateResourceOverlay,
+    StructuredPrivateValue,
+    StructuredResourceInitializationError,
+)
+from resources.lib.redlight_resource import redlight_declaration
 from resources.lib.restart import RestartReport, RestartRequirement
 from resources.lib.transaction import (
     RestartTransaction,
@@ -242,6 +251,45 @@ class PrivateOverlayTest(unittest.TestCase):
         self.assertEqual(result.outcome, PrivateOverlayOutcome.FAILED)
         self.assertNotIn(SECRET, raw)
         self.assertNotIn(SECRET, result.message)
+
+    def test_structured_resource_stage_diagnostic_survives_overlay_boundary(self):
+        declaration = redlight_declaration()
+        resource = StructuredPrivateResourceOverlay(
+            resource_id="redlight.settings",
+            owner_addon_id="plugin.video.redlight",
+            addon_version="2.6.8",
+            schema_id="redlight-settings-v1",
+            values=(StructuredPrivateValue("trakt.token", "string", SECRET),),
+        )
+        overlay = PrivateOverlay(
+            "fixture-overlay", BUILD_ID, (), resources=(resource,)
+        )
+        prepared = PreparedPrivateOverlay(
+            overlay, None, (), (declaration,)
+        )
+        expected = StructuredResourceInitializationError(
+            "plugin.video.redlight",
+            "redlight.settings",
+            ResourceInitializationCause.SCHEMA_CREATION_FAILED,
+            initialization_stage=ResourceInitializationStage.CREATE_SCHEMA,
+            last_completed_stage=ResourceInitializationStage.SET_WAL_MODE,
+        )
+
+        class FailingResourceManager:
+            def apply(self, *args, **kwargs):
+                raise expected
+
+        manager = PrivateOverlayManager(
+            ConfigurationManager(self.backend),
+            structured_resource_manager=FailingResourceManager(),
+        )
+        with self.assertRaises(StructuredResourceInitializationError) as caught:
+            manager.apply(prepared)
+        self.assertIs(caught.exception, expected)
+        self.assertEqual(caught.exception.initialization_stage, ResourceInitializationStage.CREATE_SCHEMA)
+        self.assertEqual(caught.exception.last_completed_stage, ResourceInitializationStage.SET_WAL_MODE)
+        self.assertEqual(caught.exception.cause_code, "SCHEMA_CREATION_FAILED")
+        self.assertNotIn(SECRET, str(caught.exception))
 
     def test_safe_serialization_excludes_values(self):
         overlay = _overlay()

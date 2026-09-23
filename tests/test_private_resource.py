@@ -1,10 +1,12 @@
 """BM-017C fake structured-resource, Red Light schema, and secret-safety tests."""
 
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from resources.lib.config import ConfigurationBackend, ConfigurationManager
 from resources.lib.manifest import load_manifest_json
@@ -19,6 +21,8 @@ from resources.lib.private_resource import (
     PrivateResourceLifecycleError,
     PrivateResourceNotInitializedError,
     PrivateResourceValidationError,
+    ResourceInitializationCause,
+    ResourceInitializationStage,
     ResourceLifecycle,
     StructuredPrivateResourceManager,
     StructuredResourceInitializationError,
@@ -180,6 +184,36 @@ class StructuredResourceTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _prepare_fresh_initialization(self):
+        database_path = self.adapter.database_path
+        for path in (
+            database_path,
+            Path(str(database_path) + "-wal"),
+            Path(str(database_path) + "-shm"),
+        ):
+            path.unlink(missing_ok=True)
+        return _fake_redlight_package(self.root)
+
+    def _assert_initialization_stage(self, context, stage, cause, last_stage=None):
+        manager = StructuredPrivateResourceManager(
+            {self.adapter.adapter_id: self.adapter}
+        )
+        with self.assertRaises(StructuredResourceInitializationError) as caught:
+            manager.initialize(
+                (self.declaration,),
+                owner_contexts={REDLIGHT_ADDON_ID: context},
+            )
+        error = caught.exception
+        self.assertEqual(error.code, "PRIVATE_RESOURCE_INITIALIZATION_FAILED")
+        self.assertEqual(error.owner_addon_id, REDLIGHT_ADDON_ID)
+        self.assertEqual(error.resource_id, REDLIGHT_RESOURCE_ID)
+        self.assertEqual(error.initialization_stage, stage)
+        self.assertEqual(error.last_completed_stage, last_stage)
+        self.assertEqual(error.cause_code, cause.value)
+        self.assertNotIn(SECRET, str(error))
+        self.assertNotIn(SECRET, repr(error))
+        return error
+
     def test_public_declaration_contains_only_safe_metadata(self):
         safe = self.declaration.safe_dict()
         self.assertNotIn("value", json.dumps(safe))
@@ -311,6 +345,8 @@ class StructuredResourceTest(unittest.TestCase):
                 "redlight.settings_sync_fingerprint": "2.6.8:3",
             },
         )
+        self.assertEqual(result.resource_id, REDLIGHT_RESOURCE_ID)
+        self.assertFalse(result.restart_required)
 
         connection = sqlite3.connect(database_path)
         columns = tuple(row[1] for row in connection.execute("PRAGMA table_info(settings)"))
@@ -350,9 +386,209 @@ class StructuredResourceTest(unittest.TestCase):
 
     def test_fresh_initialization_requires_verified_held_disabled_source(self):
         self.adapter.database_path.unlink()
+        context = _fake_redlight_package(self.root)
         with self.assertRaises(PrivateResourceNotInitializedError):
             self.adapter.initialize(self.declaration)
         self.assertFalse(self.adapter.database_path.exists())
+
+    def test_source_revalidation_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        with patch.object(
+            type(context.installed_source),
+            "revalidate",
+            side_effect=RuntimeError(SECRET),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.SOURCE_REVALIDATION,
+                ResourceInitializationCause.SOURCE_REVALIDATION_FAILED,
+                ResourceInitializationStage.VALIDATE_EXISTING_RESOURCE,
+            )
+
+    def test_initializer_import_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        import_module = __import__("importlib").import_module
+
+        def fail_settings_import(name, package=None):
+            if name == "caches.settings_cache":
+                raise ImportError(SECRET)
+            return import_module(name, package)
+
+        with patch(
+            "resources.lib.redlight_resource.importlib.import_module",
+            side_effect=fail_settings_import,
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.LOAD_INITIALIZER_DECLARATIONS,
+                ResourceInitializationCause.INITIALIZER_IMPORT_FAILED,
+                ResourceInitializationStage.SOURCE_REVALIDATION,
+            )
+
+    def test_addon_data_directory_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        shutil.rmtree(self.root / "addon_data")
+        addon_data_path = self.adapter._profile_root / "addon_data"
+        original_mkdir = Path.mkdir
+
+        def fail_addon_data(path, *args, **kwargs):
+            if path == addon_data_path:
+                raise OSError(SECRET)
+            return original_mkdir(path, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", new=fail_addon_data):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.CREATE_ADDON_DATA_DIRECTORY,
+                ResourceInitializationCause.DIRECTORY_CREATION_FAILED,
+                ResourceInitializationStage.LOAD_SCHEMA_DECLARATION,
+            )
+
+    def test_database_directory_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        shutil.rmtree(self.root / "addon_data")
+        database_directory = self.adapter.database_path.parent
+        original_mkdir = Path.mkdir
+
+        def fail_database_directory(path, *args, **kwargs):
+            if path == database_directory:
+                raise OSError(SECRET)
+            return original_mkdir(path, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", new=fail_database_directory):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.CREATE_DATABASE_DIRECTORY,
+                ResourceInitializationCause.DIRECTORY_CREATION_FAILED,
+                ResourceInitializationStage.CREATE_ADDON_DATA_DIRECTORY,
+            )
+
+    def test_sqlite_open_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        with patch(
+            "resources.lib.redlight_resource.sqlite3.connect",
+            side_effect=sqlite3.OperationalError(SECRET),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.OPEN_SETTINGS_DATABASE,
+                ResourceInitializationCause.DATABASE_OPEN_FAILED,
+                ResourceInitializationStage.CREATE_DATABASE_DIRECTORY,
+            )
+
+    def test_wal_setup_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+
+        class FailingWalConnection:
+            def execute(self, _statement):
+                raise sqlite3.OperationalError(SECRET)
+
+            def close(self):
+                pass
+
+        with patch(
+            "resources.lib.redlight_resource.sqlite3.connect",
+            return_value=FailingWalConnection(),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.SET_WAL_MODE,
+                ResourceInitializationCause.WAL_SETUP_FAILED,
+                ResourceInitializationStage.OPEN_SETTINGS_DATABASE,
+            )
+
+    def test_schema_creation_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+
+        class FailingSchemaConnection:
+            def execute(self, statement):
+                if statement == "PRAGMA journal_mode = WAL":
+                    return type("Cursor", (), {"fetchone": lambda _self: ("wal",)})()
+                raise sqlite3.OperationalError(SECRET)
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+
+        with patch(
+            "resources.lib.redlight_resource.sqlite3.connect",
+            return_value=FailingSchemaConnection(),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.CREATE_SCHEMA,
+                ResourceInitializationCause.SCHEMA_CREATION_FAILED,
+                ResourceInitializationStage.SET_WAL_MODE,
+            )
+
+    def test_defaults_insertion_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        with patch.object(
+            self.adapter,
+            "_write_default_rows",
+            side_effect=sqlite3.OperationalError(SECRET),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.INSERT_DEFAULTS,
+                ResourceInitializationCause.DEFAULT_INITIALIZATION_FAILED,
+                ResourceInitializationStage.VALIDATE_RESOURCE_EMPTY,
+            )
+
+    def test_final_validation_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        with patch.object(
+            self.adapter,
+            "_verify_database",
+            side_effect=PrivateResourceCompatibilityError(SECRET),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.FINAL_RESOURCE_VALIDATION,
+                ResourceInitializationCause.FINAL_VALIDATION_FAILED,
+                ResourceInitializationStage.INSERT_DEFAULTS,
+            )
+
+    def test_marker_publication_failure_reports_stage_and_cause(self):
+        context = self._prepare_fresh_initialization()
+        original_initializers = self.adapter._redlight_initializers
+
+        def with_failing_setter(installed_source, run_stage):
+            values = list(original_initializers(installed_source, run_stage))
+
+            def fail_set_property(_key, _value):
+                raise RuntimeError(SECRET)
+
+            values[3] = fail_set_property
+            return tuple(values)
+
+        with patch.object(
+            self.adapter,
+            "_redlight_initializers",
+            side_effect=with_failing_setter,
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.PUBLISH_SYNC_MARKER,
+                ResourceInitializationCause.MARKER_PUBLICATION_FAILED,
+                ResourceInitializationStage.FINAL_RESOURCE_VALIDATION,
+            )
+
+    def test_unexpected_exception_reports_safe_generic_cause(self):
+        context = self._prepare_fresh_initialization()
+        with patch.object(
+            self.adapter,
+            "_settings_database_is_empty",
+            side_effect=RuntimeError(SECRET),
+        ):
+            self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.VALIDATE_RESOURCE_EMPTY,
+                ResourceInitializationCause.INITIALIZATION_STAGE_FAILED,
+                ResourceInitializationStage.LOAD_INITIALIZER_DECLARATIONS,
+            )
 
     def test_initialization_failure_keeps_typed_owner_resource_context_safely(self):
         from resources.lib.private_resource import StructuredPrivateResourceManager
@@ -366,7 +602,14 @@ class StructuredResourceTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, "PRIVATE_RESOURCE_INITIALIZATION_FAILED")
         self.assertEqual(caught.exception.owner_addon_id, REDLIGHT_ADDON_ID)
         self.assertEqual(caught.exception.resource_id, REDLIGHT_RESOURCE_ID)
-        self.assertEqual(caught.exception.cause_code, "RESOURCE_NOT_INITIALIZED")
+        self.assertEqual(
+            caught.exception.initialization_stage,
+            ResourceInitializationStage.SOURCE_REVALIDATION,
+        )
+        self.assertEqual(
+            caught.exception.cause_code,
+            ResourceInitializationCause.SOURCE_REVALIDATION_FAILED.value,
+        )
         self.assertNotIn(SECRET, str(caught.exception))
 
     def test_ordinary_resources_do_not_require_installed_owner_context(self):

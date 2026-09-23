@@ -34,6 +34,7 @@ from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.build_manager import ReconcileRequest
+from resources.lib.private_resource import ResourceInitializationStage
 from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureError,
@@ -2135,7 +2136,7 @@ class FrozenInstallCoordinator:
                     f" ({exc.safe_detail})"
                     if isinstance(getattr(exc, "safe_detail", ""), str)
                     and re.fullmatch(
-                        r"[A-Za-z0-9_=; .:/-]{1,240}",
+                        r"[A-Za-z0-9_=; .:/-]{1,400}",
                         getattr(exc, "safe_detail", ""),
                     )
                     else ""
@@ -2527,6 +2528,27 @@ class FrozenInstallCoordinator:
                     r"[A-Z0-9_]{1,80}", cause_code
                 ):
                     diagnostic_parts.append(f"cause={cause_code}")
+                stage_values = {item.value for item in ResourceInitializationStage}
+                initialization_stage = getattr(
+                    owner_result, "initialization_stage", ""
+                )
+                initialization_stage = getattr(
+                    initialization_stage, "value", initialization_stage
+                )
+                if initialization_stage in stage_values:
+                    diagnostic_parts.append(
+                        f"initialization_stage={initialization_stage}"
+                    )
+                last_completed_stage = getattr(
+                    owner_result, "last_completed_stage", ""
+                )
+                last_completed_stage = getattr(
+                    last_completed_stage, "value", last_completed_stage
+                )
+                if last_completed_stage in stage_values:
+                    diagnostic_parts.append(
+                        f"last_completed_stage={last_completed_stage}"
+                    )
                 break
             error = FrozenInstallError("configuration/restart handoff failed")
             error.code = (

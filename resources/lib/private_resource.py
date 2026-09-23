@@ -18,10 +18,54 @@ from typing import Mapping, Optional, Sequence
 from resources.lib.installed_addon_source import PrivateResourceOwnerContext
 
 
+class ResourceInitializationStage(str, Enum):
+    """Safe, typed stages in an owner-specific structured-resource initializer."""
+
+    VALIDATE_RESOURCE_DECLARATION = "VALIDATE_RESOURCE_DECLARATION"
+    VALIDATE_EXISTING_RESOURCE = "VALIDATE_EXISTING_RESOURCE"
+    SOURCE_REVALIDATION = "SOURCE_REVALIDATION"
+    LOAD_INITIALIZER_DECLARATIONS = "LOAD_INITIALIZER_DECLARATIONS"
+    LOAD_SCHEMA_DECLARATION = "LOAD_SCHEMA_DECLARATION"
+    VALIDATE_RESOURCE_EMPTY = "VALIDATE_RESOURCE_EMPTY"
+    CREATE_ADDON_DATA_DIRECTORY = "CREATE_ADDON_DATA_DIRECTORY"
+    CREATE_DATABASE_DIRECTORY = "CREATE_DATABASE_DIRECTORY"
+    OPEN_SETTINGS_DATABASE = "OPEN_SETTINGS_DATABASE"
+    SET_WAL_MODE = "SET_WAL_MODE"
+    CREATE_SCHEMA = "CREATE_SCHEMA"
+    INSERT_DEFAULTS = "INSERT_DEFAULTS"
+    FINAL_RESOURCE_VALIDATION = "FINAL_RESOURCE_VALIDATION"
+    PUBLISH_SYNC_MARKER = "PUBLISH_SYNC_MARKER"
+
+
+class ResourceInitializationCause(str, Enum):
+    """Allowlisted causes for safe structured-resource initialization errors."""
+
+    RESOURCE_DECLARATION_INVALID = "RESOURCE_DECLARATION_INVALID"
+    EXISTING_RESOURCE_VALIDATION_FAILED = "EXISTING_RESOURCE_VALIDATION_FAILED"
+    SOURCE_REVALIDATION_FAILED = "SOURCE_REVALIDATION_FAILED"
+    INITIALIZER_IMPORT_FAILED = "INITIALIZER_IMPORT_FAILED"
+    SCHEMA_DECLARATION_FAILED = "SCHEMA_DECLARATION_FAILED"
+    RESOURCE_STATE_VALIDATION_FAILED = "RESOURCE_STATE_VALIDATION_FAILED"
+    DIRECTORY_CREATION_FAILED = "DIRECTORY_CREATION_FAILED"
+    DATABASE_OPEN_FAILED = "DATABASE_OPEN_FAILED"
+    WAL_SETUP_FAILED = "WAL_SETUP_FAILED"
+    SCHEMA_CREATION_FAILED = "SCHEMA_CREATION_FAILED"
+    DEFAULT_INITIALIZATION_FAILED = "DEFAULT_INITIALIZATION_FAILED"
+    FINAL_VALIDATION_FAILED = "FINAL_VALIDATION_FAILED"
+    MARKER_PUBLICATION_FAILED = "MARKER_PUBLICATION_FAILED"
+    INITIALIZATION_STAGE_FAILED = "INITIALIZATION_STAGE_FAILED"
+
+
 class PrivateResourceError(Exception):
     """Base class for fail-closed structured resource errors."""
 
     code = "PRIVATE_RESOURCE_ERROR"
+
+    def __init__(self, message: str = "") -> None:
+        self.initialization_stage: Optional[ResourceInitializationStage] = None
+        self.initialization_cause_code: Optional[ResourceInitializationCause] = None
+        self.last_completed_stage: Optional[ResourceInitializationStage] = None
+        super().__init__(message)
 
 
 class PrivateResourceValidationError(PrivateResourceError):
@@ -82,16 +126,42 @@ class StructuredResourceInitializationError(PrivateResourceError):
 
     code = "PRIVATE_RESOURCE_INITIALIZATION_FAILED"
 
-    def __init__(self, owner_addon_id: str, resource_id: str, cause_code: str = ""):
+    def __init__(
+        self,
+        owner_addon_id: str,
+        resource_id: str,
+        cause_code: str | ResourceInitializationCause = "",
+        *,
+        initialization_stage: Optional[ResourceInitializationStage] = None,
+        last_completed_stage: Optional[ResourceInitializationStage] = None,
+    ):
         self.owner_addon_id = _addon(owner_addon_id, "resource failure owner")
         self.resource_id = _id(resource_id, "resource failure resource_id")
+        super().__init__("structured private resource initialization failed")
+        cause_value = (
+            cause_code.value
+            if isinstance(cause_code, ResourceInitializationCause)
+            else cause_code
+        )
         self.cause_code = (
-            cause_code
-            if isinstance(cause_code, str)
-            and re.fullmatch(r"[A-Z0-9_]{1,80}", cause_code)
+            cause_value
+            if isinstance(cause_value, str)
+            and re.fullmatch(r"[A-Z0-9_]{1,80}", cause_value)
             else ""
         )
-        super().__init__("structured private resource initialization failed")
+        self.initialization_cause_code = (
+            cause_code if isinstance(cause_code, ResourceInitializationCause) else None
+        )
+        self.initialization_stage = (
+            initialization_stage
+            if isinstance(initialization_stage, ResourceInitializationStage)
+            else None
+        )
+        self.last_completed_stage = (
+            last_completed_stage
+            if isinstance(last_completed_stage, ResourceInitializationStage)
+            else None
+        )
 
 
 def validate_typed_value(value: object, value_type: StructuredValueType, label: str) -> object:
@@ -422,10 +492,15 @@ class StructuredPrivateResourceManager:
             except StructuredResourceInitializationError:
                 raise
             except Exception as exc:
+                cause_code = getattr(exc, "initialization_cause_code", None)
+                if not isinstance(cause_code, ResourceInitializationCause):
+                    cause_code = getattr(exc, "code", "")
                 raise StructuredResourceInitializationError(
                     declaration.owner_addon_id,
                     declaration.resource_id,
-                    getattr(exc, "code", ""),
+                    cause_code,
+                    initialization_stage=getattr(exc, "initialization_stage", None),
+                    last_completed_stage=getattr(exc, "last_completed_stage", None),
                 ) from exc
             if result is None or not result.succeeded:
                 raise StructuredResourceInitializationError(

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib.artifacts import ArtifactStore
+from resources.lib.build_manager import ActionFailureDiagnostic
 from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureStatus,
@@ -342,14 +343,53 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertEqual(self.store.inspect().phase, FrozenInstallPhase.NEEDS_ATTENTION)
 
     def test_configuration_failure_keeps_quarantine_and_transaction(self):
+        fake_exception = "BM017F_FAKE_STAGE_EXCEPTION_SECRET_4831"
+        diagnostic = ActionFailureDiagnostic(
+            "PRIVATE_RESOURCE_INITIALIZATION_FAILED",
+            "plugin.video.redlight",
+            "redlight.settings",
+            "DATABASE_OPEN_FAILED",
+            "OPEN_SETTINGS_DATABASE",
+            "CREATE_DATABASE_DIRECTORY",
+        )
+        reconcile_result = SimpleNamespace(
+            failure=SimpleNamespace(
+                phase=SimpleNamespace(value="execute"),
+                code="ACTION_FAILED",
+                message=fake_exception,
+            ),
+            action_results=(SimpleNamespace(
+                action=SimpleNamespace(kind="configure", addon_id=""),
+                succeeded=False,
+                owner_result=diagnostic,
+            ),),
+        )
+        configuration_result = SimpleNamespace(
+            outcome="failed",
+            failure=None,
+            reconcile_result=reconcile_result,
+            private_overlay=None,
+        )
         result = self._coordinator(
-            configuration_runner=lambda _request: SimpleNamespace(outcome="failed")
+            configuration_runner=lambda _request: configuration_result
         ).install(
             self._manifest(), manifest_path="/fixture.json", device_profile_id="test"
         )
         self.assertEqual(result.outcome, "needs_attention")
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
-        self.assertIsNotNone(self.store.inspect())
+        transaction = self.store.inspect()
+        self.assertIsNotNone(transaction)
+        self.assertEqual(
+            transaction.status_code, "FROZEN_CONFIGURATION_ACTION_FAILED"
+        )
+        self.assertIn("action=CONFIGURE", transaction.status_message)
+        self.assertIn("resource_failure=PRIVATE_RESOURCE_INITIALIZATION_FAILED", transaction.status_message)
+        self.assertIn("owner=plugin.video.redlight", transaction.status_message)
+        self.assertIn("resource=redlight.settings", transaction.status_message)
+        self.assertIn("cause=DATABASE_OPEN_FAILED", transaction.status_message)
+        self.assertIn("initialization_stage=OPEN_SETTINGS_DATABASE", transaction.status_message)
+        self.assertIn("last_completed_stage=CREATE_DATABASE_DIRECTORY", transaction.status_message)
+        self.assertNotIn(fake_exception, transaction.status_message)
 
     def test_restart_boundary_reasserts_and_finalizes(self):
         restart = SimpleNamespace(

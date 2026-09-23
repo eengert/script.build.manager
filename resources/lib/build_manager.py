@@ -35,6 +35,7 @@ from resources.lib.private_overlay import (
     PrivateOverlayMetadata,
     PreparedPrivateOverlay,
 )
+from resources.lib.private_resource import ResourceInitializationStage
 from resources.lib.installed_addon_source import (
     KodiInstalledAddonSourceResolver,
     ManagedAddonSourceIdentity,
@@ -185,6 +186,8 @@ class ActionFailureDiagnostic:
     owner_addon_id: str = ""
     resource_id: str = ""
     cause_code: str = ""
+    initialization_stage: str = ""
+    last_completed_stage: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, str) or not re.fullmatch(
@@ -203,14 +206,24 @@ class ActionFailureDiagnostic:
             r"[A-Z0-9_]{1,80}", self.cause_code
         ):
             raise ValueError("action failure cause code is not safe")
+        stage_values = {item.value for item in ResourceInitializationStage}
+        if self.initialization_stage and self.initialization_stage not in stage_values:
+            raise ValueError("action failure initialization stage is unsupported")
+        if self.last_completed_stage and self.last_completed_stage not in stage_values:
+            raise ValueError("action failure completed stage is unsupported")
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "code": self.code,
             "owner_addon_id": self.owner_addon_id,
             "resource_id": self.resource_id,
             "cause_code": self.cause_code,
         }
+        if self.initialization_stage:
+            result["initialization_stage"] = self.initialization_stage
+        if self.last_completed_stage:
+            result["last_completed_stage"] = self.last_completed_stage
+        return result
 
 
 @dataclass(frozen=True)
@@ -1035,7 +1048,19 @@ def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
     cause = getattr(exc, "cause_code", "")
     if not isinstance(cause, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", cause):
         cause = ""
-    return ActionFailureDiagnostic(code, owner, resource, cause)
+    initialization_stage = getattr(exc, "initialization_stage", "")
+    initialization_stage = getattr(
+        initialization_stage, "value", initialization_stage
+    )
+    last_completed_stage = getattr(exc, "last_completed_stage", "")
+    last_completed_stage = getattr(last_completed_stage, "value", last_completed_stage)
+    if initialization_stage not in {item.value for item in ResourceInitializationStage}:
+        initialization_stage = ""
+    if last_completed_stage not in {item.value for item in ResourceInitializationStage}:
+        last_completed_stage = ""
+    return ActionFailureDiagnostic(
+        code, owner, resource, cause, initialization_stage, last_completed_stage
+    )
 
 
 def _result_succeeded(result: object) -> bool:
