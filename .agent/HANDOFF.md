@@ -1,3 +1,81 @@
+# Agent Handoff — BM-023A-R1 validation complete
+
+**Result**: `BLOCKED_RESOURCE_NOT_INITIALIZED`. BM-023A-R1 is complete as a
+validation task. Do not begin another milestone.
+
+## Integration and synchronization
+
+Starting refs matched the supplied SHAs: `origin/matrix` at
+`b82885ab01fdb3c2486fff0c3e42bf33262b110e` and `origin/agent/codex` at
+`68f0da5613b4d5606ba2e334d4330fbaf6889d9f`. Only substantive BM-023B commit
+`1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f` was cherry-picked to matrix as
+`5648c6781b4567d3b2f0931fc4ed838142ed22f1`; worker `.agent/*` was excluded.
+Neutral matrix tracking is `d867b8029ae35d4187ecbcecb0f3f39016673517`. The
+normal worker merge is `9b16e8a5a0585a11552233071f20073af151c0b4`. Matrix and
+worker substantive endpoint trees matched after integration. Matrix was pushed
+only to `origin/matrix`; synchronization pushed only to `origin/agent/codex`.
+
+Integrated BM-023B validation: focused **581/581**, full suite **1643/1643**,
+compileall, JSON parsing, and `git diff --check` passed.
+
+## Isolated macOS retry
+
+Only `/Applications/Kodi Build Manager Test.app` was launched, using exactly
+`open "/Applications/Kodi Build Manager Test.app" --args -p`. Kodi 21.3/Omega
+mapped `special://home`, `special://profile`, userdata, addon_data, databases,
+and packages under the app's `Contents/Resources/Kodi/portable_data` tree.
+Process/open-file checks found no use of the normal Kodi profile. The portable
+profile held the fresh stock baseline; it was not reset or mutated. The exact
+Red Light `settings.db` path under portable userdata was absent.
+
+The retained capture matched source fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`:
+37 graph nodes, 31 installed managed non-system nodes, one absent optional
+`script.module.pysocks`, five system/runtime nodes, 67 required edges, and
+three optional edges. All 30 retained exact artifacts passed byte/hash,
+size, ID/version, and ZIP checks. YouTube `7.4.4+unofficial.2` remains exact
+unavailable and no trusted repository is established; policy permits Skip or
+Cancel, with a manual-install warning.
+
+Protected overlay safe metadata validation passed for ID
+`family-room-redlight-2.6.8`, expected fingerprint
+`sha256:a82915f7ae6017b497f4c8c16070420b0ab375b180a23a8cac5f9c119d85c295`,
+source binding, and the public Red Light declaration. YouTube Skip was
+compatible according to public ownership/resource declarations. No private
+values were emitted or used for the compatibility decision.
+
+Production inspection found `PrivateOverlayManager` constructs
+`RedLightSettingsAdapter` with `lifecycle=ACTIVE` and `initialized=False`.
+The adapter requires an existing database and a quiesced owner; it does not
+create the database, and no supported deterministic initialization/quiesce
+path is wired into the production flow. The clean destination lacks the
+database. The hard gate therefore stopped with
+`RESOURCE_NOT_INITIALIZED` before bootstrap, prompt, updater-policy change,
+frozen install, reconciliation, or profile mutation. YouTube UI choice,
+restart/resume, private application, final validation, updater restoration,
+and idempotence remain untested.
+
+BM-023A-R1 generalized correction: carry the immutable source software
+fingerprint through frozen reconciliation and restart-safe request metadata;
+validate overlay source binding against it; declare the public Red Light
+resource and overlay ID in the Family Room example. No lifecycle bypass was
+added. The correction and regression tests are committed on `agent/codex` as
+`a2ad39a`. Focused production regressions **288/288**, full suite **1647/1647**,
+compileall, JSON parsing, and diff check passed. Runtime label was GPT-6;
+requested Luna-6/Max and Codex quota data were unavailable.
+
+No Family Room profile/device or other Kodi device was accessed. tvOS remains
+NOT VALIDATED. Secret values do not appear in the source changes or tracking;
+the secret-blind scan result is recorded as `leak_detected=false` after the
+final scan. The exact authorized test app remains at its pristine portable
+baseline and is still available to the user.
+
+**Smallest next step**: separately design/implement a supported deterministic
+Red Light database initialization and quiesce lifecycle; only then consider a
+newly authorized BM-023A-R1 retry. Do not continue to another milestone.
+
+---
+
 # Agent Handoff — BM-023B complete
 
 **Result**: explicit exact-first frozen install recovery is implemented and

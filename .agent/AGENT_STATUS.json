@@ -1,10 +1,10 @@
 {
-  "active_agent": "codex",
+  "active_agent": "none",
   "status": "complete",
-  "task": "BM-023B-merge",
-  "reason": "BM-023B implementation 1d60ed3 is integrated on protected matrix as 5648c67 with neutral tracking d867b80 and normally merged into agent/codex. Worker and matrix usage rows are preserved once. Integrated focused module suites 581/581; full suite 1643/1643; compileall, JSON parsing, and diff check passed. BM-023A-R1 is architecturally unblocked but not yet resumed. Codex worker identity is preserved.",
-  "last_commit": "1d60ed3",
+  "task": "BM-023A-R1",
+  "reason": "Validation task complete with BLOCKED_RESOURCE_NOT_INITIALIZED. Kodi 21.3/Omega ran only from /Applications/Kodi Build Manager Test.app with -p and all mutable paths resolved under portable_data; normal-profile handles were absent. The clean profile has no Red Light settings.db. Production defaults are ACTIVE/initialized=False with no supported deterministic initialization/quiesce path, so the hard gate stopped validation before destination mutation. Protected overlay metadata/source binding and public YouTube-Skip compatibility passed without emitting values. No Family Room/device access; tvOS NOT VALIDATED.",
+  "last_commit": "a2ad39a",
   "matrix_sha": "d867b80",
-  "next_agent": "codex",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-22"
 }

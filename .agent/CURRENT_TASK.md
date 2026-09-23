@@ -1,5 +1,75 @@
 # Current Task
 
+## BM-023A-R1 — Isolated macOS Frozen Install Validation Retry
+
+**Status**: Complete as a validation task with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`. BM-023B is integrated on protected `matrix` at
+`d867b8029ae35d4187ecbcecb0f3f39016673517` and synchronized to `agent/codex`
+at `9b16e8a5a0585a11552233071f20073af151c0b4`. The R1 source-identity fix is
+committed on `agent/codex` as `a2ad39a`.
+
+### Destination isolation and input preflight
+
+- Only `/Applications/Kodi Build Manager Test.app` was launched, with the
+  exact command `open "/Applications/Kodi Build Manager Test.app" --args -p`.
+- The app reports Kodi 21.3 / Omega. The running Kodi executable and
+  `XBMCHelper` both resolve inside this test app; Kodi's process includes `-p`.
+- Kodi's own log maps `special://home` to the app's
+  `Contents/Resources/Kodi/portable_data` and `special://profile` through
+  `special://masterprofile` to that tree's `userdata`. Derived `addon_data`,
+  `Database`, and `addons/packages` paths resolve inside the same portable root.
+  Process open-file checks found no normal-profile handles.
+- Final path checks confirmed the Red Light `settings.db` is absent and its
+  expected destination remains inside the test app.
+- The portable profile contains only the fresh Kodi baseline (stock metadata
+  add-ons, default skin/input data, and empty library databases); it has not
+  been reset. No Build Manager install, settings change, add-on mutation, or
+  reconciliation has occurred.
+- The retained capture at
+  `/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json`
+  matches source fingerprint
+  `sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+  Its graph is 37 nodes, 31 installed managed, 1 absent optional, 5 system /
+  runtime nodes, 67 required edges, and 3 optional edges. All 30 available
+  artifacts pass byte hash, size, ID/version, and ZIP validation. The packages
+  contain no native binary members in the checked formats.
+- YouTube `7.4.4+unofficial.2` remains exact-unavailable with unknown trusted
+  repository provenance. The Family Room policy is exact-first with repository
+  fallback or Skip; current actions are Skip / Cancel Build.
+
+### Result and stop condition
+
+- Protected overlay validation passed for ID, fingerprint, source binding, and
+  public Red Light declaration. YouTube Skip compatibility passed using only
+  public ownership declarations. No private values were emitted.
+- The production default adapter is hard-coded `ACTIVE` and
+  `initialized=False`; it does not create the database, and no supported
+  deterministic initialization/quiesce lifecycle exists. The clean destination
+  has no Red Light settings database, so validation stopped at the hard gate
+  with `RESOURCE_NOT_INITIALIZED` before destination mutation.
+- Build Manager bootstrap, YouTube prompt/choice, frozen installation, updater
+  quarantine, public configuration, private application, restart/resume, final
+  state, and idempotence were not attempted after this architectural gate.
+
+Focused production regressions: **288/288**. Full repository suite:
+**1647/1647**. `compileall`, JSON parsing, and `git diff --check` passed.
+No Family Room/device access occurred. tvOS remains NOT VALIDATED. The
+requested Luna-6 / Max setting was not observable; runtime label was GPT-6,
+effort and Codex usage readings unavailable.
+
+Do not begin another milestone. The smallest next step is a separately scoped
+production design for deterministic Red Light initialization and quiescence,
+followed by a newly authorized retry if implemented.
+
+No Family Room/device access occurred. No normal Kodi profile path was selected
+or opened. tvOS remains NOT VALIDATED. The task-requested Luna-6 / Max setting
+was not observable in this runtime; the runtime label is GPT-6 and effort and
+Codex usage/quota readings are unavailable.
+
+---
+
+# Previous Task Records
+
 ## BM-023B — Frozen Artifact Fallback & Install Recoverability
 
 **Status**: Complete on `agent/codex`. BM-023A-H tracking is integrated on
