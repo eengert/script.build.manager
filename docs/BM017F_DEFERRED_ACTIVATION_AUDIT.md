@@ -3,6 +3,13 @@
 Status: **complete as an investigation/implementation attempt**. Result:
 `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
 
+This is the historical result of the first BM-017F attempt. It requires local
+revalidation before it can be accepted: BM-023A-R1 reported 30 exact
+artifact-backed installed managed add-ons, with Red Light 2.6.8 among them and
+YouTube 7.4.4+unofficial.2 as the single exact-artifact gap. The retained frozen
+manifest and ArtifactStore must be checked through the production model before
+concluding that the Red Light object is unavailable.
+
 BM-017F did not modify product code or begin a later milestone. The exact
 Red Light 2.6.8 package is required to re-inspect its source before choosing an
 initializer and to prove the complete clean-destination lifecycle. The
@@ -168,18 +175,22 @@ idempotence, or package-specific runtime verification. The existing
 resource and an uninitialized lifecycle. No success or retry readiness is
 claimed.
 
-## Exact next step and classification
+## Exact next step and historical classification
 
-To resume this milestone, supply a reachable local file or URL for the exact
-Red Light 2.6.8 artifact and verify SHA-256
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927` before
-opening it. If the artifact cannot be produced with that identity, BM-017F
-remains blocked; do not substitute an approximate release.
+Revalidate the retained Family Room frozen manifest's Red Light artifact
+reference and resolve that reference through the production ArtifactStore API.
+If the exact object exists, check the pinned SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`, size,
+ZIP integrity, package root, traversal/symlink safety, and addon ID/version
+before opening its source. If it is missing or the manifest reference is
+inconsistent, report that precise retained-state result. Do not use a
+substitute.
 
 - BM-017E historical result:
   `BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
-- BM-017F: complete as investigation/implementation attempt;
-  `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
+- BM-017F first attempt: complete as investigation/implementation attempt;
+  historical result `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`,
+  pending retained-manifest and ArtifactStore revalidation.
 - Red Light clean-destination lifecycle: **UNSUPPORTED**.
 - macOS BM-023A retry: **STILL_BLOCKED**; not started.
 - tvOS: **NOT VALIDATED**.
