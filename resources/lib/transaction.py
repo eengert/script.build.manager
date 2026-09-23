@@ -207,7 +207,9 @@ class RestartTransaction:
         if (
             not isinstance(request_value, dict)
             or not request_fields.issubset(request_value)
-            or set(request_value) - request_fields - {"install_resolutions"}
+            or set(request_value) - request_fields - {
+                "install_resolutions", "source_software_fingerprint"
+            }
         ):
             raise TransactionCorrupt("transaction request is not a safe selector object")
         try:
@@ -221,6 +223,9 @@ class RestartTransaction:
                 manifest_path=request_value["manifest_path"],
                 device_profile_id=request_value["device_profile_id"],
                 install_resolutions=install_resolutions,
+                source_software_fingerprint=request_value.get(
+                    "source_software_fingerprint", ""
+                ),
             )
             phase = TransactionPhase(value["phase"])
             requirement = RestartRequirement(value["restart_requirement"])

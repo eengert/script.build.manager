@@ -93,13 +93,17 @@ class TestTransactionStore(StoreTestCase):
             ResolutionState.SKIPPED,
         )
         request = ReconcileRequest(
-            "/safe/build.json", "family-room", install_resolutions=(record,)
+            "/safe/build.json", "family-room", install_resolutions=(record,),
+            source_software_fingerprint="a" * 64,
         )
         transaction = replace(_transaction(), request=request)
 
         restored = RestartTransaction.from_dict(transaction.to_dict())
 
         self.assertEqual(request, restored.request)
+        self.assertEqual(
+            "a" * 64, restored.request.source_software_fingerprint
+        )
         self.assertEqual(InstallResolution.SKIPPED, restored.request.install_resolutions[0].resolution)
         self.assertEqual(ResolutionState.SKIPPED, restored.request.install_resolutions[0].state)
 

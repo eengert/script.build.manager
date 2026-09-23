@@ -844,6 +844,27 @@ class TestEricMain(unittest.TestCase):
         for addon_id in all_enabled:
             self.assertEqual(addon_map[addon_id], "enabled", addon_id)
 
+    def test_family_room_declares_redlight_overlay_resource(self):
+        r = resolve_manifest(self.manifest, "family-room")
+        self.assertEqual(
+            r.private_overlay.overlay_id, "family-room-redlight-2.6.8"
+        )
+        resources = r.config.structured_private_resources
+        self.assertEqual(len(resources), 1)
+        declaration = resources[0]
+        self.assertEqual(declaration.resource_id, "redlight.settings")
+        self.assertEqual(declaration.owner_addon_id, "plugin.video.redlight")
+        self.assertEqual(declaration.supported_versions, ("2.6.8",))
+        self.assertEqual(declaration.schema_id, "redlight-settings-v1")
+        self.assertEqual(
+            {field.field_id for field in declaration.fields},
+            {
+                "mdblist.refresh", "mdblist.token", "mdblist.user",
+                "pm.account_id", "pm.token", "tb.token", "trakt.expires",
+                "trakt.refresh", "trakt.token", "trakt.user",
+            },
+        )
+
     # --- shield (android platform, shield-extras optional group) ---
 
     def test_shield_resolves(self):

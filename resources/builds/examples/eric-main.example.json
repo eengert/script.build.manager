@@ -35,7 +35,31 @@
         "keys": ["HomeSwitcher.Vertical", "HomeSwitcher.EnableIcons", "HomeSwitcher.EnableIconText", "HomeSwitcher.DisableHeader", "HomeSwitcher.DisableDate", "HomeSwitcher.DisableSearch", "HomeSwitcher.DisableFirstWidgetFocus", "HomeSwitcher.LoopBack", "Spotlight.EnableSlide", "Spotlight.UseMenuButton", "View.UseDetailedListLabels", "Widgets.EnableShowMore", "Widgets.DisableNoResultsItem", "Navigation.OnBack", "Seekbar.TimeDisplay", "Skin.FlixArt.Size"]
       }
     ],
-    "managed_files": []
+    "managed_files": [],
+    "structured_private_resources": [
+      {
+        "resource_type": "sqlite.settings",
+        "owner_addon_id": "plugin.video.redlight",
+        "supported_versions": ["2.6.8"],
+        "schema_id": "redlight-settings-v1",
+        "resource_id": "redlight.settings",
+        "adapter_id": "redlight.sqlite.settings.v1",
+        "lifecycle": "quiesced",
+        "required": true,
+        "fields": [
+          {"field_id": "mdblist.refresh", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "mdblist.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "mdblist.user", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "pm.account_id", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "pm.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "tb.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.expires", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "trakt.refresh", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.user", "type": "string", "required": false, "sensitivity": "private_identifier"}
+        ]
+      }
+    ]
   },
   "platform_profiles": {
     "tvos": {
@@ -94,6 +118,7 @@
   ],
   "private_overlay": {
     "type": "local_file",
+    "overlay_id": "family-room-redlight-2.6.8",
     "path_hint": "~/.config/kodi-private/eric-main-private.json",
     "description": "Optional private overlay for portable authorization state (Real-Debrid, Trakt, EasyNews, etc.). Never committed to the public repository."
   },

@@ -406,6 +406,10 @@ class FrozenResolutionTest(unittest.TestCase):
         self.assertNotIn(PYSOCKS, self.backend.installed)
         self.assertNotIn(PYSOCKS, [record.addon_id for record in result.resolution_manifest.records])
         self.assertEqual(1, len(configuration_requests))
+        self.assertEqual(
+            manifest.fingerprint(),
+            configuration_requests[0].source_software_fingerprint,
+        )
         resolved_youtube = next(
             record for record in configuration_requests[0].install_resolutions
             if record.addon_id == YOUTUBE
