@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "implemented_pending_live_validation",
+  "status": "implemented_pending_alias_live_validation",
   "task": "BM-017F",
-  "reason": "IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION. Corrected BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT with a verified resources/lib owner root, frozen-record-bound Python dependency roots, host fallback blocking, namespace collision checks, and deterministic import cleanup. Regression suites passed offline; no Kodi or lifecycle harness run. Red Light clean-destination lifecycle remains not live-validated; macOS BM-023A remains blocked and tvOS is not validated.",
-  "last_commit": "93be55a3e3a900de488d388c88fbf39aca885869",
+  "reason": "IMPLEMENTED_PENDING_ALIAS_LIVE_VALIDATION. Commit 81e8b2cb41c8d07238e20957b57f71f957cbdf06 adds source-based provider ownership, Requests 2.31.0 compatibility-alias validation, canonical object-identity checks, deterministic cleanup/retry, safe import diagnostics, and regressions. Focused 456/456 and full 1756/1756 passed; compileall, 7 tracked JSON parses, schema 50/50, and diff check passed. No Kodi or lifecycle harness run. Red Light clean-destination lifecycle remains not live-validated; macOS BM-023A remains blocked and tvOS is not validated.",
+  "last_commit": "81e8b2cb41c8d07238e20957b57f71f957cbdf06",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
   "updated_at": "2026-09-23"

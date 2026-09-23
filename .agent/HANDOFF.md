@@ -1,4 +1,64 @@
-# Current Handoff — BM-017F import correction implemented
+# Current Handoff — BM-017F Requests alias correction ready for live validation
+
+## Result
+
+Committed the verified Requests compatibility-alias correction and regression
+coverage as `81e8b2c` on `agent/codex`. The provider resolver determines
+ownership from canonical module source locations (`__file__`, spec origin, and
+namespace `__path__`) and accepts only one matching frozen provider. Requests
+2.31.0 aliases are limited to `urllib3`, `idna`, and `chardet`; each alias must
+come from its matching provider in the verified dependency closure, remain
+anchored under the verified Requests package, and be the identical object in
+the canonical provider entry in `sys.modules`. Host packages and unrelated
+cross-provider aliases fail closed.
+
+Cleanup snapshots controlled preexisting modules and their dictionaries,
+removes every newly created Requests, dependency, owner, namespace, and alias
+entry under the temporary import roots on success or failure, and restores
+`sys.path` and `sys.meta_path`. The regression covers ownership-check failure
+followed by a successful same-process retry; legitimate preexisting Requests
+and urllib3 modules and an unrelated shared module remain intact.
+
+Ownership failures carry a safe category and validated module/provider IDs
+through Red Light initialization, Build Manager action results, and the frozen
+CONFIGURE transaction status. Paths, exception text, and private values are
+excluded.
+
+## Validation and limits
+
+- Requested focused regression set: **456 passed**.
+- Full repository `unittest` suite: **1,756 passed**.
+- Manifest/schema suite: **50 passed**.
+- `compileall` passed; all **7 tracked JSON files** parsed; `git diff --check`
+  passed.
+- No Kodi executable or BM-017F lifecycle harness command was run. No normal
+  Kodi profile, real device, or private overlay values were accessed.
+
+Classification: `IMPLEMENTED_PENDING_ALIAS_LIVE_VALIDATION`. The historical
+`BLOCKED_RED_LIGHT_REQUESTS_ALIAS_SOURCE_MISMATCH` is corrected offline and
+awaits supervisor live proof. Red Light's lifecycle remains **NOT YET
+LIVE-VALIDATED**; macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT
+VALIDATED**.
+
+## Smallest next step
+
+The supervisor runs the following disposable lifecycle command manually from
+normal Terminal. Codex did not run it:
+
+```text
+cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+
+python tools/kodi_test.py validate-bm017f-lifecycle \
+  --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
+  --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+```
+
+Required human input: supervisor review of the live stage/result before any
+further BM-017F work. Do not claim completion from offline tests alone.
+
+---
+
+# Previous Handoff — BM-017F import-path correction implemented
 
 ## Result
 

@@ -2,11 +2,13 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION` on `agent/codex`.
-Substantive implementation commit: `93be55a3e3a900de488d388c88fbf39aca885869`.
-The prior import-path blocker is corrected and covered offline. Red Light's
-clean-destination lifecycle remains **NOT YET LIVE-VALIDATED**. macOS BM-023A
-remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+**Status**: `IMPLEMENTED_PENDING_ALIAS_LIVE_VALIDATION` on `agent/codex`.
+Latest alias correction commit: `81e8b2c`; verified import roots were first
+implemented in `93be55a3e3a900de488d388c88fbf39aca885869`. The historical
+`BLOCKED_RED_LIGHT_REQUESTS_ALIAS_SOURCE_MISMATCH` is corrected offline and
+awaits live proof. Red Light's clean-destination lifecycle remains **NOT YET
+LIVE-VALIDATED**. macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT
+VALIDATED**.
 
 ### Verified package import context
 
@@ -34,6 +36,41 @@ created owner modules and namespace roots on success or failure. Red Light
 continues to load its schema/default declarations and marker setter from the
 installed package while the owner remains held disabled; no service, provider,
 authentication, or network entrypoint is called.
+
+Module ownership is derived from canonical source paths, not module names.
+Ordinary modules use `__file__` or spec origin; namespace packages use every
+`__path__` entry. Each path must resolve inside exactly one verified provider
+root. Requests compatibility names are limited to its audited 2.31.0 aliases
+for `urllib3`, `idna`, and `chardet`. An alias must be backed by the matching
+provider in the current frozen dependency closure, sit under the verified
+Requests package, and be the same module object as its canonical provider
+entry. Host/system packages, missing providers, ambiguous roots, and path or
+symlink escapes fail closed. Context-created aliases and controlled modules are
+removed on success or failure; preexisting module objects and dictionaries,
+`sys.path`, and `sys.meta_path` are restored. A failed ownership check followed
+by a same-process retry passes offline.
+
+The source audit of the exact retained Requests 2.31.0 `requests/packages.py`
+confirmed its structural alias rule and the three provider names. The frozen
+Red Light import fixture reaches `requests.adapters.Retry` from frozen
+`urllib3.util.retry` and then passes post-import ownership validation.
+
+### Latest offline alias diagnosis and correction
+
+After the import-root correction, the offline Red Light import reached
+`requests.adapters.Retry`; the first ownership rejection was
+`requests.packages.urllib3.exceptions`, whose actual source belonged to the
+verified `script.module.urllib3` provider. The old prefix-only check required
+every `requests.*` entry to originate in Requests. That also left newly created
+Requests aliases in `sys.modules` after failure, causing a same-process retry to
+fail during preflight.
+
+Commit `81e8b2c` now validates physical provider ownership and canonical object
+identity for the three audited aliases, enforces Requests 2.31.0 and verified
+dependency-closure membership, and restores the temporary module state. Safe
+diagnostics retain `import_failure_category`, `failing_module`, and verified
+provider IDs through CONFIGURE transaction status without paths, exception
+text, or private values. This remains offline implementation evidence only.
 
 ### Resolved pre-correction import diagnosis
 
@@ -97,6 +134,11 @@ macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
   `LOAD_INITIALIZER_DECLARATIONS` and `INITIALIZER_IMPORT_FAILED`; the offline
   source/layout probe narrows the first operation to the missing `resources/lib`
   import root, subject to the live traceback limitation above.
+- A later offline probe against the verified installed package roots established
+  that the import chain reaches `requests.adapters.Retry`, then fails post-import
+  ownership validation on the Requests compatibility alias backed by frozen
+  `script.module.urllib3`. Commit `81e8b2c` corrects that provider mismatch and
+  alias cleanup. No live rerun was performed.
 
 ### Actual initializer map
 
@@ -129,31 +171,35 @@ retains the current `initialization_stage`, deepest
 `PRIVATE_RESOURCE_INITIALIZATION_FAILED` code and safe owner/resource IDs.
 
 The structured-resource manager carries these fields into the existing action
-failure diagnostic. The frozen CONFIGURE handler persists only allowlisted
+failure diagnostic. Import ownership errors additionally carry a validated
+failure category, Python module ID, and verified provider IDs. The frozen
+CONFIGURE handler persists only allowlisted
 `action`, `resource_failure`, `owner`, `resource`, `cause`,
-`initialization_stage`, and `last_completed_stage` tokens in the transaction
-status message. Stage fields are omitted for legacy errors, preserving their
-serialized shape. Exception text, paths, settings rows, fake secrets, and private
-overlay values are never copied into the diagnostic.
+`initialization_stage`, `last_completed_stage`, and optional import ownership
+tokens in the transaction status message. New optional action-result fields
+are omitted for legacy errors, preserving their serialized shape. Exception
+text, paths, settings rows, fake secrets, and private overlay values are never
+copied into the diagnostic.
 
 ### Validation and live boundary
 
 - Focused verified-source, import-context, Red Light resource, private overlay,
-  Build Manager, dependency, frozen install/readiness, transaction, resume, and
-  CONFIGURE diagnostics suites: **354 passed**.
-- Full repository `unittest` suite: **1,742 passed**.
+  add-on registry, Build Manager, dependency, frozen install/readiness,
+  transaction, resume, CONFIGURE diagnostics, and manifest/schema suites:
+  **456 passed**.
+- Full repository `unittest` suite: **1,756 passed**.
 - Project manifest/schema tests: **50 passed**.
 - `compileall` over `resources`, `tests`, and `tools`: passed.
 - All **7 tracked JSON files** parsed; `git diff --check` passed.
 - No Kodi executable or BM-017F lifecycle harness command was run. No normal
   Kodi profile, real device, or real private overlay values were accessed.
 
-Current classification is `IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION`.
-The historical `BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT` correction is
-implemented and awaits live proof. Red Light clean-destination lifecycle
-remains **NOT YET LIVE-VALIDATED**; macOS BM-023A remains **STILL BLOCKED**;
-tvOS remains **NOT VALIDATED**. The supervisor will run the next disposable
-validation from normal Terminal.
+Current classification is `IMPLEMENTED_PENDING_ALIAS_LIVE_VALIDATION`.
+Both the historical import-path correction and the current Requests alias
+correction are implemented and await live proof. Red Light clean-destination
+lifecycle remains **NOT YET LIVE-VALIDATED**; macOS BM-023A remains **STILL
+BLOCKED**; tvOS remains **NOT VALIDATED**. The supervisor will run the next
+disposable validation from normal Terminal.
 
 ### Next manual command — supervisor only
 
