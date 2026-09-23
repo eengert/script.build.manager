@@ -2,8 +2,8 @@
   "active_agent": "codex",
   "status": "blocked",
   "task": "BM-017F",
-  "reason": "BM-022 now invokes the shared registry-readiness gate before configuration and the full suite passes. The last authorized harness run failed at disposable JSON-RPC readiness with Operation not permitted; a no-Kodi probe also failed to bind 127.0.0.1 with EPERM, confirming loopback is blocked in this execution environment. No workaround or rerun. Await a loopback-capable execution environment and new live approval.",
-  "last_commit": "beff4f1",
+  "reason": "Offline implementation and regression coverage are complete. BM-017F remains IMPLEMENTED_PENDING_LIVE_VALIDATION until the supervisor performs the single manual disposable lifecycle validation; do not launch Kodi or the BM-017F harness from Codex. Red Light clean-destination lifecycle is not yet live-validated; macOS BM-023A remains blocked and tvOS is not validated.",
+  "last_commit": "74477f4",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
   "updated_at": "2026-09-23"

@@ -2,138 +2,88 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`. The
-preserved BM-017F implementation and tests are on `agent/codex` in commit
-`beff4f1`. The retained
-Red Light 2.6.8 object remains validated against SHA-256
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
+**Status**: `IMPLEMENTED_PENDING_LIVE_VALIDATION` on `agent/codex`. The
+offline implementation and regression tests are committed as `74477f4`.
+latest manual disposable run proved BM-022 post-restart readiness, exact Red
+Light 2.6.8 registration, disabled state, and the active hold; it then failed
+in `redlight.settings` initialization because `xbmcaddon.Addon(owner_id)` did
+not resolve a held disabled add-on. The implementation below addresses that
+source-resolution boundary. No live validation has been run for this correction.
 
-### Transport diagnosis — 2026-09-23
+### Historical BM-017F blocker sequence
 
-Classification: `VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`. With no Kodi
-running, a temporary Python HTTP server bind to `127.0.0.1` on an ephemeral
-port failed with `PermissionError`, errno 1. No listener/port was created, so
-urllib, direct-client socket, and curl requests could not be run; the probe
-stopped at the explicit environment-block condition. No loopback or proxy
-workaround was attempted.
+- `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` is resolved: the exact
+  retained Red Light 2.6.8 artifact was validated at SHA-256
+  `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`, size
+  1,261,957 bytes.
+- `BLOCKED_POST_RESTART_REGISTRY_READINESS_BYPASSED` is resolved: BM-022 now
+  invokes the shared readiness gate from its own restart continuation. The
+  supervisor's normal-Terminal run proved readiness passed for Red Light
+  2.6.8 with `enabled=false`; `UpdateLocalAddons` was not required.
+- `BLOCKED_RED_LIGHT_XBMCADDON_LOOKUP_WHILE_HELD_DISABLED` was the latest live
+  failure and is corrected offline by passing a verified installed-source
+  context into structured resource initialization.
 
-Project records show earlier successful disposable BM-022
-`validate-frozen-install` and BM-020C `validate-build-manager-resume` gates,
-which use `JSONRPC.Ping`. At BM-022 commit `27f4215` and current worker HEAD,
-the harness JSON-RPC client targets `http://127.0.0.1:8920/jsonrpc` with
-`urllib.request.urlopen`; `configure_webserver()` writes enabled webserver
-settings to disposable `guisettings.xml` before launch. The current BM-017F
-path uses the same setup. Git history shows no change to the JSON-RPC request,
-webserver configuration, launch command, or launch environment since that
-successful BM-022 implementation; current harness differences are its
-lexical disposable-path safety check and BM-017F fixture/command.
+The earlier Codex sandbox harness attempt remains separately classified
+`VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`: its disposable JSON-RPC connection
+failed with `Operation not permitted`. The later supervisor-approved Terminal
+run demonstrated that JSON-RPC works outside that sandbox. Historical safety
+notes remain in the handoff below; the normal Kodi profile has not been accessed
+in this implementation task.
 
-The historical records do not identify the precise prior Codex execution
-surface or proxy environment. In this probe, uppercase and lowercase
-HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, and no_proxy variables were all
-unset. Python's `proxy_bypass()` returned false for loopback; that does not
-establish whether a system-level proxy is configured. No proxy URL or value
-was printed or further inspected. The bind EPERM establishes that this current
-execution environment cannot run a loopback listener, independent of Kodi.
-No code was changed and no Kodi launch or lifecycle validation occurred.
+### Implementation
 
-The corrected BM-022 quiescence continuation now invokes the shared held-addon
-registry-readiness gate before `install()` enters configuration. It revalidates
-the durable transaction, updater quarantine, manifest/resolution identities,
-full activation hold, exact expected version, and disabled Kodi registry state.
-The BM-020 path reuses the same helper. Regression coverage proves BM-020
-`no_transaction` alongside a resumable BM-022 transaction, readiness ordering,
-fail-closed registry states, and hold persistence.
+- Added a generalized installed-source identity derived from the active frozen
+  transaction's installed resolution record: add-on ID/version, exact artifact
+  SHA-256 and size, transaction ID, and manifest fingerprint. The path is
+  derived only from Kodi's active `special://home/addons` root plus the
+  validated add-on ID; no manifest path is accepted.
+- The resolver canonicalizes and confines the add-on root under Kodi's active
+  add-ons directory, rejects traversal/symlink escape, and checks `addon.xml`
+  ID/version. The archive digest remains linked to the frozen install record;
+  it is not represented as a hash of the installed directory. Kodi registry
+  exact-version/disabled checks and the activation hold remain required.
+- Red Light initialization imports only the audited package-owned schema and
+  defaults (`table_creators`, `default_settings`, `_new_setting_value`, sync
+  marker constants, and `kodi_utils.set_property`). It does not call
+  `xbmcaddon.Addon`, the add-on profile helper, service startup, provider
+  clients, authentication, or settings synchronization. The `aiostreams`
+  action label uses its declared default option without importing its provider.
+- A missing or strictly empty `settings.db` is initialized from package schema
+  and defaults, enters WAL mode, and receives the package's fresh-install sync
+  markers. Existing populated data is a read-only idempotent verification;
+  partial or uncertain state fails closed. Private overlay apply remains after
+  initialization while the owner is held disabled.
+- Configuration action diagnostics now normalize enum/string action kinds,
+  preserve `CONFIGURE`, and retain validated owner/resource IDs plus a typed
+  failure code and safe cause code. Exception text and private values are not
+  serialized.
 
-The single newly authorized command was run once through `tools/kodi_test.py`
-with disposable HOME
-`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`
-and configured profile/userdata location
-`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home/Library/Application Support/Kodi/userdata`.
-Kodi.app launched, fixture preparation and harness configuration completed,
-then JSON-RPC readiness failed after 90 seconds with
-`<urlopen error [Errno 1] Operation not permitted>`. The harness stopped Kodi;
-status confirmed `running: False`, `pid: None`. The run did not reach a BM-017F
-transaction, Red Light installation, restart, BM-020/BM-022 resume, registry
-refresh, configuration, resource initialization, private apply, activation
-release, runtime start, or idempotence. The precise latest blocker is the
-disposable harness's denied JSON-RPC connection; the production readiness fix
-was not exercised live.
+### Offline validation and live boundary
 
-Diagnostics are preserved at
-`/private/tmp/bm017f-continuation-readiness-failure-2026-09-23.tar.gz`,
-SHA-256 `588d2f858083cf611d8b97798c07160e9acea827acbf5675864f5865f9c1a827`.
-The single-run authorization is exhausted. Do not relaunch Kodi or rerun the
-harness without supervisor direction and new approval.
+- Focused source resolver, Red Light resource, Build Manager, and diagnostic
+  regressions: **49/49**.
+- Full repository suite: **1,708/1,708**.
+- The apparent Kodi readiness/process output in the full suite comes from
+  `tests/test_kodi_harness.py` command-dispatch and mocked status fixtures; no
+  Kodi executable or harness lifecycle command was launched by the suite.
+- `compileall`, tracked schema/status JSON parsing, and `git diff --check`
+  passed.
+- No Kodi, BM-017F harness, normal Kodi profile, real device, Test.app, or real
+  private overlay value was accessed during this implementation task.
 
-Tests: targeted registry/readiness/frozen-install suites **48/48**; full
-repository suite **1690/1690**; `compileall`, schema/status JSON parsing, and
-`git diff --check` passed. Red Light clean-destination lifecycle remains
-**UNSUPPORTED**; macOS BM-023A remains **STILL_BLOCKED**; tvOS is **NOT
-VALIDATED**. Do not start BM-023A.
+BM-017F is **not complete** until the supervisor performs one manual disposable
+lifecycle validation. Red Light clean-destination lifecycle is **NOT YET
+LIVE-VALIDATED**. The macOS BM-023A retry remains **STILL BLOCKED** pending that
+proof; tvOS is **NOT VALIDATED**.
 
-**Safety**: This continuation used only `tools/kodi_test.py` for Kodi,
-confirmed exact disposable HOME and stopped state through the harness, and did
-not access the normal Kodi profile, a device, Kodi Build Manager Test.app, or
-real private values. A metadata-only normal-profile `test -e` from the prior
-continuation and the earlier bare `Kodi -v` are separate historical deviations;
-do not investigate them or access the normal profile.
+**Next step — one manual Terminal validation only after review**:
 
-**Smallest next step**: supervisor direction on enabling the local JSON-RPC
-readiness connection for the disposable harness, followed by new explicit
-approval before another live run. BM-022 registry readiness has unit and
-integration-regression coverage but no successful live proof. Do not resume
-BM-023A.
+```text
+python tools/kodi_test.py validate-bm017f-lifecycle --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+```
 
----
-
-## BM-023B — Frozen Artifact Fallback & Install Recoverability
-
-**Status**: Complete on `agent/codex`. BM-023A-H tracking is integrated on
-protected `matrix` as `b82885ab01fdb3c2486fff0c3e42bf33262b110e`; the normal
-worker synchronization merge is `08c0fdfc9601e770c88edab5100751c04b16166d`.
-BM-023B implementation commit `1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f`
-is integrated on protected `matrix` as `5648c678`; neutral matrix tracking is
-`d867b80`. This is the normal merge synchronization into `agent/codex`.
-
-Implement explicit per-addon install resolution for exact frozen artifacts,
-repository-current fallback, and allowed skip. Keep captured desired state and
-its fingerprint immutable; track operator resolution separately and derive a
-separate resolved-software fingerprint. Preserve exact-first validation,
-dependency safety, durable transaction recovery, truthful readiness, and
-explicit unattended `USER_RESOLUTION_REQUIRED` behavior. Repository fallback
-must use trustworthy concrete identity and execute through a supported Kodi /
-Build Manager path. Keep all choices explicit in the plan and UI; do not infer
-fallback from add-on names, optional edges, or missing artifact state.
-
-Scope is architecture, implementation, tests, and disposable validation only.
-Do not resume BM-023A installation, launch Kodi Test.app, access Family Room or
-any device, touch the portable profile, or inspect/rebind private-overlay
-values. Validate only with disposable isolated state. The Family Room YouTube
-policy may skip or use an explicitly proven current repository package; do not
-invent repository identity or claim that the captured `7.4.4+unofficial.2`
-artifact is available.
-
-**Result**: exact-first artifact installation remains strict; explicit policy
-controls repository fallback and skip; trusted fallback requires a captured
-exact repository package and concrete repository ID; readiness separates
-captured state, exact coverage, and recovery. Install choices are explicit,
-persisted, immutable, restart-safe, and propagated into BM-020 reconciliation.
-Family Room desired state remains complete with exact frozen coverage 30/31.
-YouTube's repository is unknown in retained evidence, so the current prompt is
-Skip / Cancel Build with a manual-install warning. BM-023A remains historically
-`BLOCKED_MISSING_FROZEN_ARTIFACTS`; the macOS retry is architecturally
-unblocked by explicit resolution but was not resumed. tvOS remains unvalidated.
-
-Worker focused regression group: **120/120**. Integrated matrix focused
-modules: **581/581**. Full repository suite: **1643/1643**.
-`compileall`, JSON parsing, and `git diff --check` passed. Disposable
-`TemporaryDirectory` artifacts and fake Kodi/repository backends were used; no
-Kodi app, real profile, device, or private-overlay value was accessed.
-
-**Smallest next step**: finish pushing this normal synchronization merge to
-`origin/agent/codex`, then begin the separately authorized BM-023A-R1 isolated
-macOS test-app validation. Do not start tvOS validation.
+Do not run this command from Codex or automatically retry a failure.
 
 ## BM-023A-H — Historical Exact Artifact Recovery
 
