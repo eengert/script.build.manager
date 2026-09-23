@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Iterator, Optional
 
 from resources.lib.build_manager import ReconcileRequest, ReconcileResult
+from resources.lib.frozen_resolution import InstallResolutionRecord, FrozenResolutionError
 from resources.lib.restart import RestartRequirement
 
 
@@ -202,14 +203,24 @@ class RestartTransaction:
                 f"unsupported transaction schema {value['schema_version']!r}"
             )
         request_value = value["request"]
-        if not isinstance(request_value, dict) or set(request_value) != {
-            "manifest_path", "device_profile_id"
-        }:
+        request_fields = {"manifest_path", "device_profile_id"}
+        if (
+            not isinstance(request_value, dict)
+            or not request_fields.issubset(request_value)
+            or set(request_value) - request_fields - {"install_resolutions"}
+        ):
             raise TransactionCorrupt("transaction request is not a safe selector object")
         try:
+            raw_resolutions = request_value.get("install_resolutions", [])
+            if not isinstance(raw_resolutions, list):
+                raise TransactionCorrupt("transaction install resolutions must be an array")
+            install_resolutions = tuple(
+                InstallResolutionRecord.from_dict(item) for item in raw_resolutions
+            )
             request = ReconcileRequest(
                 manifest_path=request_value["manifest_path"],
                 device_profile_id=request_value["device_profile_id"],
+                install_resolutions=install_resolutions,
             )
             phase = TransactionPhase(value["phase"])
             requirement = RestartRequirement(value["restart_requirement"])
@@ -231,7 +242,7 @@ class RestartTransaction:
             )
         except TransactionError:
             raise
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, FrozenResolutionError) as exc:
             raise TransactionCorrupt("transaction contains an invalid field") from exc
 
     def with_phase(self, phase: TransactionPhase) -> "RestartTransaction":

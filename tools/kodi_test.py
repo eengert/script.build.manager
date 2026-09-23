@@ -3950,7 +3950,7 @@ def main():
         elif job.get("mode") == "frozen_install":
             from pathlib import Path
             from resources.lib.artifacts import ArtifactStore
-            from resources.lib.build_manager import BuildManager, ReconcileRequest, ReconcileResult
+            from resources.lib.build_manager import BuildManager, ReconcileResult
             from resources.lib.frozen import FrozenBuildManifest
             from resources.lib.frozen_install import (
                 FrozenInstallCoordinator,
@@ -3974,13 +3974,9 @@ def main():
                 Path(manifest_path).read_text(encoding="utf-8")
             )
             manager = BuildManager()
-            request = ReconcileRequest(
-                manifest_path=configuration_path,
-                device_profile_id=job["device_profile_id"],
-            )
             if job.get("force_restart"):
-                def _configure_then_request_restart(_request):
-                    real_result = manager.reconcile(request)
+                def _configure_then_request_restart(configuration_request):
+                    real_result = manager.reconcile(configuration_request)
                     if not real_result.success or not real_result.desired_fingerprint:
                         failure = (
                             real_result.failure.to_dict()
@@ -4015,11 +4011,11 @@ def main():
                         )
                     trigger = ReconcileResult(
                         success=True,
-                        request=request,
+                        request=configuration_request,
                         desired_fingerprint=real_result.desired_fingerprint,
                         restart_report=RestartReport(RestartRequirement.KODI_RESTART, 1, 0),
                     )
-                    return RestartCoordinator(manager).handle_result(request, trigger)
+                    return RestartCoordinator(manager).handle_result(configuration_request, trigger)
 
                 configuration_runner = _configure_then_request_restart
             else:

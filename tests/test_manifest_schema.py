@@ -261,7 +261,7 @@ def _validate_config_declarations(config, *, label):
 
 def _validate_profile_layer(layer, *, label):
     _assert(isinstance(layer, dict), f"{label}: must be an object")
-    allowed = {"label", "addons", "config", "skin", "include_optional"}
+    allowed = {"label", "addons", "config", "skin", "include_optional", "frozen_install_policies"}
     for key in layer:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
     if "addons" in layer:
@@ -278,11 +278,13 @@ def _validate_profile_layer(layer, *, label):
             isinstance(layer["include_optional"], list),
             f"{label}: 'include_optional' must be an array"
         )
+    if "frozen_install_policies" in layer:
+        _validate_frozen_install_policies(layer["frozen_install_policies"], label=label)
 
 
 def _validate_device_profile(profile, *, label):
     _assert(isinstance(profile, dict), f"{label}: must be an object")
-    allowed = {"label", "extends", "addons", "config", "skin", "include_optional"}
+    allowed = {"label", "extends", "addons", "config", "skin", "include_optional", "frozen_install_policies"}
     for key in profile:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
     _assert("extends" in profile, f"{label}: 'extends' is required for every device profile")
@@ -303,6 +305,35 @@ def _validate_device_profile(profile, *, label):
             isinstance(profile["include_optional"], list),
             f"{label}: 'include_optional' must be an array"
         )
+    if "frozen_install_policies" in profile:
+        _validate_frozen_install_policies(profile["frozen_install_policies"], label=label)
+
+
+def _validate_frozen_install_policies(policies, *, label):
+    _assert(isinstance(policies, list), f"{label}: 'frozen_install_policies' must be an array")
+    allowed_policies = {
+        "exact_required",
+        "exact_first_with_repository_fallback",
+        "exact_first_with_repository_fallback_or_skip",
+    }
+    seen = set()
+    for index, policy in enumerate(policies):
+        entry_label = f"{label}.frozen_install_policies[{index}]"
+        _assert(isinstance(policy, dict), f"{entry_label}: must be an object")
+        _assert(set(policy) <= {"addon_id", "policy", "repository_id"}, f"{entry_label}: unknown key")
+        addon_id = policy.get("addon_id")
+        _assert(isinstance(addon_id, str) and addon_id, f"{entry_label}: addon_id is required")
+        _assert(addon_id not in seen, f"{entry_label}: duplicate addon_id")
+        seen.add(addon_id)
+        _assert(policy.get("policy") in allowed_policies, f"{entry_label}: unsupported policy")
+        repository_id = policy.get("repository_id", "")
+        _assert(isinstance(repository_id, str), f"{entry_label}: repository_id must be a string")
+        if repository_id:
+            _assert(repository_id.startswith("repository."), f"{entry_label}: invalid repository_id")
+            _assert(
+                policy["policy"] != "exact_required",
+                f"{entry_label}: exact-only policy cannot name a repository",
+            )
 
 
 def _validate_optional_group(group, *, label):

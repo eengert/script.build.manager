@@ -37,6 +37,7 @@ from resources.lib.manifest import (
     BuildInfo,
     ConfigDeclarations,
     DeviceProfile,
+    FrozenInstallPolicy,
     ManifestError,
     ManagedSettingScope,
     Manifest,
@@ -85,6 +86,7 @@ class ResolvedBuild:
     optional_groups_applied: Tuple[str, ...]
     restart_policy: Optional[RestartPolicy]
     private_overlay: Optional[PrivateOverlayRef]
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +145,10 @@ def resolve_manifest(manifest: Manifest, device_profile_id: str) -> ResolvedBuil
     if skin is not None and skin.config_packages:
         config_layers.append(ConfigDeclarations(packages=skin.config_packages))
     config = _merge_config(config_layers)
+    frozen_install_policies = _merge_frozen_install_policies(
+        platform.frozen_install_policies,
+        device.frozen_install_policies,
+    )
 
     return ResolvedBuild(
         build=manifest.build,
@@ -156,7 +162,19 @@ def resolve_manifest(manifest: Manifest, device_profile_id: str) -> ResolvedBuil
         optional_groups_applied=tuple(applied_ids),
         restart_policy=manifest.restart_policy,
         private_overlay=manifest.private_overlay,
+        frozen_install_policies=frozen_install_policies,
     )
+
+
+def _merge_frozen_install_policies(
+    *layers: Tuple[FrozenInstallPolicy, ...],
+) -> Tuple[FrozenInstallPolicy, ...]:
+    """Merge explicit recovery policies, with the deepest profile winning."""
+    policies: Dict[str, FrozenInstallPolicy] = {}
+    for layer in layers:
+        for policy in layer:
+            policies[policy.addon_id] = policy
+    return tuple(policies[addon_id] for addon_id in sorted(policies))
 
 
 # ---------------------------------------------------------------------------

@@ -6,11 +6,17 @@ import tempfile
 import time
 import unittest
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib.build_manager import ReconcileRequest, ReconcileResult
+from resources.lib.frozen_resolution import (
+    InstallResolution,
+    InstallResolutionRecord,
+    ResolutionState,
+)
 from resources.lib.restart import RestartReport, RestartRequirement
 from resources.lib.startup import StartupClassification, classify_startup_transaction
 from resources.lib.transaction import (
@@ -78,6 +84,24 @@ class TestTransactionStore(StoreTestCase):
             _transaction().to_json(),
             json.dumps(_transaction().to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True),
         )
+
+    def test_frozen_install_resolution_survives_restart_transaction_round_trip(self):
+        record = InstallResolutionRecord(
+            "plugin.video.youtube",
+            "7.4.4+unofficial.2",
+            InstallResolution.SKIPPED,
+            ResolutionState.SKIPPED,
+        )
+        request = ReconcileRequest(
+            "/safe/build.json", "family-room", install_resolutions=(record,)
+        )
+        transaction = replace(_transaction(), request=request)
+
+        restored = RestartTransaction.from_dict(transaction.to_dict())
+
+        self.assertEqual(request, restored.request)
+        self.assertEqual(InstallResolution.SKIPPED, restored.request.install_resolutions[0].resolution)
+        self.assertEqual(ResolutionState.SKIPPED, restored.request.install_resolutions[0].state)
 
     def test_supported_schema_loads(self):
         self.store.create(_transaction())

@@ -109,6 +109,32 @@
       "description": "'enabled': must be installed and enabled. 'disabled': must be installed but disabled. Add-on removal is not supported by the public Kodi API; omit an add-on to leave it unmanaged. An add-on omitted from a profile layer inherits its state from the parent layer — omission is NOT equivalent to 'disabled'."
     },
 
+    "frozen_install_policy": {
+      "type": "object",
+      "required": ["addon_id", "policy"],
+      "additionalProperties": false,
+      "description": "Explicit per-profile recovery policy when this captured add-on's exact frozen ZIP is unavailable. An omitted policy defaults to exact-only; dependency optionality never changes this policy.",
+      "properties": {
+        "addon_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "policy": {
+          "type": "string",
+          "enum": [
+            "exact_required",
+            "exact_first_with_repository_fallback",
+            "exact_first_with_repository_fallback_or_skip"
+          ]
+        },
+        "repository_id": {
+          "type": "string",
+          "pattern": "^repository\\.[a-z0-9._-]+$",
+          "description": "Optional concrete Kodi repository add-on identity. Runtime use still requires its exact captured package to be present and enabled in the frozen graph."
+        }
+      }
+    },
+
     "addon_entry": {
       "type": "object",
       "required": ["addon_id", "state"],
@@ -344,6 +370,12 @@
           "items": { "type": "string" },
           "description": "Optional group IDs (from the top-level 'optional' list) to activate for this platform.",
           "default": []
+        },
+        "frozen_install_policies": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/frozen_install_policy" },
+          "description": "Explicit policies for frozen install recovery. Platform policies are inherited by device profiles and may be overridden by add-on ID.",
+          "default": []
         }
       }
     },
@@ -380,6 +412,12 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional group IDs to activate for this device, in addition to any activated at the platform layer.",
+          "default": []
+        },
+        "frozen_install_policies": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/frozen_install_policy" },
+          "description": "Explicit frozen install recovery policies for this device profile, including captured transitive dependencies. Defaults remain exact-only.",
           "default": []
         }
       }
