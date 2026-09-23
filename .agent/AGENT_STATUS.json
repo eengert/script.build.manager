@@ -3,7 +3,7 @@
   "status": "blocked",
   "task": "BM-017F",
   "reason": "BM-022 now invokes the shared registry-readiness gate before configuration and the full suite passes. The single newly authorized harness run launched Kodi but its disposable JSON-RPC readiness request failed with Operation not permitted before lifecycle setup. Diagnostics are preserved; no rerun. Await supervisor direction and a permitted disposable JSON-RPC environment.",
-  "last_commit": "fedefae",
+  "last_commit": "beff4f1",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
   "updated_at": "2026-09-23"

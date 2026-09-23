@@ -3,7 +3,8 @@
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
 **Status**: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`. The
-preserved BM-017F implementation and tests are on `agent/codex`. The retained
+preserved BM-017F implementation and tests are on `agent/codex` in commit
+`beff4f1`. The retained
 Red Light 2.6.8 object remains validated against SHA-256
 `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
 

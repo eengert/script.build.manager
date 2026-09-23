@@ -16,7 +16,8 @@ The retained Red Light 2.6.8 ArtifactStore object is validated at SHA-256
 `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. The
 harness isolation check was also changed to avoid resolving or probing the
 normal-profile path; it verifies only lexical disposable paths and disposable
-symlink components.
+symlink components. The implementation, regression tests, and sanitized
+handoff are committed on `agent/codex` as `beff4f1`.
 
 ## Validation
 
