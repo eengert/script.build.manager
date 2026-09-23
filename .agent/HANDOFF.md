@@ -1,3 +1,32 @@
+# Agent Handoff — BM-023A-R1 correction integrated
+
+BM-023A-R1 is complete as a validation task with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`. The reviewed Codex production correction
+`a2ad39a02c8be924d478b83c5063635b587a33a3` was cherry-picked onto matrix as
+`9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`. Worker `.agent/*` files were
+excluded; matrix tracking is neutral.
+
+The correction carries the immutable source software fingerprint through
+frozen reconciliation and restart-safe request metadata, validates the private
+overlay against that source fingerprint, and declares the public Red Light
+structured resource in the Family Room example. The overlay's safe metadata
+and YouTube Skip compatibility were validated without emitting values.
+
+Validation confirmed the disposable Kodi 21.3/Omega app mapped mutable state
+into its `-p` portable tree and no normal-profile handles were open. The clean
+profile had no Red Light settings database. Production has no supported
+deterministic Red Light initialization/quiescence path, so the hard gate
+stopped before Build Manager bootstrap or destination mutation. No frozen
+software was installed, updater quarantine was not entered, the YouTube prompt
+was not reached, and no Family Room profile/device was accessed. tvOS remains
+NOT VALIDATED.
+
+Matrix validation passed focused **288/288** and full **1647/1647** tests,
+`compileall`, JSON parsing, and `git diff --check`. BM-017E may begin after
+normal Codex synchronization. Do not resume the Mac installation in BM-017E.
+
+---
+
 # Agent Handoff — BM-023A-H exact historical artifact recovery
 
 **Result**: `EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED`. The sanitized

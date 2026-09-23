@@ -1,5 +1,28 @@
 # Current Task
 
+## BM-023A-R1 — Isolated macOS validation result
+
+**Status**: Complete as a validation task with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`. The reviewed Codex correction
+`a2ad39a02c8be924d478b83c5063635b587a33a3` was cherry-picked as matrix commit
+`9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; worker `.agent/*` was excluded.
+
+The isolated Kodi 21.3/Omega test app and `-p` portable paths were verified.
+The clean portable profile had no Red Light `settings.db`. The production
+adapter defaults to `ACTIVE` / `initialized=False` and has no supported
+deterministic initialization/quiesce path. The hard gate stopped validation
+before Build Manager bootstrap or destination mutation. No frozen software was
+installed; updater quarantine was not entered; the YouTube prompt was not
+reached. Protected source/overlay metadata and public YouTube-Skip compatibility
+were validated without emitting private values. No Family Room profile/device
+was accessed, and tvOS remains NOT VALIDATED.
+
+Matrix tests: focused **288/288**, full **1647/1647**,
+`compileall`, JSON parsing, and `git diff --check` passed. The normal next
+worker task is BM-017E; do not resume the Mac installation in this task.
+
+---
+
 ## BM-023B — Frozen Artifact Fallback & Install Recoverability
 
 **Status**: Complete on protected `matrix`. Reviewed substantive worker commit

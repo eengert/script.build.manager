@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023B-merge",
-  "reason": "Integrated only the reviewed substantive BM-023B implementation as 5648c67; excluded Codex worker tracking. Exact-first fallback/Skip policy and safe restart resolution passed focused module suites 581/581 and full suite 1643/1643. Family Room capture remains COMPLETE at 30/31 exact artifacts; YouTube 7.4.4+unofficial.2 remains unavailable with trusted repository unknown and Skip/Cancel permitted. BM-023A-R1 is architecturally unblocked but NOT YET EXECUTED; tvOS is NOT VALIDATED. Matrix tracking remains neutral; no Kodi, profile, device, or private overlay was accessed.",
-  "last_commit": "5648c6781b4567d3b2f0931fc4ed838142ed22f1",
-  "matrix_sha": "5648c6781b4567d3b2f0931fc4ed838142ed22f1",
+  "task": "BM-023A-R1-merge",
+  "reason": "Integrated only the reviewed BM-023A-R1 source-identity correction as 9f05ea7; worker .agent tracking excluded. BM-023A-R1 is complete as a validation task with BLOCKED_RESOURCE_NOT_INITIALIZED: the clean isolated destination lacked Red Light settings.db, and production had no supported deterministic initialization/quiesce lifecycle. No frozen software was installed, updater quarantine was not entered, and the YouTube prompt was not reached. Portable isolation and safe source/private-overlay metadata validation passed. Family Room profile/device was not accessed; tvOS remains NOT VALIDATED. Matrix validation: focused 288/288, full 1647/1647, compileall, JSON parsing, diff check passed. Matrix tracking remains neutral.",
+  "last_commit": "9f05ea7",
+  "matrix_sha": "9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e",
   "next_agent": "codex",
   "updated_at": "2026-09-22"
 }
