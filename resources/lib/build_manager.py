@@ -91,6 +91,7 @@ class ReconcileRequest:
     device_profile_id: str
     install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
     source_software_fingerprint: str = ""
+    frozen_transaction_id: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.manifest_path, str) or not self.manifest_path:
@@ -116,6 +117,12 @@ class ReconcileRequest:
             r"[0-9a-f]{64}", self.source_software_fingerprint
         ):
             raise ValueError("source_software_fingerprint must be a SHA-256 digest")
+        if not isinstance(self.frozen_transaction_id, str):
+            raise ValueError("frozen_transaction_id must be a string")
+        if self.frozen_transaction_id and not re.fullmatch(
+            r"[0-9a-fA-F-]{36}", self.frozen_transaction_id
+        ):
+            raise ValueError("frozen_transaction_id must be a UUID")
 
     def to_dict(self) -> dict:
         payload = {
@@ -129,6 +136,8 @@ class ReconcileRequest:
             ]
         if self.source_software_fingerprint:
             payload["source_software_fingerprint"] = self.source_software_fingerprint
+        if self.frozen_transaction_id:
+            payload["frozen_transaction_id"] = self.frozen_transaction_id
         return payload
 
     def to_json(self) -> str:
@@ -369,6 +378,7 @@ def _config_declarations_payload(desired: ResolvedBuild) -> Optional[dict]:
 @dataclass(frozen=True)
 class _PreparedReconciliation:
     desired: ResolvedBuild
+    execution_desired: ResolvedBuild
     effective: Optional[EffectiveConfiguration]
     fingerprint: str
     protected_dependency_ids: frozenset
@@ -403,6 +413,7 @@ class BuildManager:
             return failure
         assert prepared is not None
         desired = prepared.desired
+        execution_desired = prepared.execution_desired
         effective = prepared.effective
         fingerprint = prepared.fingerprint
         protected = prepared.protected_dependency_ids
@@ -433,7 +444,7 @@ class BuildManager:
 
             try:
                 result = self._dispatch_action(
-                    action, desired, effective, protected, prepared.private_prepared
+                    action, execution_desired, effective, protected, prepared.private_prepared
                 )
             except Exception as exc:
                 result = ActionExecutionResult(
@@ -459,7 +470,7 @@ class BuildManager:
 
         try:
             final_actual = self._owners.inspector.inspect()
-            final_closure = self._final_dependency_closure(desired)
+            final_closure = self._final_dependency_closure(execution_desired)
             if final_closure is not None and skipped_addon_ids:
                 skipped_required_dependencies = {
                     node.addon_id
@@ -472,7 +483,7 @@ class BuildManager:
                     )
             config_state = self._config_validation_state(action_results)
             validation = validate_build_state(
-                desired, final_actual,
+                execution_desired, final_actual,
                 dependency_closure=final_closure,
                 configuration_state=config_state,
                 effective_configuration=effective,
@@ -586,9 +597,106 @@ class BuildManager:
                     raise ValueError(
                         "cannot prove frozen skip compatibility while managed add-ons are not installed"
                     )
+
+            # BM-022 is the sole lifecycle owner. While a durable activation
+            # hold exists, accept only its exact configuration request and
+            # project every held owner/dependent to disabled for planning and
+            # validation. A normal second reconciliation is read-only with
+            # respect to configured lifecycle resources.
+            from resources.lib.frozen_install import (
+                FrozenInstallPhase,
+                FrozenInstallStore,
+                FrozenLifecycleStage,
+                active_activation_hold_ids,
+            )
+            transaction = FrozenInstallStore().inspect()
+            held_ids = active_activation_hold_ids()
+            execution_desired = desired
+            lifecycle_resources = tuple(
+                item for item in (
+                    desired.config.structured_private_resources
+                    if desired.config is not None else ()
+                )
+                if item.configure_before_activation
+            )
+            if held_ids:
+                if transaction is None or transaction.activation_hold_released:
+                    raise ValueError("activation hold has no authoritative frozen transaction")
+                stage_owns_configuration = (
+                    transaction.phase is FrozenInstallPhase.CONFIGURING
+                    and transaction.lifecycle_stage is FrozenLifecycleStage.CONFIGURING
+                ) or (
+                    transaction.phase is FrozenInstallPhase.AWAITING_RESTART
+                    and transaction.lifecycle_stage
+                    is FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART
+                )
+                if (
+                    request.frozen_transaction_id != transaction.transaction_id
+                    or request.manifest_path != transaction.configuration_manifest_path
+                    or request.device_profile_id != transaction.device_profile_id
+                    or request.source_software_fingerprint != transaction.manifest_fingerprint
+                    or tuple(request.install_resolutions) != tuple(transaction.resolution_records)
+                    or not stage_owns_configuration
+                ):
+                    raise ValueError("active activation hold belongs to another coordinator stage")
+                if not lifecycle_resources or not {
+                    item.owner_addon_id for item in lifecycle_resources
+                }.issubset(held_ids):
+                    raise ValueError("configuration resources are not covered by the activation hold")
+                if transaction.private_overlay_id:
+                    metadata = private_prepared.metadata if private_prepared else None
+                    if (
+                        metadata is None
+                        or metadata.overlay_id != transaction.private_overlay_id
+                        or metadata.fingerprint != transaction.private_overlay_fingerprint
+                        or metadata.required != transaction.private_overlay_required
+                    ):
+                        raise ValueError("private overlay identity differs from the lifecycle transaction")
+                actual_map = {item.addon_id: item for item in actual.addons}
+                if any(
+                    addon_id not in actual_map or actual_map[addon_id].enabled
+                    for addon_id in held_ids
+                ):
+                    raise ValueError("held add-ons are not all installed and disabled")
+                managed_ids = {item.addon_id for item in desired.addons}
+                if not held_ids.issubset(managed_ids):
+                    raise ValueError("activation hold includes an unmanaged desired add-on")
+            else:
+                if request.frozen_transaction_id:
+                    raise ValueError("frozen lifecycle request has no active activation hold")
+                if lifecycle_resources:
+                    if private_prepared is None:
+                        raise ValueError("pre-activation resources have no validated overlay")
+                    manager = self._owners.private_overlay_manager
+                    if manager is None or not manager.verify_configured_resources(private_prepared):
+                        raise ValueError(
+                            "pre-activation resource state requires its frozen lifecycle hold"
+                        )
+
             dependency_closure = self._preflight_dependencies(
                 desired, actual, include_disabled=bool(skipped_addon_ids)
             )
+            if held_ids:
+                enabled_roots = {
+                    item.addon_id for item in desired.addons
+                    if item.state == "enabled" and item.addon_id not in held_ids
+                }
+                for node in dependency_closure.nodes:
+                    if node.addon_id in held_ids:
+                        if enabled_roots.intersection(node.required_by):
+                            raise ValueError(
+                                "an unheld desired add-on references a held dependency"
+                            )
+                if desired.skin is not None and desired.skin.addon_id in held_ids:
+                    raise ValueError("a held add-on cannot be activated as the desired skin")
+                execution_desired = replace(
+                    desired,
+                    addons=tuple(
+                        replace(addon, state="disabled")
+                        if addon.addon_id in held_ids else addon
+                        for addon in desired.addons
+                    ),
+                )
             protected = frozenset(
                 node.addon_id
                 for node in dependency_closure.nodes
@@ -611,7 +719,7 @@ class BuildManager:
             return None, self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
 
         try:
-            plan = plan_changes(desired, actual)
+            plan = plan_changes(execution_desired, actual)
         except Exception as exc:
             return None, self._failed(
                 request, ReconcilePhase.PLAN, "PLANNING_FAILED", exc,
@@ -627,6 +735,7 @@ class BuildManager:
                 )
         return _PreparedReconciliation(
             desired=desired,
+            execution_desired=execution_desired,
             effective=effective,
             fingerprint=fingerprint,
             protected_dependency_ids=protected,
@@ -772,7 +881,15 @@ class BuildManager:
                 manager = self._owners.private_overlay_manager
                 if manager is None:
                     return _failed_action(action, "private overlay support is unavailable")
-                private_result = manager.apply(private_prepared)
+                has_pre_activation_resources = any(
+                    item.configure_before_activation
+                    for item in private_prepared.resource_declarations
+                )
+                if not (
+                    has_pre_activation_resources
+                    and public_result.restart_report.requires_restart
+                ):
+                    private_result = manager.apply(private_prepared)
             return _action_from_owner(
                 action,
                 ConfigurationApplyBundle(public_result, private_result),

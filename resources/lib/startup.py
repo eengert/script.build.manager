@@ -103,8 +103,22 @@ def run_startup(
     store: Optional[TransactionStore] = None,
     resume_coordinator=None,
     frozen_precondition=None,
+    resume_precondition=None,
 ) -> StartupStatus:
     """Classify once and invoke resume only for a new-session handoff."""
+    try:
+        current_session_id = get_current_kodi_session_id()
+    except SessionIdentityError as exc:
+        return StartupStatus(
+            StartupClassification.INSPECTION_FAILED,
+            code="SESSION_IDENTITY_UNAVAILABLE",
+            message=str(exc),
+        )
+    target = store or TransactionStore()
+    # Verify the new-session boundary before touching the updater policy.
+    # Reclassify after the frozen guard is reasserted so resume uses a fresh
+    # transaction snapshot rather than the pre-guard read.
+    status = classify_startup_transaction(current_session_id, store=target)
     if frozen_precondition is None:
         try:
             from resources.lib.frozen_install import ensure_frozen_install_guard
@@ -123,15 +137,6 @@ def run_startup(
                 code=getattr(precondition, "code", "FROZEN_STARTUP_BLOCKED"),
                 message=getattr(precondition, "message", "frozen installation startup precondition failed"),
             )
-    try:
-        current_session_id = get_current_kodi_session_id()
-    except SessionIdentityError as exc:
-        return StartupStatus(
-            StartupClassification.INSPECTION_FAILED,
-            code="SESSION_IDENTITY_UNAVAILABLE",
-            message=str(exc),
-        )
-    target = store or TransactionStore()
     status = classify_startup_transaction(current_session_id, store=target)
     if not status.eligible_for_resume or status.transaction is None:
         return status
@@ -139,7 +144,13 @@ def run_startup(
     try:
         if resume_coordinator is None:
             from resources.lib.resume import ResumeCoordinator
-            resume_coordinator = ResumeCoordinator(store=target)
+            if resume_precondition is None:
+                from resources.lib.frozen_install import ensure_frozen_resume_registry_ready
+                resume_precondition = ensure_frozen_resume_registry_ready
+            resume_coordinator = ResumeCoordinator(
+                store=target,
+                before_reconcile=resume_precondition,
+            )
         result = resume_coordinator.resume(
             status.transaction, current_session_id=current_session_id
         )

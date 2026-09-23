@@ -103,6 +103,8 @@ class StructuredResourceTest(unittest.TestCase):
             self.root,
             lifecycle=ResourceLifecycle.QUIESCED,
             initialized=True,
+            activation_hold_provider=lambda _addon_id: True,
+            enabled_state_provider=lambda _addon_id: False,
         )
 
     def tearDown(self):
@@ -156,8 +158,149 @@ class StructuredResourceTest(unittest.TestCase):
         with self.assertRaises(PrivateResourceLifecycleError):
             adapter.apply(self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", SECRET)))
 
+    def test_drift_repair_requires_durable_hold_and_disabled_owner(self):
+        overlay = _overlay(StructuredPrivateValue("trakt.token", "string", SECRET))
+        for adapter in (
+            RedLightSettingsAdapter(self.root, lifecycle=ResourceLifecycle.QUIESCED, initialized=True),
+            RedLightSettingsAdapter(
+                self.root, lifecycle=ResourceLifecycle.QUIESCED, initialized=True,
+                activation_hold_provider=lambda _addon_id: True,
+                enabled_state_provider=lambda _addon_id: True,
+            ),
+        ):
+            with self.assertRaises(PrivateResourceLifecycleError):
+                adapter.apply(self.declaration, overlay)
+
+    def test_exact_values_are_read_only_after_activation_release(self):
+        overlay = _overlay(StructuredPrivateValue("trakt.token", "string", SECRET))
+        self.adapter.apply(self.declaration, overlay)
+        released = RedLightSettingsAdapter(
+            self.root,
+            lifecycle=ResourceLifecycle.QUIESCED,
+            initialized=False,
+            activation_hold_provider=lambda _addon_id: False,
+            enabled_state_provider=lambda _addon_id: True,
+        )
+        result = released.apply(self.declaration, overlay)
+        self.assertTrue(result.succeeded)
+        self.assertFalse(result.changed)
+        self.assertFalse(result.restart_required)
+        self.assertNotIn(SECRET, json.dumps(result.to_dict()))
+
+    def test_existing_populated_resource_initializes_without_activation_hold(self):
+        adapter = RedLightSettingsAdapter(self.root, lifecycle=ResourceLifecycle.QUIESCED)
+        result = adapter.initialize(self.declaration)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.outcome, "already_initialized")
+
+    def test_fresh_initialization_uses_only_bounded_package_default_helpers(self):
+        from unittest.mock import patch
+
+        database_path = self.adapter.database_path
+        database_path.unlink()
+        calls = []
+
+        def ensure_database_tables(database_name):
+            calls.append(("ensure", database_name))
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(database_path)
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute(
+                "CREATE TABLE settings (setting_id text not null unique, setting_type text, setting_default text, setting_value text)"
+            )
+            connection.commit()
+            connection.close()
+
+        class SettingsCache:
+            def is_empty_strict(inner):
+                if not database_path.exists():
+                    return True
+                connection = sqlite3.connect(database_path)
+                try:
+                    return connection.execute("SELECT 1 FROM settings LIMIT 1").fetchone() is None
+                finally:
+                    connection.close()
+
+            def set_many(inner, rows, *, load_properties=True):
+                calls.append(("set_many", tuple(rows), load_properties))
+                connection = sqlite3.connect(database_path)
+                connection.executemany(
+                    "INSERT OR REPLACE INTO settings VALUES (?, ?, ?, ?)", rows
+                )
+                connection.commit()
+                connection.close()
+
+            def clear_db_cache(inner):
+                calls.append(("clear_db_cache",))
+
+        defaults = (
+            {"setting_id": "trakt.token", "setting_type": "string", "setting_default": ""},
+            {
+                "setting_id": "example.action",
+                "setting_type": "action",
+                "setting_default": "one",
+                "settings_options": {"one": "One", "two": "Two"},
+            },
+        )
+
+        def default_settings():
+            calls.append(("default_settings",))
+            return defaults
+
+        def new_setting_value(setting_id, setting_default, current, had_existing, *, fresh_install):
+            calls.append(("new_value", setting_id, dict(current), had_existing, fresh_install))
+            return setting_default
+
+        def mark_defaults_initialized():
+            calls.append(("mark_defaults_initialized",))
+
+        settings_cache = SettingsCache()
+        helpers = (
+            ensure_database_tables,
+            default_settings,
+            new_setting_value,
+            settings_cache,
+            lambda: str(self.root / "addon_data" / REDLIGHT_ADDON_ID),
+            mark_defaults_initialized,
+        )
+        with patch.object(self.adapter, "_redlight_initializers", return_value=helpers):
+            result = self.adapter.initialize(self.declaration)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.outcome, "initialized")
+        self.assertEqual(calls[0], ("ensure", "settings_db"))
+        self.assertIn(("default_settings",), calls)
+        self.assertIn(
+            ("new_value", "trakt.token", {}, False, True),
+            calls,
+        )
+        set_call = next(call for call in calls if call[0] == "set_many")
+        self.assertFalse(set_call[2])
+        self.assertIn(("trakt.token", "string", "", ""), set_call[1])
+        self.assertIn(("example.action_name", "name", "One", "One"), set_call[1])
+        self.assertIn(("example.action", "action", "one", "one"), set_call[1])
+        self.assertFalse(any(call[0] == "sync" for call in calls))
+        self.assertIn(("mark_defaults_initialized",), calls)
+        verified = self.adapter.apply(
+            self.declaration,
+            _overlay(StructuredPrivateValue("trakt.token", "string", SECRET)),
+        )
+        self.assertTrue(verified.succeeded)
+        self.assertFalse(verified.restart_required)
+        connection = sqlite3.connect(database_path)
+        rows = dict(connection.execute("SELECT setting_id, setting_value FROM settings"))
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        connection.close()
+        self.assertEqual(rows["trakt.token"], SECRET)
+        self.assertEqual(journal_mode.lower(), "wal")
+
     def test_missing_database_is_not_synthesized(self):
-        adapter = RedLightSettingsAdapter(self.root, lifecycle=ResourceLifecycle.QUIESCED, initialized=True)
+        adapter = RedLightSettingsAdapter(
+            self.root,
+            lifecycle=ResourceLifecycle.QUIESCED,
+            initialized=True,
+            activation_hold_provider=lambda _addon_id: True,
+            enabled_state_provider=lambda _addon_id: False,
+        )
         self.adapter.database_path.unlink()
         with self.assertRaises(PrivateResourceNotInitializedError):
             adapter.capture(self.declaration)
@@ -181,7 +324,7 @@ class StructuredResourceTest(unittest.TestCase):
             ),
         )
         self.assertTrue(result.succeeded)
-        self.assertTrue(result.restart_required)
+        self.assertFalse(result.restart_required)
         self.assertNotIn(SECRET, json.dumps(result.to_dict()))
         connection = sqlite3.connect(self.adapter.database_path)
         rows = dict(connection.execute("SELECT setting_id, setting_value FROM settings"))

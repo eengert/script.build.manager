@@ -275,8 +275,14 @@ class AddonStateReconciler:
         result = reconciler.reconcile(...)
     """
 
-    def __init__(self, backend: AddonStateBackend) -> None:
+    def __init__(
+        self,
+        backend: AddonStateBackend,
+        *,
+        activation_hold_provider=None,
+    ) -> None:
         self._backend = backend
+        self._activation_hold_provider = activation_hold_provider
 
     def reconcile(
         self,
@@ -370,6 +376,29 @@ class AddonStateReconciler:
             )
 
         desired_enabled = desired_state == "enabled"
+
+        if desired_enabled:
+            try:
+                from resources.lib.activation import current_activation_holds
+                held_ids = current_activation_holds(self._activation_hold_provider)
+            except Exception:
+                return AddonStateResult(
+                    addon_id=addon_id,
+                    desired_state=desired_state,
+                    status=AddonStateStatus.FAILED,
+                    was_enabled=None,
+                    now_enabled=None,
+                    message="activation hold could not be inspected safely",
+                )
+            if addon_id in held_ids:
+                return AddonStateResult(
+                    addon_id=addon_id,
+                    desired_state=desired_state,
+                    status=AddonStateStatus.FAILED,
+                    was_enabled=None,
+                    now_enabled=None,
+                    message="add-on activation is held by a structured-resource lifecycle",
+                )
 
         # Dependency protection: a required dependency must not be disabled.
         # The check is independent of current state — even if already disabled,
@@ -595,6 +624,14 @@ class KodiRuntimeAddonStateBackend(AddonStateBackend):
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
         """Set enabled state via Addons.SetAddonEnabled JSON-RPC."""
+        if enabled:
+            try:
+                from resources.lib.activation import reject_held_activation
+                reject_held_activation(addon_id)
+            except Exception as exc:
+                raise AddonStateError(
+                    "add-on activation is held or hold state is unavailable"
+                ) from exc
         xbmc = self._xbmc()
         req = _json.dumps({
             "jsonrpc": "2.0",

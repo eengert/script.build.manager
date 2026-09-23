@@ -7,6 +7,7 @@ import zipfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from resources.lib.artifacts import ArtifactStore
 from resources.lib.frozen import (
@@ -22,11 +23,16 @@ from resources.lib.frozen_install import (
     FrozenInstallStore,
     FrozenInstallTransaction,
     FrozenInstallValidationError,
+    FrozenLifecycleStage,
     FrozenInstalledAddon,
     InMemoryFrozenArtifactBackend,
+    KodiRuntimeFrozenArtifactBackend,
+    active_activation_hold_ids,
     ensure_frozen_install_guard,
+    run_frozen_install_startup,
     validate_frozen_manifest,
 )
+from resources.lib.startup import StartupClassification, StartupStatus
 from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
 
 
@@ -73,6 +79,18 @@ class FakePolicy(UpdatePolicyBackend):
         if self.fail_after is not None and len(self.calls) > self.fail_after:
             raise RuntimeError("policy mutation failed")
         self.policy = AddonUpdatePolicy(policy)
+
+
+class InMemoryRegistryBackend:
+    def __init__(self, installer):
+        self.installer = installer
+        self.refresh_calls = 0
+
+    def get_addon_details(self, addon_id):
+        return self.installer.get_addon_details(addon_id)
+
+    def refresh_local_addons(self):
+        self.refresh_calls += 1
 
 
 class FrozenInstallTest(unittest.TestCase):
@@ -165,6 +183,7 @@ class FrozenInstallTest(unittest.TestCase):
         )
 
     def _coordinator(self, **kwargs):
+        kwargs.setdefault("registry_backend", InMemoryRegistryBackend(self.backend))
         return FrozenInstallCoordinator(
             store=self.store,
             artifact_store=self.artifacts,
@@ -190,6 +209,16 @@ class FrozenInstallTest(unittest.TestCase):
     def test_system_dependencies_are_not_installed(self):
         plan = validate_frozen_manifest(self._manifest(), self.artifacts)
         self.assertNotIn("xbmc.python", [node.addon_id for node in plan.install_order])
+
+    def test_kodi_state_result_string_is_verified_by_readback(self):
+        backend = KodiRuntimeFrozenArtifactBackend()
+        backend._rpc = lambda _method, _params: {"result": "OK"}
+        backend._wait_for_details = lambda addon_id: FrozenInstalledAddon(
+            addon_id, "1.0.0", False
+        )
+        result = backend.set_addon_enabled("script.module.fixture", False)
+        self.assertEqual(result.addon_id, "script.module.fixture")
+        self.assertFalse(result.enabled)
 
     def test_optional_dependency_absent_at_capture_is_not_installed(self):
         manifest = self._manifest(optional_missing=True)
@@ -344,9 +373,425 @@ class FrozenInstallTest(unittest.TestCase):
             manifest_loader=lambda _path: self._manifest(),
             session_id_provider=lambda: SESSION_B,
         ).resume_after_restart()
-        self.assertEqual(resumed.outcome, "complete")
+        self.assertEqual(resumed.outcome, "complete", (resumed.code, resumed.message))
         self.assertIsNone(self.store.inspect())
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
+
+    def test_preexisting_lifecycle_owner_stays_held_until_verified_resume(self):
+        manifest = self._manifest()
+        owner_id = "plugin.video.bm022.fixture"
+        self.backend.installed[owner_id] = FrozenInstalledAddon(owner_id, "1.0.0", True)
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+        from resources.lib.redlight_resource import redlight_declaration
+
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "2" * 64, True, True
+        )
+        declaration = replace(redlight_declaration(), owner_addon_id=owner_id)
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="fixture-overlay"),
+            build=SimpleNamespace(id="bm022-fixture"),
+            config=SimpleNamespace(
+                private_settings=(), structured_private_resources=(declaration,)
+            ),
+        )
+
+        def configuration_runner(_request):
+            private_result = SimpleNamespace(
+                succeeded=True,
+                resource_results=(SimpleNamespace(succeeded=True),),
+            )
+            reconcile = SimpleNamespace(
+                success=True,
+                action_results=(SimpleNamespace(
+                    owner_result=SimpleNamespace(private_result=private_result),
+                ),),
+                private_overlay=overlay_meta,
+            )
+            return SimpleNamespace(outcome="complete", reconcile_result=reconcile)
+
+        metadata_provider = lambda _profile, _fingerprint: (
+            overlay_meta.overlay_id,
+            overlay_meta.fingerprint,
+            overlay_meta.required,
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ):
+            first = self._coordinator(
+                configuration_runner=configuration_runner,
+                private_overlay_metadata_provider=metadata_provider,
+            ).install(
+                manifest,
+                manifest_path="/fixture-frozen.json",
+                configuration_manifest_path="/fixture-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+            self.assertEqual(first.outcome, "awaiting_restart")
+            transaction = self.store.inspect()
+            self.assertEqual(
+                transaction.lifecycle_stage,
+                FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            )
+            self.assertFalse(transaction.activation_hold_released)
+            self.assertEqual(transaction.private_overlay_id, overlay_meta.overlay_id)
+            self.assertEqual(active_activation_hold_ids(self.store), frozenset({owner_id}))
+            self.assertFalse(self.backend.installed[owner_id].enabled)
+            self.assertEqual(self.backend.install_calls, [])
+            self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+            abandoned = self._coordinator().abandon()
+            self.assertEqual(abandoned.outcome, "needs_attention")
+            self.assertEqual(active_activation_hold_ids(self.store), frozenset({owner_id}))
+
+            resumed = FrozenInstallCoordinator(
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=self.policy,
+                installer=self.backend,
+                manifest_loader=lambda _path: manifest,
+                session_id_provider=lambda: SESSION_B,
+                configuration_runner=configuration_runner,
+                registry_backend=InMemoryRegistryBackend(self.backend),
+                private_overlay_metadata_provider=metadata_provider,
+            ).resume_after_restart(current_session_id=SESSION_B)
+
+        self.assertEqual(resumed.outcome, "complete", (resumed.code, resumed.message))
+        self.assertIsNone(self.store.inspect())
+        self.assertTrue(self.backend.installed[owner_id].enabled)
+        self.assertEqual(active_activation_hold_ids(self.store), frozenset())
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
+
+    def test_new_lifecycle_owner_crosses_restart_before_configuration(self):
+        manifest = self._manifest()
+        owner_id = "plugin.video.bm022.fixture"
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+        from resources.lib.redlight_resource import redlight_declaration
+
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "3" * 64, True, True
+        )
+        declaration = replace(redlight_declaration(), owner_addon_id=owner_id)
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="fixture-overlay"),
+            build=SimpleNamespace(id="bm022-fixture"),
+            config=SimpleNamespace(
+                private_settings=(), structured_private_resources=(declaration,)
+            ),
+        )
+        configured = []
+
+        def configuration_runner(_request):
+            configured.append(True)
+            private_result = SimpleNamespace(
+                succeeded=True,
+                resource_results=(SimpleNamespace(succeeded=True),),
+            )
+            reconcile = SimpleNamespace(
+                success=True,
+                action_results=(SimpleNamespace(
+                    owner_result=SimpleNamespace(private_result=private_result),
+                ),),
+                private_overlay=overlay_meta,
+            )
+            return SimpleNamespace(outcome="complete", reconcile_result=reconcile)
+
+        metadata_provider = lambda _profile, _fingerprint: (
+            overlay_meta.overlay_id,
+            overlay_meta.fingerprint,
+            overlay_meta.required,
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ):
+            first = self._coordinator(
+                configuration_runner=configuration_runner,
+                private_overlay_metadata_provider=metadata_provider,
+            ).install(
+                manifest,
+                manifest_path="/fixture-frozen.json",
+                configuration_manifest_path="/fixture-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+            self.assertEqual(first.outcome, "awaiting_restart")
+            transaction = self.store.inspect()
+            self.assertEqual(
+                transaction.lifecycle_stage,
+                FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            )
+            self.assertEqual(transaction.lifecycle_restart_count, 1)
+            self.assertFalse(transaction.activation_hold_released)
+            self.assertEqual(active_activation_hold_ids(self.store), frozenset({owner_id}))
+            self.assertFalse(self.backend.installed[owner_id].enabled)
+            self.assertTrue(self.backend.installed)
+            self.assertEqual(configured, [])
+            self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+
+            resumed = FrozenInstallCoordinator(
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=self.policy,
+                installer=self.backend,
+                manifest_loader=lambda _path: manifest,
+                session_id_provider=lambda: SESSION_B,
+                configuration_runner=configuration_runner,
+                registry_backend=InMemoryRegistryBackend(self.backend),
+                private_overlay_metadata_provider=metadata_provider,
+            ).resume_after_restart(current_session_id=SESSION_B)
+
+        self.assertEqual(resumed.outcome, "complete")
+        self.assertEqual(configured, [True])
+        self.assertIsNone(self.store.inspect())
+        self.assertTrue(self.backend.installed[owner_id].enabled)
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
+
+    def test_bm022_resume_gates_configuration_when_bm020_has_no_transaction(self):
+        manifest = self._manifest()
+        owner_id = "plugin.video.bm022.fixture"
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+        from resources.lib.redlight_resource import redlight_declaration
+
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "4" * 64, True, True
+        )
+        declaration = replace(redlight_declaration(), owner_addon_id=owner_id)
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="fixture-overlay"),
+            build=SimpleNamespace(id="bm022-fixture"),
+            config=SimpleNamespace(
+                private_settings=(), structured_private_resources=(declaration,)
+            ),
+        )
+        events = []
+
+        class RecordingPolicy(FakePolicy):
+            def get_policy(inner_self):
+                events.append("read_updater_policy")
+                return super(RecordingPolicy, inner_self).get_policy()
+
+            def set_policy(inner_self, policy):
+                events.append("set_updater_policy")
+                return super(RecordingPolicy, inner_self).set_policy(policy)
+
+        policy = RecordingPolicy(AddonUpdatePolicy.NOTIFY_ONLY)
+
+        class Registry:
+            def get_addon_details(inner_self, addon_id):
+                events.append("query_registry")
+                return self.backend.get_addon_details(addon_id)
+
+            def refresh_local_addons(inner_self):
+                self.assertEqual(
+                    active_activation_hold_ids(self.store),
+                    frozenset({owner_id}),
+                )
+                events.append("refresh_local_addons")
+                self.backend.installed[owner_id] = FrozenInstalledAddon(
+                    owner_id, "1.0.0", False
+                )
+
+        registry = Registry()
+
+        def configure(_request):
+            events.append("configuration_private_apply")
+            private_result = SimpleNamespace(
+                succeeded=True,
+                resource_results=(SimpleNamespace(succeeded=True),),
+            )
+            reconcile = SimpleNamespace(
+                success=True,
+                action_results=(SimpleNamespace(
+                    owner_result=SimpleNamespace(private_result=private_result),
+                ),),
+                private_overlay=overlay_meta,
+            )
+            return SimpleNamespace(outcome="complete", reconcile_result=reconcile)
+
+        metadata_provider = lambda _profile, _fingerprint: (
+            overlay_meta.overlay_id,
+            overlay_meta.fingerprint,
+            overlay_meta.required,
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(
+            FrozenInstallCoordinator,
+            "_private_overlay_metadata",
+            side_effect=lambda _profile, _fingerprint: (
+                overlay_meta.overlay_id,
+                overlay_meta.fingerprint,
+                overlay_meta.required,
+            ),
+        ):
+            first = FrozenInstallCoordinator(
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=policy,
+                installer=self.backend,
+                session_id_provider=lambda: SESSION_A,
+                configuration_runner=configure,
+                private_overlay_metadata_provider=metadata_provider,
+            ).install(
+                manifest,
+                manifest_path="/fixture-frozen.json",
+                configuration_manifest_path="/fixture-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+            self.assertEqual(first.outcome, "awaiting_restart")
+            transaction = self.store.inspect()
+            self.assertEqual(
+                transaction.lifecycle_stage,
+                FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            )
+            self.assertFalse(transaction.activation_hold_released)
+            self.backend.installed.pop(owner_id)
+            events.clear()
+
+            bm020_status = StartupStatus(StartupClassification.NO_TRANSACTION)
+            self.assertIsNone(bm020_status.transaction)
+            resumed = run_frozen_install_startup(
+                bm020_status=bm020_status,
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=policy,
+                installer=self.backend,
+                registry_backend=registry,
+                manifest_loader=lambda _path: manifest,
+                session_id_provider=lambda: SESSION_B,
+                configuration_runner=configure,
+            )
+
+        self.assertEqual(resumed.outcome, "complete", (resumed.code, resumed.message))
+        self.assertLess(events.index("set_updater_policy"), events.index("refresh_local_addons"))
+        self.assertLess(events.index("read_updater_policy"), events.index("refresh_local_addons"))
+        self.assertLess(events.index("refresh_local_addons"), events.index("configuration_private_apply"))
+        self.assertEqual(events.count("refresh_local_addons"), 1)
+        self.assertIsNone(self.store.inspect())
+        self.assertEqual(policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
+        self.assertTrue(self.backend.installed[owner_id].enabled)
+
+    def test_bm022_registry_readiness_failure_keeps_hold_and_blocks_configuration(self):
+        manifest = self._manifest()
+        owner_id = "plugin.video.bm022.fixture"
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+        from resources.lib.redlight_resource import redlight_declaration
+
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "5" * 64, True, True
+        )
+        declaration = replace(redlight_declaration(), owner_addon_id=owner_id)
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="fixture-overlay"),
+            build=SimpleNamespace(id="bm022-fixture"),
+            config=SimpleNamespace(
+                private_settings=(), structured_private_resources=(declaration,)
+            ),
+        )
+        configured = []
+        metadata_provider = lambda _profile, _fingerprint: (
+            overlay_meta.overlay_id,
+            overlay_meta.fingerprint,
+            overlay_meta.required,
+        )
+
+        class WrongVersionRegistry:
+            def __init__(inner_self):
+                inner_self.refresh_calls = 0
+
+            def get_addon_details(inner_self, addon_id):
+                return FrozenInstalledAddon(addon_id, "9.9.9", False)
+
+            def refresh_local_addons(inner_self):
+                inner_self.refresh_calls += 1
+
+        registry = WrongVersionRegistry()
+
+        def configure(_request):
+            configured.append(True)
+            return SimpleNamespace(outcome="complete")
+
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(
+            FrozenInstallCoordinator,
+            "_private_overlay_metadata",
+            side_effect=lambda _profile, _fingerprint: (
+                overlay_meta.overlay_id,
+                overlay_meta.fingerprint,
+                overlay_meta.required,
+            ),
+        ):
+            first = self._coordinator(
+                configuration_runner=configure,
+                private_overlay_metadata_provider=metadata_provider,
+            ).install(
+                manifest,
+                manifest_path="/fixture-frozen.json",
+                configuration_manifest_path="/fixture-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+            self.assertEqual(first.outcome, "awaiting_restart")
+            resumed = FrozenInstallCoordinator(
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=self.policy,
+                installer=self.backend,
+                manifest_loader=lambda _path: manifest,
+                session_id_provider=lambda: SESSION_B,
+                configuration_runner=configure,
+                registry_backend=registry,
+                private_overlay_metadata_provider=metadata_provider,
+            ).resume_after_restart(current_session_id=SESSION_B)
+
+        self.assertEqual(resumed.outcome, "needs_attention")
+        self.assertEqual(resumed.code, "FROZEN_ADDON_REGISTRY_WRONG_VERSION")
+        self.assertEqual(configured, [])
+        self.assertEqual(registry.refresh_calls, 0)
+        durable = self.store.inspect()
+        self.assertEqual(durable.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertEqual(
+            durable.lifecycle_stage,
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+        )
+        self.assertFalse(durable.activation_hold_released)
+        self.assertEqual(active_activation_hold_ids(self.store), frozenset({owner_id}))
+
+    def test_lifecycle_hold_includes_optional_managed_dependents(self):
+        from resources.lib.redlight_resource import redlight_declaration
+
+        owner_id = "plugin.video.redlight"
+        dependent_id = "plugin.video.optional.consumer"
+        profile = SimpleNamespace(config=SimpleNamespace(
+            structured_private_resources=(redlight_declaration(),),
+        ))
+        owner = AddonCaptureNode(
+            addon_id=owner_id,
+            version="2.6.8",
+            addon_type="xbmc.python.pluginsource",
+            desired_enabled=True,
+            provenance=ProvenanceStatus.VERIFIED_REPOSITORY,
+        )
+        dependent = AddonCaptureNode(
+            addon_id=dependent_id,
+            version="1.0.0",
+            addon_type="xbmc.python.pluginsource",
+            desired_enabled=True,
+            provenance=ProvenanceStatus.VERIFIED_REPOSITORY,
+            dependency_edges=(DependencyEdge(owner_id, optional=True),),
+        )
+        plan = SimpleNamespace(install_order=(owner, dependent))
+
+        self.assertEqual(
+            FrozenInstallCoordinator._activation_hold_ids(plan, profile),
+            tuple(sorted((owner_id, dependent_id))),
+        )
 
     def test_startup_reasserts_guard_before_resume(self):
         transaction = FrozenInstallTransaction(
@@ -367,6 +812,50 @@ class FrozenInstallTest(unittest.TestCase):
         )
         self.assertTrue(status.allowed)
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+
+    def test_activation_hold_persists_across_attention_until_explicit_release(self):
+        transaction = FrozenInstallTransaction(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            build_id="bm022-fixture",
+            manifest_path="/fixture.json",
+            device_profile_id="test",
+            manifest_fingerprint="a" * 64,
+            phase=FrozenInstallPhase.AWAITING_RESTART,
+            originating_kodi_session_id=SESSION_A,
+            original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+            created_at="2026-09-21T00:00:00Z",
+            updated_at="2026-09-21T00:00:00Z",
+            configuration_manifest_path="/configuration.json",
+            lifecycle_stage=FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            activation_hold_ids=("plugin.video.redlight",),
+            activation_hold_released=False,
+            lifecycle_restart_count=1,
+        )
+        self.store.create(transaction)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+        attention = self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=FrozenInstallPhase.AWAITING_RESTART,
+            new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            status_code="TEST_HOLD",
+        )
+        self.assertFalse(attention.activation_hold_released)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+        released = self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            lifecycle_stage=FrozenLifecycleStage.ACTIVATION_RELEASED,
+            activation_hold_released=True,
+        )
+        self.assertTrue(released.activation_hold_released)
+        self.assertEqual(active_activation_hold_ids(self.store), frozenset())
 
     def test_reassert_failure_transitions_attention(self):
         transaction = FrozenInstallTransaction(

@@ -1,5 +1,142 @@
 # BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
+## Latest continuation result — disposable Kodi JSON-RPC unavailable — 2026-09-23
+
+Current classification: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`.
+The BM-022 quiescence-resume path now calls shared held-addon registry
+readiness before configuration; BM-020 reuses that helper. It validates the
+durable transaction and updater guard, confirms the full activation hold,
+refreshes Kodi's local registry only when needed, and checks exact version and
+disabled state through bounded supported-state polling. Unit and regression
+tests cover the bypassed BM-020 hook, BM-020 `no_transaction` with a resumable
+BM-022 transaction, ordering, hold persistence, and fail-closed results.
+
+After the focused suites and full suite passed, the single newly authorized
+command ran once through `tools/kodi_test.py` with the retained manifest and
+ArtifactStore. Harness preflight verified disposable `HOME`
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`,
+`KODI_HOME` unset, and configured executable
+`/Applications/Kodi.app/Contents/MacOS/Kodi`. Kodi launched after disposable
+fixture preparation, but its local JSON-RPC readiness request failed after 90
+seconds with `<urlopen error [Errno 1] Operation not permitted>`. The harness
+stopped Kodi and subsequent harness status confirmed no running process.
+
+The failure preceded a BM-017F transaction and Red Light installation. No
+quiescence restart, BM-020/BM-022 resume, registry query or refresh,
+configuration, Red Light initialization, settings DB creation, private apply,
+activation release, runtime start, or second reconciliation was reached. The
+new production readiness path therefore remains unproven in live Kodi. The
+single-run approval is exhausted; do not relaunch Kodi or rerun the harness.
+Diagnostics are preserved at
+`/private/tmp/bm017f-continuation-readiness-failure-2026-09-23.tar.gz`
+(SHA-256
+`588d2f858083cf611d8b97798c07160e9acea827acbf5675864f5865f9c1a827`).
+
+No normal-profile path was accessed during this continuation. The prior
+metadata-only normal-profile `test -e` and separate bare `Kodi -v` remain
+historical safety deviations; they were not investigated further. No real
+device, Kodi Build Manager Test.app, or real private value was accessed.
+Current result: BM-017F blocked at the disposable JSON-RPC permission boundary;
+Red Light clean-destination lifecycle **UNSUPPORTED**; macOS BM-023A
+**STILL_BLOCKED**; tvOS **NOT VALIDATED**. Await supervisor direction and new
+approval before any further live run or milestone.
+
+## Historical lifecycle result — registry readiness bypassed — 2026-09-23
+
+BM-017F is `BLOCKED_POST_RESTART_REGISTRY_READINESS_BYPASSED`. The exact
+retained `plugin.video.redlight` 2.6.8 artifact was validated at SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. The
+implementation added generalized fail-closed registry readiness using Kodi's
+`UpdateLocalAddons` discovery path and bounded JSON-RPC polling. Focused tests
+and the complete suite passed before one directly authorized disposable run.
+
+That run used `tools/kodi_test.py` with `HOME` at
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`;
+`special://profile` resolved to its nested `Library/Application Support/Kodi/userdata`.
+The exact Kodi binary launched by the harness was
+`/Applications/Kodi.app/Contents/MacOS/Kodi`. Installation and the quiescence
+restart completed. After restart, `run_startup()` logged BM-020
+`no_transaction`, so its `ResumeCoordinator.before_reconcile` hook did not run.
+BM-022 then entered its separate quiescence continuation through
+`run_frozen_install_startup()` → `resume_after_restart()` → `install()` and
+reached private-resource initialization without registry reconciliation.
+
+Kodi logged `Unknown addon id 'plugin.video.redlight'` when Red Light's
+package-owned initializer attempted `xbmcaddon.Addon("plugin.video.redlight")`.
+No `UpdateLocalAddons` request or readiness markers were logged, so registry
+state immediately before/after refresh is **unobserved** and refresh was **not
+attempted**. The durable BM-022 transaction ended in
+`needs_attention/configuring` with `FROZEN_CONFIGURATION_ACTION_FAILED`,
+`failure=ACTION_FAILED`, one completed lifecycle restart, and the activation
+hold unreleased. Private initialization was reached, but the initializer
+failed before settings database creation or private-value writes. Activation
+release, service start, and second-reconcile idempotence were not reached.
+Red Light clean-destination lifecycle support remains **UNSUPPORTED**; BM-017F
+is blocked and macOS BM-023A remains `STILL_BLOCKED`.
+
+The previous failed-run evidence was archived before the harness reset, and
+this failed-run evidence was archived after the attempt; both archives are
+outside the disposable harness and contain only `.kodi-test` data and fake
+private inputs. No further Kodi launch or runtime mutation occurred. One later
+shell `test -e` checked only existence of a constructed settings-database path
+under the normal profile; it did not read or modify profile contents. This
+unintended metadata-only access is a recorded safety deviation. The earlier
+bare `Kodi -v` is a separate historical deviation. No real device, Kodi Build
+Manager Test.app, or real private value was used.
+
+The single live-run approval is exhausted. The next code step requires
+supervisor direction: invoke registry readiness from the BM-022 quiescence
+continuation before configuration, and add a regression for the BM-020
+`no_transaction` startup path. Obtain new explicit approval before any further
+live lifecycle run. Do not resume BM-023A.
+
+## Prior implementation context and accepted safety review — 2026-09-23
+
+The exact Red Light 2.6.8 object was recovered from the retained local
+ArtifactStore through the frozen manifest and validated through production
+artifact/package validators. Its identity is
+`plugin.video.redlight` 2.6.8, SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. The
+historical `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` result is
+therefore invalidated. No artifact bytes were modified or added to Git.
+
+The supervisor accepted the safety audit: purposeful BM-017F Kodi runs used
+the disposable harness `HOME`
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`,
+and Kodi startup logs mapped `special://profile` to the matching disposable
+`userdata` path. Purposeful runs did not use the normal Kodi profile. The
+shared `/Applications/Kodi.app/Contents/MacOS/Kodi` executable is the harness
+binary; the profile is selected by its isolated `HOME`. The earlier bare
+`/Applications/Kodi.app/Contents/MacOS/Kodi -v` invocation remains a separate
+historical safety deviation: no process remained afterward, but transient
+normal-profile access could not be ruled out. The normal profile was not
+inspected or modified. No direct Kodi.app launch occurred after supervisor
+clearance, and Kodi Build Manager Test.app was not used.
+
+The resumed worker contains implementation changes for generic
+`configure_before_activation`, durable activation holds, required and optional
+dependent protection, staged restart/re-entry, updater quarantine, a bounded
+Red Light-owned settings initializer, private apply/verification, and the
+disposable runtime harness. The last completed purposeful lifecycle run before
+the safety pause reached the quiescence boundary but failed during restart
+resume with `FROZEN_INSTALL_ERROR` in `_handle_configuration_result`. Safe
+failure-code diagnostics were added but have not been exercised. Review also
+closed a gap where an unheld enabled add-on could reference the held owner via
+an optional dependency.
+
+Current non-runtime checks: focused suites **250/250**, full repository suite
+**1659/1659**, `compileall`, schema JSON parsing, and `git diff --check` passed.
+After the supervisor cleared the safety stop, automatic review rejected a new
+`tools/kodi_test.py validate-bm017f-lifecycle` invocation because it did not
+accept the attached clearance as a direct override for the previous runtime
+stop. No retry or indirect workaround was attempted. BM-017F remains in
+progress and its implementation is uncommitted pending direct approval for
+that single disposable run. Do not resume BM-023A.
+
+Current classifications: BM-017F **IN PROGRESS**; Red Light clean-destination
+lifecycle **NOT YET SUPPORTED**; macOS BM-023A retry **STILL BLOCKED**; tvOS
+**NOT VALIDATED**.
+
 Status: **complete as an investigation/implementation attempt**. Result:
 `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
 

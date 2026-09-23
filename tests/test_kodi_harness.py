@@ -136,7 +136,7 @@ class TestVerifyIsolation(unittest.TestCase):
                     PROJECT=project, ROOT=root_outside, HOME=home,
                     KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
                 ):
-                    with self.assertRaisesRegex(RuntimeError, "not inside PROJECT"):
+                    with self.assertRaisesRegex(RuntimeError, "exact .kodi-test"):
                         harness.verify_isolation()
 
     def test_home_outside_root_rejected(self):
@@ -147,7 +147,7 @@ class TestVerifyIsolation(unittest.TestCase):
                 PROJECT=project, ROOT=root, HOME=home_outside,
                 KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "not inside ROOT"):
+                with self.assertRaisesRegex(RuntimeError, "exact disposable .kodi-test/home"):
                     harness.verify_isolation()
 
     def test_appdata_outside_home_rejected(self):
@@ -158,31 +158,38 @@ class TestVerifyIsolation(unittest.TestCase):
                 PROJECT=project, ROOT=root, HOME=home,
                 KODI_APPDATA_DIR=appdata_outside, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "not inside HOME"):
+                with self.assertRaisesRegex(RuntimeError, "derived from the disposable HOME"):
                     harness.verify_isolation()
 
-    def test_real_profile_overlap_rejected(self):
+    def test_profile_path_check_does_not_resolve_or_probe_normal_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project, root, home, appdata, _ = self._make_valid_layout(Path(tmp))
-            # normal IS appdata — direct overlap
+            project, root, home, appdata, normal = self._make_valid_layout(Path(tmp))
             with _patch_constants(
                 PROJECT=project, ROOT=root, HOME=home,
-                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=appdata,
+                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "overlaps real profile"):
+                with patch.object(Path, "resolve", side_effect=AssertionError("path resolution is forbidden")):
                     harness.verify_isolation()
 
-    def test_real_profile_parent_of_appdata_rejected(self):
+    def test_profile_symlink_is_rejected_before_descendant_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project, root, home, appdata, _ = self._make_valid_layout(Path(tmp))
-            # normal is a parent of appdata — still overlaps
-            normal_parent = appdata.parent
+            project, root, home, appdata, normal = self._make_valid_layout(Path(tmp))
+            appdata.parent.mkdir(parents=True)
+            appdata.symlink_to(normal, target_is_directory=True)
             with _patch_constants(
                 PROJECT=project, ROOT=root, HOME=home,
-                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal_parent,
+                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "overlaps real profile"):
+                with self.assertRaisesRegex(RuntimeError, "symlink-based"):
                     harness.verify_isolation()
+
+
+class TestDisposableEnvironment(unittest.TestCase):
+    def test_env_forces_exact_disposable_home_and_removes_kodi_home_override(self):
+        with patch.dict(os.environ, {"HOME": "/tmp/normal-home", "KODI_HOME": "/tmp/other"}):
+            env = harness._env()
+        self.assertEqual(env["HOME"], str(harness.HOME))
+        self.assertNotIn("KODI_HOME", env)
 
 
 # ---------------------------------------------------------------------------

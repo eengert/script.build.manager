@@ -39,6 +39,7 @@ from resources.lib.manifest import (
 )
 from resources.lib.private_resource import (
     PrivateResourceValidationError,
+    ResourceLifecycle,
     StructuredPrivateResourceDeclaration,
     StructuredPrivateResourceOverlay,
     StructuredPrivateResourceManager,
@@ -643,9 +644,22 @@ class PrivateOverlayManager:
         if self._structured_resource_manager is None:
             try:
                 from resources.lib.redlight_resource import RedLightSettingsAdapter
+
+                def _held(addon_id: str) -> bool:
+                    from resources.lib.frozen_install import active_activation_hold_ids
+                    return addon_id in active_activation_hold_ids()
+
+                def _enabled(addon_id: str) -> Optional[bool]:
+                    from resources.lib.addon_state import KodiRuntimeAddonStateBackend
+                    current = KodiRuntimeAddonStateBackend().get_addon_details(addon_id)
+                    return current.enabled if current is not None else None
+
                 self._structured_resource_manager = StructuredPrivateResourceManager({
                     RedLightSettingsAdapter.adapter_id: RedLightSettingsAdapter(
                         _translate_profile_root("special://profile"),
+                        lifecycle=ResourceLifecycle.QUIESCED,
+                        activation_hold_provider=_held,
+                        enabled_state_provider=_enabled,
                     ),
                 })
             except Exception:
@@ -743,3 +757,21 @@ class PrivateOverlayManager:
             results,
             resource_results,
         )
+
+    def verify_configured_resources(self, prepared: PreparedPrivateOverlay) -> bool:
+        """Read-only check for resources whose activation hold was released."""
+        declarations = tuple(
+            item for item in prepared.resource_declarations
+            if item.configure_before_activation
+        )
+        if not declarations:
+            return True
+        if prepared.overlay is None:
+            return not any(item.required for item in declarations)
+        try:
+            self._active_resource_manager.verify(
+                declarations, prepared.overlay.resources,
+            )
+        except Exception:
+            return False
+        return True

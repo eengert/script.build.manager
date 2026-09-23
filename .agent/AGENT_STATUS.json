@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "in_progress",
+  "status": "blocked",
   "task": "BM-017F",
-  "reason": "Resuming BM-017F after qualified matrix integration. Historical BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE requires revalidation through the retained frozen manifest and production ArtifactStore because BM-023A-R1 reported Red Light among 30 exact artifact-backed nodes. No BM-023A retry or tvOS validation.",
+  "reason": "BM-022 now invokes the shared registry-readiness gate before configuration and the full suite passes. The single newly authorized harness run launched Kodi but its disposable JSON-RPC readiness request failed with Operation not permitted before lifecycle setup. Diagnostics are preserved; no rerun. Await supervisor direction and a permitted disposable JSON-RPC environment.",
   "last_commit": "fedefae",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
-  "next_agent": "codex",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-23"
 }

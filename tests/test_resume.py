@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib.build_manager import ReconcileRequest, ReconcileResult
@@ -175,6 +176,89 @@ class ResumeTestCase(unittest.TestCase):
         self.assertEqual(result.outcome, ResumeOutcome.NEEDS_ATTENTION)
         self.assertEqual(self.store.inspect().phase, TransactionPhase.NEEDS_ATTENTION)
         self.assertTrue(Path(self.store.transaction_path).exists())
+
+    def test_registry_readiness_runs_after_preview_and_before_reconcile(self):
+        events = []
+
+        class OrderedManager(_Manager):
+            def preview(inner, request):
+                events.append("preview")
+                return super(OrderedManager, inner).preview(request)
+
+            def reconcile(inner, request):
+                events.append("reconcile")
+                return super(OrderedManager, inner).reconcile(request)
+
+        manager = OrderedManager()
+
+        def readiness(transaction, preview, session_id):
+            events.append("registry_readiness")
+            self.assertEqual(transaction.transaction_id, self.store.inspect().transaction_id)
+            self.assertTrue(preview.success)
+            self.assertEqual(session_id, SESSION_B)
+            return SimpleNamespace(allowed=True)
+
+        result = ResumeCoordinator(
+            manager,
+            store=self.store,
+            session_id_provider=lambda: SESSION_B,
+            before_reconcile=readiness,
+        ).resume(self.store.inspect())
+        self.assertTrue(result.succeeded)
+        self.assertEqual(events, ["preview", "registry_readiness", "reconcile"])
+
+    def test_registry_readiness_failure_blocks_reconcile_and_keeps_transaction(self):
+        manager = _Manager()
+        result = ResumeCoordinator(
+            manager,
+            store=self.store,
+            session_id_provider=lambda: SESSION_B,
+            before_reconcile=lambda *_args: SimpleNamespace(
+                allowed=False,
+                code="FROZEN_ADDON_REGISTRY_NOT_REGISTERED_AFTER_REFRESH",
+                message="held add-on remained absent after local refresh",
+            ),
+        ).resume(self.store.inspect())
+        self.assertEqual(result.outcome, ResumeOutcome.NEEDS_ATTENTION)
+        self.assertEqual(
+            result.failure.code,
+            "FROZEN_ADDON_REGISTRY_NOT_REGISTERED_AFTER_REFRESH",
+        )
+        self.assertEqual(manager.reconcile_calls, [])
+        self.assertEqual(self.store.inspect().phase, TransactionPhase.NEEDS_ATTENTION)
+
+    def test_startup_verifies_session_then_reasserts_guard_then_reloads(self):
+        import resources.lib.startup as startup_module
+        events = []
+        coordinator = _StartupResume()
+        original_classify = startup_module.classify_startup_transaction
+
+        def classify(session_id, *, store):
+            events.append("classify")
+            return original_classify(session_id, store=store)
+
+        def current_session():
+            events.append("session")
+            return SESSION_B
+
+        def frozen_guard():
+            events.append("updater_guard")
+            return SimpleNamespace(allowed=True)
+
+        def resume(transaction, *, current_session_id):
+            events.append("resume")
+            return ResumeResult(ResumeOutcome.COMPLETED)
+
+        coordinator.resume = resume
+        with patch.object(startup_module, "get_current_kodi_session_id", current_session), \
+             patch.object(startup_module, "classify_startup_transaction", classify):
+            status = run_startup(
+                store=self.store,
+                resume_coordinator=coordinator,
+                frozen_precondition=frozen_guard,
+            )
+        self.assertEqual(status.classification, StartupClassification.NO_TRANSACTION)
+        self.assertEqual(events, ["session", "classify", "updater_guard", "classify", "resume"])
 
     def test_resuming_transaction_is_not_retried_on_startup(self):
         self.store.update_phase(TransactionPhase.RESUMING)

@@ -1,4 +1,78 @@
-# Agent Handoff — BM-017F resumed after qualified matrix integration
+# Current Handoff — BM-017F blocked at disposable JSON-RPC readiness
+
+## Work completed
+
+The preserved BM-017F implementation now places held-addon registry readiness
+in BM-022's own post-restart continuation, before configuration, so it does not
+depend on BM-020 having a transaction. BM-020 reuses the same readiness helper.
+The helper reloads durable ownership, checks updater quarantine and the full
+activation hold before and during refresh, derives exact expected versions,
+uses supported `UpdateLocalAddons`, and verifies registered-disabled state with
+bounded polling. Regression coverage includes BM-020 `no_transaction` with a
+resumable BM-022 transaction, ordering, failure modes, exact-version state, and
+hold persistence.
+
+The retained Red Light 2.6.8 ArtifactStore object is validated at SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. The
+harness isolation check was also changed to avoid resolving or probing the
+normal-profile path; it verifies only lexical disposable paths and disposable
+symlink components.
+
+## Validation
+
+- Registry/readiness/frozen-install focused suites: **48/48**.
+- Full repository suite: **1,690/1,690**.
+- `compileall`, schema/status JSON parsing, and `git diff --check`: passed.
+- The new full-hold regression first failed with a mutable mock that changed
+  the same in-memory transaction. The fixture was corrected to model durable
+  transaction replacement; targeted tests and the full suite then passed.
+
+## One authorized live run
+
+The exact authorized `tools/kodi_test.py validate-bm017f-lifecycle` command was
+run once with retained manifest
+`/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json` and
+ArtifactStore `/private/tmp/bm022v-familyroom.ygB0t5/artifact-store`. Isolation
+preflight verified HOME
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`,
+`KODI_HOME` unset, configured binary
+`/Applications/Kodi.app/Contents/MacOS/Kodi`, and a stopped starting state.
+
+Kodi launched through the harness (PID 79755). Reset, fixture preparation,
+Build Manager runner setup, and webserver configuration completed. Kodi did
+not answer the harness JSON-RPC readiness request within 90 seconds; the last
+error was `<urlopen error [Errno 1] Operation not permitted>`. The harness
+stopped Kodi, and its status command confirmed `running: False`, `pid: None`.
+The failure occurred before a BM-017F transaction or Red Light installation.
+No restart, BM-020/BM-022 resume, registry query/refresh, resource
+initialization, settings DB creation, private apply, activation release,
+runtime start, or idempotence was reached. The production readiness fix was
+not exercised live. Do not rerun under this approval.
+
+Diagnostics: `/private/tmp/bm017f-continuation-readiness-failure-2026-09-23.tar.gz`,
+SHA-256 `588d2f858083cf611d8b97798c07160e9acea827acbf5675864f5865f9c1a827`.
+
+## Safety and next step
+
+This continuation used Kodi only through `tools/kodi_test.py` and did not
+access the normal Kodi profile, any real device, Kodi Build Manager Test.app,
+or real private values. The earlier normal-profile metadata-only `test -e`
+and separate bare `Kodi -v` invocation remain documented historical safety
+deviations; do not investigate them or access that profile. No BM-023A retry
+or tvOS validation was started.
+
+Current classification: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`;
+Red Light clean-destination lifecycle **UNSUPPORTED**; macOS BM-023A
+**STILL_BLOCKED**; tvOS **NOT VALIDATED**. The smallest next step is
+supervisor direction on the disposable harness's local JSON-RPC permission,
+followed by new explicit approval before another live run. Preserve all current
+worker changes; do not start another milestone.
+
+---
+
+---
+
+# Historical Handoff — BM-017F resumed after qualified matrix integration
 
 BM-017F first attempt is complete as an investigation/implementation attempt.
 Its historical result is `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`,

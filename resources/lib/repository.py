@@ -534,6 +534,16 @@ class RepositoryManager:
         """
         addon_id = repository.addon_id
 
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception:
+            return RepositoryInstallResult(
+                addon_id=addon_id,
+                status=RepositoryStatus.FAILED,
+                message="repository installation is held or activation-hold state is unavailable",
+            )
+
         # Detection: already in Kodi's database? No mutation.
         if self.is_installed(addon_id):
             return RepositoryInstallResult(
@@ -758,6 +768,13 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
         SetAddonEnabled. Raises RepositoryInstallError if the addon does not
         appear within _ENABLE_WAIT_TIMEOUT seconds, or if SetAddonEnabled fails.
         """
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise RepositoryInstallError(
+                "repository activation is held or activation-hold state is unavailable"
+            ) from exc
         xbmc = self._xbmc()
 
         # Wait for UpdateLocalAddons to register the addon (as disabled)

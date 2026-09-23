@@ -2,37 +2,58 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: Resumed after the first investigation/implementation attempt. The
-historical result `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` requires
-revalidation because BM-023A-R1 reported Red Light 2.6.8 among 30 exact
-artifact-backed installed managed add-ons, with YouTube as the single exact
-artifact gap. The pinned Red Light SHA-256 is
+**Status**: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`. The
+preserved BM-017F implementation and tests are on `agent/codex`. The retained
+Red Light 2.6.8 object remains validated against SHA-256
 `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
 
-The sanitized audit and neutral tracking are integrated on protected matrix
-through `fedefae98aa01253e6b34ecbac1b292b80c21b6a`. Worker metadata and its
-single usage row remain on `agent/codex`. The retained manifest and ArtifactStore
-lookup is in progress; no artifact outcome is claimed yet.
+The corrected BM-022 quiescence continuation now invokes the shared held-addon
+registry-readiness gate before `install()` enters configuration. It revalidates
+the durable transaction, updater quarantine, manifest/resolution identities,
+full activation hold, exact expected version, and disabled Kodi registry state.
+The BM-020 path reuses the same helper. Regression coverage proves BM-020
+`no_transaction` alongside a resumable BM-022 transaction, readiness ordering,
+fail-closed registry states, and hold persistence.
 
-Prior Kodi 21.1/Omega evidence: newly discovered ordinary add-ons were disabled
-by default, `UpdateLocalAddons` did not start the fake service, and the fake
-service started only after enable. Kodi native install/reload and dependency
-reconciliation remain possible activation paths; the managed-graph activation
-barrier remains unresolved.
+The single newly authorized command was run once through `tools/kodi_test.py`
+with disposable HOME
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home`
+and configured profile/userdata location
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.kodi-test/home/Library/Application Support/Kodi/userdata`.
+Kodi.app launched, fixture preparation and harness configuration completed,
+then JSON-RPC readiness failed after 90 seconds with
+`<urlopen error [Errno 1] Operation not permitted>`. The harness stopped Kodi;
+status confirmed `running: False`, `pid: None`. The run did not reach a BM-017F
+transaction, Red Light installation, restart, BM-020/BM-022 resume, registry
+refresh, configuration, resource initialization, private apply, activation
+release, runtime start, or idempotence. The precise latest blocker is the
+disposable harness's denied JSON-RPC connection; the production readiness fix
+was not exercised live.
 
-The prior run accidentally invoked
-`/Applications/Kodi.app/Contents/MacOS/Kodi -v` without disposable `HOME`. No
-process remained at the later check, but transient normal-profile access could
-not be ruled out. The normal profile was not inspected and must not be
-inspected for that deviation.
+Diagnostics are preserved at
+`/private/tmp/bm017f-continuation-readiness-failure-2026-09-23.tar.gz`,
+SHA-256 `588d2f858083cf611d8b97798c07160e9acea827acbf5675864f5865f9c1a827`.
+The single-run authorization is exhausted. Do not relaunch Kodi or rerun the
+harness without supervisor direction and new approval.
 
-No product implementation has started in the resumed run. No BM-023A retry or
-tvOS validation is in scope.
+Tests: targeted registry/readiness/frozen-install suites **48/48**; full
+repository suite **1690/1690**; `compileall`, schema/status JSON parsing, and
+`git diff --check` passed. Red Light clean-destination lifecycle remains
+**UNSUPPORTED**; macOS BM-023A remains **STILL_BLOCKED**; tvOS is **NOT
+VALIDATED**. Do not start BM-023A.
 
-**Smallest next step**: use the retained frozen manifest and production
-ArtifactStore API to resolve the exact Red Light 2.6.8 artifact reference.
-Validate the pinned object if present; stop with a precise consistency blocker
-if missing or inconsistent. Do not resume BM-023A.
+**Safety**: This continuation used only `tools/kodi_test.py` for Kodi,
+confirmed exact disposable HOME and stopped state through the harness, and did
+not access the normal Kodi profile, a device, Kodi Build Manager Test.app, or
+real private values. A metadata-only normal-profile `test -e` from the prior
+continuation and the earlier bare `Kodi -v` are separate historical deviations;
+do not investigate them or access the normal profile.
+
+**Smallest next step**: supervisor direction on enabling the local JSON-RPC
+readiness connection for the disposable harness, followed by new explicit
+approval before another live run. BM-022 registry readiness has unit and
+integration-regression coverage but no successful live proof. Do not resume
+BM-023A.
 
 ---
 

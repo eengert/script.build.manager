@@ -132,6 +132,7 @@ class StructuredPrivateResourceDeclaration:
     adapter_id: str
     lifecycle: str = ResourceLifecycle.QUIESCED.value
     required: bool = True
+    configure_before_activation: bool = False
 
     def __post_init__(self) -> None:
         _id(self.resource_type, "resource_type")
@@ -147,6 +148,10 @@ class StructuredPrivateResourceDeclaration:
             raise PrivateResourceValidationError("resource lifecycle is unsupported")
         if not isinstance(self.required, bool):
             raise PrivateResourceValidationError("resource required must be boolean")
+        if not isinstance(self.configure_before_activation, bool):
+            raise PrivateResourceValidationError(
+                "resource configure_before_activation must be boolean"
+            )
         if not self.fields:
             raise PrivateResourceValidationError("resource must declare at least one field")
         seen = set()
@@ -170,6 +175,7 @@ class StructuredPrivateResourceDeclaration:
             "adapter_id": self.adapter_id,
             "lifecycle": self.lifecycle,
             "required": self.required,
+            "configure_before_activation": self.configure_before_activation,
         }
 
 
@@ -301,7 +307,7 @@ class StructuredResourceResult:
 
     @property
     def succeeded(self) -> bool:
-        return self.outcome == "applied"
+        return self.outcome in {"applied", "initialized", "already_initialized"}
 
     @property
     def changed(self) -> bool:
@@ -321,6 +327,33 @@ class StructuredPrivateResourceAdapter:
     """Adapter interface; implementations must keep values out of results."""
 
     adapter_id = ""
+
+    def initialize(
+        self, declaration: StructuredPrivateResourceDeclaration
+    ) -> Optional[StructuredResourceResult]:
+        """Initialize an absent resource through its owner-specific safe API.
+
+        Adapters that do not declare ``configure_before_activation`` may keep
+        the default no-op. Lifecycle adapters must override this method and
+        return a sanitized result without exposing resource values.
+        """
+        if declaration.configure_before_activation:
+            raise PrivateResourceNotInitializedError(
+                "resource adapter has no safe initializer"
+            )
+        return None
+
+    def verify(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        overlay: StructuredPrivateResourceOverlay,
+    ) -> StructuredResourceResult:
+        """Read-only verification used after activation has been released."""
+        if declaration.configure_before_activation:
+            raise PrivateResourceNotInitializedError(
+                "resource adapter cannot verify its configured state"
+            )
+        raise NotImplementedError
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration) -> tuple[StructuredPrivateResourceOverlay, StructuredResourceResult]:
         raise NotImplementedError
@@ -351,6 +384,48 @@ class StructuredPrivateResourceManager:
     def capture(self, declaration: StructuredPrivateResourceDeclaration):
         return self._adapter(declaration).capture(declaration)
 
+    def initialize(
+        self,
+        declarations: Sequence[StructuredPrivateResourceDeclaration],
+    ) -> tuple[StructuredResourceResult, ...]:
+        results = []
+        for declaration in declarations:
+            if not declaration.configure_before_activation:
+                continue
+            result = self._adapter(declaration).initialize(declaration)
+            if result is None or not result.succeeded:
+                raise PrivateResourceNotInitializedError(
+                    "structured resource initialization was not verified"
+                )
+            results.append(result)
+        return tuple(results)
+
+    def verify(
+        self,
+        declarations: Sequence[StructuredPrivateResourceDeclaration],
+        overlays: Sequence[StructuredPrivateResourceOverlay],
+    ) -> tuple[StructuredResourceResult, ...]:
+        declarations_by_id = {item.resource_id: item for item in declarations}
+        if len(declarations_by_id) != len(declarations):
+            raise PrivateResourceValidationError("duplicate resource ownership")
+        overlays_by_id = {item.resource_id: item for item in overlays}
+        if len(overlays_by_id) != len(overlays):
+            raise PrivateResourceValidationError("duplicate resource overlays")
+        results = []
+        for declaration in declarations:
+            overlay = overlays_by_id.get(declaration.resource_id)
+            if overlay is None:
+                if declaration.required:
+                    raise PrivateResourceValidationError("required resource overlay is missing")
+                continue
+            result = self._adapter(declaration).verify(declaration, overlay)
+            if not result.succeeded:
+                raise PrivateResourceNotInitializedError(
+                    "structured resource values are not verified"
+                )
+            results.append(result)
+        return tuple(results)
+
     def apply(
         self,
         declarations: Sequence[StructuredPrivateResourceDeclaration],
@@ -362,6 +437,7 @@ class StructuredPrivateResourceManager:
         overlays_by_id = {item.resource_id: item for item in overlays}
         if len(overlays_by_id) != len(overlays):
             raise PrivateResourceValidationError("duplicate resource overlays")
+        self.initialize(declarations)
         results = []
         for declaration in declarations:
             overlay = overlays_by_id.get(declaration.resource_id)
