@@ -6,7 +6,8 @@
 protected `matrix` as `b82885ab01fdb3c2486fff0c3e42bf33262b110e`; the normal
 worker synchronization merge is `08c0fdfc9601e770c88edab5100751c04b16166d`.
 BM-023B implementation commit `1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f`
-is pushed only to `origin/agent/codex`.
+is integrated on protected `matrix` as `5648c678`; neutral matrix tracking is
+`d867b80`. This is the normal merge synchronization into `agent/codex`.
 
 Implement explicit per-addon install resolution for exact frozen artifacts,
 repository-current fallback, and allowed skip. Keep captured desired state and
@@ -37,13 +38,15 @@ Skip / Cancel Build with a manual-install warning. BM-023A remains historically
 `BLOCKED_MISSING_FROZEN_ARTIFACTS`; the macOS retry is architecturally
 unblocked by explicit resolution but was not resumed. tvOS remains unvalidated.
 
-Focused regression group: **120/120**. Full repository suite: **1643/1643**.
+Worker focused regression group: **120/120**. Integrated matrix focused
+modules: **581/581**. Full repository suite: **1643/1643**.
 `compileall`, JSON parsing, and `git diff --check` passed. Disposable
 `TemporaryDirectory` artifacts and fake Kodi/repository backends were used; no
 Kodi app, real profile, device, or private-overlay value was accessed.
 
-**Smallest next step**: stop after BM-023B. Any macOS frozen-install retry is a
-separate action and was not performed here.
+**Smallest next step**: finish pushing this normal synchronization merge to
+`origin/agent/codex`, then begin the separately authorized BM-023A-R1 isolated
+macOS test-app validation. Do not start tvOS validation.
 
 ## BM-023A-H — Historical Exact Artifact Recovery
 

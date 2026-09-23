@@ -1043,3 +1043,23 @@ Focused tests passed 1391/1391 and the full suite passed 1472/1472.
 `git diff --check` passed. BM-020B/C and BM-017 remain unstarted. The real
 Kodi profile, Apple TV, and all devices remained untouched. Family-room
 distribution/source work remains separate and was not started.
+
+## BM-023B — protected matrix integration and Codex synchronization
+
+The reviewed substantive implementation commit `1d60ed3` was cherry-picked to
+protected `matrix` as `5648c678`; sanitized neutral tracking is `d867b80`. The
+Codex worker branch was synchronized through this normal merge, preserving its
+BM-023A/B history and Codex identity. Worker `.agent/*` files were not copied
+onto matrix. The worker BM-023B usage row and neutral matrix integration row
+are each preserved exactly once.
+
+Matrix validation passed focused relevant modules **581/581**, full suite
+**1643/1643**, `compileall`, schema/example JSON parsing, and
+`git diff --check`. The synchronized substantive endpoint matches matrix when
+`.agent/**` is excluded. No Kodi app, Family Room, device, portable profile,
+or private-overlay value was accessed during integration.
+
+BM-023A-R1 is separately authorized and architecturally unblocked; it had not
+started at this synchronization checkpoint. The next action is the isolated
+macOS destination preflight using only `/Applications/Kodi Build Manager Test.app`.
+tvOS remains NOT VALIDATED.

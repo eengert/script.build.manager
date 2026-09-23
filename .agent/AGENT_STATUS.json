@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
   "status": "complete",
-  "task": "BM-023B",
-  "reason": "BM-023B completed and pushed on agent/codex. Exact-first fallback/skip resolution, safe recoverability reporting, immutable fingerprints, and restart-safe Build Manager composition are implemented. Full suite 1643/1643; no Kodi app, real profile, device, or private-overlay values accessed. BM-023A macOS installation was not resumed.",
+  "task": "BM-023B-merge",
+  "reason": "BM-023B implementation 1d60ed3 is integrated on protected matrix as 5648c67 with neutral tracking d867b80 and normally merged into agent/codex. Worker and matrix usage rows are preserved once. Integrated focused module suites 581/581; full suite 1643/1643; compileall, JSON parsing, and diff check passed. BM-023A-R1 is architecturally unblocked but not yet resumed. Codex worker identity is preserved.",
   "last_commit": "1d60ed3",
-  "matrix_sha": "b82885a",
-  "next_agent": "supervisor",
+  "matrix_sha": "d867b80",
+  "next_agent": "codex",
   "updated_at": "2026-09-22"
 }
