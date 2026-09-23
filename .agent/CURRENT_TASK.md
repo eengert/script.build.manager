@@ -1,5 +1,24 @@
 # Current Task
 
+## BM-017F — Deferred Activation & Structured-Resource Lifecycle Coordination
+
+**Status**: In progress under the authorized task. BM-017E's sanitized audit
+was integrated on protected `matrix` as `7075d59`, with neutral tracking at
+`ee5c5f7266b00ce7338123c74f8985a4886e848c`; worker synchronization is in
+progress by normal merge. BM-017E remains complete as static investigation
+with result `BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
+
+The work will first audit existing coordinator ordering and Kodi 21/Omega
+activation behavior, then implement or stop at the task's explicit safety gates.
+Use only the authorized disposable `tools/kodi_test.py` path and fake private
+values. Do not access Family Room state/device, `/Applications/Kodi Build
+Manager Test.app`, or real private values. Do not resume BM-023A or begin a
+later milestone. Do not claim tvOS validation.
+
+**Smallest next step**: verify the ordinary merge and worker synchronization,
+then map BM-020/BM-022 ordering and Kodi's new-addon service activation path.
+
+---
 ## BM-017E — Structured Private Resource Initialization & Quiescence
 
 **Status**: Complete as a static investigation. Result:
@@ -32,7 +51,6 @@ BM-020/BM-022 stage that holds Red Light disabled through initialization and
 private application before any later BM-023A retry is authorized.
 
 ---
-
 ## Previous Task — BM-023A-R1 isolated macOS validation
 
 **Status**: Complete as a validation task with result

@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-017E",
-  "reason": "BM-017E is complete as a static investigation with BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED. The exact public Red Light 2.6.8 source has an internal settings initializer, but current BM-020/BM-022 ordering cannot prove owner quiescence and updater quarantine across initialization, private apply, and re-enable. No Red Light code or live profile was executed or changed. BM-023A remains blocked; do not start its Mac retry.",
-  "last_commit": "7b8fe386447fd345c3029d7c8a13f0a96cf300ce",
-  "matrix_sha": "9abc472",
-  "next_agent": "supervisor",
+  "status": "in_progress",
+  "task": "BM-017F",
+  "reason": "Authorized BM-017F deferred-activation and structured-resource lifecycle work started after integrating the sanitized BM-017E audit onto matrix. BM-017E historical result remains BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED. No BM-023A retry or real-profile/device work is authorized.",
+  "last_commit": "7075d59",
+  "matrix_sha": "ee5c5f7266b00ce7338123c74f8985a4886e848c",
+  "next_agent": "codex",
   "updated_at": "2026-09-22"
 }
