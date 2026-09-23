@@ -1,4 +1,63 @@
-# Current Handoff — BM-017F stage diagnostics ready for live validation
+# Current Handoff — BM-017F import correction implemented
+
+## Result
+
+Implemented the correction for `BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT` in
+`93be55a3e3a900de488d388c88fbf39aca885869` on `agent/codex`. Red Light's
+temporary owner import root is derived from its verified installed
+`addon.xml` module declaration and resolves to the canonical
+`plugin.video.redlight/resources/lib` directory.
+
+The import context adds only the frozen transaction's verified Python-module
+dependency closure required by the audited initializer: requests 2.31.0,
+urllib3 2.2.3, certifi 2023.5.7, chardet 5.1.0, and idna 3.10.0. The exact
+versions and enabled registry state must match the frozen records. It rejects
+unverified or colliding top-level modules, checks namespace `__path__` as well
+as ordinary `__file__`, restores `sys.path` and legitimate prior modules, and
+cleans up imported owner namespace modules on success and failure.
+
+Red Light remains held disabled. Its installed package still supplies the
+schema/default declarations, value converter, marker constants, and property
+setter. Offline source review found no database, provider network,
+authentication, service-start, or background-worker side effects in the
+audited initializer import chain. No `xbmcaddon.Addon("plugin.video.redlight")`
+source lookup was reintroduced.
+
+## Validation and limits
+
+- Focused source/import/resource/private-overlay/build/dependency/frozen
+  transaction and resume suites: **354 passed**.
+- Full repository suite: **1,742 passed**; manifest/schema suite: **50 passed**.
+- `compileall` passed; all **7 tracked JSON files** parsed; `git diff --check`
+  passed.
+- BM-017F was not live-validated in this task. Kodi and the lifecycle harness
+  were not run. No normal Kodi profile, real device, or private overlay values
+  were accessed.
+
+Classification: `IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION`. The historical
+`BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT` correction awaits live proof. Red Light
+clean-destination lifecycle remains **NOT YET LIVE-VALIDATED**; macOS BM-023A
+remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+
+## Smallest next step
+
+The supervisor runs the following disposable lifecycle command manually from
+normal Terminal. Codex did not run it:
+
+```text
+cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+
+python tools/kodi_test.py validate-bm017f-lifecycle \
+  --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
+  --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+```
+
+Required human input: supervisor review of the live stage/result before any
+further BM-017F work. Do not claim completion from offline tests alone.
+
+---
+
+# Previous Handoff — BM-017F stage diagnostics ready for live validation
 
 ## Work completed
 

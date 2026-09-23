@@ -2,10 +2,83 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_DIAGNOSTIC_LIVE_VALIDATION` on `agent/codex`.
-The narrowly scoped instrumentation and regression tests are committed as
-`deae656`. Red Light clean-destination lifecycle remains **NOT YET
-LIVE-VALIDATED**. No lifecycle or activation architecture was changed.
+**Status**: `IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION` on `agent/codex`.
+Substantive implementation commit: `93be55a3e3a900de488d388c88fbf39aca885869`.
+The prior import-path blocker is corrected and covered offline. Red Light's
+clean-destination lifecycle remains **NOT YET LIVE-VALIDATED**. macOS BM-023A
+remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+
+### Verified package import context
+
+Red Light's package-owned initialization imports now use the canonical
+`<verified plugin.video.redlight>/resources/lib` root derived from the exact
+installed source descriptor. The add-on root is not used as the Python root.
+The declared module path is checked against `addon.xml`; traversal, symlinks,
+missing roots, wrong owner identity, and wrong version fail closed.
+
+The owner context derives Python dependency roots from the transaction's
+fingerprinted frozen manifest and exact installed resolution records. The
+audited import chain requires `script.module.requests` (2.31.0), with its
+frozen transitive module dependencies `script.module.urllib3` (2.2.3),
+`script.module.certifi` (2023.5.7), `script.module.chardet` (5.1.0), and
+`script.module.idna` (3.10.0). Registry versions and enabled state must match
+the exact frozen records. `script.module.pil` and other Red Light dependencies
+are not added to the import path because the audited initializer does not
+require them.
+
+`verified_addon_import_context` routes known packages only to those verified
+roots and blocks host-package fallback. It validates ordinary module origins
+and namespace `__path__` locations for `caches` and `modules`, rejects external
+collisions, restores `sys.path` and preexisting modules, and removes newly
+created owner modules and namespace roots on success or failure. Red Light
+continues to load its schema/default declarations and marker setter from the
+installed package while the owner remains held disabled; no service, provider,
+authentication, or network entrypoint is called.
+
+### Resolved pre-correction import diagnosis
+
+The latest supervisor-run disposable result completed `SOURCE_REVALIDATION`,
+then failed at `LOAD_INITIALIZER_DECLARATIONS` with
+`INITIALIZER_IMPORT_FAILED`; `last_completed_stage` was
+`SOURCE_REVALIDATION`. The installed disposable source identifies as
+`plugin.video.redlight` 2.6.8; BM-017F's validated artifact digest is
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
+
+`RedLightSettingsAdapter._redlight_initializers()` inserts the installed
+add-on root into `sys.path`, then first calls
+`importlib.import_module("caches.base_cache")`. In the exact installed layout,
+`caches/base_cache.py` is under `resources/lib/caches`, and the add-on root has
+no `caches` directory. A side-effect-free isolated import probe using the same
+root-only path reproduced `ModuleNotFoundError` for `caches`; source inspection
+also confirmed that `resources/lib` is the package import root. The latest
+persisted Kodi diagnostic contains only the stage/cause, not the exception or
+frame, so the source-path reproduction identifies the first failing operation
+but does not independently recover a live traceback. The same safe cause can
+also be set by the pre-import namespace-collision guard; the live transaction
+does not persist enough information to distinguish those branches. A static
+scan found no Build Manager source imports of top-level `caches` or `modules`.
+
+The remaining import chain, if that path is supplied, reaches
+`modules.kodi_utils` (Kodi API imports), then `caches.settings_cache`, which
+imports `modules.http_defaults` and `requests.adapters.Retry`. Red Light
+declares `script.module.requests`, whose installed module code is under its
+`lib` directory; Build Manager itself declares only `xbmc.python`, so dependency
+visibility is a follow-on import-context check. Module-scope inspection found
+no database, network, service/thread, migration, or Kodi-property operation
+before the failed first import. The `caches` and `modules` directories have no
+`__init__.py`; their namespace package objects have no `__file__`, which is why
+the pre-correction collision and cleanup logic missed those package roots. The
+current context checks their `__path__` locations and cleans them up. No
+narrower existing defaults module was found; `resources/settings.xml` has no
+setting declarations.
+
+Historical classification for that pre-correction run:
+`BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT` (architecture verdict A). The
+implementation above corrects the missing package root and adds verified,
+isolated dependency resolution plus namespace collision handling. This task
+did not run Kodi or the lifecycle harness; live confirmation remains pending.
+No normal Kodi profile, real device, or private overlay values were accessed.
+macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
 
 ### Historical BM-017F blocker progression
 
@@ -20,9 +93,10 @@ LIVE-VALIDATED**. No lifecycle or activation architecture was changed.
   deriving and revalidating the installed source from the frozen transaction.
 - The most recent supervisor-run disposable attempt passed readiness and source
   validation, entered `redlight.settings` initialization, and stopped before
-  private apply or activation release. Its preserved failure did not identify
-  the first failing initializer operation. This task adds diagnostics for the
-  next supervisor-authorized live run; it does not claim that run has passed.
+  private apply or activation release. Its latest preserved diagnostic names
+  `LOAD_INITIALIZER_DECLARATIONS` and `INITIALIZER_IMPORT_FAILED`; the offline
+  source/layout probe narrows the first operation to the missing `resources/lib`
+  import root, subject to the live traceback limitation above.
 
 ### Actual initializer map
 
@@ -64,24 +138,26 @@ overlay values are never copied into the diagnostic.
 
 ### Validation and live boundary
 
-- Focused Red Light resource, private overlay, CONFIGURE diagnostic,
-  Build Manager, and frozen transaction/readiness suites: **93/93**.
-- Full repository `unittest` suite: **1,722/1,722**.
+- Focused verified-source, import-context, Red Light resource, private overlay,
+  Build Manager, dependency, frozen install/readiness, transaction, resume, and
+  CONFIGURE diagnostics suites: **354 passed**.
+- Full repository `unittest` suite: **1,742 passed**.
+- Project manifest/schema tests: **50 passed**.
 - `compileall` over `resources`, `tests`, and `tools`: passed.
 - All **7 tracked JSON files** parsed; `git diff --check` passed.
-- No Kodi executable, BM-017F lifecycle harness command, normal Kodi profile,
-  real device, or real private overlay values were used. Harness unit tests use
-  mocked process behavior.
+- No Kodi executable or BM-017F lifecycle harness command was run. No normal
+  Kodi profile, real device, or real private overlay values were accessed.
 
-Classification: `IMPLEMENTED_PENDING_DIAGNOSTIC_LIVE_VALIDATION`;
-Red Light clean-destination lifecycle **NOT YET LIVE-VALIDATED**; macOS BM-023A
-retry **STILL BLOCKED**; tvOS **NOT VALIDATED**. Wait for the supervisor's
-manual disposable run and inspect its persisted safe stage/cause before any
-further correction.
+Current classification is `IMPLEMENTED_PENDING_IMPORT_LIVE_VALIDATION`.
+The historical `BLOCKED_RED_LIGHT_IMPORT_PATH_CONTEXT` correction is
+implemented and awaits live proof. Red Light clean-destination lifecycle
+remains **NOT YET LIVE-VALIDATED**; macOS BM-023A remains **STILL BLOCKED**;
+tvOS remains **NOT VALIDATED**. The supervisor will run the next disposable
+validation from normal Terminal.
 
-### Next manual live command
+### Next manual command — supervisor only
 
-Run only from the normal Terminal when the supervisor directs:
+Do not run this command from Codex:
 
 ```text
 cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
@@ -90,8 +166,6 @@ python tools/kodi_test.py validate-bm017f-lifecycle \
   --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
   --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
 ```
-
-Codex did not and must not run this live command as part of the current task.
 
 ## BM-023A-H — Historical Exact Artifact Recovery
 
