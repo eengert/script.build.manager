@@ -69,7 +69,13 @@
     },
     "family-room": {
       "label": "Family Room Apple TV",
-      "extends": "tvos"
+      "extends": "tvos",
+      "frozen_install_policies": [
+        {
+          "addon_id": "plugin.video.youtube",
+          "policy": "exact_first_with_repository_fallback_or_skip"
+        }
+      ]
     },
     "shield": {
       "label": "Nvidia Shield Pro",

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from resources.lib.artifacts import (
     ArtifactMetadata,
@@ -24,6 +24,10 @@ from resources.lib.artifacts import (
     validate_addon_zip,
 )
 from resources.lib.dependencies import _is_system_dependency
+
+if TYPE_CHECKING:
+    from resources.lib.frozen_resolution import FrozenBuildRecoverabilitySummary
+    from resources.lib.manifest import FrozenInstallPolicy
 
 
 class CaptureError(Exception):
@@ -247,10 +251,32 @@ class FrozenBuildManifest:
 class FrozenBuildCaptureResult:
     manifest: FrozenBuildManifest
     errors: Tuple[str, ...] = ()
+    recoverability: Optional["FrozenBuildRecoverabilitySummary"] = None
 
     @property
     def complete(self) -> bool:
         return self.manifest.capture_status == CaptureStatus.COMPLETE
+
+    @property
+    def exact_frozen_coverage(self) -> Optional[str]:
+        return self.recoverability.exact_frozen_coverage if self.recoverability else None
+
+    def to_dict(self) -> dict:
+        return {
+            "build_id": self.manifest.build_id,
+            "capture_complete": self.complete,
+            "captured_desired_state": (
+                self.recoverability.captured_desired_state if self.recoverability else "unknown"
+            ),
+            "exact_frozen_coverage": self.exact_frozen_coverage,
+            "install_recoverability": (
+                self.recoverability.install_recoverability if self.recoverability else "unknown"
+            ),
+            "recoverability": (
+                self.recoverability.to_dict() if self.recoverability else None
+            ),
+            "errors": list(self.errors),
+        }
 
 
 def _manifest_string(value: Mapping[str, object], field: str) -> str:
@@ -611,6 +637,7 @@ def capture_frozen_build(
     kodi_version: str = "",
     platform: str = "",
     configuration_packages: Sequence[str] = (),
+    install_policies: Sequence["FrozenInstallPolicy"] = (),
 ) -> FrozenBuildCaptureResult:
     """Capture exact installed software for selected roots and dependencies."""
     installed = {}
@@ -771,4 +798,11 @@ def capture_frozen_build(
         configuration_packages=tuple(sorted(set(configuration_packages))),
         source_metadata=source,
     )
-    return FrozenBuildCaptureResult(manifest, tuple(sorted(set(errors))))
+    from resources.lib.frozen_resolution import summarize_frozen_recoverability
+
+    recoverability = summarize_frozen_recoverability(manifest, store, install_policies)
+    return FrozenBuildCaptureResult(
+        manifest,
+        tuple(sorted(set(errors))),
+        recoverability,
+    )

@@ -1,10 +1,10 @@
 """BM-022 frozen-build installation and transaction lifecycle.
 
-The installer consumes only a complete BM-021B manifest and immutable
-content-addressed artifacts.  It reuses the project's established validated
-staged-package installation boundary, never asks Kodi to resolve a newer
-repository version, and fails closed when an existing installation is not the
-exact requested version.
+The installer prefers exact BM-021B artifacts and immutable content-addressed
+packages. An explicit per-add-on policy may offer a user-selected current
+version from one captured, verified repository or an explicit skip. All other
+missing artifacts remain blocking, and existing installations must match the
+selected exact or resolved version.
 
 The durable transaction owns the global updater quarantine from the first
 mutation until explicit final release or recovery.  It is intentionally
@@ -18,24 +18,50 @@ import datetime as _datetime
 import errno
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
 import tempfile
 import time
 import uuid
+import zipfile
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
+from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.build_manager import ReconcileRequest
 from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureError,
     CaptureStatus,
     FrozenBuildManifest,
+)
+from resources.lib.frozen_resolution import (
+    FrozenBuildRecoverabilitySummary,
+    FrozenInstallResolutionManifest,
+    FrozenPlanAction,
+    FrozenPlanActionKind,
+    FrozenResolutionError,
+    InstallResolution,
+    InstallResolutionRecord,
+    Recoverability,
+    ResolutionChoice,
+    ResolutionPrompt,
+    ResolutionState,
+    default_exact_record,
+    effective_policy,
+    install_plan_fingerprint,
+    resolution_fingerprint,
+    resolved_software_fingerprint,
+    summarize_frozen_recoverability,
+)
+from resources.lib.manifest import (
+    FrozenInstallPolicy,
+    FrozenInstallPolicyMode,
 )
 from resources.lib.repository import _extract_zip_to_directory
 from resources.lib.update_guard import (
@@ -76,7 +102,7 @@ class FrozenInstallPhase(str, Enum):
     COMPLETE = "complete"
 
 
-_TRANSACTION_SCHEMA = 1
+_TRANSACTION_SCHEMA = 2
 _TRANSACTION_FILENAME = "frozen_install_transaction.json"
 _LOCK_FILENAME = "frozen_install_transaction.lock"
 _MAX_CODE = 96
@@ -130,6 +156,11 @@ class FrozenInstallTransaction:
     private_overlay_id: str = ""
     private_overlay_fingerprint: str = ""
     private_overlay_required: bool = False
+    install_plan_fingerprint: str = ""
+    policies: Tuple[FrozenInstallPolicy, ...] = ()
+    resolution_records: Tuple[InstallResolutionRecord, ...] = ()
+    resolution_fingerprint: str = ""
+    resolved_software_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         _valid_uuid(self.transaction_id, "transaction_id")
@@ -165,6 +196,22 @@ class FrozenInstallTransaction:
             raise FrozenInstallValidationError("private_overlay_fingerprint is invalid")
         if not isinstance(self.private_overlay_required, bool):
             raise FrozenInstallValidationError("private_overlay_required is invalid")
+        for field in (
+            "install_plan_fingerprint",
+            "resolution_fingerprint",
+            "resolved_software_fingerprint",
+        ):
+            value = getattr(self, field)
+            if value and not _FINGERPRINT.fullmatch(value):
+                raise FrozenInstallValidationError(f"{field} is invalid")
+        if len({policy.addon_id for policy in self.policies}) != len(self.policies):
+            raise FrozenInstallValidationError("transaction policies contain duplicates")
+        if len({record.addon_id for record in self.resolution_records}) != len(self.resolution_records):
+            raise FrozenInstallValidationError("transaction resolutions contain duplicates")
+        if self.resolution_records:
+            expected_resolution = resolution_fingerprint(self.resolution_records)
+            if self.resolution_fingerprint and self.resolution_fingerprint != expected_resolution:
+                raise FrozenInstallValidationError("transaction resolution fingerprint does not match")
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +233,11 @@ class FrozenInstallTransaction:
             "private_overlay_id": self.private_overlay_id,
             "private_overlay_fingerprint": self.private_overlay_fingerprint,
             "private_overlay_required": self.private_overlay_required,
+            "install_plan_fingerprint": self.install_plan_fingerprint,
+            "policies": [policy.to_dict() for policy in self.policies],
+            "resolution_records": [record.to_dict() for record in self.resolution_records],
+            "resolution_fingerprint": self.resolution_fingerprint,
+            "resolved_software_fingerprint": self.resolved_software_fingerprint,
         }
 
     @classmethod
@@ -202,12 +254,31 @@ class FrozenInstallTransaction:
         optional = {
             "private_overlay_id", "private_overlay_fingerprint",
             "private_overlay_required",
+            "install_plan_fingerprint", "policies", "resolution_records",
+            "resolution_fingerprint", "resolved_software_fingerprint",
         }
         if set(value) - required - optional or not required.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction fields are unsupported")
-        if value["schema_version"] != _TRANSACTION_SCHEMA:
+        if value["schema_version"] not in (1, _TRANSACTION_SCHEMA):
             raise FrozenInstallPersistenceError("unsupported frozen transaction schema")
+        if value["schema_version"] == _TRANSACTION_SCHEMA and not {
+            "install_plan_fingerprint", "policies", "resolution_records",
+            "resolution_fingerprint", "resolved_software_fingerprint",
+        }.issubset(value):
+            raise FrozenInstallPersistenceError("frozen transaction is missing resolution metadata")
         try:
+            policies = tuple(
+                FrozenInstallPolicy(
+                    addon_id=item["addon_id"],
+                    mode=FrozenInstallPolicyMode(item["policy"]),
+                    repository_id=item.get("repository_id", ""),
+                )
+                for item in value.get("policies", [])
+            )
+            resolutions = tuple(
+                InstallResolutionRecord.from_dict(item)
+                for item in value.get("resolution_records", [])
+            )
             return cls(
                 transaction_id=value["transaction_id"],
                 build_id=value["build_id"],
@@ -226,8 +297,13 @@ class FrozenInstallTransaction:
                 private_overlay_id=value.get("private_overlay_id", ""),
                 private_overlay_fingerprint=value.get("private_overlay_fingerprint", ""),
                 private_overlay_required=value.get("private_overlay_required", False),
+                install_plan_fingerprint=value.get("install_plan_fingerprint", ""),
+                policies=policies,
+                resolution_records=resolutions,
+                resolution_fingerprint=value.get("resolution_fingerprint", ""),
+                resolved_software_fingerprint=value.get("resolved_software_fingerprint", ""),
             )
-        except (KeyError, TypeError, ValueError, FrozenInstallError) as exc:
+        except (KeyError, TypeError, ValueError, FrozenInstallError, FrozenResolutionError) as exc:
             if isinstance(exc, FrozenInstallError):
                 raise
             raise FrozenInstallPersistenceError("frozen transaction contains invalid fields") from exc
@@ -242,6 +318,9 @@ class FrozenInstallTransaction:
         private_overlay_id: Optional[str] = None,
         private_overlay_fingerprint: Optional[str] = None,
         private_overlay_required: Optional[bool] = None,
+        resolution_records: Optional[Tuple[InstallResolutionRecord, ...]] = None,
+        resolution_fingerprint_value: Optional[str] = None,
+        resolved_software_fingerprint_value: Optional[str] = None,
     ) -> "FrozenInstallTransaction":
         return replace(
             self,
@@ -263,6 +342,19 @@ class FrozenInstallTransaction:
             private_overlay_required=(
                 self.private_overlay_required
                 if private_overlay_required is None else private_overlay_required
+            ),
+            resolution_records=(
+                self.resolution_records
+                if resolution_records is None else resolution_records
+            ),
+            resolution_fingerprint=(
+                self.resolution_fingerprint
+                if resolution_fingerprint_value is None else resolution_fingerprint_value
+            ),
+            resolved_software_fingerprint=(
+                self.resolved_software_fingerprint
+                if resolved_software_fingerprint_value is None
+                else resolved_software_fingerprint_value
             ),
             updated_at=_utc_now(),
         )
@@ -320,6 +412,84 @@ class FrozenInstallStore:
     def lock_path(self) -> Path:
         return self.root / _LOCK_FILENAME
 
+    @property
+    def resolutions_dir(self) -> Path:
+        return self.root / "install_resolutions"
+
+    def resolution_path(self, fingerprint: str) -> Path:
+        if not isinstance(fingerprint, str) or not _FINGERPRINT.fullmatch(fingerprint):
+            raise FrozenInstallPersistenceError("resolution fingerprint is invalid")
+        return self.resolutions_dir / f"{fingerprint}.json"
+
+    def save_resolution_manifest(
+        self, manifest: FrozenInstallResolutionManifest
+    ) -> Path:
+        """Persist an immutable, safe derivative install-resolution record."""
+        if not isinstance(manifest, FrozenInstallResolutionManifest):
+            raise FrozenInstallPersistenceError("install resolution record is invalid")
+        data = (json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode()
+        destination = self.resolution_path(manifest.resolution_fingerprint)
+        staged: Optional[Path] = None
+        try:
+            self.resolutions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if destination.exists():
+                if destination.read_bytes() != data:
+                    raise FrozenInstallPersistenceError("resolution identity already has different content")
+                return destination
+            fd, name = tempfile.mkstemp(prefix=".resolution.", suffix=".tmp", dir=self.resolutions_dir)
+            staged = Path(name)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.link(staged, destination)
+            except FileExistsError:
+                if destination.read_bytes() != data:
+                    raise FrozenInstallPersistenceError("resolution identity already has different content")
+            staged.unlink()
+            staged = None
+            self._fsync_directory_path(self.resolutions_dir)
+            self.load_resolution_manifest(manifest.resolution_fingerprint)
+            return destination
+        except FrozenInstallError:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            raise FrozenInstallPersistenceError("install resolution could not be persisted") from exc
+        finally:
+            if staged is not None:
+                try:
+                    staged.unlink()
+                except OSError:
+                    pass
+
+    def load_resolution_manifest(self, fingerprint: str) -> FrozenInstallResolutionManifest:
+        path = self.resolution_path(fingerprint)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise FrozenInstallPersistenceError("install resolution could not be read") from exc
+        try:
+            record = FrozenInstallResolutionManifest.from_dict(raw)
+        except FrozenResolutionError as exc:
+            raise FrozenInstallPersistenceError("install resolution is invalid") from exc
+        if record.resolution_fingerprint != fingerprint:
+            raise FrozenInstallPersistenceError("install resolution identity changed")
+        return record
+
+    @staticmethod
+    def _fsync_directory_path(path: Path) -> None:
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
     def locked(self) -> FrozenInstallLock:
         return FrozenInstallLock(self.lock_path)
 
@@ -352,6 +522,9 @@ class FrozenInstallStore:
         private_overlay_id: Optional[str] = None,
         private_overlay_fingerprint: Optional[str] = None,
         private_overlay_required: Optional[bool] = None,
+        resolution_records: Optional[Tuple[InstallResolutionRecord, ...]] = None,
+        resolution_fingerprint_value: Optional[str] = None,
+        resolved_software_fingerprint_value: Optional[str] = None,
     ) -> FrozenInstallTransaction:
         with self.locked():
             current = self._read_unlocked()
@@ -367,6 +540,9 @@ class FrozenInstallStore:
                 private_overlay_id=private_overlay_id,
                 private_overlay_fingerprint=private_overlay_fingerprint,
                 private_overlay_required=private_overlay_required,
+                resolution_records=resolution_records,
+                resolution_fingerprint_value=resolution_fingerprint_value,
+                resolved_software_fingerprint_value=resolved_software_fingerprint_value,
             )
             self._write_unlocked(updated)
             return updated
@@ -465,12 +641,27 @@ class FrozenManifestPlan:
 def validate_frozen_manifest(
     manifest: FrozenBuildManifest, store: ArtifactStore
 ) -> FrozenManifestPlan:
-    """Validate completeness, artifact identity, edges, and deterministic order."""
+    """Strictly validate an exact-frozen manifest and deterministic order."""
+    return _validate_frozen_manifest_core(manifest, store)
+
+
+def _validate_frozen_manifest_core(
+    manifest: FrozenBuildManifest,
+    store: ArtifactStore,
+    *,
+    recoverable_gaps: frozenset = frozenset(),
+    skipped: frozenset = frozenset(),
+    repository_dependencies: Optional[Mapping[str, Tuple[str, ...]]] = None,
+) -> FrozenManifestPlan:
+    """Validate graph/artifacts, allowing only caller-proven install gaps."""
     if not isinstance(manifest, FrozenBuildManifest):
         raise FrozenInstallValidationError("frozen installation requires a typed manifest")
     if manifest.schema_version != 1:
         raise FrozenInstallValidationError("unsupported frozen manifest schema")
-    if manifest.capture_status is not CaptureStatus.COMPLETE:
+    if manifest.capture_status is not CaptureStatus.COMPLETE and not (
+        manifest.capture_status is CaptureStatus.INCOMPLETE_ARTIFACT
+        and recoverable_gaps
+    ):
         raise FrozenInstallValidationError("incomplete frozen capture is not installable")
     nodes: Dict[str, AddonCaptureNode] = {}
     for node in manifest.addons:
@@ -483,6 +674,22 @@ def validate_frozen_manifest(
             continue
         if node.is_absent_optional_dependency:
             continue
+        if (
+            node.addon_id in recoverable_gaps
+            and node.status in (
+                CaptureStatus.COMPLETE,
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                CaptureStatus.INCOMPLETE_PROVENANCE,
+                CaptureStatus.INVALID_PACKAGE,
+            )
+            and node.version
+            and node.addon_type
+        ):
+            if node.artifact is None or (
+                not store.artifact_path(node.artifact.sha256).exists()
+                or not store.metadata_path(node.artifact.sha256).exists()
+            ):
+                continue
         if node.status is not CaptureStatus.COMPLETE or node.artifact is None:
             raise FrozenInstallValidationError(
                 f"installed add-on artifact is incomplete for {node.addon_id} {node.version}"
@@ -520,7 +727,7 @@ def validate_frozen_manifest(
     install_nodes = {
         addon_id: node
         for addon_id, node in nodes.items()
-        if not node.system and not node.is_absent_optional_dependency
+        if not node.system and not node.is_absent_optional_dependency and addon_id not in skipped
     }
     edges: Dict[str, set] = {addon_id: set() for addon_id in install_nodes}
     reverse: Dict[str, set] = {addon_id: set() for addon_id in edges}
@@ -540,8 +747,25 @@ def validate_frozen_manifest(
                 raise FrozenInstallValidationError(
                     f"required dependency {edge.addon_id} is absent from frozen manifest"
                 )
+            if edge.addon_id in skipped:
+                if edge.optional:
+                    continue
+                raise FrozenInstallValidationError(
+                    f"required dependency {edge.addon_id} is intentionally skipped"
+                )
             edges[node.addon_id].add(edge.addon_id)
             reverse[edge.addon_id].add(node.addon_id)
+
+    for addon_id, repository_ids in (repository_dependencies or {}).items():
+        if addon_id not in install_nodes:
+            continue
+        for repository_id in repository_ids:
+            if repository_id not in install_nodes or repository_id in skipped:
+                raise FrozenInstallValidationError(
+                    f"trusted repository {repository_id} is not installable"
+                )
+            edges[addon_id].add(repository_id)
+            reverse[repository_id].add(addon_id)
 
     ready = sorted(addon_id for addon_id, deps in edges.items() if not deps)
     order = []
@@ -556,6 +780,162 @@ def validate_frozen_manifest(
     if len(order) != len(edges):
         raise FrozenInstallValidationError("frozen dependency graph contains a cycle")
     return FrozenManifestPlan(manifest, nodes, tuple(order))
+
+
+@dataclass(frozen=True)
+class RecoverableFrozenInstallPlan:
+    strict_plan: FrozenManifestPlan
+    policies: Tuple[FrozenInstallPolicy, ...]
+    summary: FrozenBuildRecoverabilitySummary
+    install_plan_fingerprint: str
+    actions: Tuple[FrozenPlanAction, ...]
+
+    @property
+    def manifest(self) -> FrozenBuildManifest:
+        return self.strict_plan.manifest
+
+    @property
+    def nodes(self) -> Mapping[str, AddonCaptureNode]:
+        return self.strict_plan.nodes
+
+    @property
+    def install_order(self) -> Tuple[AddonCaptureNode, ...]:
+        return self.strict_plan.install_order
+
+
+def validate_frozen_install_plan(
+    manifest: FrozenBuildManifest,
+    store: ArtifactStore,
+    policies: Sequence[FrozenInstallPolicy] = (),
+    *,
+    skipped: Sequence[str] = (),
+    extra_dependencies: Optional[Mapping[str, Tuple[str, ...]]] = None,
+) -> RecoverableFrozenInstallPlan:
+    """Validate exact artifacts plus explicit, safe install-time recoveries.
+
+    ``validate_frozen_manifest`` remains exact-only. This planner accepts only
+    missing artifacts that have an explicit repository/skip policy and a
+    coherent dependency graph.
+    """
+    summary = summarize_frozen_recoverability(manifest, store, policies)
+    rows = {row.addon_id: row for row in summary.addons}
+    effective = {policy.addon_id: policy for policy in policies}
+    for addon_id in skipped:
+        row = rows.get(addon_id)
+        policy = effective_policy(addon_id, effective)
+        if (
+            row is None
+            or row.exact_artifact_available
+            or not policy.skip_allowed
+            or not row.skip_eligible
+        ):
+            raise FrozenInstallValidationError(
+                f"skip resolution is not permitted for {addon_id}"
+            )
+    blocking = [
+        row.addon_id for row in summary.addons
+        if row.recoverability is Recoverability.BLOCKING_UNRECOVERABLE
+    ]
+    if blocking:
+        raise FrozenInstallValidationError(
+            "missing exact artifacts are blocking for " + ", ".join(sorted(blocking))
+        )
+    allowed_gaps = frozenset(
+        row.addon_id for row in summary.addons if not row.exact_artifact_available
+    )
+    trusted_repo_dependencies: Dict[str, Tuple[str, ...]] = {}
+    for addon_id in allowed_gaps:
+        row = rows[addon_id]
+        policy = effective_policy(addon_id, effective)
+        if row.repository_known and policy.repository_fallback_allowed:
+            trusted_repo_dependencies[addon_id] = (row.repository_id,)
+    for addon_id, dependency_ids in (extra_dependencies or {}).items():
+        trusted_repo_dependencies[addon_id] = tuple(sorted(set(
+            trusted_repo_dependencies.get(addon_id, ()) + tuple(dependency_ids)
+        )))
+    strict_plan = _validate_frozen_manifest_core(
+        manifest,
+        store,
+        recoverable_gaps=allowed_gaps,
+        skipped=frozenset(skipped),
+        repository_dependencies=trusted_repo_dependencies,
+    )
+    actions = []
+    for node in strict_plan.install_order:
+        row = rows[node.addon_id]
+        if row.exact_artifact_available:
+            kind = FrozenPlanActionKind.INSTALL_EXACT_ARTIFACT
+        elif row.repository_known and row.fallback_eligible:
+            kind = (
+                FrozenPlanActionKind.PROMPT_REPOSITORY_OR_SKIP
+                if row.skip_eligible else FrozenPlanActionKind.PROMPT_REPOSITORY_OR_CANCEL
+            )
+        elif row.skip_eligible:
+            kind = FrozenPlanActionKind.PROMPT_SKIP_OR_CANCEL
+        else:
+            kind = FrozenPlanActionKind.BLOCKING_UNRECOVERABLE
+        actions.append(FrozenPlanAction(kind, node.addon_id))
+    for addon_id in sorted(set(skipped)):
+        actions.append(FrozenPlanAction(FrozenPlanActionKind.SKIPPED, addon_id))
+    normalized_policies = tuple(
+        sorted(policies, key=lambda policy: policy.addon_id)
+    )
+    return RecoverableFrozenInstallPlan(
+        strict_plan,
+        normalized_policies,
+        summary,
+        install_plan_fingerprint(manifest, normalized_policies),
+        tuple(actions),
+    )
+
+
+def _repository_package_required_dependencies(
+    package: RepositoryPackage,
+    manifest_plan: RecoverableFrozenInstallPlan,
+    records: Mapping[str, InstallResolutionRecord],
+    skipped: frozenset,
+) -> Tuple[str, ...]:
+    """Require repository-current ZIP dependencies to fit the captured plan."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(package.zip_bytes), "r") as archive:
+            xml_bytes = archive.read(f"{package.addon_id}/addon.xml")
+        from resources.lib.dependencies import _is_system_dependency, _parse_requirements_strict, _version_satisfies
+        requirements = _parse_requirements_strict(xml_bytes)
+    except Exception as exc:
+        raise FrozenInstallValidationError(
+            "repository package dependency metadata is invalid"
+        ) from exc
+    dependencies = []
+    for requirement in requirements:
+        if _is_system_dependency(requirement.addon_id):
+            continue
+        dependency = manifest_plan.nodes.get(requirement.addon_id)
+        if dependency is None or dependency.is_absent_optional_dependency:
+            if requirement.optional:
+                continue
+            raise FrozenInstallValidationError(
+                f"repository package requires uncaptured dependency {requirement.addon_id}"
+            )
+        if requirement.addon_id in skipped:
+            if requirement.optional:
+                continue
+            raise FrozenInstallValidationError(
+                f"repository package requires skipped dependency {requirement.addon_id}"
+            )
+        record = records.get(requirement.addon_id)
+        version = (
+            record.resolved_version if record and record.resolved_version
+            else dependency.version
+        )
+        if requirement.min_version and not _version_satisfies(version, requirement.min_version):
+            if requirement.optional:
+                continue
+            raise FrozenInstallValidationError(
+                f"repository package requires a newer captured dependency {requirement.addon_id}"
+            )
+        if not requirement.optional:
+            dependencies.append(requirement.addon_id)
+    return tuple(sorted(set(dependencies)))
 
 
 @dataclass(frozen=True)
@@ -575,6 +955,11 @@ class FrozenArtifactBackend:
     def install_exact(self, addon_id: str, version: str, zip_bytes: bytes) -> FrozenInstalledAddon:
         raise NotImplementedError
 
+    def resolve_repository_current(
+        self, addon_id: str, repository_id: str
+    ) -> RepositoryPackage:
+        raise NotImplementedError
+
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> FrozenInstalledAddon:
         raise NotImplementedError
 
@@ -582,11 +967,17 @@ class FrozenArtifactBackend:
 class InMemoryFrozenArtifactBackend(FrozenArtifactBackend):
     """Deterministic backend for transaction tests and fixture design."""
 
-    def __init__(self, installed: Optional[Mapping[str, FrozenInstalledAddon]] = None):
+    def __init__(
+        self,
+        installed: Optional[Mapping[str, FrozenInstalledAddon]] = None,
+        repository_packages: Optional[Mapping[Tuple[str, str], Tuple[str, bytes]]] = None,
+    ):
         self.installed = dict(installed or {})
+        self.repository_packages = dict(repository_packages or {})
         self.install_calls = []
         self.enable_calls = []
         self.artifacts = {}
+        self.repository_calls = []
 
     def get_addon_details(self, addon_id: str) -> Optional[FrozenInstalledAddon]:
         return self.installed.get(addon_id)
@@ -606,6 +997,16 @@ class InMemoryFrozenArtifactBackend(FrozenArtifactBackend):
         result = FrozenInstalledAddon(addon_id, version, False, False)
         self.installed[addon_id] = result
         return result
+
+    def resolve_repository_current(
+        self, addon_id: str, repository_id: str
+    ) -> RepositoryPackage:
+        self.repository_calls.append((addon_id, repository_id))
+        package = self.repository_packages.get((repository_id, addon_id))
+        if package is None:
+            raise FrozenInstallError("captured repository did not provide the requested add-on")
+        version, zip_bytes = package
+        return RepositoryPackage(addon_id, repository_id, version, bytes(zip_bytes))
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> FrozenInstalledAddon:
         current = self.installed.get(addon_id)
@@ -705,6 +1106,19 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                 shutil.rmtree(staging, ignore_errors=True)
         return self._wait_for_exact(addon_id, version)
 
+    def resolve_repository_current(
+        self, addon_id: str, repository_id: str
+    ) -> RepositoryPackage:
+        """Use BM-011's constrained fresh-index/package validation path."""
+        try:
+            return KodiRuntimeAddonBackend().fetch_current_from_repository(
+                addon_id, repository_id
+            )
+        except Exception as exc:
+            raise FrozenInstallError(
+                f"captured repository could not resolve {addon_id}"
+            ) from exc
+
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> FrozenInstalledAddon:
         response = self._rpc(
             "Addons.SetAddonEnabled", {"addonid": addon_id, "enabled": bool(enabled)}
@@ -738,10 +1152,61 @@ class FrozenInstallResult:
     transaction: Optional[FrozenInstallTransaction] = None
     message: str = ""
     code: str = ""
+    recoverability: Optional[FrozenBuildRecoverabilitySummary] = None
+    resolution_manifest: Optional[FrozenInstallResolutionManifest] = None
 
     @property
     def succeeded(self) -> bool:
         return self.outcome == "complete"
+
+    def to_dict(self) -> dict:
+        return {
+            "outcome": self.outcome,
+            "code": self.code,
+            "message": self.message,
+            "recoverability": self.recoverability.to_dict() if self.recoverability else None,
+            "resolution": self.resolution_manifest.to_dict() if self.resolution_manifest else None,
+        }
+
+
+def _kodi_resolution_choice(prompt: ResolutionPrompt) -> Optional[ResolutionChoice]:
+    """Show safe metadata and clear actions; return None when no UI exists."""
+    try:
+        import xbmcgui
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+    heading = (
+        f"{prompt.addon_id}\n"
+        f"Captured version: {prompt.captured_version}\n"
+        "Exact captured package: unavailable\n"
+    )
+    if prompt.repository_known:
+        heading += (
+            "Build Manager can install the current version available from:\n"
+            f"{prompt.repository_id}\n"
+            "The installed version may differ from the captured source."
+        )
+        choices = [ResolutionChoice.INSTALL_CURRENT]
+        labels = ["Install Current Version"]
+        if prompt.skip_allowed:
+            choices.append(ResolutionChoice.SKIP)
+            labels.append("Skip")
+        choices.append(ResolutionChoice.CANCEL)
+        labels.append("Cancel Build")
+    else:
+        heading += (
+            "Build Manager does not know a trusted repository from which this "
+            "add-on can be installed automatically. You may need to install it "
+            "manually later."
+        )
+        if not prompt.skip_allowed:
+            return None
+        choices = [ResolutionChoice.SKIP, ResolutionChoice.CANCEL]
+        labels = ["Skip", "Cancel Build"]
+    selected = xbmcgui.Dialog().select(heading, labels)
+    if not isinstance(selected, int) or selected < 0 or selected >= len(choices):
+        return ResolutionChoice.CANCEL
+    return choices[selected]
 
 
 def _default_manifest_loader(path: str) -> FrozenBuildManifest:
@@ -772,6 +1237,7 @@ class FrozenInstallCoordinator:
         session_id_provider: Optional[Callable[[], str]] = None,
         configuration_runner: Optional[Callable[[ReconcileRequest], object]] = None,
         final_validator: Optional[Callable[[FrozenManifestPlan], bool]] = None,
+        resolution_decider: Optional[Callable[[ResolutionPrompt], ResolutionChoice]] = None,
     ):
         self.store = store
         self.artifact_store = artifact_store
@@ -781,6 +1247,96 @@ class FrozenInstallCoordinator:
         self.session_id_provider = session_id_provider or _default_session_id
         self.configuration_runner = configuration_runner
         self.final_validator = final_validator
+        self.resolution_decider = resolution_decider
+
+    @staticmethod
+    def _configuration_profile(configuration_manifest_path: str, device_profile_id: str):
+        if not configuration_manifest_path:
+            return None
+        from resources.lib.manifest import load_manifest_file
+        from resources.lib.resolver import resolve_manifest
+        manifest = load_manifest_file(configuration_manifest_path)
+        return resolve_manifest(manifest, device_profile_id)
+
+    def _check_private_ownership_compatibility(self, desired, records):
+        if desired is None:
+            return
+        config = getattr(desired, "config", None)
+        if config is None:
+            return
+        changes = {
+            record.addon_id: (
+                None if record.resolution is InstallResolution.SKIPPED
+                else record.resolved_version or record.captured_version
+            )
+            for record in records
+            if record.resolution is InstallResolution.SKIPPED
+            or record.resolution is InstallResolution.REPOSITORY_CURRENT
+            or record.resolved_version != record.captured_version
+        }
+        if not changes:
+            return
+        from resources.lib.private_overlay import validate_private_overlay_resolution_compatibility
+        validate_private_overlay_resolution_compatibility(
+            changes,
+            config.private_settings,
+            config.structured_private_resources,
+        )
+
+    def _persist_resolutions(self, transaction, manifest, records):
+        records = tuple(sorted(records, key=lambda record: record.addon_id))
+        resolved_fingerprint = ""
+        if all(record.state in (ResolutionState.INSTALLED, ResolutionState.SKIPPED) for record in records):
+            resolved_fingerprint = resolved_software_fingerprint(manifest, records)
+        return self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=transaction.phase,
+            new_phase=transaction.phase,
+            resolution_records=records,
+            resolution_fingerprint_value=resolution_fingerprint(records),
+            resolved_software_fingerprint_value=resolved_fingerprint,
+        )
+
+    @staticmethod
+    def _make_resolution_manifest(manifest, transaction, records):
+        return FrozenInstallResolutionManifest(
+            build_id=manifest.build_id,
+            source_software_fingerprint=manifest.fingerprint(),
+            install_plan_fingerprint=(
+                transaction.install_plan_fingerprint
+                or install_plan_fingerprint(manifest, transaction.policies)
+            ),
+            resulting_software_fingerprint=resolved_software_fingerprint(manifest, records),
+            records=tuple(sorted(records, key=lambda record: record.addon_id)),
+        )
+
+    @staticmethod
+    def _repository_prerequisites(plan, repository_ids, records, recoverability_rows):
+        required = set()
+        pending = list(repository_ids)
+        while pending:
+            addon_id = pending.pop()
+            if addon_id in required:
+                continue
+            node = plan.nodes.get(addon_id)
+            if node is None or node.system or node.is_absent_optional_dependency:
+                raise FrozenInstallValidationError("captured repository prerequisite is unavailable")
+            record = records.get(addon_id)
+            row = recoverability_rows.get(addon_id)
+            if (
+                record is None
+                or record.resolution is not InstallResolution.EXACT
+                or row is None
+                or not row.exact_artifact_available
+            ):
+                raise FrozenInstallValidationError(
+                    "captured repository and its prerequisites must have exact artifacts"
+                )
+            required.add(addon_id)
+            for edge in node.dependency_edges:
+                if not edge.optional and edge.addon_id in plan.nodes and not plan.nodes[edge.addon_id].system:
+                    pending.append(edge.addon_id)
+        return required
 
     def install(
         self,
@@ -789,35 +1345,163 @@ class FrozenInstallCoordinator:
         manifest_path: str,
         device_profile_id: str,
         configuration_manifest_path: str = "",
+        install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
+        interactive: bool = True,
     ) -> FrozenInstallResult:
         try:
-            plan = validate_frozen_manifest(manifest, self.artifact_store)
+            desired_profile = self._configuration_profile(
+                configuration_manifest_path, device_profile_id
+            )
+            policies = tuple(
+                install_policies if install_policies is not None
+                else getattr(desired_profile, "frozen_install_policies", ())
+            )
+            plan = validate_frozen_install_plan(
+                manifest, self.artifact_store, policies
+            )
             session_id = _valid_uuid(self.session_id_provider(), "current_session_id")
-        except (FrozenInstallError, CaptureError, ValueError) as exc:
-            return FrozenInstallResult("failed", code=getattr(exc, "code", "FROZEN_MANIFEST_INVALID"), message="frozen manifest validation failed")
+        except (FrozenInstallError, FrozenResolutionError, CaptureError, ValueError) as exc:
+            return FrozenInstallResult(
+                "failed",
+                code=getattr(exc, "code", "FROZEN_MANIFEST_INVALID"),
+                message="frozen install plan validation failed",
+            )
         active = self._safe_inspect()
         if active is not None:
-            if active.manifest_fingerprint == plan.manifest.fingerprint():
+            if (
+                active.manifest_fingerprint == plan.manifest.fingerprint()
+                and active.install_plan_fingerprint == plan.install_plan_fingerprint
+            ):
                 return FrozenInstallResult(
-                    "needs_attention" if active.phase is FrozenInstallPhase.NEEDS_ATTENTION else "awaiting_restart",
+                    "needs_attention" if active.phase is FrozenInstallPhase.NEEDS_ATTENTION else "active",
                     transaction=active,
                     code=active.status_code or "FROZEN_INSTALL_ACTIVE",
-                    message="an equivalent frozen install transaction is already active",
+                    message="an equivalent frozen install transaction already has recorded resolutions",
+                    recoverability=plan.summary,
                 )
             return FrozenInstallResult("failed", transaction=active, code="ACTIVE_TRANSACTION_CONFLICT", message="another frozen install transaction is active")
+
+        records: Dict[str, InstallResolutionRecord] = {}
+        rows = {row.addon_id: row for row in plan.summary.addons}
+        effective = {policy.addon_id: policy for policy in policies}
+        for node in plan.install_order:
+            row = rows[node.addon_id]
+            if row.exact_artifact_available:
+                records[node.addon_id] = default_exact_record(node)
+                continue
+            policy = effective_policy(node.addon_id, effective)
+            prompt = ResolutionPrompt(
+                addon_id=node.addon_id,
+                captured_version=node.version,
+                repository_id=row.repository_id if row.fallback_eligible else "",
+                skip_allowed=row.skip_eligible,
+            )
+            if not interactive:
+                return FrozenInstallResult(
+                    "user_resolution_required",
+                    code="USER_RESOLUTION_REQUIRED",
+                    message="interactive install resolution is required before this build can continue",
+                    recoverability=plan.summary,
+                )
+            try:
+                choice = (
+                    self.resolution_decider(prompt)
+                    if self.resolution_decider is not None
+                    else _kodi_resolution_choice(prompt)
+                )
+                if choice is not None and not isinstance(choice, ResolutionChoice):
+                    choice = ResolutionChoice(choice)
+            except Exception:
+                choice = None
+            if choice is None:
+                return FrozenInstallResult(
+                    "user_resolution_required",
+                    code="USER_RESOLUTION_REQUIRED",
+                    message="interactive install resolution is required before this build can continue",
+                    recoverability=plan.summary,
+                )
+            if choice is ResolutionChoice.CANCEL:
+                return FrozenInstallResult(
+                    "cancelled",
+                    code="BUILD_CANCELLED",
+                    message="build cancelled before frozen installation began",
+                    recoverability=plan.summary,
+                )
+            if choice is ResolutionChoice.INSTALL_CURRENT:
+                if not policy.repository_fallback_allowed or not row.repository_known:
+                    return FrozenInstallResult(
+                        "failed", code="FROZEN_RESOLUTION_NOT_PERMITTED",
+                        message="repository resolution is not permitted for this add-on",
+                        recoverability=plan.summary,
+                    )
+                records[node.addon_id] = InstallResolutionRecord(
+                    addon_id=node.addon_id,
+                    captured_version=node.version,
+                    resolution=InstallResolution.REPOSITORY_CURRENT,
+                    state=ResolutionState.SELECTED,
+                    desired_enabled=node.desired_enabled,
+                    repository_id=row.repository_id,
+                )
+            elif choice is ResolutionChoice.SKIP:
+                if not policy.skip_allowed or not row.skip_eligible:
+                    return FrozenInstallResult(
+                        "failed", code="FROZEN_SKIP_NOT_PERMITTED",
+                        message="skip is not permitted for this add-on or its required dependents",
+                        recoverability=plan.summary,
+                    )
+                if self.installer.get_addon_details(node.addon_id) is not None:
+                    return FrozenInstallResult(
+                        "failed", code="SKIP_TARGET_ALREADY_INSTALLED",
+                        message="the target already has this add-on and Build Manager cannot remove it safely",
+                        recoverability=plan.summary,
+                    )
+                records[node.addon_id] = InstallResolutionRecord(
+                    addon_id=node.addon_id,
+                    captured_version=node.version,
+                    resolution=InstallResolution.SKIPPED,
+                    state=ResolutionState.SKIPPED,
+                    desired_enabled=node.desired_enabled,
+                )
+            else:
+                return FrozenInstallResult(
+                    "failed", code="FROZEN_RESOLUTION_INVALID",
+                    message="install resolution choice is unsupported",
+                    recoverability=plan.summary,
+                )
+
+        skipped = frozenset(
+            addon_id for addon_id, record in records.items()
+            if record.resolution is InstallResolution.SKIPPED
+        )
+        try:
+            validate_frozen_install_plan(
+                manifest, self.artifact_store, policies, skipped=tuple(skipped)
+            )
+            self._check_private_ownership_compatibility(desired_profile, tuple(records.values()))
+        except Exception as exc:
+            return FrozenInstallResult(
+                "failed", code=getattr(exc, "code", "FROZEN_RESOLUTION_INVALID"),
+                message="selected install resolutions are incompatible with the build graph or owned configuration",
+                recoverability=plan.summary,
+            )
+
         try:
             original = AddonUpdatePolicy(self.policy_backend.get_policy())
             transaction = FrozenInstallTransaction(
                 transaction_id=str(uuid.uuid4()),
-                build_id=plan.manifest.build_id,
+                build_id=manifest.build_id,
                 manifest_path=manifest_path,
                 device_profile_id=device_profile_id,
-                manifest_fingerprint=plan.manifest.fingerprint(),
+                manifest_fingerprint=manifest.fingerprint(),
                 phase=FrozenInstallPhase.PREPARING,
                 originating_kodi_session_id=session_id,
                 original_update_policy=original,
                 created_at=_utc_now(),
                 updated_at=_utc_now(),
+                install_plan_fingerprint=plan.install_plan_fingerprint,
+                policies=tuple(sorted(policies, key=lambda item: item.addon_id)),
+                resolution_records=tuple(sorted(records.values(), key=lambda item: item.addon_id)),
+                resolution_fingerprint=resolution_fingerprint(tuple(records.values())),
             )
             self.store.create(transaction)
         except Exception as exc:
@@ -831,6 +1515,7 @@ class FrozenInstallCoordinator:
                     "transaction creation failed",
                 ),
             )
+        resolution_manifest = None
         guard = AddonUpdateGuard(self.policy_backend)
         try:
             guard.engage_with_original(original)
@@ -839,9 +1524,114 @@ class FrozenInstallCoordinator:
                 expected_phase=FrozenInstallPhase.PREPARING,
                 new_phase=FrozenInstallPhase.INSTALLING_SOFTWARE,
             )
+
+            # Install only the exact repository and its exact required
+            # prerequisites before querying a current package from that repo.
+            repository_ids = {
+                record.repository_id for record in records.values()
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT
+            }
+            prelude_ids = self._repository_prerequisites(
+                plan.strict_plan, repository_ids, records, rows
+            ) if repository_ids else set()
+            installed_ids = set()
+            record_map = dict(records)
             for node in plan.install_order:
-                data = self.artifact_store.read_bytes(node.artifact.sha256)  # type: ignore[union-attr]
-                self.installer.install_exact(node.addon_id, node.version, data)
+                if node.addon_id not in prelude_ids:
+                    continue
+                record = record_map[node.addon_id]
+                data = self.artifact_store.read_bytes(record.artifact_sha256)
+                current = self.installer.install_exact(node.addon_id, node.version, data)
+                if current.version != node.version or current.broken:
+                    raise FrozenInstallValidationError("captured repository prerequisite failed exact verification")
+                if current.enabled is not node.desired_enabled:
+                    current = self.installer.set_addon_enabled(node.addon_id, node.desired_enabled)
+                if current.enabled is not node.desired_enabled:
+                    raise FrozenInstallValidationError("captured repository prerequisite enabled state is invalid")
+                record_map[node.addon_id] = replace(record, state=ResolutionState.INSTALLED)
+                installed_ids.add(node.addon_id)
+                transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
+
+            packages = {}
+            for addon_id in sorted(repository_ids):
+                repository = self.installer.get_addon_details(addon_id)
+                if repository is None or not repository.enabled or repository.broken:
+                    raise FrozenInstallValidationError("captured repository is not installed and enabled")
+            for addon_id, record in tuple(record_map.items()):
+                if record.resolution is not InstallResolution.REPOSITORY_CURRENT:
+                    continue
+                package = self.installer.resolve_repository_current(
+                    addon_id, record.repository_id
+                )
+                if (
+                    package.addon_id != addon_id
+                    or package.repository_id != record.repository_id
+                    or not package.version
+                ):
+                    raise FrozenInstallValidationError("repository returned a mismatched package identity")
+                validate_addon_zip(
+                    package.zip_bytes,
+                    expected_addon_id=addon_id,
+                    expected_version=package.version,
+                )
+                metadata = self.artifact_store.import_zip(
+                    package.zip_bytes,
+                    expected_addon_id=addon_id,
+                    expected_version=package.version,
+                    source=f"repository:{record.repository_id}",
+                )
+                packages[addon_id] = package
+                record_map[addon_id] = replace(
+                    record,
+                    state=ResolutionState.RESOLVED,
+                    resolved_version=package.version,
+                    artifact_sha256=metadata.sha256,
+                    artifact_size=metadata.size,
+                )
+                transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
+
+            extra_dependencies = {}
+            for addon_id, package in packages.items():
+                extra_dependencies[addon_id] = _repository_package_required_dependencies(
+                    package, plan, record_map, skipped
+                )
+            resolved_plan = validate_frozen_install_plan(
+                manifest,
+                self.artifact_store,
+                policies,
+                skipped=tuple(skipped),
+                extra_dependencies=extra_dependencies,
+            )
+            self._check_private_ownership_compatibility(
+                desired_profile, tuple(record_map.values())
+            )
+
+            for node in resolved_plan.install_order:
+                if node.addon_id in installed_ids:
+                    continue
+                record = record_map[node.addon_id]
+                if record.resolution is InstallResolution.SKIPPED:
+                    continue
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT and not record.resolved_version:
+                    raise FrozenInstallValidationError("repository resolution metadata is incomplete")
+                version = record.resolved_version or node.version
+                data = self.artifact_store.read_bytes(record.artifact_sha256)
+                current = self.installer.install_exact(node.addon_id, version, data)
+                if current.addon_id != node.addon_id or current.version != version or current.broken:
+                    raise FrozenInstallValidationError("installed add-on did not match resolved package identity")
+                if current.enabled is not node.desired_enabled:
+                    current = self.installer.set_addon_enabled(node.addon_id, node.desired_enabled)
+                if current.enabled is not node.desired_enabled:
+                    raise FrozenInstallValidationError("resolved add-on enabled state is invalid")
+                record_map[node.addon_id] = replace(record, state=ResolutionState.INSTALLED)
+                transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
+
+            if any(record.state not in (ResolutionState.INSTALLED, ResolutionState.SKIPPED) for record in record_map.values()):
+                raise FrozenInstallValidationError("install resolution did not reach a terminal state")
+            transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
+            resolution_manifest = self._make_resolution_manifest(
+                manifest, transaction, tuple(record_map.values())
+            )
             transaction = self.store.transition_expected(
                 transaction_id=transaction.transaction_id,
                 expected_phase=FrozenInstallPhase.INSTALLING_SOFTWARE,
@@ -849,22 +1639,128 @@ class FrozenInstallCoordinator:
             )
             if self.configuration_runner is not None:
                 request_path = configuration_manifest_path or manifest_path
-                result = self.configuration_runner(ReconcileRequest(request_path, device_profile_id))
+                result = self.configuration_runner(ReconcileRequest(
+                    request_path,
+                    device_profile_id,
+                    install_resolutions=tuple(sorted(
+                        record_map.values(), key=lambda record: record.addon_id
+                    )),
+                ))
                 transaction, awaiting = self._handle_configuration_result(transaction, result)
                 if awaiting is not None:
-                    return awaiting
-            return self._finalize(transaction, plan, guard)
+                    return replace(awaiting, recoverability=plan.summary, resolution_manifest=resolution_manifest)
+            return self._finalize(
+                transaction, resolved_plan.strict_plan, guard,
+                manifest=manifest, records=tuple(record_map.values()),
+                resolution_manifest=resolution_manifest,
+                recoverability=plan.summary,
+            )
         except Exception as exc:
             return self._attention(
                 transaction,
                 getattr(exc, "code", "FROZEN_INSTALL_FAILED"),
-                _bounded(
-                    "frozen installation failed "
-                    f"({type(exc).__name__}): {exc}",
-                    _MAX_MESSAGE,
-                    "frozen installation failed",
-                ),
+                "frozen installation failed and requires explicit recovery",
+                recoverability=plan.summary,
+                resolution_manifest=resolution_manifest,
             )
+
+    def _restore_resolution(self, manifest, transaction):
+        policies = transaction.policies
+        records = tuple(transaction.resolution_records)
+        if not records:
+            # Compatibility with BM-022 schema-1 transactions created before
+            # explicit resolution records existed: those transactions were
+            # exact-only and have already installed all exact packages.
+            strict_plan = validate_frozen_manifest(manifest, self.artifact_store)
+            records = tuple(
+                replace(default_exact_record(node), state=ResolutionState.INSTALLED)
+                for node in strict_plan.install_order
+            )
+            plan = RecoverableFrozenInstallPlan(
+                strict_plan,
+                (),
+                summarize_frozen_recoverability(manifest, self.artifact_store),
+                install_plan_fingerprint(manifest, ()),
+                tuple(FrozenPlanAction(FrozenPlanActionKind.INSTALL_EXACT_ARTIFACT, node.addon_id)
+                      for node in strict_plan.install_order),
+            )
+        else:
+            skipped = tuple(
+                record.addon_id for record in records
+                if record.resolution is InstallResolution.SKIPPED
+            )
+            plan = validate_frozen_install_plan(
+                manifest, self.artifact_store, policies, skipped=skipped
+            )
+            if plan.install_plan_fingerprint != transaction.install_plan_fingerprint:
+                raise FrozenInstallValidationError("install policy changed before restart resume")
+            rows = {row.addon_id: row for row in plan.summary.addons}
+            record_map = {record.addon_id: record for record in records}
+            if set(record_map) != set(rows):
+                raise FrozenInstallValidationError("durable resolutions do not cover captured add-ons")
+            extra_dependencies = {}
+            for addon_id, record in record_map.items():
+                node = plan.nodes[addon_id]
+                row = rows[addon_id]
+                if record.captured_version != node.version:
+                    raise FrozenInstallValidationError("durable resolution changed captured version")
+                if record.resolution is InstallResolution.EXACT:
+                    if (
+                        not row.exact_artifact_available
+                        or node.artifact is None
+                        or record.resolved_version != node.version
+                        or record.artifact_sha256 != node.artifact.sha256
+                        or record.artifact_size != node.artifact.size
+                        or record.state is not ResolutionState.INSTALLED
+                    ):
+                        raise FrozenInstallValidationError("durable exact resolution is inconsistent")
+                elif record.resolution is InstallResolution.REPOSITORY_CURRENT:
+                    policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
+                    if (
+                        not policy.repository_fallback_allowed
+                        or record.repository_id != row.repository_id
+                        or not record.resolved_version
+                        or not record.artifact_sha256
+                        or record.state is not ResolutionState.INSTALLED
+                    ):
+                        raise FrozenInstallValidationError("durable repository resolution is inconsistent")
+                    data = self.artifact_store.read_bytes(record.artifact_sha256)
+                    metadata = self.artifact_store.get_metadata(record.artifact_sha256)
+                    if (
+                        metadata.addon_id != addon_id
+                        or metadata.version != record.resolved_version
+                        or metadata.sha256 != record.artifact_sha256
+                        or metadata.size != record.artifact_size
+                        or len(data) != record.artifact_size
+                    ):
+                        raise FrozenInstallValidationError("durable resolved artifact identity is invalid")
+                    package = RepositoryPackage(
+                        addon_id, record.repository_id, record.resolved_version, data
+                    )
+                    extra_dependencies[addon_id] = _repository_package_required_dependencies(
+                        package, plan, record_map, frozenset(skipped)
+                    )
+                elif record.resolution is InstallResolution.SKIPPED:
+                    policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
+                    if not policy.skip_allowed or record.state is not ResolutionState.SKIPPED:
+                        raise FrozenInstallValidationError("durable skip resolution is inconsistent")
+            plan = validate_frozen_install_plan(
+                manifest,
+                self.artifact_store,
+                policies,
+                skipped=skipped,
+                extra_dependencies=extra_dependencies,
+            )
+        if manifest.fingerprint() != transaction.manifest_fingerprint:
+            raise FrozenInstallValidationError("frozen manifest changed before resume")
+        if transaction.resolution_records:
+            if resolution_fingerprint(records) != transaction.resolution_fingerprint:
+                raise FrozenInstallValidationError("durable resolution fingerprint changed")
+            resulting = resolved_software_fingerprint(manifest, records)
+            if transaction.resolved_software_fingerprint != resulting:
+                raise FrozenInstallValidationError("resolved software fingerprint changed")
+        resolution_manifest = self._make_resolution_manifest(manifest, transaction, records)
+        return plan, records, resolution_manifest
 
     def resume_after_restart(self, *, current_session_id: Optional[str] = None) -> FrozenInstallResult:
         transaction = self._safe_inspect()
@@ -872,6 +1768,8 @@ class FrozenInstallCoordinator:
             return FrozenInstallResult("failed", code="FROZEN_TRANSACTION_MISSING", message="no frozen install transaction is active")
         if transaction.phase is not FrozenInstallPhase.AWAITING_RESTART:
             return FrozenInstallResult("needs_attention", transaction=transaction, code="FROZEN_TRANSACTION_NOT_AWAITING", message="frozen transaction is not awaiting restart")
+        recoverability = None
+        resolution_manifest = None
         try:
             session = _valid_uuid(current_session_id or self.session_id_provider(), "current_session_id")
             if session == transaction.originating_kodi_session_id:
@@ -879,25 +1777,26 @@ class FrozenInstallCoordinator:
             guard = AddonUpdateGuard(self.policy_backend)
             guard.reassert_required()
             manifest = self.manifest_loader(transaction.manifest_path)
-            plan = validate_frozen_manifest(manifest, self.artifact_store)
-            if plan.manifest.fingerprint() != transaction.manifest_fingerprint:
-                return self._attention(transaction, "FROZEN_FINGERPRINT_MISMATCH", "frozen manifest changed before resume")
+            plan, records, resolution_manifest = self._restore_resolution(manifest, transaction)
             transaction = self.store.transition_expected(
                 transaction_id=transaction.transaction_id,
                 expected_phase=FrozenInstallPhase.AWAITING_RESTART,
                 new_phase=FrozenInstallPhase.RESUMING,
             )
-            return self._finalize(transaction, plan, guard)
+            return self._finalize(
+                transaction, plan.strict_plan, guard,
+                manifest=manifest,
+                records=records,
+                resolution_manifest=resolution_manifest,
+                recoverability=plan.summary,
+            )
         except Exception as exc:
             return self._attention(
                 transaction,
                 getattr(exc, "code", "FROZEN_RESUME_FAILED"),
-                _bounded(
-                    "frozen installation resume failed "
-                    f"({type(exc).__name__}): {exc}",
-                    _MAX_MESSAGE,
-                    "frozen installation resume failed",
-                ),
+                "frozen installation resume failed and requires explicit recovery",
+                recoverability=recoverability,
+                resolution_manifest=resolution_manifest,
             )
 
     def abandon(self, *, acknowledge_restore_failure: bool = False) -> FrozenInstallResult:
@@ -953,43 +1852,127 @@ class FrozenInstallCoordinator:
         )
         return updated, None
 
-    def _finalize(self, transaction, plan, guard) -> FrozenInstallResult:
+    def _finalize(
+        self,
+        transaction,
+        plan,
+        guard,
+        *,
+        manifest,
+        records,
+        resolution_manifest,
+        recoverability,
+    ) -> FrozenInstallResult:
         transaction = self.store.transition_expected(
             transaction_id=transaction.transaction_id,
             expected_phase=transaction.phase,
             new_phase=FrozenInstallPhase.VALIDATING,
         )
         if self.final_validator is not None and not self.final_validator(plan):
-            return self._attention(transaction, "FINAL_VALIDATION_FAILED", "frozen software/configuration validation failed")
+            return self._attention(
+                transaction, "FINAL_VALIDATION_FAILED",
+                "frozen software/configuration validation failed",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
+        record_map = {record.addon_id: record for record in records}
+        for record in records:
+            if record.resolution is InstallResolution.SKIPPED:
+                current = self.installer.get_addon_details(record.addon_id)
+                if current is not None:
+                    return self._attention(
+                        transaction,
+                        "SKIPPED_ADDON_PRESENT",
+                        f"skipped add-on {record.addon_id} is present on the target",
+                        recoverability=recoverability, resolution_manifest=resolution_manifest,
+                    )
         for node in plan.install_order:
+            record = record_map.get(node.addon_id)
+            if record is None or record.resolution is InstallResolution.SKIPPED:
+                return self._attention(
+                    transaction, "INSTALL_RESOLUTION_MISSING",
+                    "install resolution does not cover the final plan",
+                    recoverability=recoverability, resolution_manifest=resolution_manifest,
+                )
+            resolved_version = record.resolved_version or node.version
             current = self.installer.get_addon_details(node.addon_id)
-            if current is None or current.version != node.version or current.broken:
-                return self._attention(transaction, "EXACT_VERSION_VALIDATION_FAILED", f"exact frozen version validation failed for {node.addon_id}")
+            if current is None or current.version != resolved_version or current.broken:
+                return self._attention(
+                    transaction, "RESOLVED_VERSION_VALIDATION_FAILED",
+                    f"resolved version validation failed for {node.addon_id}",
+                    recoverability=recoverability, resolution_manifest=resolution_manifest,
+                )
             if current.enabled is not node.desired_enabled:
                 self.installer.set_addon_enabled(node.addon_id, node.desired_enabled)
         for node in plan.install_order:
+            record = record_map[node.addon_id]
+            resolved_version = record.resolved_version or node.version
             current = self.installer.get_addon_details(node.addon_id)
-            if current is None or current.version != node.version or current.enabled is not node.desired_enabled or current.broken:
-                return self._attention(transaction, "FINAL_STATE_VALIDATION_FAILED", f"final frozen state validation failed for {node.addon_id}")
+            if current is None or current.version != resolved_version or current.enabled is not node.desired_enabled or current.broken:
+                return self._attention(
+                    transaction, "FINAL_STATE_VALIDATION_FAILED",
+                    f"final frozen state validation failed for {node.addon_id}",
+                    recoverability=recoverability, resolution_manifest=resolution_manifest,
+                )
+        computed_resolution_manifest = self._make_resolution_manifest(
+            manifest, transaction, tuple(records)
+        )
+        if (
+            computed_resolution_manifest.resolution_fingerprint
+            != resolution_manifest.resolution_fingerprint
+            or computed_resolution_manifest.resulting_software_fingerprint
+            != resolution_manifest.resulting_software_fingerprint
+        ):
+            return self._attention(
+                transaction, "RESOLUTION_FINGERPRINT_MISMATCH",
+                "install resolution identity changed before completion",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
         transaction = self.store.transition_expected(
             transaction_id=transaction.transaction_id,
             expected_phase=FrozenInstallPhase.VALIDATING,
             new_phase=FrozenInstallPhase.COMPLETE,
+            resolution_records=tuple(records),
+            resolution_fingerprint_value=resolution_manifest.resolution_fingerprint,
+            resolved_software_fingerprint_value=resolution_manifest.resulting_software_fingerprint,
         )
+        try:
+            self.store.save_resolution_manifest(resolution_manifest)
+        except Exception:
+            return self._attention(
+                transaction, "RESOLUTION_PERSISTENCE_FAILED",
+                "completed install resolution could not be recorded",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
         try:
             guard.restore_original(transaction.original_update_policy)
         except Exception:
-            return self._attention(transaction, "UPDATE_POLICY_RESTORE_FAILED", "original updater policy could not be restored")
+            return self._attention(
+                transaction, "UPDATE_POLICY_RESTORE_FAILED",
+                "original updater policy could not be restored",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
         try:
             self.store.clear_expected(
                 transaction_id=transaction.transaction_id,
                 expected_phase=FrozenInstallPhase.COMPLETE,
             )
         except Exception:
-            return self._attention(transaction, "FROZEN_TRANSACTION_CLEAR_FAILED", "completed frozen transaction could not be cleared")
-        return FrozenInstallResult("complete", message="frozen installation completed and updater policy restored")
+            return self._attention(
+                transaction, "FROZEN_TRANSACTION_CLEAR_FAILED",
+                "completed frozen transaction could not be cleared",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
+        return FrozenInstallResult(
+            "complete",
+            message="frozen installation completed and updater policy restored",
+            recoverability=recoverability,
+            resolution_manifest=resolution_manifest,
+        )
 
-    def _attention(self, transaction, code: str, message: str) -> FrozenInstallResult:
+    def _attention(
+        self, transaction, code: str, message: str, *,
+        recoverability=None, resolution_manifest=None,
+    ) -> FrozenInstallResult:
         try:
             current = self.store.inspect() or transaction
             if current.phase is not FrozenInstallPhase.NEEDS_ATTENTION:
@@ -1002,7 +1985,10 @@ class FrozenInstallCoordinator:
                 )
         except Exception:
             current = transaction
-        return FrozenInstallResult("needs_attention", transaction=current, code=code, message=message)
+        return FrozenInstallResult(
+            "needs_attention", transaction=current, code=code, message=message,
+            recoverability=recoverability, resolution_manifest=resolution_manifest,
+        )
 
     def _safe_inspect(self) -> Optional[FrozenInstallTransaction]:
         try:

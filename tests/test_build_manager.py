@@ -9,6 +9,7 @@ from resources.lib.build_manager import (
     fingerprint_resolved_build,
 )
 from resources.lib.dependencies import DependencyClosure
+from resources.lib.dependencies import DependencyNode, DependencyStatus
 from resources.lib.inspector import InstalledAddon, KodiState
 from resources.lib.manifest import AddonEntry, BuildInfo, PrivateOverlayRef
 from resources.lib.resolver import ResolvedBuild
@@ -133,6 +134,92 @@ class TestBuildManager(unittest.TestCase):
         self.assertNotIn("runtime", request.to_json())
         with self.assertRaises(ValueError):
             ReconcileRequest("", "family-room")
+
+    def test_explicit_frozen_skip_is_excluded_from_configuration_desired_state(self):
+        from resources.lib.frozen_resolution import (
+            InstallResolution,
+            InstallResolutionRecord,
+            ResolutionState,
+        )
+
+        youtube = "plugin.video.youtube"
+        record = InstallResolutionRecord(
+            youtube, "7.4.4+unofficial.2", InstallResolution.SKIPPED,
+            ResolutionState.SKIPPED,
+        )
+        owners = _Owners(
+            _desired((AddonEntry(youtube, "enabled"),)),
+            [_state(), _state()], (), {},
+        )
+        request = ReconcileRequest("m", "family-room", install_resolutions=(record,))
+        result = BuildManager(owners.owners).reconcile(request)
+
+        self.assertTrue(result.success)
+        self.assertFalse(any(action.addon_id == youtube for action in result.planned_actions))
+        self.assertEqual(record.to_dict(), request.to_dict()["install_resolutions"][0])
+        self.assertEqual([], owners.dependency_installer.calls)
+
+    def test_explicit_frozen_skip_fails_if_configuration_requires_dependency(self):
+        from resources.lib.frozen_resolution import (
+            InstallResolution,
+            InstallResolutionRecord,
+            ResolutionState,
+        )
+
+        youtube = "plugin.video.youtube"
+        record = InstallResolutionRecord(
+            youtube, "7.4.4+unofficial.2", InstallResolution.SKIPPED,
+            ResolutionState.SKIPPED,
+        )
+        app = "plugin.video.app"
+        actual = _state(InstalledAddon(app, True, "1.0.0"))
+        owners = _Owners(
+            _desired((AddonEntry(app, "enabled"), AddonEntry(youtube, "enabled"))),
+            [actual, actual], (app,), {},
+        )
+        owners.dependency_resolver.resolve_closure = lambda roots, **kwargs: DependencyClosure(
+            root_addon_ids=tuple(roots),
+            nodes=(DependencyNode(
+                addon_id=youtube,
+                required_by=(app,),
+                status=DependencyStatus.MISSING_REQUIRED,
+                installed_version=None,
+                installed_enabled=None,
+                min_version_required="",
+                optional=False,
+            ),),
+        )
+        result = BuildManager(owners.owners).reconcile(
+            ReconcileRequest("m", "family-room", install_resolutions=(record,))
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual("PREFLIGHT_FAILED", result.failure.code)
+        self.assertEqual([], owners.dependency_installer.calls)
+
+    def test_explicit_frozen_skip_fails_closed_when_managed_addon_is_not_installed(self):
+        from resources.lib.frozen_resolution import (
+            InstallResolution,
+            InstallResolutionRecord,
+            ResolutionState,
+        )
+
+        youtube = "plugin.video.youtube"
+        record = InstallResolutionRecord(
+            youtube, "7.4.4+unofficial.2", InstallResolution.SKIPPED,
+            ResolutionState.SKIPPED,
+        )
+        owners = _Owners(
+            _desired((AddonEntry("plugin.video.app", "enabled"),)),
+            [_state(), _state()], (), {},
+        )
+        result = BuildManager(owners.owners).reconcile(
+            ReconcileRequest("m", "family-room", install_resolutions=(record,))
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual("PREFLIGHT_FAILED", result.failure.code)
+        self.assertEqual([], owners.dependency_installer.calls)
 
     def test_dispatch_covers_every_planner_action(self):
         from resources.lib import planner

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from resources.lib.addon_state import AddonStateReconciler
 from resources.lib.addons import AddonManager, KodiRuntimeAddonBackend
@@ -59,6 +59,11 @@ from resources.lib.repository import (
     RepositoryStatus,
 )
 from resources.lib.resolver import ResolvedBuild, resolve_manifest
+from resources.lib.frozen_resolution import (
+    InstallResolution,
+    InstallResolutionRecord,
+    ResolutionState,
+)
 from resources.lib.restart import RestartReport, aggregate_restart_reports
 from resources.lib.skin import KodiRuntimeSkinBackend, SkinActivator
 from resources.lib.validator import ValidationReport, validate_build_state
@@ -83,18 +88,38 @@ class ReconcileRequest:
 
     manifest_path: str
     device_profile_id: str
+    install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.manifest_path, str) or not self.manifest_path:
             raise ValueError("manifest_path must be a non-empty string")
         if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
             raise ValueError("device_profile_id must be a non-empty string")
+        if not isinstance(self.install_resolutions, tuple) or any(
+            not isinstance(record, InstallResolutionRecord)
+            for record in self.install_resolutions
+        ):
+            raise ValueError("install_resolutions must be a tuple of frozen resolution records")
+        addon_ids = [record.addon_id for record in self.install_resolutions]
+        if len(addon_ids) != len(set(addon_ids)):
+            raise ValueError("install_resolutions must not contain duplicate add-on IDs")
+        if any(
+            record.state not in (ResolutionState.INSTALLED, ResolutionState.SKIPPED)
+            for record in self.install_resolutions
+        ):
+            raise ValueError("install_resolutions must contain only terminal resolutions")
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "manifest_path": self.manifest_path,
             "device_profile_id": self.device_profile_id,
         }
+        if self.install_resolutions:
+            payload["install_resolutions"] = [
+                record.to_dict()
+                for record in sorted(self.install_resolutions, key=lambda item: item.addon_id)
+            ]
+        return payload
 
     def to_json(self) -> str:
         return _canonical_json(self.to_dict())
@@ -260,6 +285,14 @@ def fingerprint_resolved_build(
             }
             for repo in sorted(desired.repositories, key=lambda item: item.addon_id)
         ],
+        "frozen_install_policies": [
+            {
+                "addon_id": policy.addon_id,
+                "policy": policy.mode.value,
+                "repository_id": policy.repository_id,
+            }
+            for policy in desired.frozen_install_policies
+        ],
         "addons": [
             {
                 "addon_id": addon.addon_id,
@@ -331,6 +364,7 @@ class _PreparedReconciliation:
     protected_dependency_ids: frozenset
     plan: object
     private_prepared: Optional[PreparedPrivateOverlay] = None
+    skipped_addon_ids: Tuple[str, ...] = ()
 
 
 class BuildManager:
@@ -362,6 +396,7 @@ class BuildManager:
         effective = prepared.effective
         fingerprint = prepared.fingerprint
         protected = prepared.protected_dependency_ids
+        skipped_addon_ids = prepared.skipped_addon_ids
         plan = prepared.plan
         private_metadata = (
             prepared.private_prepared.metadata
@@ -415,6 +450,16 @@ class BuildManager:
         try:
             final_actual = self._owners.inspector.inspect()
             final_closure = self._final_dependency_closure(desired)
+            if final_closure is not None and skipped_addon_ids:
+                skipped_required_dependencies = {
+                    node.addon_id
+                    for node in final_closure.nodes
+                    if node.addon_id in skipped_addon_ids and not node.optional
+                }
+                if skipped_required_dependencies:
+                    raise ValueError(
+                        "frozen skipped add-on is required by the final configuration dependency closure"
+                    )
             config_state = self._config_validation_state(action_results)
             validation = validate_build_state(
                 desired, final_actual,
@@ -497,6 +542,9 @@ class BuildManager:
 
         try:
             desired = self._owners.resolver(manifest, request.device_profile_id)
+            desired, skipped_addon_ids = self._apply_install_resolutions(
+                desired, request.install_resolutions
+            )
         except Exception as exc:
             return None, self._failed(request, ReconcilePhase.RESOLVE, "RESOLUTION_FAILED", exc)
 
@@ -517,7 +565,19 @@ class BuildManager:
                     ),
                 )
             fingerprint = fingerprint_resolved_build(desired, effective)
-            dependency_closure = self._preflight_dependencies(desired, actual)
+            if skipped_addon_ids:
+                installed_ids = {addon.addon_id for addon in actual.addons}
+                unresolved_managed_addons = {
+                    addon.addon_id for addon in desired.addons
+                    if addon.addon_id not in installed_ids
+                }
+                if unresolved_managed_addons:
+                    raise ValueError(
+                        "cannot prove frozen skip compatibility while managed add-ons are not installed"
+                    )
+            dependency_closure = self._preflight_dependencies(
+                desired, actual, include_disabled=bool(skipped_addon_ids)
+            )
             protected = frozenset(
                 node.addon_id
                 for node in dependency_closure.nodes
@@ -526,6 +586,16 @@ class BuildManager:
                     DependencyStatus.INSTALLED_DISABLED,
                 )
             )
+            required_dependency_ids = {
+                node.addon_id
+                for node in dependency_closure.nodes
+                if not node.optional
+            }
+            blocked_skips = sorted(set(skipped_addon_ids) & required_dependency_ids)
+            if blocked_skips:
+                raise ValueError(
+                    "frozen skipped add-on is required by the configuration dependency closure"
+                )
         except Exception as exc:
             return None, self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
 
@@ -551,15 +621,45 @@ class BuildManager:
             protected_dependency_ids=protected,
             plan=plan,
             private_prepared=private_prepared,
+            skipped_addon_ids=skipped_addon_ids,
         ), None
 
-    def _preflight_dependencies(self, desired: ResolvedBuild, actual: KodiState):
+    @staticmethod
+    def _apply_install_resolutions(
+        desired: ResolvedBuild,
+        records: Tuple[InstallResolutionRecord, ...],
+    ) -> Tuple[ResolvedBuild, Tuple[str, ...]]:
+        """Project explicit frozen-install outcomes onto reconciliation state."""
+        if not records:
+            return desired, ()
+        skipped = {
+            record.addon_id for record in records
+            if record.resolution is InstallResolution.SKIPPED
+        }
+        if not skipped:
+            return desired, ()
+        if desired.skin is not None and desired.skin.addon_id in skipped:
+            raise ValueError("a frozen skipped add-on cannot be the desired skin")
+        if any(repository.addon_id in skipped and repository.required for repository in desired.repositories):
+            raise ValueError("a required repository cannot be skipped")
+        return replace(desired, addons=tuple(
+            addon for addon in desired.addons if addon.addon_id not in skipped
+        )), tuple(sorted(skipped))
+
+    def _preflight_dependencies(
+        self,
+        desired: ResolvedBuild,
+        actual: KodiState,
+        *,
+        include_disabled: bool = False,
+    ):
         installed_ids = {addon.addon_id for addon in actual.addons}
         roots = sorted(
             {
                 addon.addon_id
                 for addon in desired.addons
-                if addon.state == "enabled" and addon.addon_id in installed_ids
+                if (include_disabled or addon.state == "enabled")
+                and addon.addon_id in installed_ids
             }
             | (
                 {desired.skin.addon_id}

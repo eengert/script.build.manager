@@ -134,6 +134,52 @@ class ConfigDeclarations:
     structured_private_resources: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
 
 
+class FrozenInstallPolicyMode(str, Enum):
+    """Explicit recovery choices for a missing exact frozen artifact."""
+
+    EXACT_REQUIRED = "exact_required"
+    EXACT_FIRST_REPOSITORY = "exact_first_with_repository_fallback"
+    EXACT_FIRST_REPOSITORY_OR_SKIP = "exact_first_with_repository_fallback_or_skip"
+
+
+@dataclass(frozen=True)
+class FrozenInstallPolicy:
+    """Profile-scoped policy for resolving one captured add-on at install time."""
+
+    addon_id: str
+    mode: FrozenInstallPolicyMode = FrozenInstallPolicyMode.EXACT_REQUIRED
+    repository_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.addon_id, str) or not _RE_ADDON_ID.fullmatch(self.addon_id):
+            raise ValueError("frozen install policy add-on ID is invalid")
+        if not isinstance(self.mode, FrozenInstallPolicyMode):
+            raise ValueError("frozen install policy mode is invalid")
+        if not isinstance(self.repository_id, str):
+            raise ValueError("frozen install policy repository ID is invalid")
+        if self.repository_id and not _RE_REPO_ID.fullmatch(self.repository_id):
+            raise ValueError("frozen install policy repository ID is invalid")
+        if self.repository_id and self.mode is FrozenInstallPolicyMode.EXACT_REQUIRED:
+            raise ValueError("exact-only policy cannot declare a fallback repository")
+
+    @property
+    def repository_fallback_allowed(self) -> bool:
+        return self.mode in (
+            FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY,
+            FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP,
+        )
+
+    @property
+    def skip_allowed(self) -> bool:
+        return self.mode is FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP
+
+    def to_dict(self) -> dict:
+        value = {"addon_id": self.addon_id, "policy": self.mode.value}
+        if self.repository_id:
+            value["repository_id"] = self.repository_id
+        return value
+
+
 @dataclass(frozen=True)
 class ProfileLayer:
     label: str = ""
@@ -141,6 +187,7 @@ class ProfileLayer:
     config: Optional[ConfigDeclarations] = None
     skin: Optional[SkinEntry] = None
     include_optional: Tuple[str, ...] = ()
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -151,6 +198,7 @@ class DeviceProfile:
     config: Optional[ConfigDeclarations] = None
     skin: Optional[SkinEntry] = None
     include_optional: Tuple[str, ...] = ()
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -225,8 +273,9 @@ _SKIN_KEYS              = frozenset({"addon_id", "config_packages"})
 _CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files", "private_settings", "structured_private_resources"})
 _MANAGED_SETTING_KEYS   = frozenset({"target", "addon_id", "keys"})
 _PRIVATE_SETTING_KEYS   = frozenset({"target", "addon_id", "key", "type", "required", "sensitivity"})
-_PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional"})
-_DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional"})
+_PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional", "frozen_install_policies"})
+_DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional", "frozen_install_policies"})
+_FROZEN_INSTALL_POLICY_KEYS = frozenset({"addon_id", "policy", "repository_id"})
 _OPTIONAL_GROUP_KEYS    = frozenset({"id", "label", "description", "addons", "config"})
 _OVERLAY_KEYS           = frozenset({"type", "path_hint", "description", "overlay_id", "required"})
 _RESTART_POLICY_KEYS    = frozenset({"allow_skin_reload", "allow_kodi_restart"})
@@ -828,6 +877,11 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
                 )
         include_optional = tuple(io)
 
+    frozen_install_policies = _parse_frozen_install_policies(
+        raw.get("frozen_install_policies", []),
+        label=f"{label}.frozen_install_policies",
+    )
+
     profile_label = ""
     if "label" in raw:
         lv = raw["label"]
@@ -843,6 +897,7 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
         config=config,
         skin=skin,
         include_optional=include_optional,
+        frozen_install_policies=frozen_install_policies,
     )
 
 
@@ -894,6 +949,11 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
                 )
         include_optional = tuple(io)
 
+    frozen_install_policies = _parse_frozen_install_policies(
+        raw.get("frozen_install_policies", []),
+        label=f"{label}.frozen_install_policies",
+    )
+
     profile_label = ""
     if "label" in raw:
         lv = raw["label"]
@@ -910,7 +970,44 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
         config=config,
         skin=skin,
         include_optional=include_optional,
+        frozen_install_policies=frozen_install_policies,
     )
+
+
+def _parse_frozen_install_policies(
+    raw: object, *, label: str
+) -> Tuple[FrozenInstallPolicy, ...]:
+    if not isinstance(raw, list):
+        raise ManifestValidationError(f"{label}: must be an array")
+    out = []
+    seen = set()
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        if not isinstance(item, dict):
+            raise ManifestValidationError(f"{item_label}: must be an object")
+        _reject_unknown(item, _FROZEN_INSTALL_POLICY_KEYS, item_label)
+        addon_id = _require_str(item, "addon_id", item_label)
+        if not _RE_ADDON_ID.fullmatch(addon_id):
+            raise ManifestValidationError(f"{item_label}.addon_id: invalid add-on ID")
+        if addon_id in seen:
+            raise ManifestValidationError(f"{item_label}.addon_id: duplicate policy")
+        seen.add(addon_id)
+        try:
+            mode = FrozenInstallPolicyMode(_require_str(item, "policy", item_label))
+        except ValueError as exc:
+            raise ManifestValidationError(f"{item_label}.policy: unsupported frozen install policy") from exc
+        repository_id = item.get("repository_id", "")
+        if not isinstance(repository_id, str):
+            raise ManifestValidationError(f"{item_label}.repository_id: must be a string")
+        if repository_id:
+            if not _RE_REPO_ID.fullmatch(repository_id):
+                raise ManifestValidationError(f"{item_label}.repository_id: invalid repository ID")
+            if mode is FrozenInstallPolicyMode.EXACT_REQUIRED:
+                raise ManifestValidationError(
+                    f"{item_label}.repository_id: exact-only policy cannot declare a fallback repository"
+                )
+        out.append(FrozenInstallPolicy(addon_id, mode, repository_id))
+    return tuple(out)
 
 
 # ---------------------------------------------------------------------------

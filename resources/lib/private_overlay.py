@@ -22,7 +22,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from resources.lib.config import (
     ConfigApplyResult,
@@ -569,6 +569,40 @@ def validate_private_overlay(
     if missing_resources:
         raise PrivateOverlayValidationError("a required private resource is missing")
     return overlay
+
+
+def validate_private_overlay_resolution_compatibility(
+    resolutions: Mapping[str, Optional[str]],
+    declarations: Sequence[PrivateSettingDeclaration],
+    resource_declarations: Sequence[StructuredPrivateResourceDeclaration] = (),
+) -> bool:
+    """Check resolution changes against declared overlay ownership only.
+
+    ``None`` means an add-on is intentionally skipped; a string is its
+    resolved version. This function accepts public declarations only and
+    never loads or inspects private overlay values.
+    """
+    setting_owners = {item.addon_id for item in declarations}
+    resource_owners: Dict[str, list] = {}
+    for item in resource_declarations:
+        resource_owners.setdefault(item.owner_addon_id, []).append(item)
+    for addon_id, version in resolutions.items():
+        if addon_id in setting_owners:
+            raise PrivateOverlayValidationError(
+                "install resolution changes an add-on that owns declared private settings"
+            )
+        resources = resource_owners.get(addon_id, ())
+        if not resources:
+            continue
+        if version is None:
+            raise PrivateOverlayValidationError(
+                "install resolution skips a declared private-resource owner"
+            )
+        if any(version not in resource.supported_versions for resource in resources):
+            raise PrivateOverlayValidationError(
+                "resolved private-resource owner version is not declared as compatible"
+            )
+    return True
 
 
 class PrivateOverlayManager:
