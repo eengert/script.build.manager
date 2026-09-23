@@ -2,21 +2,38 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle Coordination
 
-**Status**: In progress under the authorized task. BM-017E's sanitized audit
-was integrated on protected `matrix` as `7075d59`, with neutral tracking at
-`ee5c5f7266b00ce7338123c74f8985a4886e848c`; worker synchronization is in
-progress by normal merge. BM-017E remains complete as static investigation
-with result `BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
+**Status**: Complete as an investigation/implementation attempt. Result:
+`BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
 
-The work will first audit existing coordinator ordering and Kodi 21/Omega
-activation behavior, then implement or stop at the task's explicit safety gates.
-Use only the authorized disposable `tools/kodi_test.py` path and fake private
-values. Do not access Family Room state/device, `/Applications/Kodi Build
-Manager Test.app`, or real private values. Do not resume BM-023A or begin a
-later milestone. Do not claim tvOS validation.
+BM-017E audit `docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md` was integrated on
+protected `matrix` as `7075d59`, with neutral tracking `ee5c5f7`. Normal merge
+`071e93a0ab20c13ee1bb52ac6134664a418aa671` synchronized `agent/codex` with
+`origin/matrix`; the worker branch was pushed. BM-017E's historical result
+remains `BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
 
-**Smallest next step**: verify the ordinary merge and worker synchronization,
-then map BM-020/BM-022 ordering and Kodi's new-addon service activation path.
+The BM-017F audit-only commit is `10512a6`; no product implementation or new
+test file was added.
+
+The BM-017F audit found that Kodi 21.1 staged local discovery registers a new
+ordinary add-on disabled; the disposable fake-service probe saw no start through
+scan, hold, and restart. The current BM-022 frozen installer nevertheless
+enforces final enabled state before configuration. Kodi and Build Manager can
+enable disabled dependencies while enabling another add-on; the exact
+package-specific dependency graph was not proven. BM-020/BM-022 still lack a
+single durable structured-resource stage. The exact Red Light 2.6.8 package
+could not be recovered from the published URL: it redirected to Google HTML
+with the wrong hash. No product code or BM-023A retry was performed.
+
+Focused regressions passed **703/703**, full suite **1647/1647**, compileall,
+seven JSON files parsed, and `git diff --check` passed. The report is in
+[`docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md`](../docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md).
+No Family Room values/device were intentionally accessed; tvOS is NOT VALIDATED.
+
+**Smallest next step / human input**: provide a reachable local file or URL for
+the exact Red Light 2.6.8 ZIP and verify SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927` before
+resuming this milestone. Do not resume BM-023A until lifecycle support is
+implemented and proven.
 
 ---
 ## BM-017E — Structured Private Resource Initialization & Quiescence

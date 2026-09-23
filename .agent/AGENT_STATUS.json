@@ -1,9 +1,9 @@
 {
-  "active_agent": "codex",
-  "status": "in_progress",
+  "active_agent": "none",
+  "status": "blocked",
   "task": "BM-017F",
-  "reason": "Authorized BM-017F deferred-activation and structured-resource lifecycle work started after integrating the sanitized BM-017E audit onto matrix. BM-017E historical result remains BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED. No BM-023A retry or real-profile/device work is authorized.",
-  "last_commit": "7075d59",
+  "reason": "BM-017F investigation/implementation attempt complete with BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE. Exact package path redirected to non-ZIP HTML with the wrong SHA-256; user input is required to supply the pinned artifact before source-owned initialization can be selected. BM-017E history remains unchanged; no BM-023A retry or tvOS validation.",
+  "last_commit": "10512a6",
   "matrix_sha": "ee5c5f7266b00ce7338123c74f8985a4886e848c",
   "next_agent": "codex",
   "updated_at": "2026-09-22"
