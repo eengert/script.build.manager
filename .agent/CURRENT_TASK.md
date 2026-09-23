@@ -2,88 +2,96 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_LIVE_VALIDATION` on `agent/codex`. The
-offline implementation and regression tests are committed as `74477f4`.
-latest manual disposable run proved BM-022 post-restart readiness, exact Red
-Light 2.6.8 registration, disabled state, and the active hold; it then failed
-in `redlight.settings` initialization because `xbmcaddon.Addon(owner_id)` did
-not resolve a held disabled add-on. The implementation below addresses that
-source-resolution boundary. No live validation has been run for this correction.
+**Status**: `IMPLEMENTED_PENDING_DIAGNOSTIC_LIVE_VALIDATION` on `agent/codex`.
+The narrowly scoped instrumentation and regression tests are committed as
+`deae656`. Red Light clean-destination lifecycle remains **NOT YET
+LIVE-VALIDATED**. No lifecycle or activation architecture was changed.
 
-### Historical BM-017F blocker sequence
+### Historical BM-017F blocker progression
 
-- `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` is resolved: the exact
-  retained Red Light 2.6.8 artifact was validated at SHA-256
+- `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` is resolved. The
+  retained archive is SHA-256
   `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`, size
   1,261,957 bytes.
-- `BLOCKED_POST_RESTART_REGISTRY_READINESS_BYPASSED` is resolved: BM-022 now
-  invokes the shared readiness gate from its own restart continuation. The
-  supervisor's normal-Terminal run proved readiness passed for Red Light
-  2.6.8 with `enabled=false`; `UpdateLocalAddons` was not required.
-- `BLOCKED_RED_LIGHT_XBMCADDON_LOOKUP_WHILE_HELD_DISABLED` was the latest live
-  failure and is corrected offline by passing a verified installed-source
-  context into structured resource initialization.
+- `BLOCKED_POST_RESTART_REGISTRY_READINESS_BYPASSED` is resolved. BM-022's own
+  restart continuation now proves held-disabled registry readiness before
+  configuration.
+- `BLOCKED_RED_LIGHT_XBMCADDON_LOOKUP_WHILE_HELD_DISABLED` was addressed by
+  deriving and revalidating the installed source from the frozen transaction.
+- The most recent supervisor-run disposable attempt passed readiness and source
+  validation, entered `redlight.settings` initialization, and stopped before
+  private apply or activation release. Its preserved failure did not identify
+  the first failing initializer operation. This task adds diagnostics for the
+  next supervisor-authorized live run; it does not claim that run has passed.
 
-The earlier Codex sandbox harness attempt remains separately classified
-`VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`: its disposable JSON-RPC connection
-failed with `Operation not permitted`. The later supervisor-approved Terminal
-run demonstrated that JSON-RPC works outside that sandbox. Historical safety
-notes remain in the handoff below; the normal Kodi profile has not been accessed
-in this implementation task.
+### Actual initializer map
 
-### Implementation
+`RedLightSettingsAdapter.initialize()` in
+`resources/lib/redlight_resource.py` now names the actual operations in order:
 
-- Added a generalized installed-source identity derived from the active frozen
-  transaction's installed resolution record: add-on ID/version, exact artifact
-  SHA-256 and size, transaction ID, and manifest fingerprint. The path is
-  derived only from Kodi's active `special://home/addons` root plus the
-  validated add-on ID; no manifest path is accepted.
-- The resolver canonicalizes and confines the add-on root under Kodi's active
-  add-ons directory, rejects traversal/symlink escape, and checks `addon.xml`
-  ID/version. The archive digest remains linked to the frozen install record;
-  it is not represented as a hash of the installed directory. Kodi registry
-  exact-version/disabled checks and the activation hold remain required.
-- Red Light initialization imports only the audited package-owned schema and
-  defaults (`table_creators`, `default_settings`, `_new_setting_value`, sync
-  marker constants, and `kodi_utils.set_property`). It does not call
-  `xbmcaddon.Addon`, the add-on profile helper, service startup, provider
-  clients, authentication, or settings synchronization. The `aiostreams`
-  action label uses its declared default option without importing its provider.
-- A missing or strictly empty `settings.db` is initialized from package schema
-  and defaults, enters WAL mode, and receives the package's fresh-install sync
-  markers. Existing populated data is a read-only idempotent verification;
-  partial or uncertain state fails closed. Private overlay apply remains after
-  initialization while the owner is held disabled.
-- Configuration action diagnostics now normalize enum/string action kinds,
-  preserve `CONFIGURE`, and retain validated owner/resource IDs plus a typed
-  failure code and safe cause code. Exception text and private values are not
-  serialized.
+1. Validate the declared owner/resource/version.
+2. Inspect any existing database and verify an already-populated resource.
+3. Verify quiescence and activation hold; revalidate the frozen installed-source
+   context, then revalidate the source again immediately before helper imports.
+4. Import the package-owned schema/default helpers and marker setter.
+5. Check the existing resource is empty. For a missing database, load the
+   package schema declaration, create `addon_data`, create the database
+   directory, open SQLite, set WAL mode, and execute/commit the schema.
+6. Recheck the empty-state predicate, build package defaults, and insert rows.
+7. Confirm rows persisted and validate the final database/WAL/schema.
+8. Publish Red Light's two existing sync markers through its window-property
+   helper, then return the same successful result.
 
-### Offline validation and live boundary
+Each operation uses a project enum stage. The split directory checks name the
+existing recursive path creation boundaries; successful paths still create the
+same directories and database content.
 
-- Focused source resolver, Red Light resource, Build Manager, and diagnostic
-  regressions: **49/49**.
-- Full repository suite: **1,708/1,708**.
-- The apparent Kodi readiness/process output in the full suite comes from
-  `tests/test_kodi_harness.py` command-dispatch and mocked status fixtures; no
-  Kodi executable or harness lifecycle command was launched by the suite.
-- `compileall`, tracked schema/status JSON parsing, and `git diff --check`
-  passed.
-- No Kodi, BM-017F harness, normal Kodi profile, real device, Test.app, or real
-  private overlay value was accessed during this implementation task.
+### Diagnostic propagation and safety
 
-BM-017F is **not complete** until the supervisor performs one manual disposable
-lifecycle validation. Red Light clean-destination lifecycle is **NOT YET
-LIVE-VALIDATED**. The macOS BM-023A retry remains **STILL BLOCKED** pending that
-proof; tvOS is **NOT VALIDATED**.
+`ResourceInitializationStage` and `ResourceInitializationCause` in
+`resources/lib/private_resource.py` provide allowlisted typed codes. A failure
+retains the current `initialization_stage`, deepest
+`last_completed_stage`, and typed safe cause while preserving the high-level
+`PRIVATE_RESOURCE_INITIALIZATION_FAILED` code and safe owner/resource IDs.
 
-**Next step — one manual Terminal validation only after review**:
+The structured-resource manager carries these fields into the existing action
+failure diagnostic. The frozen CONFIGURE handler persists only allowlisted
+`action`, `resource_failure`, `owner`, `resource`, `cause`,
+`initialization_stage`, and `last_completed_stage` tokens in the transaction
+status message. Stage fields are omitted for legacy errors, preserving their
+serialized shape. Exception text, paths, settings rows, fake secrets, and private
+overlay values are never copied into the diagnostic.
+
+### Validation and live boundary
+
+- Focused Red Light resource, private overlay, CONFIGURE diagnostic,
+  Build Manager, and frozen transaction/readiness suites: **93/93**.
+- Full repository `unittest` suite: **1,722/1,722**.
+- `compileall` over `resources`, `tests`, and `tools`: passed.
+- All **7 tracked JSON files** parsed; `git diff --check` passed.
+- No Kodi executable, BM-017F lifecycle harness command, normal Kodi profile,
+  real device, or real private overlay values were used. Harness unit tests use
+  mocked process behavior.
+
+Classification: `IMPLEMENTED_PENDING_DIAGNOSTIC_LIVE_VALIDATION`;
+Red Light clean-destination lifecycle **NOT YET LIVE-VALIDATED**; macOS BM-023A
+retry **STILL BLOCKED**; tvOS **NOT VALIDATED**. Wait for the supervisor's
+manual disposable run and inspect its persisted safe stage/cause before any
+further correction.
+
+### Next manual live command
+
+Run only from the normal Terminal when the supervisor directs:
 
 ```text
-python tools/kodi_test.py validate-bm017f-lifecycle --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+
+python tools/kodi_test.py validate-bm017f-lifecycle \
+  --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
+  --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
 ```
 
-Do not run this command from Codex or automatically retry a failure.
+Codex did not and must not run this live command as part of the current task.
 
 ## BM-023A-H — Historical Exact Artifact Recovery
 

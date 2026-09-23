@@ -2,8 +2,8 @@
   "active_agent": "codex",
   "status": "blocked",
   "task": "BM-017F",
-  "reason": "Offline implementation and regression coverage are complete. BM-017F remains IMPLEMENTED_PENDING_LIVE_VALIDATION until the supervisor performs the single manual disposable lifecycle validation; do not launch Kodi or the BM-017F harness from Codex. Red Light clean-destination lifecycle is not yet live-validated; macOS BM-023A remains blocked and tvOS is not validated.",
-  "last_commit": "74477f4",
+  "reason": "IMPLEMENTED_PENDING_DIAGNOSTIC_LIVE_VALIDATION. Safe typed Red Light initializer stage/cause diagnostics and tests are committed as deae656. Await supervisor-directed disposable lifecycle validation; Red Light clean-destination lifecycle is not yet live-validated. macOS BM-023A remains blocked and tvOS is not validated.",
+  "last_commit": "deae656",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
   "updated_at": "2026-09-23"
