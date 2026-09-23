@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "in_progress",
+  "status": "complete",
   "task": "BM-023B",
-  "reason": "BM-023A-H completion tracking commit 49791ea was preserved on worker and its sanitized neutral matrix tracking was pushed as b82885a and is being merged normally. BM-023B is authorized on agent/codex: implement explicit exact-artifact fallback and install recoverability while preserving immutable capture fingerprints, truthful readiness, safe durable resolution, and the stated no-device/no-profile/no-overlay boundaries.",
-  "last_commit": "a8d4b71",
+  "reason": "BM-023B completed and pushed on agent/codex. Exact-first fallback/skip resolution, safe recoverability reporting, immutable fingerprints, and restart-safe Build Manager composition are implemented. Full suite 1643/1643; no Kodi app, real profile, device, or private-overlay values accessed. BM-023A macOS installation was not resumed.",
+  "last_commit": "1d60ed3",
   "matrix_sha": "b82885a",
-  "next_agent": "codex",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-22"
 }

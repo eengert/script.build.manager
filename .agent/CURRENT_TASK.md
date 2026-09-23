@@ -2,10 +2,11 @@
 
 ## BM-023B — Frozen Artifact Fallback & Install Recoverability
 
-**Status**: In progress on `agent/codex`. BM-023A-H completion tracking was
-integrated into protected `matrix` as `b82885a`, pushed, and is being brought
-back by a normal merge. The worker's detailed BM-023A-H evidence and usage row
-remain preserved.
+**Status**: Complete on `agent/codex`. BM-023A-H tracking is integrated on
+protected `matrix` as `b82885ab01fdb3c2486fff0c3e42bf33262b110e`; the normal
+worker synchronization merge is `08c0fdfc9601e770c88edab5100751c04b16166d`.
+BM-023B implementation commit `1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f`
+is pushed only to `origin/agent/codex`.
 
 Implement explicit per-addon install resolution for exact frozen artifacts,
 repository-current fallback, and allowed skip. Keep captured desired state and
@@ -25,9 +26,24 @@ policy may skip or use an explicitly proven current repository package; do not
 invent repository identity or claim that the captured `7.4.4+unofficial.2`
 artifact is available.
 
-**Smallest next step**: inspect the frozen manifest, planner, install executor,
-repository provenance, durable transaction, and UI contracts; then settle the
-smallest generalized resolution model before editing production code.
+**Result**: exact-first artifact installation remains strict; explicit policy
+controls repository fallback and skip; trusted fallback requires a captured
+exact repository package and concrete repository ID; readiness separates
+captured state, exact coverage, and recovery. Install choices are explicit,
+persisted, immutable, restart-safe, and propagated into BM-020 reconciliation.
+Family Room desired state remains complete with exact frozen coverage 30/31.
+YouTube's repository is unknown in retained evidence, so the current prompt is
+Skip / Cancel Build with a manual-install warning. BM-023A remains historically
+`BLOCKED_MISSING_FROZEN_ARTIFACTS`; the macOS retry is architecturally
+unblocked by explicit resolution but was not resumed. tvOS remains unvalidated.
+
+Focused regression group: **120/120**. Full repository suite: **1643/1643**.
+`compileall`, JSON parsing, and `git diff --check` passed. Disposable
+`TemporaryDirectory` artifacts and fake Kodi/repository backends were used; no
+Kodi app, real profile, device, or private-overlay value was accessed.
+
+**Smallest next step**: stop after BM-023B. Any macOS frozen-install retry is a
+separate action and was not performed here.
 
 ## BM-023A-H — Historical Exact Artifact Recovery
 

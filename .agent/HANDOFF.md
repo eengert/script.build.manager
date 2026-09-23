@@ -1,17 +1,37 @@
-# Agent Handoff — BM-023B in progress
+# Agent Handoff — BM-023B complete
 
-**Scope**: explicit frozen-artifact fallback and installation recoverability.
-The BM-023A-H tracking integration is pushed to matrix as `b82885a`; this
-normal merge preserves the complete worker H record and usage row, adding one
-matrix integration row. BM-023B implementation has not yet started.
+**Result**: explicit exact-first frozen install recovery is implemented and
+pushed as `1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f` on `agent/codex`. BM-023A-H
+tracking remains on protected `matrix` at `b82885ab01fdb3c2486fff0c3e42bf33262b110e`;
+the normal worker synchronization merge is `08c0fdfc9601e770c88edab5100751c04b16166d`.
 
-**Boundaries**: no BM-023A installation resume, Kodi Test.app launch, Family
-Room/device access, portable profile mutation, or private-overlay value
-inspection/rebinding. Use disposable isolated evidence only.
+**Architecture**: exact artifacts retain strict digest/size/ZIP/ID/version
+validation and install first. Explicit per-addon policy selects exact-only,
+exact-first repository fallback, or exact-first fallback/skip. Fallback uses
+only a named repository represented by an exact captured enabled repository
+package. Unknown repository provenance never triggers guessing. Skip is
+explicit, cannot satisfy required dependencies, is carried into ordinary
+BuildManager reconciliation, and survives BM-020 restart transaction
+serialization. Unattended choice returns `USER_RESOLUTION_REQUIRED`. Source,
+install-plan, resolution, and resulting-software fingerprints are separate;
+the source manifest is unchanged. Private-overlay compatibility uses only
+public owner/resource declarations and reads no overlay values.
 
-**Smallest next step**: map exact frozen validation, plan/action model,
-repository identity and supported install route, and durable transaction
-recovery before changing code.
+**Family Room classification**: captured desired state COMPLETE; exact frozen
+coverage 30/31; YouTube `7.4.4+unofficial.2` exact artifact unavailable;
+trusted repository identity unknown. Current actions are Skip or Cancel Build,
+with a manual-install warning. If a trusted repository is established later,
+the explicit Install Current Version choice is available under policy.
+
+**Validation**: focused group 120/120; full suite 1643/1643; `compileall`, JSON
+parsing, and `git diff --check` passed. Disposable temporary artifacts and
+fake backends were used. Kodi was not launched; no real profile, device, or
+private-overlay value was accessed. macOS BM-023A retry is architecturally
+unblocked through explicit resolution but was not resumed; tvOS is not
+validated.
+
+**Smallest next step**: stop after BM-023B. Do not perform the separate macOS
+install retry without a new task authorization.
 
 ---
 
