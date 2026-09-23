@@ -65,6 +65,10 @@ class PrivateResourceError(Exception):
         self.initialization_stage: Optional[ResourceInitializationStage] = None
         self.initialization_cause_code: Optional[ResourceInitializationCause] = None
         self.last_completed_stage: Optional[ResourceInitializationStage] = None
+        self.import_failure_category = ""
+        self.failing_module = ""
+        self.expected_provider = ""
+        self.actual_provider = ""
         super().__init__(message)
 
 
@@ -107,6 +111,10 @@ _ADDON = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 _SENSITIVITY = frozenset({"secret", "credential", "token", "private_identifier"})
 _TYPES = frozenset(item.value for item in StructuredValueType)
 _LIFECYCLES = frozenset(item.value for item in ResourceLifecycle)
+_IMPORT_FAILURE_CATEGORY = re.compile(r"^[A-Z0-9_]{1,80}$")
+_IMPORT_FAILURE_MODULE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}$"
+)
 
 
 def _id(value: object, label: str) -> str:
@@ -134,6 +142,10 @@ class StructuredResourceInitializationError(PrivateResourceError):
         *,
         initialization_stage: Optional[ResourceInitializationStage] = None,
         last_completed_stage: Optional[ResourceInitializationStage] = None,
+        import_failure_category: str = "",
+        failing_module: str = "",
+        expected_provider: str = "",
+        actual_provider: str = "",
     ):
         self.owner_addon_id = _addon(owner_addon_id, "resource failure owner")
         self.resource_id = _id(resource_id, "resource failure resource_id")
@@ -161,6 +173,28 @@ class StructuredResourceInitializationError(PrivateResourceError):
             last_completed_stage
             if isinstance(last_completed_stage, ResourceInitializationStage)
             else None
+        )
+        self.import_failure_category = (
+            import_failure_category
+            if isinstance(import_failure_category, str)
+            and _IMPORT_FAILURE_CATEGORY.fullmatch(import_failure_category)
+            else ""
+        )
+        self.failing_module = (
+            failing_module
+            if isinstance(failing_module, str)
+            and _IMPORT_FAILURE_MODULE.fullmatch(failing_module)
+            else ""
+        )
+        self.expected_provider = (
+            expected_provider
+            if isinstance(expected_provider, str) and _ADDON.fullmatch(expected_provider)
+            else ""
+        )
+        self.actual_provider = (
+            actual_provider
+            if isinstance(actual_provider, str) and _ADDON.fullmatch(actual_provider)
+            else ""
         )
 
 
@@ -501,6 +535,12 @@ class StructuredPrivateResourceManager:
                     cause_code,
                     initialization_stage=getattr(exc, "initialization_stage", None),
                     last_completed_stage=getattr(exc, "last_completed_stage", None),
+                    import_failure_category=getattr(
+                        exc, "import_failure_category", ""
+                    ),
+                    failing_module=getattr(exc, "failing_module", ""),
+                    expected_provider=getattr(exc, "expected_provider", ""),
+                    actual_provider=getattr(exc, "actual_provider", ""),
                 ) from exc
             if result is None or not result.succeeded:
                 raise StructuredResourceInitializationError(

@@ -10,6 +10,7 @@ then applies only owned rows; it does not run service, provider, or auth setup.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -48,6 +49,7 @@ REDLIGHT_SCHEMA_ID = "redlight-settings-v1"
 REDLIGHT_RESOURCE_TYPE = "sqlite.settings"
 REDLIGHT_ADAPTER_ID = "redlight.sqlite.settings.v1"
 REDLIGHT_SETTINGS_RELATIVE_PATH = "databases/settings.db"
+_SAFE_ADDON_DIAGNOSTIC_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 REDLIGHT_SETTINGS_COLUMNS = ("setting_id", "setting_type", "setting_default", "setting_value")
 _REDLIGHT_INITIALIZER_LOCK = threading.RLock()
 
@@ -204,6 +206,28 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 failure.initialization_stage = stage
                 failure.initialization_cause_code = failure_cause
                 failure.last_completed_stage = last_completed_stage
+                if isinstance(exc, ImportError):
+                    category = getattr(exc, "import_failure_category", "")
+                    module_name = getattr(exc, "failing_module", "")
+                    expected_provider = getattr(exc, "expected_provider", "")
+                    actual_provider = getattr(exc, "actual_provider", "")
+                    if isinstance(category, str) and re.fullmatch(
+                        r"[A-Z0-9_]{1,80}", category
+                    ):
+                        failure.import_failure_category = category
+                    if isinstance(module_name, str) and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}",
+                        module_name,
+                    ):
+                        failure.failing_module = module_name
+                    if isinstance(expected_provider, str) and _SAFE_ADDON_DIAGNOSTIC_ID.fullmatch(
+                        expected_provider
+                    ):
+                        failure.expected_provider = expected_provider
+                    if isinstance(actual_provider, str) and _SAFE_ADDON_DIAGNOSTIC_ID.fullmatch(
+                        actual_provider
+                    ):
+                        failure.actual_provider = actual_provider
                 raise failure from None
             last_completed_stage = stage
             return result

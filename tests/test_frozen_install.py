@@ -351,6 +351,10 @@ class FrozenInstallTest(unittest.TestCase):
             "DATABASE_OPEN_FAILED",
             "OPEN_SETTINGS_DATABASE",
             "CREATE_DATABASE_DIRECTORY",
+            "MODULE_SOURCE_MISMATCH",
+            "requests.packages.urllib3.exceptions",
+            "script.module.urllib3",
+            "script.module.requests",
         )
         reconcile_result = SimpleNamespace(
             failure=SimpleNamespace(
@@ -389,6 +393,13 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertIn("cause=DATABASE_OPEN_FAILED", transaction.status_message)
         self.assertIn("initialization_stage=OPEN_SETTINGS_DATABASE", transaction.status_message)
         self.assertIn("last_completed_stage=CREATE_DATABASE_DIRECTORY", transaction.status_message)
+        self.assertIn("import_failure_category=MODULE_SOURCE_MISMATCH", transaction.status_message)
+        self.assertIn(
+            "failing_module=requests.packages.urllib3.exceptions",
+            transaction.status_message,
+        )
+        self.assertIn("expected_provider=script.module.urllib3", transaction.status_message)
+        self.assertIn("actual_provider=script.module.requests", transaction.status_message)
         self.assertNotIn(fake_exception, transaction.status_message)
 
     def test_restart_boundary_reasserts_and_finalizes(self):

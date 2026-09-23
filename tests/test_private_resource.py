@@ -3,6 +3,7 @@
 import json
 import shutil
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,7 @@ from resources.lib.redlight_resource import (
     RedLightSettingsAdapter,
     redlight_declaration,
 )
+from resources.lib.verified_addon_imports import VerifiedAddonImportError
 
 
 SECRET = "BM017C_FAKE_SECRET_NOT_FOR_OUTPUT"
@@ -187,7 +189,7 @@ def _fake_redlight_package(root: Path):
         encoding="utf-8",
     )
     (import_root / "caches" / "settings_cache.py").write_text(
-        "from modules import kodi_utils\n"
+        "from modules import kodi_utils, http_defaults\n"
         "_SETTINGS_DB_SYNCED = 'redlight.settings_db_synced'\n"
         "_SETTINGS_SYNC_FINGERPRINT = 'redlight.settings_sync_fingerprint'\n"
         "def default_settings():\n"
@@ -217,17 +219,59 @@ def _fake_redlight_package(root: Path):
         }[source.addon_id]
         package = dependency_root / module_name
         package.mkdir(parents=True)
-        (package / "__init__.py").write_text("", encoding="utf-8")
         if source.addon_id == "script.module.requests":
+            (package / "__init__.py").write_text(
+                "from . import packages\n", encoding="utf-8"
+            )
+            (package / "packages.py").write_text(
+                "import sys\n"
+                "try:\n"
+                "    import chardet\n"
+                "except ImportError:\n"
+                "    import warnings\n"
+                "    import charset_normalizer as chardet\n"
+                "    warnings.filterwarnings('ignore', 'Trying to detect', "
+                "module='charset_normalizer')\n"
+                "for package in ('urllib3', 'idna'):\n"
+                "    locals()[package] = __import__(package)\n"
+                "    for mod in list(sys.modules):\n"
+                "        if mod == package or mod.startswith(f'{package}.'):\n"
+                "            sys.modules[f'requests.packages.{mod}'] = sys.modules[mod]\n"
+                "target = chardet.__name__\n"
+                "for mod in list(sys.modules):\n"
+                "    if mod == target or mod.startswith(f'{target}.'):\n"
+                "        target = target.replace(target, 'chardet')\n"
+                "        sys.modules[f'requests.packages.{target}'] = sys.modules[mod]\n",
+                encoding="utf-8",
+            )
             (package / "adapters.py").write_text(
                 "from urllib3.util.retry import Retry\n",
                 encoding="utf-8",
             )
         elif source.addon_id == "script.module.urllib3":
+            (package / "__init__.py").write_text(
+                "__version__ = '2.2.3'\nfrom . import exceptions, util\n",
+                encoding="utf-8",
+            )
+            (package / "exceptions.py").write_text(
+                "class DependencyWarning(Warning): pass\n",
+                encoding="utf-8",
+            )
             util = package / "util"
             util.mkdir()
-            (util / "__init__.py").write_text("", encoding="utf-8")
+            (util / "__init__.py").write_text(
+                "from . import retry\n", encoding="utf-8"
+            )
             (util / "retry.py").write_text("class Retry: pass\n", encoding="utf-8")
+        elif source.addon_id == "script.module.idna":
+            (package / "__init__.py").write_text(
+                "from . import codec\n", encoding="utf-8"
+            )
+            (package / "codec.py").write_text("value = True\n", encoding="utf-8")
+        elif source.addon_id == "script.module.chardet":
+            (package / "__init__.py").write_text(
+                "__version__ = '5.1.0'\n", encoding="utf-8"
+            )
     return context
 
 
@@ -373,6 +417,7 @@ class StructuredResourceTest(unittest.TestCase):
         calls = []
         lifecycle_checks = []
         loaded_modules = {}
+        request_alias_checks = []
         self.adapter._activation_hold_provider = lambda addon_id: (
             lifecycle_checks.append((addon_id, "held", True)) or True
         )
@@ -389,6 +434,16 @@ class StructuredResourceTest(unittest.TestCase):
             calls.append(name)
             module = original_import_module(name, package)
             loaded_modules[name] = module
+            if name == "caches.settings_cache":
+                request_alias_checks.extend((
+                    getattr(module.http_defaults.Retry, "__module__", ""),
+                    sys.modules.get("requests.packages.urllib3.exceptions")
+                    is sys.modules.get("urllib3.exceptions"),
+                    sys.modules.get("requests.packages.idna.codec")
+                    is sys.modules.get("idna.codec"),
+                    sys.modules.get("requests.packages.chardet")
+                    is sys.modules.get("chardet"),
+                ))
             return module
 
         def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -409,6 +464,15 @@ class StructuredResourceTest(unittest.TestCase):
                 ["caches.base_cache", "caches.settings_cache", "modules.kodi_utils"],
             )
             forbidden_addon.assert_not_called()
+        self.assertEqual(
+            request_alias_checks,
+            [
+                "urllib3.util.retry",
+                True,
+                True,
+                True,
+            ],
+        )
         self.assertEqual(
             loaded_modules["modules.kodi_utils"].properties,
             {
@@ -505,6 +569,48 @@ class StructuredResourceTest(unittest.TestCase):
                 ResourceInitializationCause.INITIALIZER_IMPORT_FAILED,
                 ResourceInitializationStage.SOURCE_REVALIDATION,
             )
+
+    def test_import_ownership_diagnostic_fields_are_sanitized_and_retained(self):
+        context = self._prepare_fresh_initialization()
+        import_module = __import__("importlib").import_module
+
+        def fail_alias_import(name, package=None):
+            if name == "caches.settings_cache":
+                raise VerifiedAddonImportError(
+                    f"source=/private/untrusted/path {SECRET}",
+                    import_failure_category="MODULE_SOURCE_MISMATCH",
+                    failing_module="requests.packages.urllib3.exceptions",
+                    expected_provider="script.module.urllib3",
+                    actual_provider="script.module.requests",
+                )
+            return import_module(name, package)
+
+        with patch(
+            "resources.lib.verified_addon_imports.importlib.import_module",
+            side_effect=fail_alias_import,
+        ):
+            error = self._assert_initialization_stage(
+                context,
+                ResourceInitializationStage.LOAD_INITIALIZER_DECLARATIONS,
+                ResourceInitializationCause.INITIALIZER_IMPORT_FAILED,
+                ResourceInitializationStage.SOURCE_REVALIDATION,
+            )
+        self.assertEqual(error.import_failure_category, "MODULE_SOURCE_MISMATCH")
+        self.assertEqual(
+            error.failing_module,
+            "requests.packages.urllib3.exceptions",
+        )
+        self.assertEqual(error.expected_provider, "script.module.urllib3")
+        self.assertEqual(error.actual_provider, "script.module.requests")
+        encoded = json.dumps({
+            "category": error.import_failure_category,
+            "module": error.failing_module,
+            "expected": error.expected_provider,
+            "actual": error.actual_provider,
+            "message": str(error),
+        })
+        self.assertNotIn("/private/", encoded)
+        self.assertNotIn(SECRET, encoded)
 
     def test_addon_data_directory_failure_reports_stage_and_cause(self):
         context = self._prepare_fresh_initialization()

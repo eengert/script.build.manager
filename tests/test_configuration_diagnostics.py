@@ -38,6 +38,10 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
         cause_code="RESOURCE_NOT_INITIALIZED",
         initialization_stage="",
         last_completed_stage="",
+        import_failure_category="",
+        failing_module="",
+        expected_provider="",
+        actual_provider="",
     ):
         diagnostic = ActionFailureDiagnostic(
             "PRIVATE_RESOURCE_INITIALIZATION_FAILED",
@@ -46,6 +50,10 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             cause_code,
             initialization_stage,
             last_completed_stage,
+            import_failure_category,
+            failing_module,
+            expected_provider,
+            actual_provider,
         )
         action_result = SimpleNamespace(
             action=SimpleNamespace(kind=action_kind, addon_id=""),
@@ -114,6 +122,41 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
         )
         self.assertNotIn(FAKE_SECRET, error.safe_detail)
 
+    def test_import_ownership_fields_survive_configure_diagnostic_safely(self):
+        error = self._frozen_failure(
+            "configure",
+            cause_code=ResourceInitializationCause.INITIALIZER_IMPORT_FAILED.value,
+            initialization_stage=ResourceInitializationStage.LOAD_INITIALIZER_DECLARATIONS.value,
+            last_completed_stage=ResourceInitializationStage.SOURCE_REVALIDATION.value,
+            import_failure_category="MODULE_SOURCE_MISMATCH",
+            failing_module="requests.packages.urllib3.exceptions",
+            expected_provider="script.module.urllib3",
+            actual_provider="script.module.requests",
+        )
+        self.assertIn("import_failure_category=MODULE_SOURCE_MISMATCH", error.safe_detail)
+        self.assertIn(
+            "failing_module=requests.packages.urllib3.exceptions", error.safe_detail
+        )
+        self.assertIn("expected_provider=script.module.urllib3", error.safe_detail)
+        self.assertIn("actual_provider=script.module.requests", error.safe_detail)
+        self.assertNotIn(FAKE_SECRET, error.safe_detail)
+        self.assertNotIn("/private/", error.safe_detail)
+
+    def test_action_import_diagnostics_reject_paths_and_unbounded_text(self):
+        diagnostic = _action_failure_diagnostic(SimpleNamespace(
+            code="PRIVATE_RESOURCE_INITIALIZATION_FAILED",
+            import_failure_category="MODULE_SOURCE_MISMATCH",
+            failing_module="/private/profile/secret.py",
+            expected_provider="script.module.requests",
+            actual_provider=FAKE_SECRET,
+        ))
+        self.assertEqual(diagnostic.import_failure_category, "MODULE_SOURCE_MISMATCH")
+        self.assertEqual(diagnostic.failing_module, "")
+        self.assertEqual(diagnostic.expected_provider, "script.module.requests")
+        self.assertEqual(diagnostic.actual_provider, "")
+        self.assertNotIn("/private/", json.dumps(diagnostic.to_dict()))
+        self.assertNotIn(FAKE_SECRET, json.dumps(diagnostic.to_dict()))
+
     def test_action_diagnostic_extracts_typed_stage_metadata(self):
         error = StructuredResourceInitializationError(
             "plugin.video.redlight",
@@ -132,6 +175,13 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             ResourceInitializationStage.OPEN_SETTINGS_DATABASE.value,
         )
         self.assertEqual(diagnostic.cause_code, "WAL_SETUP_FAILED")
+        self.assertEqual(
+            set(diagnostic.to_dict()),
+            {
+                "code", "owner_addon_id", "resource_id", "cause_code",
+                "initialization_stage", "last_completed_stage",
+            },
+        )
         self.assertEqual(
             set(diagnostic.to_dict()),
             {

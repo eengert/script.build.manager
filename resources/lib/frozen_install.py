@@ -121,6 +121,7 @@ _MAX_CODE = 96
 _MAX_MESSAGE = 512
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_SAFE_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 
 
 def _utc_now() -> str:
@@ -2127,20 +2128,24 @@ class FrozenInstallCoordinator:
             failure_code = getattr(exc, "code", "") or (
                 f"FROZEN_INSTALL_{type(exc).__name__.upper()}"
             )
+            safe_detail = getattr(exc, "safe_detail", "")
+            safe_detail_valid = (
+                isinstance(safe_detail, str)
+                and len(safe_detail) <= 480
+                and re.fullmatch(r"[A-Za-z0-9_=; .:/-]+", safe_detail)
+            )
+            if safe_detail_valid and len(safe_detail) > 350:
+                message = f"configuration failure: {safe_detail}"
+            else:
+                message = (
+                    "frozen installation failed at "
+                    f"{_safe_exception_location(exc)} and requires explicit recovery"
+                    + (f" ({safe_detail})" if safe_detail_valid else "")
+                )
             return self._attention(
                 transaction,
                 failure_code,
-                "frozen installation failed at "
-                f"{_safe_exception_location(exc)} and requires explicit recovery"
-                + (
-                    f" ({exc.safe_detail})"
-                    if isinstance(getattr(exc, "safe_detail", ""), str)
-                    and re.fullmatch(
-                        r"[A-Za-z0-9_=; .:/-]{1,400}",
-                        getattr(exc, "safe_detail", ""),
-                    )
-                    else ""
-                ),
+                message,
                 recoverability=plan.summary,
                 resolution_manifest=resolution_manifest,
             )
@@ -2549,7 +2554,42 @@ class FrozenInstallCoordinator:
                     diagnostic_parts.append(
                         f"last_completed_stage={last_completed_stage}"
                     )
+                import_failure_category = getattr(
+                    owner_result, "import_failure_category", ""
+                )
+                if isinstance(import_failure_category, str) and re.fullmatch(
+                    r"[A-Z0-9_]{1,80}", import_failure_category
+                ):
+                    diagnostic_parts.append(
+                        f"import_failure_category={import_failure_category}"
+                    )
+                failing_module = getattr(owner_result, "failing_module", "")
+                if isinstance(failing_module, str) and re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}",
+                    failing_module,
+                ):
+                    diagnostic_parts.append(f"failing_module={failing_module}")
+                expected_provider = getattr(owner_result, "expected_provider", "")
+                if isinstance(expected_provider, str) and _SAFE_PROVIDER_ID.fullmatch(
+                    expected_provider
+                ):
+                    diagnostic_parts.append(
+                        f"expected_provider={expected_provider}"
+                    )
+                actual_provider = getattr(owner_result, "actual_provider", "")
+                if isinstance(actual_provider, str) and _SAFE_PROVIDER_ID.fullmatch(
+                    actual_provider
+                ):
+                    diagnostic_parts.append(f"actual_provider={actual_provider}")
                 break
+            if any(
+                part.startswith("import_failure_category=")
+                for part in diagnostic_parts
+            ):
+                diagnostic_parts = [
+                    part for part in diagnostic_parts
+                    if not part.startswith(("outcome=", "phase=", "failure="))
+                ]
             error = FrozenInstallError("configuration/restart handoff failed")
             error.code = (
                 f"FROZEN_CONFIGURATION_{failure_code}"

@@ -26,12 +26,57 @@ from resources.lib.installed_addon_source import (
 class VerifiedAddonImportError(ImportError):
     """A verified add-on package import could not be isolated safely."""
 
+    def __init__(
+        self,
+        message: str = "verified add-on package import was rejected",
+        *,
+        import_failure_category: str = "",
+        failing_module: str = "",
+        expected_provider: str = "",
+        actual_provider: str = "",
+    ) -> None:
+        self.import_failure_category = (
+            import_failure_category
+            if isinstance(import_failure_category, str)
+            and _SAFE_FAILURE_CATEGORY.fullmatch(import_failure_category)
+            else ""
+        )
+        self.failing_module = (
+            failing_module
+            if isinstance(failing_module, str)
+            and _SAFE_MODULE_NAME.fullmatch(failing_module)
+            else ""
+        )
+        self.expected_provider = (
+            expected_provider
+            if isinstance(expected_provider, str)
+            and _SAFE_PROVIDER_ID.fullmatch(expected_provider)
+            else ""
+        )
+        self.actual_provider = (
+            actual_provider
+            if isinstance(actual_provider, str)
+            and _SAFE_PROVIDER_ID.fullmatch(actual_provider)
+            else ""
+        )
+        super().__init__(message)
+
 
 _IMPORT_CONTEXT_LOCK = threading.RLock()
 _PYTHON_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_OWNER_NAMESPACES = frozenset(("caches", "modules"))
 _KODI_RUNTIME_MODULES = frozenset(("xbmc", "xbmcaddon", "xbmcgui", "xbmcplugin", "xbmcvfs"))
 _STDLIB_MODULE_NAMES = getattr(sys, "stdlib_module_names", frozenset())
+_SAFE_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
+_SAFE_MODULE_NAME = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}$"
+)
+_SAFE_FAILURE_CATEGORY = re.compile(r"^[A-Z0-9_]{1,80}$")
+_REQUESTS_COMPATIBILITY_PROVIDERS = {
+    "urllib3": "script.module.urllib3",
+    "idna": "script.module.idna",
+    "chardet": "script.module.chardet",
+}
+_REQUESTS_COMPATIBILITY_VERSION = "2.31.0"
 
 
 def _root_modules(root: Path) -> dict[str, Path]:
@@ -79,36 +124,162 @@ def _module_paths(module: object) -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def _assert_module_owned(name: str, module: object, roots: Sequence[Path]) -> None:
-    paths = _module_paths(module)
+def _module_provider(
+    name: str,
+    module: object,
+    roots_by_provider: Mapping[str, Sequence[Path]],
+    *,
+    expected_provider: str = "",
+) -> str:
+    """Resolve a module object's provider from all canonical source locations."""
+    try:
+        paths = _module_paths(module)
+    except VerifiedAddonImportError:
+        raise VerifiedAddonImportError(
+            "verified package module source could not be inspected",
+            import_failure_category="MODULE_SOURCE_UNAVAILABLE",
+            failing_module=name,
+            expected_provider=expected_provider,
+        ) from None
     if not paths:
-        raise VerifiedAddonImportError("verified package module has no inspectable source path")
+        raise VerifiedAddonImportError(
+            "verified package module has no inspectable source",
+            import_failure_category="MODULE_SOURCE_UNAVAILABLE",
+            failing_module=name,
+            expected_provider=expected_provider,
+        )
+
+    observed_providers = set()
     for path in paths:
         try:
             canonical = path.resolve(strict=True)
-            if not any(canonical == root or canonical.is_relative_to(root) for root in roots):
-                raise ValueError
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError):
             raise VerifiedAddonImportError(
-                f"preexisting {name.split('.', 1)[0]} package is outside verified roots"
-            ) from exc
-
-
-def _module_is_owned(module: object, roots: Sequence[Path]) -> bool:
-    paths = _module_paths(module)
-    if not paths:
-        return False
-    try:
-        for path in paths:
-            canonical = path.resolve(strict=True)
-            if not any(
+                "verified package module source is unavailable",
+                import_failure_category="MODULE_SOURCE_MISMATCH",
+                failing_module=name,
+                expected_provider=expected_provider,
+            ) from None
+        matching = {
+            provider
+            for provider, roots in roots_by_provider.items()
+            if any(
                 canonical == root or canonical.is_relative_to(root)
                 for root in roots
-            ):
-                return False
-        return True
-    except (OSError, RuntimeError, ValueError):
-        return False
+            )
+        }
+        if len(matching) > 1:
+            raise VerifiedAddonImportError(
+                "verified package module has ambiguous provider ownership",
+                import_failure_category="MODULE_PROVIDER_AMBIGUOUS",
+                failing_module=name,
+                expected_provider=expected_provider,
+            )
+        if not matching:
+            raise VerifiedAddonImportError(
+                "verified package module source is outside verified providers",
+                import_failure_category="MODULE_SOURCE_MISMATCH",
+                failing_module=name,
+                expected_provider=expected_provider,
+            )
+        observed_providers.update(matching)
+
+    if len(observed_providers) != 1:
+        raise VerifiedAddonImportError(
+            "verified package module search paths have ambiguous providers",
+            import_failure_category="MODULE_PROVIDER_AMBIGUOUS",
+            failing_module=name,
+            expected_provider=expected_provider,
+        )
+    return next(iter(observed_providers))
+
+
+def _requests_alias_provider(name: str) -> str | None:
+    prefix = "requests.packages."
+    if not name.startswith(prefix):
+        return None
+    package = name[len(prefix):].split(".", 1)[0]
+    return _REQUESTS_COMPATIBILITY_PROVIDERS.get(package)
+
+
+def _assert_module_owned(
+    name: str,
+    module: object,
+    providers_by_module_name: Mapping[str, str],
+    versions_by_provider: Mapping[str, str],
+    roots_by_provider: Mapping[str, Sequence[Path]],
+) -> None:
+    top_level = name.split(".", 1)[0]
+    expected_provider = providers_by_module_name.get(top_level, "")
+    alias_provider = _requests_alias_provider(name)
+    if alias_provider is not None:
+        expected_provider = alias_provider
+        if alias_provider not in roots_by_provider:
+            raise VerifiedAddonImportError(
+                "Requests compatibility alias provider is outside the verified closure",
+                import_failure_category="MODULE_PROVIDER_NOT_IN_CLOSURE",
+                failing_module=name,
+                expected_provider=alias_provider,
+            )
+        requests_provider = providers_by_module_name.get("requests", "")
+        if (
+            requests_provider != "script.module.requests"
+            or versions_by_provider.get(requests_provider)
+            != _REQUESTS_COMPATIBILITY_VERSION
+        ):
+            raise VerifiedAddonImportError(
+                "Requests compatibility alias has no audited Requests provider",
+                import_failure_category="MODULE_ALIAS_PROVIDER_UNVERIFIED",
+                failing_module=name,
+                expected_provider="script.module.requests",
+                actual_provider=requests_provider,
+            )
+
+    if not expected_provider:
+        return
+
+    actual_provider = _module_provider(
+        name,
+        module,
+        roots_by_provider,
+        expected_provider=expected_provider,
+    )
+    if actual_provider != expected_provider:
+        raise VerifiedAddonImportError(
+            "verified package module source does not match its provider",
+            import_failure_category="MODULE_SOURCE_MISMATCH",
+            failing_module=name,
+            expected_provider=expected_provider,
+            actual_provider=actual_provider,
+        )
+
+    if alias_provider is None:
+        return
+
+    for parent_name in ("requests", "requests.packages"):
+        parent = sys.modules.get(parent_name)
+        if parent is None or _module_provider(
+            parent_name,
+            parent,
+            roots_by_provider,
+            expected_provider="script.module.requests",
+        ) != "script.module.requests":
+            raise VerifiedAddonImportError(
+                "Requests compatibility alias is not rooted in verified Requests",
+                import_failure_category="MODULE_ALIAS_PROVIDER_UNVERIFIED",
+                failing_module=name,
+                expected_provider="script.module.requests",
+            )
+
+    canonical_name = name[len("requests.packages."):]
+    if sys.modules.get(canonical_name) is not module:
+        raise VerifiedAddonImportError(
+            "Requests compatibility alias is not the canonical module object",
+            import_failure_category="MODULE_ALIAS_IDENTITY_MISMATCH",
+            failing_module=name,
+            expected_provider=expected_provider,
+            actual_provider=actual_provider,
+        )
 
 
 def _stdlib_paths() -> tuple[Path, ...]:
@@ -205,8 +376,11 @@ def verified_addon_import_context(
                         "verified dependency belongs to another frozen transaction"
                     )
                 dependencies.append((verified, verified.python_module_roots()))
-            if len({source.addon_id for source, _roots in dependencies}) != len(dependencies):
+            dependency_ids = {source.addon_id for source, _roots in dependencies}
+            if len(dependency_ids) != len(dependencies):
                 raise VerifiedAddonImportError("verified dependency sources contain duplicates")
+            if owner.addon_id in dependency_ids:
+                raise VerifiedAddonImportError("owner source is duplicated as a dependency")
 
             owner_names = {}
             for root in owner_roots:
@@ -228,6 +402,24 @@ def verified_addon_import_context(
                 raise VerifiedAddonImportError(
                     "owner and dependency Python module roots contain a collision"
                 )
+
+            providers_by_module_name = {
+                name: owner.addon_id for name in owner_names
+            }
+            providers_by_module_name.update({
+                name: addon_id for name, (addon_id, _root) in dependency_names.items()
+            })
+            providers_by_module_name["caches"] = owner.addon_id
+            providers_by_module_name["modules"] = owner.addon_id
+            versions_by_provider = {owner.addon_id: owner.version}
+            versions_by_provider.update({
+                source.addon_id: source.version for source, _roots in dependencies
+            })
+            roots_by_provider = {owner.addon_id: tuple(owner_roots)}
+            roots_by_provider.update({
+                source.addon_id: tuple(roots)
+                for source, roots in dependencies
+            })
 
             required = dict(required_module_providers)
             for module_name, addon_id in required.items():
@@ -257,12 +449,16 @@ def verified_addon_import_context(
                 for name, roots in roots_by_name.items()
             }
             controlled_names = set(controlled_roots)
-            dependency_names_by_top_level = set(dependency_names)
             for loaded_name, loaded_module in tuple(sys.modules.items()):
                 top_level = loaded_name.split(".", 1)[0]
-                roots = controlled_roots.get(top_level)
-                if roots is not None:
-                    _assert_module_owned(loaded_name, loaded_module, roots)
+                if top_level in controlled_roots:
+                    _assert_module_owned(
+                        loaded_name,
+                        loaded_module,
+                        providers_by_module_name,
+                        versions_by_provider,
+                        roots_by_provider,
+                    )
 
             root_order = []
             for _source, roots in dependencies:
@@ -297,9 +493,14 @@ def verified_addon_import_context(
             yield importlib.import_module
             for loaded_name, loaded_module in tuple(sys.modules.items()):
                 top_level = loaded_name.split(".", 1)[0]
-                roots = controlled_roots.get(top_level)
-                if roots is not None:
-                    _assert_module_owned(loaded_name, loaded_module, roots)
+                if top_level in controlled_roots:
+                    _assert_module_owned(
+                        loaded_name,
+                        loaded_module,
+                        providers_by_module_name,
+                        versions_by_provider,
+                        roots_by_provider,
+                    )
             for loaded_name, loaded_module in tuple(sys.modules.items()):
                 if loaded_name in modules_before:
                     continue
@@ -335,30 +536,12 @@ def verified_addon_import_context(
                 top_level = name.split(".", 1)[0]
                 if top_level not in controlled_names:
                     continue
-                original = prefix_snapshot.get(name)
-                if original is not None:
-                    sys.modules[name] = original
-                    namespace = getattr(original, "__dict__", None)
-                    previous = dict_snapshots.get(name)
-                    if namespace is not None and previous is not None:
-                        namespace.clear()
-                        namespace.update(previous)
-                elif top_level in _OWNER_NAMESPACES:
-                    # These two package names are scoped to this owner's
-                    # temporary import context. Clear every newly created
-                    # entry, including namespace roots with no __file__.
-                    sys.modules.pop(name, None)
-                elif (
-                    top_level in dependency_names_by_top_level
-                    and _module_is_owned(
-                        sys.modules[name],
-                        controlled_roots[top_level],
-                    )
-                ):
-                    # The context itself loaded this exact managed dependency
-                    # package for declaration import. Remove only its newly
-                    # created entries; preexisting shared modules are restored
-                    # from the snapshot above.
+                if name not in prefix_snapshot:
                     sys.modules.pop(name, None)
             for name, module in prefix_snapshot.items():
                 sys.modules[name] = module
+                namespace = getattr(module, "__dict__", None)
+                previous = dict_snapshots.get(name)
+                if namespace is not None and previous is not None:
+                    namespace.clear()
+                    namespace.update(previous)

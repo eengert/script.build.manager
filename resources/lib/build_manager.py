@@ -79,6 +79,13 @@ from resources.lib.skin import KodiRuntimeSkinBackend, SkinActivator
 from resources.lib.validator import ValidationReport, validate_build_state
 
 
+_SAFE_IMPORT_FAILURE_CATEGORY = re.compile(r"^[A-Z0-9_]{1,80}$")
+_SAFE_IMPORT_FAILURE_MODULE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}$"
+)
+_SAFE_IMPORT_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
+
+
 class ReconcilePhase(str, Enum):
     """Phase in which a reconciliation failure occurred."""
 
@@ -191,6 +198,10 @@ class ActionFailureDiagnostic:
     cause_code: str = ""
     initialization_stage: str = ""
     last_completed_stage: str = ""
+    import_failure_category: str = ""
+    failing_module: str = ""
+    expected_provider: str = ""
+    actual_provider: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, str) or not re.fullmatch(
@@ -214,6 +225,17 @@ class ActionFailureDiagnostic:
             raise ValueError("action failure initialization stage is unsupported")
         if self.last_completed_stage and self.last_completed_stage not in stage_values:
             raise ValueError("action failure completed stage is unsupported")
+        if self.import_failure_category and not _SAFE_IMPORT_FAILURE_CATEGORY.fullmatch(
+            self.import_failure_category
+        ):
+            raise ValueError("action failure import category is not safe")
+        if self.failing_module and not _SAFE_IMPORT_FAILURE_MODULE.fullmatch(
+            self.failing_module
+        ):
+            raise ValueError("action failure module is not safe")
+        for provider in (self.expected_provider, self.actual_provider):
+            if provider and not _SAFE_IMPORT_PROVIDER.fullmatch(provider):
+                raise ValueError("action failure provider is not safe")
 
     def to_dict(self) -> dict:
         result = {
@@ -226,6 +248,14 @@ class ActionFailureDiagnostic:
             result["initialization_stage"] = self.initialization_stage
         if self.last_completed_stage:
             result["last_completed_stage"] = self.last_completed_stage
+        if self.import_failure_category:
+            result["import_failure_category"] = self.import_failure_category
+        if self.failing_module:
+            result["failing_module"] = self.failing_module
+        if self.expected_provider:
+            result["expected_provider"] = self.expected_provider
+        if self.actual_provider:
+            result["actual_provider"] = self.actual_provider
         return result
 
 
@@ -1224,8 +1254,37 @@ def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
         initialization_stage = ""
     if last_completed_stage not in {item.value for item in ResourceInitializationStage}:
         last_completed_stage = ""
+    import_failure_category = getattr(exc, "import_failure_category", "")
+    if not isinstance(import_failure_category, str) or not _SAFE_IMPORT_FAILURE_CATEGORY.fullmatch(
+        import_failure_category
+    ):
+        import_failure_category = ""
+    failing_module = getattr(exc, "failing_module", "")
+    if not isinstance(failing_module, str) or not _SAFE_IMPORT_FAILURE_MODULE.fullmatch(
+        failing_module
+    ):
+        failing_module = ""
+    expected_provider = getattr(exc, "expected_provider", "")
+    if not isinstance(expected_provider, str) or not _SAFE_IMPORT_PROVIDER.fullmatch(
+        expected_provider
+    ):
+        expected_provider = ""
+    actual_provider = getattr(exc, "actual_provider", "")
+    if not isinstance(actual_provider, str) or not _SAFE_IMPORT_PROVIDER.fullmatch(
+        actual_provider
+    ):
+        actual_provider = ""
     return ActionFailureDiagnostic(
-        code, owner, resource, cause, initialization_stage, last_completed_stage
+        code,
+        owner,
+        resource,
+        cause,
+        initialization_stage,
+        last_completed_stage,
+        import_failure_category,
+        failing_module,
+        expected_provider,
+        actual_provider,
     )
 
 
