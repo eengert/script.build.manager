@@ -1,27 +1,52 @@
-# Agent Handoff — BM-017E started; BM-023A-R1 synchronized
+# Agent Handoff — BM-017E investigation complete; BM-023A-R1 synchronized
 
-The R1 production correction was integrated onto protected matrix as
-`9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; neutral tracking is
-`9abc4724fede1a2a936be37db501d1ab24c6d5f1`. The correction carries frozen
-source identity through reconciliation/restart metadata and declares the
-Family Room Red Light resource. Matrix focused validation passed **288/288**;
-full suite passed **1647/1647**. Worker tracking was excluded from matrix.
-Codex synchronization uses a normal merge, preserving its worker history.
+## BM-017E disposition
 
-BM-023A-R1 remains complete as a validation task with result
-`BLOCKED_RESOURCE_NOT_INITIALIZED`. The isolated Kodi 21.3/Omega destination
-was proven portable. Its clean profile had no Red Light settings resource, and
-production lacked a supported deterministic initialize/quiesce lifecycle. No
-frozen software was installed, updater quarantine was not entered, and the
-YouTube prompt was not reached. The protected overlay's safe metadata and
-public YouTube-Skip compatibility passed without emitting private values.
-Family Room profile/device was not accessed; tvOS remains NOT VALIDATED.
+**Complete as a static investigation** with result
+`BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
 
-BM-017E begins with a static audit of the exact public Red Light 2.6.8 package
-whose expected SHA-256 is
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
-The task will not use the real Family Room database or protected overlay
-values. No Kodi device or the Mac test profile is part of BM-017E.
+The exact public Red Light 2.6.8 package (SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`) contains
+an internal `ensure_database_tables('settings_db')` helper and a fresh-settings
+sync path. The helper is called from directory-listing routing, not a standalone
+initializer API. The ordinary enabled-addon service performs broad
+integrity/rebuild maintenance, syncs settings, bootstraps properties, and starts
+multiple background workers. Its pause flag does not stop all workers, and its
+disabled notification has no worker-join/quiescence acknowledgement.
+
+Build Manager's current frozen-install flow enforces the add-on's requested
+enabled state before its configuration runner. BM-022 restart resume has a
+separate updater-policy transaction and finalizes software without rerunning
+configuration; BM-020 stores no resource stage and its resume path does not
+accept a further restart requirement. The present ordering cannot prove that
+the owner remains disabled while the internal initializer and private apply
+run, and that it is re-enabled only afterward while updater quarantine remains
+active. No safe production lifecycle could be established from the current
+architecture, so no production code or tests were added and no Red Light code
+was executed. Full static findings and the exact next step are in
+[`docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md`](../docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md).
+
+No Family Room database, protected overlay values, Kodi device, or portable Mac
+test profile was accessed. BM-023A remains blocked; do not start its Mac retry
+from BM-017E. tvOS remains NOT VALIDATED.
+
+## BM-023A-R1 integration
+
+The reviewed R1 correction was integrated onto protected matrix as substantive
+commit `9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; neutral tracking is
+`9abc4724fede1a2a936be37db501d1ab24c6d5f1`. Matrix focused validation passed
+**288/288** and the full suite passed **1647/1647**. Compileall, JSON parsing,
+and `git diff --check` passed. The Codex worker synchronized by normal merge
+`7b8fe386447fd345c3029d7c8a13f0a96cf300ce`; only the authorized branches were
+pushed. BM-023A-R1 remains complete as validation with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`.
+
+The requested Luna-6 / Max setting was not observable. Runtime label was GPT-6;
+effort and usage telemetry were unavailable.
+
+**Smallest next step**: review the BM-017E audit and design a single durable
+BM-020/BM-022 stage for disabling Red Light through initialization and private
+application, then re-enabling it before a future BM-023A retry.
 
 ---
 

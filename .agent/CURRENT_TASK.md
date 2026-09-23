@@ -2,23 +2,34 @@
 
 ## BM-017E — Structured Private Resource Initialization & Quiescence
 
-**Status**: In progress. The supervisor-approved BM-023A-R1 correction was
-integrated as matrix commit `9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; neutral
-matrix tracking is `9abc4724fede1a2a936be37db501d1ab24c6d5f1`. Codex is being
-synchronized by a normal merge. BM-023A-R1 remains complete as a validation
-task with result `BLOCKED_RESOURCE_NOT_INITIALIZED`.
+**Status**: Complete as a static investigation. Result:
+`BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
 
-The next action is a static audit of the exact public Red Light 2.6.8 package
-with SHA-256
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
-Determine the Red Light-owned database creation, schema, WAL, settings cache,
-startup, and quiescence behavior before executing any add-on code. Use only
-public package/source and fake/disposable data. Do not access the Family Room
-database or inspect protected overlay values. BM-017E is separate from the Mac
-destination retry; do not modify its portable profile.
+The public Red Light 2.6.8 package was audited at SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. It has
+an internal settings-table initializer, but its ordinary enabled-addon startup
+performs broad database maintenance and starts background workers. Build
+Manager's current BM-020/BM-022 durable ordering cannot prove that Red Light
+stays disabled across restart, initialization, private application, and
+re-enable while updater quarantine remains active. No Red Light code was
+executed, no production implementation or live validation was attempted, and
+no Family Room database, overlay value, Kodi device, or portable Mac test
+profile was accessed. See
+[`docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md`](../docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md).
 
-Requested Luna-6 / Max was not observable in this runtime; the runtime label is
-GPT-6 and effort/usage telemetry are unavailable.
+BM-023A-R1 remains complete as a validation task with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`. Its production correction is integrated on
+matrix as `9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`, neutral tracking is
+`9abc4724fede1a2a936be37db501d1ab24c6d5f1`, and Codex is synchronized by normal
+merge `7b8fe386447fd345c3029d7c8a13f0a96cf300ce`. The BM-023A Mac retry remains
+blocked and was not started; tvOS remains NOT VALIDATED.
+
+The requested Luna-6 / Max was not observable in this runtime. The observed
+runtime label is GPT-6; effort and Codex usage telemetry are unavailable.
+
+**Smallest next step**: review the audit disposition and design one durable
+BM-020/BM-022 stage that holds Red Light disabled through initialization and
+private application before any later BM-023A retry is authorized.
 
 ---
 
