@@ -1,5 +1,36 @@
 # BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
+## Validation transport diagnosis — 2026-09-23
+
+Classification: `VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`. With no Kodi
+running, a temporary Python HTTP server could not bind `127.0.0.1` on an
+ephemeral port: `PermissionError`, errno 1 (`EPERM`). No listening port was
+created. Per the fail-fast scope, urllib, client sockets, curl, and a localhost
+variant were not tried. No code or transport workaround was introduced.
+
+Earlier project handoffs report successful disposable BM-022
+`validate-frozen-install` and BM-020C `validate-build-manager-resume` runs.
+Their `JSONRPC.Ping` path uses the same harness code retained from BM-022
+commit `27f4215`: `urllib.request.urlopen()` to
+`http://127.0.0.1:8920/jsonrpc`. `configure_webserver()` writes
+`services.webserver=true` and port 8920 to disposable `guisettings.xml` before
+launch, as the BM-017F command did. The request, webserver setup, launch args,
+and environment construction show no relevant code change since that
+successful implementation; only the disposable-path isolation logic and
+BM-017F-specific command/fixture were added. Historical records do not capture
+the exact execution sandbox or proxy environment, so equivalence of the
+previous and current Codex execution surfaces is unknown.
+
+In the current command environment, uppercase/lowercase HTTP_PROXY,
+HTTPS_PROXY, ALL_PROXY, NO_PROXY, and no_proxy variables were absent. Python
+reported no proxy-bypass match for `127.0.0.1` or `localhost`; that result
+alone does not establish whether a system-level proxy is configured. No proxy
+URL/value was printed or further inspected. The denied bind proves a current
+execution environment loopback restriction independently of Kodi or proxy
+routing.
+BM-017F remains blocked pending live proof; no Kodi process was launched in
+this investigation.
+
 ## Latest continuation result — disposable Kodi JSON-RPC unavailable — 2026-09-23
 
 Current classification: `BLOCKED_DISPOSABLE_KODI_JSONRPC_OPERATION_NOT_PERMITTED`.

@@ -1,5 +1,35 @@
 # Current Handoff — BM-017F blocked at disposable JSON-RPC readiness
 
+## Follow-up transport investigation — loopback blocked
+
+With Kodi stopped, a no-Kodi Python HTTP server bind to `127.0.0.1` on an
+ephemeral port failed with `PermissionError`, errno 1 (`EPERM`). No port was
+selected and no HTTP listener started, so urllib, direct socket-client, and
+curl requests were not attempted. This meets the environment-block condition;
+no alternate host, port, or transport was tried. Classification:
+`VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`.
+
+Historical project handoffs record that the disposable BM-022
+`validate-frozen-install` gate and BM-020C `validate-build-manager-resume`
+gate succeeded and exercised `JSONRPC.Ping`. The successful BM-022 source at
+`27f4215` and the current harness both target
+`http://127.0.0.1:8920/jsonrpc` through `urllib.request.urlopen()`. Both write
+the enabled webserver setting and port 8920 to disposable `guisettings.xml`
+before launch. Git history shows no request, webserver, launch command, or
+launch-environment change since BM-022; the current harness's functional
+changes are the BM-017F command/fixture and lexical profile-isolation check.
+The old records do not state whether those successes used the same Codex
+execution sandbox or record proxy variables.
+
+During this investigation all uppercase and lowercase HTTP_PROXY, HTTPS_PROXY,
+ALL_PROXY, NO_PROXY, and no_proxy variables were unset. `urllib`'s loopback
+proxy-bypass checks returned false; because explicit proxy variables were
+absent, no environment-proxy route was indicated. The bypass result alone does
+not establish whether a system-level proxy is configured; no proxy URL/value
+was printed or further inspected. A proxy cannot explain the failed server
+bind; the current execution surface denies loopback listener creation. No code
+was changed.
+
 ## Work completed
 
 The preserved BM-017F implementation now places held-addon registry readiness

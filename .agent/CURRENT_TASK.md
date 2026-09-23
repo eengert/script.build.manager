@@ -8,6 +8,35 @@ preserved BM-017F implementation and tests are on `agent/codex` in commit
 Red Light 2.6.8 object remains validated against SHA-256
 `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
 
+### Transport diagnosis — 2026-09-23
+
+Classification: `VALIDATION_ENVIRONMENT_LOOPBACK_BLOCKED`. With no Kodi
+running, a temporary Python HTTP server bind to `127.0.0.1` on an ephemeral
+port failed with `PermissionError`, errno 1. No listener/port was created, so
+urllib, direct-client socket, and curl requests could not be run; the probe
+stopped at the explicit environment-block condition. No loopback or proxy
+workaround was attempted.
+
+Project records show earlier successful disposable BM-022
+`validate-frozen-install` and BM-020C `validate-build-manager-resume` gates,
+which use `JSONRPC.Ping`. At BM-022 commit `27f4215` and current worker HEAD,
+the harness JSON-RPC client targets `http://127.0.0.1:8920/jsonrpc` with
+`urllib.request.urlopen`; `configure_webserver()` writes enabled webserver
+settings to disposable `guisettings.xml` before launch. The current BM-017F
+path uses the same setup. Git history shows no change to the JSON-RPC request,
+webserver configuration, launch command, or launch environment since that
+successful BM-022 implementation; current harness differences are its
+lexical disposable-path safety check and BM-017F fixture/command.
+
+The historical records do not identify the precise prior Codex execution
+surface or proxy environment. In this probe, uppercase and lowercase
+HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, and no_proxy variables were all
+unset. Python's `proxy_bypass()` returned false for loopback; that does not
+establish whether a system-level proxy is configured. No proxy URL or value
+was printed or further inspected. The bind EPERM establishes that this current
+execution environment cannot run a loopback listener, independent of Kodi.
+No code was changed and no Kodi launch or lifecycle validation occurred.
+
 The corrected BM-022 quiescence continuation now invokes the shared held-addon
 registry-readiness gate before `install()` enters configuration. It revalidates
 the durable transaction, updater quarantine, manifest/resolution identities,

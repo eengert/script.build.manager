@@ -2,7 +2,7 @@
   "active_agent": "codex",
   "status": "blocked",
   "task": "BM-017F",
-  "reason": "BM-022 now invokes the shared registry-readiness gate before configuration and the full suite passes. The single newly authorized harness run launched Kodi but its disposable JSON-RPC readiness request failed with Operation not permitted before lifecycle setup. Diagnostics are preserved; no rerun. Await supervisor direction and a permitted disposable JSON-RPC environment.",
+  "reason": "BM-022 now invokes the shared registry-readiness gate before configuration and the full suite passes. The last authorized harness run failed at disposable JSON-RPC readiness with Operation not permitted; a no-Kodi probe also failed to bind 127.0.0.1 with EPERM, confirming loopback is blocked in this execution environment. No workaround or rerun. Await a loopback-capable execution environment and new live approval.",
   "last_commit": "beff4f1",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
