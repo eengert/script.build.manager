@@ -523,3 +523,37 @@ The Antigravity worker's measured WF-002 usage row is preserved exactly once
 in `.agent/USAGE_HISTORY.md`; no Codex usage figures were fabricated.
 
 Next task awaits supervisor assignment.
+
+## BM-023B — Frozen Artifact Fallback & Install Recoverability integrated
+
+**Result**: supervisor-approved BM-023B implementation commit `1d60ed3` was
+reviewed and cherry-picked as matrix commit `5648c6781b4567d3b2f0931fc4ed838142ed22f1`.
+The 17 substantive production, test, schema/example, and documentation paths
+were integrated; the four worker `.agent/*` paths were excluded. Matrix remains
+neutral with `active_agent: none`.
+
+Exact artifact validation remains strict and exact-first. Repository-current
+fallback requires explicit policy and a concrete captured trusted repository;
+Skip is explicit, does not satisfy required dependencies, and remains an
+installation resolution separate from captured source state. Resolution records
+and fingerprints survive restart/resume and are propagated into ordinary
+Build Manager reconciliation. Private-overlay compatibility is evaluated from
+public ownership/resource declarations.
+
+Family Room source capture remains COMPLETE and unchanged at fingerprint
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`;
+exact frozen coverage is 30 / 31 installed managed add-ons. YouTube
+`7.4.4+unofficial.2` remains without an exact artifact or established trusted
+repository. Its policy permits Skip or Cancel Build and preserves the
+manual-install warning. `script.module.pysocks` remains absent and optional.
+BM-023A-R1 is architecturally unblocked but NOT YET EXECUTED. tvOS validation
+remains NOT VALIDATED.
+
+**Validation**: integration-focused modules passed **581/581**; full repository
+suite passed **1643/1643**. `compileall`, schema/example JSON parsing, and
+`git diff --check` passed. Tests used fixtures and fake backends. No Kodi app,
+Family Room, device, portable profile, or private-overlay value was accessed.
+
+**Next step**: normally merge matrix into `agent/codex`, resolve `.agent`
+semantically while retaining worker history, push only the Codex worker branch,
+then begin the separately authorized BM-023A-R1 test-app validation.

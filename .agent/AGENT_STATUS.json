@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A-H",
-  "reason": "EXACT_YOUTUBE_7.4.4_UNOFFICIAL_2_NOT_RECOVERED. Public upstream and repository metadata searches found no exact .2 package reference, URL, checksum, archived asset, or .2-specific source commit. No ZIP was downloaded, imported, substituted, or repackaged. The retained manifest/store remain unchanged and production validation still rejects installed plugin.video.youtube 7.4.4+unofficial.2; absent optional pysocks remains artifactless and excluded. BM-023A remains historically BLOCKED_MISSING_FROZEN_ARTIFACTS. Matrix tracking is neutral; no Family Room/device, Kodi, portable profile, or private overlay was accessed or modified. Sanitized worker tracking commit 49791ea is recorded here; reviewed implementation a8d4b71 remains integrated as ff5c000.",
-  "last_commit": "ff5c000",
-  "matrix_sha": "ff5c000",
-  "next_agent": "human",
+  "task": "BM-023B-merge",
+  "reason": "Integrated only the reviewed substantive BM-023B implementation as 5648c67; excluded Codex worker tracking. Exact-first fallback/Skip policy and safe restart resolution passed focused module suites 581/581 and full suite 1643/1643. Family Room capture remains COMPLETE at 30/31 exact artifacts; YouTube 7.4.4+unofficial.2 remains unavailable with trusted repository unknown and Skip/Cancel permitted. BM-023A-R1 is architecturally unblocked but NOT YET EXECUTED; tvOS is NOT VALIDATED. Matrix tracking remains neutral; no Kodi, profile, device, or private overlay was accessed.",
+  "last_commit": "5648c6781b4567d3b2f0931fc4ed838142ed22f1",
+  "matrix_sha": "5648c6781b4567d3b2f0931fc4ed838142ed22f1",
+  "next_agent": "codex",
   "updated_at": "2026-09-22"
 }

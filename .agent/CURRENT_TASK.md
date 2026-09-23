@@ -1,5 +1,47 @@
 # Current Task
 
+## BM-023B — Frozen Artifact Fallback & Install Recoverability
+
+**Status**: Complete on protected `matrix`. Reviewed substantive worker commit
+`1d60ed39b36a1b25ac4c0d912712a55fe9a17e8f` was cherry-picked as
+`5648c6781b4567d3b2f0931fc4ed838142ed22f1`. Worker `.agent/*` files were not
+integrated; matrix tracking is neutral (`active_agent: none`). Starting matrix
+was `b82885ab01fdb3c2486fff0c3e42bf33262b110e`.
+
+Exact captured artifacts remain preferred and strictly validated. Repository
+fallback and Skip require explicit policy and user choice; fallback requires a
+concrete trusted repository represented by an exact captured package. Skip is
+checked against dependency closure and remains absent from installed state.
+Source capture, install plan, resolution, and resolved-software identities
+remain distinct. Restart-safe metadata preserves resolution without rewriting
+the source manifest.
+
+Family Room captured desired state remains COMPLETE, with 30 / 31 exact
+artifact-backed installed managed add-ons. The source fingerprint remains
+`sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
+YouTube `7.4.4+unofficial.2` exact artifact is unavailable; trusted repository
+provenance is not established. Its explicit policy permits Skip or Cancel Build
+and retains the manual-install warning. Absent optional `script.module.pysocks`
+remains absent.
+
+Matrix validation passed: relevant focused module suites **581/581**, full
+repository suite **1643/1643**, `compileall`, schema/example JSON parsing, and
+`git diff --check`. These were automated fixture tests; Kodi, Family Room, any
+device, the portable profile, and private overlay values were not accessed.
+
+BM-023A remains historically `BLOCKED_MISSING_FROZEN_ARTIFACTS`; BM-023A-R and
+BM-023A-H remain complete. BM-023A-R1 is architecturally unblocked but
+**NOT YET EXECUTED**. tvOS validation remains **NOT VALIDATED**.
+
+**Smallest next step**: normally merge the new `origin/matrix` into
+`agent/codex`, preserve worker history while semantically resolving `.agent`,
+push only `agent/codex`, then begin the separately authorized BM-023A-R1
+macOS test-app validation.
+
+---
+
+# Previous Task Records
+
 ## BM-023A-H — Historical Exact Artifact Recovery
 
 **Status**: Complete with result
