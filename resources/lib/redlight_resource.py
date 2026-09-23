@@ -11,8 +11,6 @@ then applies only owned rows; it does not run service, provider, or auth setup.
 from __future__ import annotations
 
 import sqlite3
-import importlib
-import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -40,6 +38,7 @@ from resources.lib.installed_addon_source import (
     PrivateResourceOwnerContext,
     VerifiedInstalledAddonSource,
 )
+from resources.lib.verified_addon_imports import verified_addon_import_context
 
 
 REDLIGHT_ADDON_ID = "plugin.video.redlight"
@@ -250,7 +249,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 self._validate_quiescence()
                 return self._verified_source_context(declaration, context)
 
-            installed_source = run_stage(
+            owner_context = run_stage(
                 ResourceInitializationStage.SOURCE_REVALIDATION,
                 ResourceInitializationCause.SOURCE_REVALIDATION_FAILED,
                 revalidate_source,
@@ -262,7 +261,11 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 set_property,
                 settings_db_synced_property,
                 settings_sync_fingerprint_property,
-            ) = self._redlight_initializers(installed_source, run_stage)
+            ) = self._redlight_initializers(
+                owner_context.installed_source,
+                run_stage,
+                dependency_sources=owner_context.python_dependency_sources,
+            )
             def validate_empty_before_initialization():
                 if not self._settings_database_is_empty():
                     raise PrivateResourceCompatibilityError(
@@ -328,7 +331,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                     set_property(settings_db_synced_property, "true")
                     set_property(
                         settings_sync_fingerprint_property,
-                        f"{installed_source.version}:{len(default_settings())}",
+                        f"{owner_context.expected_version}:{len(default_settings())}",
                     )
                 except Exception:
                     raise PrivateResourceNotInitializedError(
@@ -422,7 +425,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         self,
         declaration: StructuredPrivateResourceDeclaration,
         context: Optional[PrivateResourceOwnerContext],
-    ) -> VerifiedInstalledAddonSource:
+    ) -> PrivateResourceOwnerContext:
         if (
             context is None
             or not context.matches(REDLIGHT_ADDON_ID, self._addon_version)
@@ -445,7 +448,31 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             raise PrivateResourceCompatibilityError(
                 "verified Red Light source identity does not match the resource owner"
             )
-        return source
+        dependency_sources = []
+        for dependency in context.python_dependency_sources:
+            try:
+                verified_dependency = dependency.revalidate()
+            except Exception:
+                raise PrivateResourceNotInitializedError(
+                    "verified Red Light Python dependency changed before initialization"
+                ) from None
+            if (
+                verified_dependency.frozen_transaction_id != source.frozen_transaction_id
+                or verified_dependency.manifest_fingerprint != source.manifest_fingerprint
+            ):
+                raise PrivateResourceCompatibilityError(
+                    "verified Red Light Python dependency belongs to another frozen install"
+                )
+            dependency_sources.append(verified_dependency)
+        return PrivateResourceOwnerContext(
+            owner_addon_id=context.owner_addon_id,
+            expected_version=context.expected_version,
+            registry_version=context.registry_version,
+            owner_enabled=context.owner_enabled,
+            activation_held=context.activation_held,
+            installed_source=source,
+            python_dependency_sources=tuple(dependency_sources),
+        )
 
     def _settings_database_is_empty(self) -> bool:
         if not self.database_path.exists():
@@ -552,6 +579,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
     def _redlight_initializers(
         installed_source: VerifiedInstalledAddonSource,
         run_stage,
+        dependency_sources=(),
     ):
         """Import the audited package defaults from a revalidated installed root.
 
@@ -566,27 +594,21 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             installed_source.revalidate,
             expected_exceptions=(OSError, ValueError),
         )
-        addon_path = verified.installed_root
-
         def load_helpers():
-            for top_level in ("caches", "modules"):
-                loaded = sys.modules.get(top_level)
-                origin = getattr(loaded, "__file__", None) if loaded else None
-                if origin is not None:
-                    try:
-                        Path(origin).resolve().relative_to(addon_path)
-                    except ValueError:
-                        raise PrivateResourceCompatibilityError(
-                            "Red Light helper namespace is already occupied"
-                        ) from None
-
-            inserted = str(addon_path) not in sys.path
-            if inserted:
-                sys.path.insert(0, str(addon_path))
-            try:
-                base_cache = importlib.import_module("caches.base_cache")
-                settings_cache_module = importlib.import_module("caches.settings_cache")
-                kodi_utils = importlib.import_module("modules.kodi_utils")
+            import_root = verified.resources_lib_root()
+            expected_root = (verified.installed_root / "resources" / "lib").resolve(strict=True)
+            if import_root != expected_root:
+                raise PrivateResourceCompatibilityError(
+                    "Red Light Python import root does not match resources/lib"
+                )
+            with verified_addon_import_context(
+                verified,
+                dependency_sources,
+                required_module_providers={"requests": "script.module.requests"},
+            ) as import_module:
+                base_cache = import_module("caches.base_cache")
+                settings_cache_module = import_module("caches.settings_cache")
+                kodi_utils = import_module("modules.kodi_utils")
                 table_creators = getattr(base_cache, "table_creators")
                 default_settings = getattr(settings_cache_module, "default_settings")
                 new_setting_value = getattr(settings_cache_module, "_new_setting_value")
@@ -606,32 +628,12 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                     settings_db_synced_property,
                     settings_sync_fingerprint_property,
                 )
-            finally:
-                if inserted:
-                    try:
-                        sys.path.remove(str(addon_path))
-                    except ValueError:
-                        pass
-                # Kodi gives each add-on invoker its own Python interpreter.
-                # Clear this bounded import set so later Build Manager calls
-                # cannot reuse the package-level cache accidentally.
-                for name, module in tuple(sys.modules.items()):
-                    if name.split(".", 1)[0] not in {"caches", "modules"}:
-                        continue
-                    origin = getattr(module, "__file__", None)
-                    if origin is None:
-                        continue
-                    try:
-                        Path(origin).resolve().relative_to(addon_path)
-                    except ValueError:
-                        continue
-                    sys.modules.pop(name, None)
 
         return run_stage(
             ResourceInitializationStage.LOAD_INITIALIZER_DECLARATIONS,
             ResourceInitializationCause.INITIALIZER_IMPORT_FAILED,
             load_helpers,
-            expected_exceptions=(ImportError, AttributeError),
+            expected_exceptions=(ImportError, AttributeError, ValueError, OSError),
         )
 
     def _verify_database(self) -> None:

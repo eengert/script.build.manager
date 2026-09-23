@@ -106,22 +106,59 @@ def _overlay(*values):
 def _verified_source_context(root: Path, *, version="2.6.8"):
     addons_root = root / "verified-kodi-home" / "addons"
     installed_root = addons_root / REDLIGHT_ADDON_ID
-    installed_root.mkdir(parents=True, exist_ok=True)
+    (installed_root / "resources" / "lib").mkdir(parents=True, exist_ok=True)
     (installed_root / "addon.xml").write_text(
-        f'<addon id="{REDLIGHT_ADDON_ID}" version="{version}"/>',
+        f'<addon id="{REDLIGHT_ADDON_ID}" version="{version}">'
+        '<extension point="xbmc.python.module" library="resources/lib/"/>'
+        '</addon>',
         encoding="utf-8",
     )
+    transaction_id = "11111111-1111-4111-8111-111111111111"
+    manifest_fingerprint = "b" * 64
     identity = ManagedAddonSourceIdentity(
         REDLIGHT_ADDON_ID,
         version,
         "a" * 64,
         1234,
-        "11111111-1111-4111-8111-111111111111",
-        "b" * 64,
+        transaction_id,
+        manifest_fingerprint,
     )
-    source = InstalledAddonSourceResolver(lambda: addons_root).resolve(identity)
+    resolver = InstalledAddonSourceResolver(lambda: addons_root)
+    source = resolver.resolve(identity)
+    dependency_specs = (
+        ("script.module.requests", "2.31.0", "requests"),
+        ("script.module.urllib3", "2.2.3", "urllib3"),
+        ("script.module.certifi", "2023.5.7", "certifi"),
+        ("script.module.chardet", "5.1.0", "chardet"),
+        ("script.module.idna", "3.10.0", "idna"),
+    )
+    dependency_sources = []
+    for index, (addon_id, addon_version, _module) in enumerate(dependency_specs):
+        dependency_root = addons_root / addon_id
+        (dependency_root / "lib").mkdir(parents=True)
+        (dependency_root / "addon.xml").write_text(
+            f'<addon id="{addon_id}" version="{addon_version}">'
+            '<extension point="xbmc.python.module" library="lib"/>'
+            '</addon>',
+            encoding="utf-8",
+        )
+        dependency_identity = ManagedAddonSourceIdentity(
+            addon_id,
+            addon_version,
+            format(index + 1, "x") * 64,
+            200 + index,
+            transaction_id,
+            manifest_fingerprint,
+        )
+        dependency_sources.append(resolver.resolve(dependency_identity))
     return PrivateResourceOwnerContext(
-        REDLIGHT_ADDON_ID, version, version, False, True, source
+        REDLIGHT_ADDON_ID,
+        version,
+        version,
+        False,
+        True,
+        source,
+        tuple(dependency_sources),
     )
 
 
@@ -129,18 +166,17 @@ def _fake_redlight_package(root: Path):
     """Small fixture for the audited defaults/schema import contract."""
     context = _verified_source_context(root)
     addon_root = context.installed_source.installed_root
-    (addon_root / "caches").mkdir()
-    (addon_root / "modules").mkdir()
-    (addon_root / "caches" / "__init__.py").write_text("", encoding="utf-8")
-    (addon_root / "modules" / "__init__.py").write_text("", encoding="utf-8")
-    (addon_root / "caches" / "base_cache.py").write_text(
+    import_root = addon_root / "resources" / "lib"
+    (import_root / "caches").mkdir()
+    (import_root / "modules").mkdir()
+    (import_root / "caches" / "base_cache.py").write_text(
         "def table_creators():\n"
         "    return {'settings_db': (\"CREATE TABLE IF NOT EXISTS settings "
         "(setting_id text not null unique, setting_type text, "
         "setting_default text, setting_value text)\",)}\n",
         encoding="utf-8",
     )
-    (addon_root / "modules" / "kodi_utils.py").write_text(
+    (import_root / "modules" / "kodi_utils.py").write_text(
         "properties = {}\n"
         "def addon_fanart():\n"
         "    return 'special://home/addons/plugin.video.redlight/resources/media/fanart.jpg'\n"
@@ -150,7 +186,7 @@ def _fake_redlight_package(root: Path):
         "    properties[key] = value\n",
         encoding="utf-8",
     )
-    (addon_root / "caches" / "settings_cache.py").write_text(
+    (import_root / "caches" / "settings_cache.py").write_text(
         "from modules import kodi_utils\n"
         "_SETTINGS_DB_SYNCED = 'redlight.settings_db_synced'\n"
         "_SETTINGS_SYNC_FINGERPRINT = 'redlight.settings_sync_fingerprint'\n"
@@ -164,6 +200,34 @@ def _fake_redlight_package(root: Path):
         "    return setting_default\n",
         encoding="utf-8",
     )
+    (import_root / "modules" / "http_defaults.py").write_text(
+        "from requests.adapters import Retry\n"
+        "def scoped_token(value):\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    for source in context.python_dependency_sources:
+        dependency_root = source.installed_root / "lib"
+        module_name = {
+            "script.module.requests": "requests",
+            "script.module.urllib3": "urllib3",
+            "script.module.certifi": "certifi",
+            "script.module.chardet": "chardet",
+            "script.module.idna": "idna",
+        }[source.addon_id]
+        package = dependency_root / module_name
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        if source.addon_id == "script.module.requests":
+            (package / "adapters.py").write_text(
+                "from urllib3.util.retry import Retry\n",
+                encoding="utf-8",
+            )
+        elif source.addon_id == "script.module.urllib3":
+            util = package / "util"
+            util.mkdir()
+            (util / "__init__.py").write_text("", encoding="utf-8")
+            (util / "retry.py").write_text("class Retry: pass\n", encoding="utf-8")
     return context
 
 
@@ -307,7 +371,14 @@ class StructuredResourceTest(unittest.TestCase):
             Path(str(database_path) + suffix).unlink(missing_ok=True)
         source_context = _fake_redlight_package(self.root)
         calls = []
+        lifecycle_checks = []
         loaded_modules = {}
+        self.adapter._activation_hold_provider = lambda addon_id: (
+            lifecycle_checks.append((addon_id, "held", True)) or True
+        )
+        self.adapter._enabled_state_provider = lambda addon_id: (
+            lifecycle_checks.append((addon_id, "enabled", False)) or False
+        )
         forbidden_addon = unittest.mock.Mock(
             side_effect=AssertionError("xbmcaddon.Addon must not be called")
         )
@@ -327,7 +398,7 @@ class StructuredResourceTest(unittest.TestCase):
 
         with (
             patch.dict("sys.modules", {"xbmcaddon": SimpleNamespace(Addon=forbidden_addon)}),
-            patch("resources.lib.redlight_resource.importlib.import_module", side_effect=track_import),
+            patch("resources.lib.verified_addon_imports.importlib.import_module", side_effect=track_import),
             patch("builtins.__import__", side_effect=guarded_import),
         ):
             result = self.adapter.initialize(self.declaration, source_context)
@@ -345,6 +416,16 @@ class StructuredResourceTest(unittest.TestCase):
                 "redlight.settings_sync_fingerprint": "2.6.8:3",
             },
         )
+        self.assertTrue(lifecycle_checks)
+        self.assertTrue(all(
+            addon_id == REDLIGHT_ADDON_ID and state_value in (True, False)
+            for addon_id, _state_name, state_value in lifecycle_checks
+        ))
+        self.assertTrue(all(
+            (state_name != "held" or state_value is True)
+            and (state_name != "enabled" or state_value is False)
+            for _addon_id, state_name, state_value in lifecycle_checks
+        ))
         self.assertEqual(result.resource_id, REDLIGHT_RESOURCE_ID)
         self.assertFalse(result.restart_required)
 
@@ -415,7 +496,7 @@ class StructuredResourceTest(unittest.TestCase):
             return import_module(name, package)
 
         with patch(
-            "resources.lib.redlight_resource.importlib.import_module",
+            "resources.lib.verified_addon_imports.importlib.import_module",
             side_effect=fail_settings_import,
         ):
             self._assert_initialization_stage(
@@ -555,8 +636,12 @@ class StructuredResourceTest(unittest.TestCase):
         context = self._prepare_fresh_initialization()
         original_initializers = self.adapter._redlight_initializers
 
-        def with_failing_setter(installed_source, run_stage):
-            values = list(original_initializers(installed_source, run_stage))
+        def with_failing_setter(installed_source, run_stage, dependency_sources=()):
+            values = list(original_initializers(
+                installed_source,
+                run_stage,
+                dependency_sources=dependency_sources,
+            ))
 
             def fail_set_property(_key, _value):
                 raise RuntimeError(SECRET)

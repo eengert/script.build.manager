@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable, Optional
 import xml.etree.ElementTree as ET
 
@@ -105,6 +106,66 @@ class VerifiedInstalledAddonSource:
         )
         return _resolve_under_root(identity, self.addons_root)
 
+    def python_module_roots(self) -> tuple[Path, ...]:
+        """Return Python module roots declared by this verified package.
+
+        The roots are read from the verified installed ``addon.xml`` and must
+        resolve to real directories below that add-on's canonical install
+        root. Public manifest paths are never involved.
+        """
+        verified = self.revalidate()
+        addon_xml = verified.installed_root / "addon.xml"
+        try:
+            metadata = ET.fromstring(addon_xml.read_bytes())
+        except (OSError, ET.ParseError, ValueError) as exc:
+            raise InstalledAddonSourceError(
+                "INSTALLED_ADDON_XML_INVALID", "managed add-on metadata is invalid"
+            ) from exc
+        if (
+            metadata.tag != "addon"
+            or metadata.get("id") != verified.addon_id
+            or metadata.get("version") != verified.version
+        ):
+            raise InstalledAddonSourceError(
+                "INSTALLED_ADDON_METADATA_CHANGED",
+                "managed add-on metadata changed before import-root resolution",
+            )
+        roots = []
+        for extension in metadata.findall("extension"):
+            if extension.get("point") != "xbmc.python.module":
+                continue
+            library = extension.get("library")
+            if not isinstance(library, str) or not library:
+                raise InstalledAddonSourceError(
+                    "PYTHON_MODULE_ROOT_INVALID",
+                    "managed Python module root is not declared",
+                )
+            roots.append(_canonical_addon_descendant(verified.installed_root, library))
+        if not roots:
+            raise InstalledAddonSourceError(
+                "PYTHON_MODULE_ROOT_MISSING",
+                "managed add-on does not declare a Python module root",
+            )
+        if len(roots) != len(set(roots)):
+            raise InstalledAddonSourceError(
+                "PYTHON_MODULE_ROOT_INVALID",
+                "managed add-on declares duplicate Python module roots",
+            )
+        return tuple(roots)
+
+    def resources_lib_root(self) -> Path:
+        """Return Red Light's canonical ``resources/lib`` import root."""
+        verified = self.revalidate()
+        expected = _canonical_addon_descendant(
+            verified.installed_root, "resources/lib"
+        )
+        if expected not in verified.python_module_roots():
+            raise InstalledAddonSourceError(
+                "PYTHON_MODULE_ROOT_MISMATCH",
+                "managed add-on Python module declaration does not match resources/lib",
+            )
+        return expected
+
 
 def _resolve_under_root(
     identity: ManagedAddonSourceIdentity,
@@ -187,6 +248,49 @@ def _resolve_under_root(
     )
 
 
+def _canonical_addon_descendant(installed_root: Path, relative_path: str) -> Path:
+    """Resolve a declared package directory while rejecting path/symlink escapes."""
+    if (
+        not isinstance(relative_path, str)
+        or not relative_path
+        or "\\" in relative_path
+        or ":" in relative_path
+    ):
+        raise InstalledAddonSourceError(
+            "PYTHON_MODULE_ROOT_INVALID", "managed Python module root is invalid"
+        )
+    posix = PurePosixPath(relative_path)
+    parts = tuple(part for part in posix.parts if part not in ("", "."))
+    if posix.is_absolute() or not parts or any(part == ".." for part in parts):
+        raise InstalledAddonSourceError(
+            "PYTHON_MODULE_ROOT_INVALID", "managed Python module root is invalid"
+        )
+    current = installed_root
+    try:
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise InstalledAddonSourceError(
+                    "PYTHON_MODULE_ROOT_OUTSIDE_ROOT",
+                    "managed Python module root is outside its installed add-on",
+                )
+        canonical = current.resolve(strict=True)
+        canonical.relative_to(installed_root)
+    except InstalledAddonSourceError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise InstalledAddonSourceError(
+            "PYTHON_MODULE_ROOT_UNAVAILABLE",
+            "managed Python module root is unavailable",
+        ) from exc
+    if not canonical.is_dir():
+        raise InstalledAddonSourceError(
+            "PYTHON_MODULE_ROOT_UNAVAILABLE",
+            "managed Python module root is unavailable",
+        )
+    return canonical
+
+
 class InstalledAddonSourceResolver:
     """Resolve a frozen identity below the active Kodi add-ons directory."""
 
@@ -233,6 +337,7 @@ class PrivateResourceOwnerContext:
     owner_enabled: bool
     activation_held: bool
     installed_source: VerifiedInstalledAddonSource
+    python_dependency_sources: tuple[VerifiedInstalledAddonSource, ...] = ()
 
     def matches(self, addon_id: str, version: str) -> bool:
         source = self.installed_source
@@ -246,4 +351,14 @@ class PrivateResourceOwnerContext:
             and self.activation_held is True
             and source.addon_id == addon_id
             and source.version == version
+            and isinstance(self.python_dependency_sources, tuple)
+            and all(
+                isinstance(item, VerifiedInstalledAddonSource)
+                and item.verified
+                and item.frozen_transaction_id == source.frozen_transaction_id
+                and item.manifest_fingerprint == source.manifest_fingerprint
+                for item in self.python_dependency_sources
+            )
+            and len({item.addon_id for item in self.python_dependency_sources})
+            == len(self.python_dependency_sources)
         )

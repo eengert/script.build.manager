@@ -142,6 +142,102 @@ def _state(*addons):
     return KodiState("macos", "21.0", "", tuple(addons))
 
 
+def _redlight_frozen_import_graph():
+    from resources.lib.artifacts import ArtifactMetadata
+    from resources.lib.frozen import (
+        AddonCaptureNode,
+        CaptureStatus,
+        DependencyEdge,
+        FrozenBuildManifest,
+        ProvenanceStatus,
+    )
+
+    versions = {
+        "plugin.video.redlight": "2.6.8",
+        "script.module.requests": "2.31.0",
+        "script.module.urllib3": "2.2.3",
+        "script.module.certifi": "2023.5.7",
+        "script.module.chardet": "5.1.0",
+        "script.module.idna": "3.10.0",
+        "script.module.pil": "1.1.7",
+    }
+    digests = {
+        addon_id: format(index + 1, "x") * 64
+        for index, addon_id in enumerate(sorted(versions))
+    }
+    digests["plugin.video.redlight"] = "c" * 64
+    edges = {
+        "plugin.video.redlight": (
+            DependencyEdge("script.module.requests", "2.19.1"),
+            DependencyEdge("script.module.pil", "1.1.7"),
+            DependencyEdge("xbmc.python", "3.0.0"),
+        ),
+        "script.module.requests": (
+            DependencyEdge("script.module.certifi", "2023.5.7"),
+            DependencyEdge("script.module.chardet", "5.1.0"),
+            DependencyEdge("script.module.idna", "3.4.0"),
+            DependencyEdge("script.module.urllib3", "1.26.16+matrix.1"),
+            DependencyEdge("xbmc.python", "3.0.0"),
+        ),
+        "script.module.urllib3": (DependencyEdge("xbmc.python", "3.0.0"),),
+        "script.module.certifi": (DependencyEdge("xbmc.python", "3.0.0"),),
+        "script.module.chardet": (DependencyEdge("xbmc.python", "3.0.0"),),
+        "script.module.idna": (DependencyEdge("xbmc.python", "3.0.0"),),
+        "script.module.pil": (DependencyEdge("xbmc.python", "3.0.0"),),
+    }
+    nodes = []
+    for addon_id, version in versions.items():
+        artifact = ArtifactMetadata(
+            digests[addon_id],
+            1261957 if addon_id == "plugin.video.redlight" else 1000 + len(nodes),
+            addon_id,
+            version,
+            f"{addon_id}-{version}.zip",
+        )
+        nodes.append(AddonCaptureNode(
+            addon_id=addon_id,
+            version=version,
+            addon_type="unknown",
+            desired_enabled=True,
+            provenance=ProvenanceStatus.MANUAL_OR_UNKNOWN,
+            artifact=artifact,
+            dependency_edges=edges[addon_id],
+        ))
+    nodes.append(AddonCaptureNode(
+        addon_id="xbmc.python",
+        version="3.0.0",
+        addon_type="system.runtime",
+        desired_enabled=True,
+        provenance=ProvenanceStatus.UNKNOWN,
+        system=True,
+        status=CaptureStatus.SYSTEM,
+    ))
+    manifest = FrozenBuildManifest(
+        schema_version=1,
+        build_id="bm-017f-test",
+        name="BM-017F import dependency fixture",
+        created_at="2026-09-23T00:00:00Z",
+        kodi_version="21.1",
+        platform="macos",
+        capture_status=CaptureStatus.COMPLETE,
+        addons=tuple(nodes),
+    )
+    records = tuple(sorted((
+        InstallResolutionRecord(
+            addon_id=node.addon_id,
+            captured_version=node.version,
+            resolution=InstallResolution.EXACT,
+            state=ResolutionState.INSTALLED,
+            desired_enabled=node.desired_enabled,
+            resolved_version=node.version,
+            artifact_sha256=node.artifact.sha256,
+            artifact_size=node.artifact.size,
+        )
+        for node in nodes if not node.system
+    ), key=lambda item: item.addon_id))
+    return manifest, records
+
+
 class TestBuildManager(unittest.TestCase):
     def test_request_is_safe_and_serializable(self):
         request = ReconcileRequest("/tmp/build.json", "family-room")
@@ -394,15 +490,8 @@ class TestBuildManager(unittest.TestCase):
 
         owner_id = "plugin.video.redlight"
         declaration = redlight_declaration()
-        record = InstallResolutionRecord(
-            owner_id,
-            "2.6.8",
-            InstallResolution.EXACT,
-            ResolutionState.INSTALLED,
-            resolved_version="2.6.8",
-            artifact_sha256="c" * 64,
-            artifact_size=1261957,
-        )
+        frozen_manifest, records = _redlight_frozen_import_graph()
+        records_by_id = {item.addon_id: item for item in records}
         desired = replace(
             _desired(
                 (AddonEntry(owner_id, "enabled"),),
@@ -410,9 +499,14 @@ class TestBuildManager(unittest.TestCase):
             ),
             config=ConfigDeclarations(structured_private_resources=(declaration,)),
         )
+        actual_addons = [InstalledAddon(owner_id, False, "2.6.8")]
+        actual_addons.extend(
+            InstalledAddon(item.addon_id, item.desired_enabled, item.resolved_version)
+            for item in records if item.addon_id != owner_id
+        )
         owners = _Owners(
             desired,
-            [_state(InstalledAddon(owner_id, False, "2.6.8"))],
+            [_state(*actual_addons)],
             (owner_id,),
             {},
         )
@@ -443,9 +537,10 @@ class TestBuildManager(unittest.TestCase):
             activation_hold_released=False,
             activation_hold_ids=(owner_id,),
             configuration_manifest_path="manifest.json",
+            manifest_path="frozen.json",
             device_profile_id="dev",
-            manifest_fingerprint="a" * 64,
-            resolution_records=(record,),
+            manifest_fingerprint=frozen_manifest.fingerprint(),
+            resolution_records=records,
             private_overlay_id="fixture-overlay",
             private_overlay_fingerprint=metadata.fingerprint,
             private_overlay_required=True,
@@ -453,21 +548,47 @@ class TestBuildManager(unittest.TestCase):
         fake_store = SimpleNamespace(inspect=lambda: transaction)
         request = ReconcileRequest(
             "manifest.json", "dev",
-            install_resolutions=(record,),
-            source_software_fingerprint="a" * 64,
+            install_resolutions=records,
+            source_software_fingerprint=frozen_manifest.fingerprint(),
             frozen_transaction_id=transaction_id,
         )
         with tempfile.TemporaryDirectory() as source_temp:
             addons_root = Path(source_temp) / "home" / "addons"
-            installed_root = addons_root / owner_id
-            installed_root.mkdir(parents=True)
-            (installed_root / "addon.xml").write_text(
-                f'<addon id="{owner_id}" version="2.6.8"/>', encoding="utf-8"
+            def install_source(addon_id, version, library):
+                import_root = addons_root / addon_id / library
+                import_root.mkdir(parents=True)
+                (addons_root / addon_id / "addon.xml").write_text(
+                    f'<addon id="{addon_id}" version="{version}">'
+                    f'<extension point="xbmc.python.module" library="{library}"/>'
+                    '</addon>',
+                    encoding="utf-8",
+                )
+
+            owner_root = addons_root / owner_id / "resources" / "lib"
+            owner_root.mkdir(parents=True)
+            (addons_root / owner_id / "addon.xml").write_text(
+                f'<addon id="{owner_id}" version="2.6.8">'
+                '<extension point="xbmc.python.module" library="resources/lib/"/>'
+                '</addon>',
+                encoding="utf-8",
             )
+            for addon_id in (
+                "script.module.requests",
+                "script.module.urllib3",
+                "script.module.certifi",
+                "script.module.chardet",
+                "script.module.idna",
+            ):
+                install_source(
+                    addon_id,
+                    records_by_id[addon_id].resolved_version,
+                    "lib",
+                )
             source_resolver = InstalledAddonSourceResolver(lambda: addons_root)
             owners.owners = replace(
                 owners.owners,
                 installed_addon_source_resolver=source_resolver,
+                frozen_manifest_loader=lambda path: frozen_manifest,
             )
             with (
                 patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
@@ -477,6 +598,7 @@ class TestBuildManager(unittest.TestCase):
                 ),
             ):
                 preview = BuildManager(owners.owners).preview(request)
+                prepared, failure = BuildManager(owners.owners)._prepare(request)
                 unrelated = BuildManager(owners.owners).preview(
                     replace(request, frozen_transaction_id="")
                 )
@@ -484,8 +606,128 @@ class TestBuildManager(unittest.TestCase):
         self.assertFalse(any(
             action.kind == ENABLE_ADDON for action in preview.planned_actions
         ))
+        self.assertIsNone(failure)
+        self.assertEqual(
+            {item.addon_id for item in prepared.owner_contexts[owner_id].python_dependency_sources},
+            {
+                "script.module.requests",
+                "script.module.urllib3",
+                "script.module.certifi",
+                "script.module.chardet",
+                "script.module.idna",
+            },
+        )
         self.assertFalse(unrelated.success)
         self.assertEqual(unrelated.failure.code, "PREFLIGHT_FAILED")
+
+    def test_missing_required_python_dependency_fails_closed(self):
+        from resources.lib.build_manager import _verified_python_dependency_sources
+
+        manifest, records = _redlight_frozen_import_graph()
+        records_by_id = {item.addon_id: item for item in records}
+        records_by_id.pop("script.module.requests")
+        actual_by_id = {
+            item.addon_id: InstalledAddon(
+                item.addon_id, item.desired_enabled, item.resolved_version
+            )
+            for item in records
+        }
+        transaction = SimpleNamespace(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            manifest_fingerprint=manifest.fingerprint(),
+        )
+        with self.assertRaisesRegex(ValueError, "installed Python dependency state"):
+            _verified_python_dependency_sources(
+                frozen_manifest=manifest,
+                transaction=transaction,
+                owner_addon_id="plugin.video.redlight",
+                required_module_providers={"requests": "script.module.requests"},
+                records_by_id=records_by_id,
+                actual_by_id=actual_by_id,
+                source_resolver=SimpleNamespace(
+                    resolve=lambda _identity: self.fail("must fail before source lookup")
+                ),
+            )
+
+    def test_wrong_python_dependency_registry_version_fails_closed(self):
+        from resources.lib.build_manager import _verified_python_dependency_sources
+
+        manifest, records = _redlight_frozen_import_graph()
+        records_by_id = {item.addon_id: item for item in records}
+        actual_by_id = {
+            item.addon_id: InstalledAddon(
+                item.addon_id, item.desired_enabled, item.resolved_version
+            )
+            for item in records
+        }
+        actual_by_id["script.module.requests"] = InstalledAddon(
+            "script.module.requests", True, "2.30.0"
+        )
+        transaction = SimpleNamespace(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            manifest_fingerprint=manifest.fingerprint(),
+        )
+        with self.assertRaisesRegex(ValueError, "installed Python dependency state"):
+            _verified_python_dependency_sources(
+                frozen_manifest=manifest,
+                transaction=transaction,
+                owner_addon_id="plugin.video.redlight",
+                required_module_providers={"requests": "script.module.requests"},
+                records_by_id=records_by_id,
+                actual_by_id=actual_by_id,
+                source_resolver=SimpleNamespace(
+                    resolve=lambda _identity: self.fail("must fail before source lookup")
+                ),
+            )
+
+    def test_uninstalled_or_wrong_enabled_python_dependency_state_fails_closed(self):
+        from resources.lib.build_manager import _verified_python_dependency_sources
+
+        manifest, records = _redlight_frozen_import_graph()
+        records_by_id = {item.addon_id: item for item in records}
+        request_record = records_by_id["script.module.requests"]
+        records_by_id["script.module.requests"] = replace(
+            request_record, state=ResolutionState.SELECTED
+        )
+        actual_by_id = {
+            item.addon_id: InstalledAddon(
+                item.addon_id, item.desired_enabled, item.resolved_version
+            )
+            for item in records
+        }
+        transaction = SimpleNamespace(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            manifest_fingerprint=manifest.fingerprint(),
+        )
+        with self.assertRaisesRegex(ValueError, "installed Python dependency state"):
+            _verified_python_dependency_sources(
+                frozen_manifest=manifest,
+                transaction=transaction,
+                owner_addon_id="plugin.video.redlight",
+                required_module_providers={"requests": "script.module.requests"},
+                records_by_id=records_by_id,
+                actual_by_id=actual_by_id,
+                source_resolver=SimpleNamespace(
+                    resolve=lambda _identity: self.fail("must fail before source lookup")
+                ),
+            )
+
+        records_by_id["script.module.requests"] = request_record
+        actual_by_id["script.module.requests"] = InstalledAddon(
+            "script.module.requests", False, request_record.resolved_version
+        )
+        with self.assertRaisesRegex(ValueError, "installed Python dependency state"):
+            _verified_python_dependency_sources(
+                frozen_manifest=manifest,
+                transaction=transaction,
+                owner_addon_id="plugin.video.redlight",
+                required_module_providers={"requests": "script.module.requests"},
+                records_by_id=records_by_id,
+                actual_by_id=actual_by_id,
+                source_resolver=SimpleNamespace(
+                    resolve=lambda _identity: self.fail("must fail before source lookup")
+                ),
+            )
 
     def test_wrong_registry_version_fails_before_installed_source_resolution(self):
         from resources.lib.frozen_install import FrozenInstallPhase, FrozenLifecycleStage

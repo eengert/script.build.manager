@@ -17,6 +17,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Tuple
 
 from resources.lib.addon_state import AddonStateReconciler
@@ -41,7 +42,9 @@ from resources.lib.installed_addon_source import (
     ManagedAddonSourceIdentity,
     PrivateResourceOwnerContext,
 )
+from resources.lib.frozen import CaptureStatus, FrozenBuildManifest
 from resources.lib.dependencies import (
+    _is_system_dependency,
     DependencyAwareInstaller,
     DependencyResolver,
     DependencyStatus,
@@ -294,6 +297,7 @@ class BuildManagerOwners:
     config_manager: object
     private_overlay_manager: object = None
     installed_addon_source_resolver: object = None
+    frozen_manifest_loader: object = None
 
 
 def _runtime_addon_state_backend():
@@ -321,7 +325,148 @@ def _default_owners() -> BuildManagerOwners:
         config_manager=config_manager,
         private_overlay_manager=PrivateOverlayManager(config_manager),
         installed_addon_source_resolver=KodiInstalledAddonSourceResolver(),
+        frozen_manifest_loader=_load_frozen_manifest_file,
     )
+
+
+def _load_frozen_manifest_file(path: str) -> FrozenBuildManifest:
+    """Read frozen graph metadata from the transaction's fingerprinted file."""
+    return FrozenBuildManifest.from_json(Path(path).read_text(encoding="utf-8"))
+
+
+_RESOURCE_REQUIRED_PYTHON_MODULES = {
+    # Red Light 2.6.8's audited initializer import chain reaches
+    # requests.adapters.Retry through modules.http_defaults.
+    "redlight.sqlite.settings.v1": {"requests": "script.module.requests"},
+}
+
+
+def _verified_python_dependency_sources(
+    *,
+    frozen_manifest: FrozenBuildManifest,
+    transaction: object,
+    owner_addon_id: str,
+    required_module_providers: dict[str, str],
+    records_by_id: dict[str, InstallResolutionRecord],
+    actual_by_id: dict[str, object],
+    source_resolver: object,
+) -> tuple:
+    """Resolve only the required Python-module subtree of a frozen owner."""
+    if not isinstance(frozen_manifest, FrozenBuildManifest):
+        raise ValueError("frozen dependency graph is unavailable")
+    if frozen_manifest.fingerprint() != transaction.manifest_fingerprint:
+        raise ValueError("frozen dependency graph does not match the active transaction")
+    nodes = tuple(frozen_manifest.addons)
+    nodes_by_id = {node.addon_id: node for node in nodes}
+    if len(nodes_by_id) != len(nodes):
+        raise ValueError("frozen dependency graph contains duplicate add-ons")
+    owner = nodes_by_id.get(owner_addon_id)
+    owner_record = records_by_id.get(owner_addon_id)
+    owner_registered = actual_by_id.get(owner_addon_id)
+    if (
+        owner is None
+        or owner.system
+        or owner.status is not CaptureStatus.COMPLETE
+        or owner.artifact is None
+        or owner_record is None
+        or owner_record.resolution is not InstallResolution.EXACT
+        or owner_record.state is not ResolutionState.INSTALLED
+        or owner_record.captured_version != owner.version
+        or owner_record.resolved_version != owner.version
+        or owner_record.artifact_sha256 != owner.artifact.sha256
+        or owner_record.artifact_size != owner.artifact.size
+        or owner_record.desired_enabled is not owner.desired_enabled
+        or owner_registered is None
+        or owner_registered.version != owner_record.resolved_version
+    ):
+        raise ValueError("frozen resource owner is missing from the dependency graph")
+
+    requested_roots = tuple(sorted(set(required_module_providers.values())))
+    for dependency_id in requested_roots:
+        if not any(
+            edge.addon_id == dependency_id and not edge.optional
+            for edge in owner.dependency_edges
+        ):
+            raise ValueError("required Python module is not a required owner dependency")
+
+    visited = set()
+    dependency_ids = set()
+    pending = list(reversed(requested_roots))
+    while pending:
+        addon_id = pending.pop()
+        if addon_id in visited:
+            continue
+        visited.add(addon_id)
+        node = nodes_by_id.get(addon_id)
+        if node is None and _is_system_dependency(addon_id):
+            continue
+        if node is None:
+            raise ValueError("frozen Python dependency is absent from the dependency graph")
+        if node.system:
+            continue
+        if (
+            node.status is not CaptureStatus.COMPLETE
+            or node.artifact is None
+            or not node.artifact.sha256
+            or node.artifact.size <= 0
+        ):
+            raise ValueError("frozen Python dependency has no complete exact artifact")
+        record = records_by_id.get(addon_id)
+        registered = actual_by_id.get(addon_id)
+        if (
+            record is None
+            or record.resolution is not InstallResolution.EXACT
+            or record.state is not ResolutionState.INSTALLED
+            or record.captured_version != node.version
+            or record.resolved_version != node.version
+            or record.artifact_sha256 != node.artifact.sha256
+            or record.artifact_size != node.artifact.size
+            or record.desired_enabled is not node.desired_enabled
+            or registered is None
+            or registered.version != record.resolved_version
+            or registered.enabled is not record.desired_enabled
+        ):
+            raise ValueError(
+                "installed Python dependency state differs from the exact frozen graph"
+            )
+        dependency_ids.add(addon_id)
+        for edge in reversed(node.dependency_edges):
+            if not edge.optional:
+                pending.append(edge.addon_id)
+
+    resolved = []
+    for addon_id in sorted(dependency_ids):
+        record = records_by_id[addon_id]
+        identity = ManagedAddonSourceIdentity(
+            addon_id=addon_id,
+            version=record.resolved_version,
+            artifact_sha256=record.artifact_sha256,
+            artifact_size=record.artifact_size,
+            frozen_transaction_id=transaction.transaction_id,
+            manifest_fingerprint=transaction.manifest_fingerprint,
+        )
+        source = source_resolver.resolve(identity)
+        # A required root must expose its provider from the verified Kodi
+        # module extension. Other exact graph nodes are included only when
+        # their installed metadata declares Python modules.
+        try:
+            roots = source.python_module_roots()
+        except Exception as exc:
+            if addon_id in requested_roots:
+                raise ValueError("required Python dependency root is unavailable") from exc
+            if getattr(exc, "code", "") == "PYTHON_MODULE_ROOT_MISSING":
+                continue
+            raise
+        if not roots:
+            if addon_id in requested_roots:
+                raise ValueError("required Python dependency root is unavailable")
+            continue
+        resolved.append(source)
+
+    resolved_ids = {source.addon_id for source in resolved}
+    if not set(requested_roots).issubset(resolved_ids):
+        raise ValueError("required Python dependency source is unavailable")
+    return tuple(resolved)
 
 
 def _canonical_json(value: object) -> str:
@@ -765,6 +910,26 @@ class BuildManager:
                         manifest_fingerprint=transaction.manifest_fingerprint,
                     )
                     source = source_resolver.resolve(identity)
+                    required_module_providers = _RESOURCE_REQUIRED_PYTHON_MODULES.get(
+                        declaration.adapter_id, {}
+                    )
+                    dependency_sources = ()
+                    if required_module_providers:
+                        frozen_manifest_loader = getattr(
+                            self._owners, "frozen_manifest_loader", None
+                        )
+                        if not callable(frozen_manifest_loader):
+                            raise ValueError("frozen dependency graph loader is unavailable")
+                        frozen_manifest = frozen_manifest_loader(transaction.manifest_path)
+                        dependency_sources = _verified_python_dependency_sources(
+                            frozen_manifest=frozen_manifest,
+                            transaction=transaction,
+                            owner_addon_id=owner_id,
+                            required_module_providers=required_module_providers,
+                            records_by_id=records_by_id,
+                            actual_by_id=actual_map,
+                            source_resolver=source_resolver,
+                        )
                     owner_contexts[owner_id] = PrivateResourceOwnerContext(
                         owner_addon_id=owner_id,
                         expected_version=record.resolved_version,
@@ -772,6 +937,7 @@ class BuildManager:
                         owner_enabled=registered.enabled,
                         activation_held=owner_id in held_ids,
                         installed_source=source,
+                        python_dependency_sources=dependency_sources,
                     )
             else:
                 if request.frozen_transaction_id:

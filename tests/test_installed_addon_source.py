@@ -104,6 +104,74 @@ class InstalledAddonSourceTest(unittest.TestCase):
         source = self.resolver.resolve(self.identity)
         self.assertEqual(source.installed_root.parent, self.root.resolve())
 
+    def _write_python_module_metadata(self, library="resources/lib/"):
+        python_root = self.installed / "resources" / "lib"
+        python_root.mkdir(parents=True, exist_ok=True)
+        (self.installed / "addon.xml").write_text(
+            f'<addon id="{OWNER_ID}" version="{VERSION}">'
+            f'<extension point="xbmc.python.module" library="{library}"/>'
+            '</addon>',
+            encoding="utf-8",
+        )
+
+    def test_red_light_import_root_is_verified_resources_lib_not_addon_root(self):
+        self._write_python_module_metadata()
+        source = self.resolver.resolve(self.identity)
+        import_root = source.resources_lib_root()
+        (import_root / "caches").mkdir()
+        (import_root / "modules").mkdir()
+        (import_root / "caches" / "base_cache.py").write_text("", encoding="utf-8")
+        (import_root / "modules" / "kodi_utils.py").write_text("", encoding="utf-8")
+
+        self.assertEqual(import_root, (self.installed / "resources" / "lib").resolve())
+        self.assertNotEqual(import_root, self.installed.resolve())
+        self.assertFalse((self.installed / "caches").exists())
+        self.assertTrue((import_root / "caches" / "base_cache.py").is_file())
+        self.assertTrue((import_root / "modules" / "kodi_utils.py").is_file())
+
+    def test_python_module_path_traversal_is_rejected(self):
+        self._write_python_module_metadata("../outside")
+        source = self.resolver.resolve(self.identity)
+        with self.assertRaises(InstalledAddonSourceError) as caught:
+            source.python_module_roots()
+        self.assertEqual(caught.exception.code, "PYTHON_MODULE_ROOT_INVALID")
+
+    def test_python_module_symlink_escape_is_rejected(self):
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        self._write_python_module_metadata()
+        (self.installed / "resources" / "lib").rmdir()
+        (self.installed / "resources").rmdir()
+        (self.installed / "resources").symlink_to(outside, target_is_directory=True)
+        source = self.resolver.resolve(self.identity)
+        with self.assertRaises(InstalledAddonSourceError) as caught:
+            source.resources_lib_root()
+        self.assertEqual(caught.exception.code, "PYTHON_MODULE_ROOT_OUTSIDE_ROOT")
+
+    def test_missing_resources_lib_fails_closed(self):
+        (self.installed / "addon.xml").write_text(
+            f'<addon id="{OWNER_ID}" version="{VERSION}">'
+            '<extension point="xbmc.python.module" library="resources/lib"/>'
+            '</addon>',
+            encoding="utf-8",
+        )
+        source = self.resolver.resolve(self.identity)
+        with self.assertRaises(InstalledAddonSourceError) as caught:
+            source.resources_lib_root()
+        self.assertEqual(caught.exception.code, "PYTHON_MODULE_ROOT_UNAVAILABLE")
+
+    def test_resources_lib_import_root_still_rejects_wrong_owner_identity(self):
+        self._write_python_module_metadata()
+        source = self.resolver.resolve(self.identity)
+        self._write_addon_xml("plugin.video.other", VERSION)
+        with self.assertRaises(InstalledAddonSourceError) as caught:
+            source.resources_lib_root()
+        self.assertEqual(caught.exception.code, "INSTALLED_ADDON_ID_MISMATCH")
+        self._write_addon_xml(OWNER_ID, "2.6.7")
+        with self.assertRaises(InstalledAddonSourceError) as caught:
+            source.resources_lib_root()
+        self.assertEqual(caught.exception.code, "INSTALLED_ADDON_VERSION_MISMATCH")
+
 
 if __name__ == "__main__":
     unittest.main()
