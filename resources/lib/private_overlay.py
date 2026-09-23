@@ -40,6 +40,7 @@ from resources.lib.manifest import (
 from resources.lib.private_resource import (
     PrivateResourceValidationError,
     ResourceLifecycle,
+    StructuredResourceInitializationError,
     StructuredPrivateResourceDeclaration,
     StructuredPrivateResourceOverlay,
     StructuredPrivateResourceManager,
@@ -707,7 +708,12 @@ class PrivateOverlayManager:
             validated, metadata, tuple(declarations), tuple(resource_declarations)
         )
 
-    def apply(self, prepared: PreparedPrivateOverlay) -> PrivateOverlayApplyResult:
+    def apply(
+        self,
+        prepared: PreparedPrivateOverlay,
+        *,
+        owner_contexts=None,
+    ) -> PrivateOverlayApplyResult:
         if prepared.overlay is None:
             return PrivateOverlayApplyResult(
                 PrivateOverlayOutcome.ABSENT_OPTIONAL,
@@ -747,8 +753,12 @@ class PrivateOverlayManager:
         if prepared.overlay.resources:
             try:
                 resource_results = self._active_resource_manager.apply(
-                    prepared.resource_declarations, prepared.overlay.resources,
+                    prepared.resource_declarations,
+                    prepared.overlay.resources,
+                    owner_contexts=owner_contexts,
                 )
+            except StructuredResourceInitializationError:
+                raise
             except Exception:
                 return PrivateOverlayApplyResult(PrivateOverlayOutcome.FAILED, prepared.metadata, results)
         return PrivateOverlayApplyResult(

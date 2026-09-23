@@ -21,10 +21,16 @@ from resources.lib.private_resource import (
     PrivateResourceValidationError,
     ResourceLifecycle,
     StructuredPrivateResourceManager,
+    StructuredResourceInitializationError,
     StructuredPrivateResourceOverlay,
     StructuredPrivateValue,
     StructuredResourceFieldDeclaration,
     validate_resource_overlay,
+)
+from resources.lib.installed_addon_source import (
+    InstalledAddonSourceResolver,
+    ManagedAddonSourceIdentity,
+    PrivateResourceOwnerContext,
 )
 from resources.lib.redlight_resource import (
     REDLIGHT_ADDON_ID,
@@ -91,6 +97,70 @@ def _overlay(*values):
         REDLIGHT_SCHEMA_ID,
         tuple(values),
     )
+
+
+def _verified_source_context(root: Path, *, version="2.6.8"):
+    addons_root = root / "verified-kodi-home" / "addons"
+    installed_root = addons_root / REDLIGHT_ADDON_ID
+    installed_root.mkdir(parents=True, exist_ok=True)
+    (installed_root / "addon.xml").write_text(
+        f'<addon id="{REDLIGHT_ADDON_ID}" version="{version}"/>',
+        encoding="utf-8",
+    )
+    identity = ManagedAddonSourceIdentity(
+        REDLIGHT_ADDON_ID,
+        version,
+        "a" * 64,
+        1234,
+        "11111111-1111-4111-8111-111111111111",
+        "b" * 64,
+    )
+    source = InstalledAddonSourceResolver(lambda: addons_root).resolve(identity)
+    return PrivateResourceOwnerContext(
+        REDLIGHT_ADDON_ID, version, version, False, True, source
+    )
+
+
+def _fake_redlight_package(root: Path):
+    """Small fixture for the audited defaults/schema import contract."""
+    context = _verified_source_context(root)
+    addon_root = context.installed_source.installed_root
+    (addon_root / "caches").mkdir()
+    (addon_root / "modules").mkdir()
+    (addon_root / "caches" / "__init__.py").write_text("", encoding="utf-8")
+    (addon_root / "modules" / "__init__.py").write_text("", encoding="utf-8")
+    (addon_root / "caches" / "base_cache.py").write_text(
+        "def table_creators():\n"
+        "    return {'settings_db': (\"CREATE TABLE IF NOT EXISTS settings "
+        "(setting_id text not null unique, setting_type text, "
+        "setting_default text, setting_value text)\",)}\n",
+        encoding="utf-8",
+    )
+    (addon_root / "modules" / "kodi_utils.py").write_text(
+        "properties = {}\n"
+        "def addon_fanart():\n"
+        "    return 'special://home/addons/plugin.video.redlight/resources/media/fanart.jpg'\n"
+        "def addon_profile():\n"
+        "    raise AssertionError('owner profile API must not be used')\n"
+        "def set_property(key, value):\n"
+        "    properties[key] = value\n",
+        encoding="utf-8",
+    )
+    (addon_root / "caches" / "settings_cache.py").write_text(
+        "from modules import kodi_utils\n"
+        "_SETTINGS_DB_SYNCED = 'redlight.settings_db_synced'\n"
+        "_SETTINGS_SYNC_FINGERPRINT = 'redlight.settings_sync_fingerprint'\n"
+        "def default_settings():\n"
+        "    return [\n"
+        "      {'setting_id': 'trakt.token', 'setting_type': 'string', 'setting_default': 'empty_setting'},\n"
+        "      {'setting_id': 'aiostreams.instance', 'setting_type': 'action', 'setting_default': '0', 'settings_options': {'0': 'Default'}},\n"
+        "      {'setting_id': 'default_addon_fanart', 'setting_type': 'path', 'setting_default': kodi_utils.addon_fanart()},\n"
+        "    ]\n"
+        "def _new_setting_value(setting_id, setting_default, current, had_existing, fresh_install=False):\n"
+        "    return setting_default\n",
+        encoding="utf-8",
+    )
+    return context
 
 
 class StructuredResourceTest(unittest.TestCase):
@@ -193,105 +263,120 @@ class StructuredResourceTest(unittest.TestCase):
         self.assertTrue(result.succeeded)
         self.assertEqual(result.outcome, "already_initialized")
 
-    def test_fresh_initialization_uses_only_bounded_package_default_helpers(self):
+    def test_verified_source_initializes_red_light_while_disabled_without_addon_lookup(self):
+        from types import SimpleNamespace
         from unittest.mock import patch
 
         database_path = self.adapter.database_path
         database_path.unlink()
+        for suffix in ("-wal", "-shm"):
+            Path(str(database_path) + suffix).unlink(missing_ok=True)
+        source_context = _fake_redlight_package(self.root)
         calls = []
+        loaded_modules = {}
+        forbidden_addon = unittest.mock.Mock(
+            side_effect=AssertionError("xbmcaddon.Addon must not be called")
+        )
+        original_import_module = __import__("importlib").import_module
+        original_import = __import__("builtins").__import__
 
-        def ensure_database_tables(database_name):
-            calls.append(("ensure", database_name))
-            database_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(database_path)
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute(
-                "CREATE TABLE settings (setting_id text not null unique, setting_type text, setting_default text, setting_value text)"
+        def track_import(name, package=None):
+            calls.append(name)
+            module = original_import_module(name, package)
+            loaded_modules[name] = module
+            return module
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.split(".", 1)[0] in {"apis", "service"}:
+                raise AssertionError("provider or service import must not run")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with (
+            patch.dict("sys.modules", {"xbmcaddon": SimpleNamespace(Addon=forbidden_addon)}),
+            patch("resources.lib.redlight_resource.importlib.import_module", side_effect=track_import),
+            patch("builtins.__import__", side_effect=guarded_import),
+        ):
+            result = self.adapter.initialize(self.declaration, source_context)
+            self.assertTrue(result.succeeded)
+            self.assertEqual(result.outcome, "initialized")
+            self.assertEqual(
+                calls,
+                ["caches.base_cache", "caches.settings_cache", "modules.kodi_utils"],
             )
-            connection.commit()
-            connection.close()
-
-        class SettingsCache:
-            def is_empty_strict(inner):
-                if not database_path.exists():
-                    return True
-                connection = sqlite3.connect(database_path)
-                try:
-                    return connection.execute("SELECT 1 FROM settings LIMIT 1").fetchone() is None
-                finally:
-                    connection.close()
-
-            def set_many(inner, rows, *, load_properties=True):
-                calls.append(("set_many", tuple(rows), load_properties))
-                connection = sqlite3.connect(database_path)
-                connection.executemany(
-                    "INSERT OR REPLACE INTO settings VALUES (?, ?, ?, ?)", rows
-                )
-                connection.commit()
-                connection.close()
-
-            def clear_db_cache(inner):
-                calls.append(("clear_db_cache",))
-
-        defaults = (
-            {"setting_id": "trakt.token", "setting_type": "string", "setting_default": ""},
+            forbidden_addon.assert_not_called()
+        self.assertEqual(
+            loaded_modules["modules.kodi_utils"].properties,
             {
-                "setting_id": "example.action",
-                "setting_type": "action",
-                "setting_default": "one",
-                "settings_options": {"one": "One", "two": "Two"},
+                "redlight.settings_db_synced": "true",
+                "redlight.settings_sync_fingerprint": "2.6.8:3",
             },
         )
 
-        def default_settings():
-            calls.append(("default_settings",))
-            return defaults
-
-        def new_setting_value(setting_id, setting_default, current, had_existing, *, fresh_install):
-            calls.append(("new_value", setting_id, dict(current), had_existing, fresh_install))
-            return setting_default
-
-        def mark_defaults_initialized():
-            calls.append(("mark_defaults_initialized",))
-
-        settings_cache = SettingsCache()
-        helpers = (
-            ensure_database_tables,
-            default_settings,
-            new_setting_value,
-            settings_cache,
-            lambda: str(self.root / "addon_data" / REDLIGHT_ADDON_ID),
-            mark_defaults_initialized,
+        connection = sqlite3.connect(database_path)
+        columns = tuple(row[1] for row in connection.execute("PRAGMA table_info(settings)"))
+        rows = dict(connection.execute("SELECT setting_id, setting_value FROM settings"))
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        connection.execute(
+            "INSERT INTO settings VALUES (?, ?, ?, ?)",
+            ("ordinary.preference", "string", "keep", "keep-me"),
         )
-        with patch.object(self.adapter, "_redlight_initializers", return_value=helpers):
-            result = self.adapter.initialize(self.declaration)
-        self.assertTrue(result.succeeded)
-        self.assertEqual(result.outcome, "initialized")
-        self.assertEqual(calls[0], ("ensure", "settings_db"))
-        self.assertIn(("default_settings",), calls)
-        self.assertIn(
-            ("new_value", "trakt.token", {}, False, True),
-            calls,
+        connection.execute(
+            "INSERT INTO settings VALUES (?, ?, ?, ?)",
+            ("unrelated.name", "name", "", "preserve-me"),
         )
-        set_call = next(call for call in calls if call[0] == "set_many")
-        self.assertFalse(set_call[2])
-        self.assertIn(("trakt.token", "string", "", ""), set_call[1])
-        self.assertIn(("example.action_name", "name", "One", "One"), set_call[1])
-        self.assertIn(("example.action", "action", "one", "one"), set_call[1])
-        self.assertFalse(any(call[0] == "sync" for call in calls))
-        self.assertIn(("mark_defaults_initialized",), calls)
-        verified = self.adapter.apply(
+        connection.commit()
+        connection.close()
+        self.assertEqual(columns, ("setting_id", "setting_type", "setting_default", "setting_value"))
+        self.assertEqual(rows["trakt.token"], "empty_setting")
+        self.assertEqual(rows["aiostreams.instance_name"], "Default")
+        self.assertEqual(journal_mode.lower(), "wal")
+
+        # A repeat is read-only and idempotent; private application remains
+        # row-scoped and preserves unrelated package state.
+        repeated = self.adapter.initialize(self.declaration, source_context)
+        self.assertEqual(repeated.outcome, "already_initialized")
+        applied = self.adapter.apply(
             self.declaration,
             _overlay(StructuredPrivateValue("trakt.token", "string", SECRET)),
         )
-        self.assertTrue(verified.succeeded)
-        self.assertFalse(verified.restart_required)
+        self.assertTrue(applied.succeeded)
+        self.assertNotIn(SECRET, json.dumps(applied.to_dict()))
         connection = sqlite3.connect(database_path)
         rows = dict(connection.execute("SELECT setting_id, setting_value FROM settings"))
-        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
         connection.close()
         self.assertEqual(rows["trakt.token"], SECRET)
-        self.assertEqual(journal_mode.lower(), "wal")
+        self.assertEqual(rows["ordinary.preference"], "keep-me")
+        self.assertEqual(rows["unrelated.name"], "preserve-me")
+
+    def test_fresh_initialization_requires_verified_held_disabled_source(self):
+        self.adapter.database_path.unlink()
+        with self.assertRaises(PrivateResourceNotInitializedError):
+            self.adapter.initialize(self.declaration)
+        self.assertFalse(self.adapter.database_path.exists())
+
+    def test_initialization_failure_keeps_typed_owner_resource_context_safely(self):
+        from resources.lib.private_resource import StructuredPrivateResourceManager
+
+        self.adapter.database_path.unlink()
+        manager = StructuredPrivateResourceManager(
+            {self.adapter.adapter_id: self.adapter}
+        )
+        with self.assertRaises(StructuredResourceInitializationError) as caught:
+            manager.initialize((self.declaration,))
+        self.assertEqual(caught.exception.code, "PRIVATE_RESOURCE_INITIALIZATION_FAILED")
+        self.assertEqual(caught.exception.owner_addon_id, REDLIGHT_ADDON_ID)
+        self.assertEqual(caught.exception.resource_id, REDLIGHT_RESOURCE_ID)
+        self.assertEqual(caught.exception.cause_code, "RESOURCE_NOT_INITIALIZED")
+        self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_ordinary_resources_do_not_require_installed_owner_context(self):
+        from dataclasses import replace
+
+        ordinary = replace(self.declaration, configure_before_activation=False)
+        manager = StructuredPrivateResourceManager(
+            {self.adapter.adapter_id: self.adapter}
+        )
+        self.assertEqual(manager.initialize((ordinary,)), ())
 
     def test_missing_database_is_not_synthesized(self):
         adapter = RedLightSettingsAdapter(

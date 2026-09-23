@@ -15,6 +15,8 @@ import math
 import re
 from typing import Mapping, Optional, Sequence
 
+from resources.lib.installed_addon_source import PrivateResourceOwnerContext
+
 
 class PrivateResourceError(Exception):
     """Base class for fail-closed structured resource errors."""
@@ -73,6 +75,23 @@ def _addon(value: object, label: str) -> str:
     if not isinstance(value, str) or not _ADDON.fullmatch(value):
         raise PrivateResourceValidationError(f"{label} is not a safe add-on ID")
     return value
+
+
+class StructuredResourceInitializationError(PrivateResourceError):
+    """Sanitized initialization failure with safe resource ownership metadata."""
+
+    code = "PRIVATE_RESOURCE_INITIALIZATION_FAILED"
+
+    def __init__(self, owner_addon_id: str, resource_id: str, cause_code: str = ""):
+        self.owner_addon_id = _addon(owner_addon_id, "resource failure owner")
+        self.resource_id = _id(resource_id, "resource failure resource_id")
+        self.cause_code = (
+            cause_code
+            if isinstance(cause_code, str)
+            and re.fullmatch(r"[A-Z0-9_]{1,80}", cause_code)
+            else ""
+        )
+        super().__init__("structured private resource initialization failed")
 
 
 def validate_typed_value(value: object, value_type: StructuredValueType, label: str) -> object:
@@ -329,7 +348,9 @@ class StructuredPrivateResourceAdapter:
     adapter_id = ""
 
     def initialize(
-        self, declaration: StructuredPrivateResourceDeclaration
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        context: Optional[PrivateResourceOwnerContext] = None,
     ) -> Optional[StructuredResourceResult]:
         """Initialize an absent resource through its owner-specific safe API.
 
@@ -387,15 +408,30 @@ class StructuredPrivateResourceManager:
     def initialize(
         self,
         declarations: Sequence[StructuredPrivateResourceDeclaration],
+        *,
+        owner_contexts: Optional[Mapping[str, PrivateResourceOwnerContext]] = None,
     ) -> tuple[StructuredResourceResult, ...]:
         results = []
         for declaration in declarations:
             if not declaration.configure_before_activation:
                 continue
-            result = self._adapter(declaration).initialize(declaration)
+            context = (owner_contexts or {}).get(declaration.owner_addon_id)
+            adapter = self._adapter(declaration)
+            try:
+                result = adapter.initialize(declaration, context)
+            except StructuredResourceInitializationError:
+                raise
+            except Exception as exc:
+                raise StructuredResourceInitializationError(
+                    declaration.owner_addon_id,
+                    declaration.resource_id,
+                    getattr(exc, "code", ""),
+                ) from exc
             if result is None or not result.succeeded:
-                raise PrivateResourceNotInitializedError(
-                    "structured resource initialization was not verified"
+                raise StructuredResourceInitializationError(
+                    declaration.owner_addon_id,
+                    declaration.resource_id,
+                    "RESOURCE_NOT_INITIALIZED",
                 )
             results.append(result)
         return tuple(results)
@@ -430,6 +466,8 @@ class StructuredPrivateResourceManager:
         self,
         declarations: Sequence[StructuredPrivateResourceDeclaration],
         overlays: Sequence[StructuredPrivateResourceOverlay],
+        *,
+        owner_contexts: Optional[Mapping[str, PrivateResourceOwnerContext]] = None,
     ) -> tuple[StructuredResourceResult, ...]:
         declarations_by_id = {item.resource_id: item for item in declarations}
         if len(declarations_by_id) != len(declarations):
@@ -437,7 +475,7 @@ class StructuredPrivateResourceManager:
         overlays_by_id = {item.resource_id: item for item in overlays}
         if len(overlays_by_id) != len(overlays):
             raise PrivateResourceValidationError("duplicate resource overlays")
-        self.initialize(declarations)
+        self.initialize(declarations, owner_contexts=owner_contexts)
         results = []
         for declaration in declarations:
             overlay = overlays_by_id.get(declaration.resource_id)

@@ -1,6 +1,8 @@
+import json
 import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +15,12 @@ from resources.lib.build_manager import (
 from resources.lib.dependencies import DependencyClosure
 from resources.lib.dependencies import DependencyNode, DependencyStatus
 from resources.lib.inspector import InstalledAddon, KodiState
+from resources.lib.frozen_resolution import (
+    InstallResolution,
+    InstallResolutionRecord,
+    ResolutionState,
+)
+from resources.lib.installed_addon_source import InstalledAddonSourceResolver
 from resources.lib.manifest import (
     AddonEntry,
     BuildInfo,
@@ -386,6 +394,15 @@ class TestBuildManager(unittest.TestCase):
 
         owner_id = "plugin.video.redlight"
         declaration = redlight_declaration()
+        record = InstallResolutionRecord(
+            owner_id,
+            "2.6.8",
+            InstallResolution.EXACT,
+            ResolutionState.INSTALLED,
+            resolved_version="2.6.8",
+            artifact_sha256="c" * 64,
+            artifact_size=1261957,
+        )
         desired = replace(
             _desired(
                 (AddonEntry(owner_id, "enabled"),),
@@ -428,7 +445,7 @@ class TestBuildManager(unittest.TestCase):
             configuration_manifest_path="manifest.json",
             device_profile_id="dev",
             manifest_fingerprint="a" * 64,
-            resolution_records=(),
+            resolution_records=(record,),
             private_overlay_id="fixture-overlay",
             private_overlay_fingerprint=metadata.fingerprint,
             private_overlay_required=True,
@@ -436,26 +453,255 @@ class TestBuildManager(unittest.TestCase):
         fake_store = SimpleNamespace(inspect=lambda: transaction)
         request = ReconcileRequest(
             "manifest.json", "dev",
+            install_resolutions=(record,),
             source_software_fingerprint="a" * 64,
             frozen_transaction_id=transaction_id,
         )
-        with (
-            patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
-            patch(
-                "resources.lib.frozen_install.active_activation_hold_ids",
-                return_value=frozenset({owner_id}),
-            ),
-        ):
-            preview = BuildManager(owners.owners).preview(request)
-            unrelated = BuildManager(owners.owners).preview(
-                replace(request, frozen_transaction_id="")
+        with tempfile.TemporaryDirectory() as source_temp:
+            addons_root = Path(source_temp) / "home" / "addons"
+            installed_root = addons_root / owner_id
+            installed_root.mkdir(parents=True)
+            (installed_root / "addon.xml").write_text(
+                f'<addon id="{owner_id}" version="2.6.8"/>', encoding="utf-8"
             )
+            source_resolver = InstalledAddonSourceResolver(lambda: addons_root)
+            owners.owners = replace(
+                owners.owners,
+                installed_addon_source_resolver=source_resolver,
+            )
+            with (
+                patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
+                patch(
+                    "resources.lib.frozen_install.active_activation_hold_ids",
+                    return_value=frozenset({owner_id}),
+                ),
+            ):
+                preview = BuildManager(owners.owners).preview(request)
+                unrelated = BuildManager(owners.owners).preview(
+                    replace(request, frozen_transaction_id="")
+                )
         self.assertTrue(preview.success)
         self.assertFalse(any(
             action.kind == ENABLE_ADDON for action in preview.planned_actions
         ))
         self.assertFalse(unrelated.success)
         self.assertEqual(unrelated.failure.code, "PREFLIGHT_FAILED")
+
+    def test_wrong_registry_version_fails_before_installed_source_resolution(self):
+        from resources.lib.frozen_install import FrozenInstallPhase, FrozenLifecycleStage
+
+        owner_id = "plugin.video.redlight"
+        declaration = redlight_declaration()
+        record = InstallResolutionRecord(
+            owner_id, "2.6.8", InstallResolution.EXACT, ResolutionState.INSTALLED,
+            resolved_version="2.6.8", artifact_sha256="d" * 64, artifact_size=100,
+        )
+        desired = replace(
+            _desired(
+                (AddonEntry(owner_id, "enabled"),),
+                PrivateOverlayRef("local_file", overlay_id="fixture-overlay"),
+            ),
+            config=ConfigDeclarations(structured_private_resources=(declaration,)),
+        )
+        owners = _Owners(desired, [_state(InstalledAddon(owner_id, False, "2.6.7"))], (owner_id,), {})
+        transaction_id = "55555555-5555-4555-8555-555555555555"
+        transaction = SimpleNamespace(
+            transaction_id=transaction_id,
+            phase=FrozenInstallPhase.CONFIGURING,
+            lifecycle_stage=FrozenLifecycleStage.CONFIGURING,
+            activation_hold_released=False,
+            activation_hold_ids=(owner_id,),
+            configuration_manifest_path="manifest.json",
+            device_profile_id="dev",
+            manifest_fingerprint="e" * 64,
+            resolution_records=(record,),
+            private_overlay_id="fixture-overlay",
+            private_overlay_fingerprint="sha256:" + "5" * 64,
+            private_overlay_required=True,
+        )
+        calls = []
+
+        class SourceResolver:
+            def resolve(self, identity):
+                calls.append(identity)
+                raise AssertionError("registry mismatch must fail before source lookup")
+
+        apply_calls = []
+
+        owners.owners = replace(
+            owners.owners,
+            installed_addon_source_resolver=SourceResolver(),
+            private_overlay_manager=SimpleNamespace(
+                prepare=lambda *args, **kwargs: SimpleNamespace(
+                    metadata=SimpleNamespace(
+                        overlay_id="fixture-overlay",
+                        fingerprint="sha256:" + "5" * 64,
+                        required=True,
+                    ),
+                    overlay=SimpleNamespace(resources=()),
+                    resource_declarations=(declaration,),
+                ),
+                verify_configured_resources=lambda _prepared: True,
+                apply=lambda *args, **kwargs: apply_calls.append((args, kwargs)),
+            ),
+        )
+        fake_store = SimpleNamespace(inspect=lambda: transaction)
+        request = ReconcileRequest(
+            "manifest.json", "dev", install_resolutions=(record,),
+            source_software_fingerprint="e" * 64,
+            frozen_transaction_id=transaction_id,
+        )
+        with (
+            patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
+            patch("resources.lib.frozen_install.active_activation_hold_ids", return_value=frozenset({owner_id})),
+        ):
+            result = BuildManager(owners.owners).reconcile(request)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure.code, "PREFLIGHT_FAILED")
+        self.assertEqual(calls, [])
+        self.assertEqual(apply_calls, [])
+
+    def test_enabled_held_owner_fails_before_installed_source_resolution(self):
+        from resources.lib.frozen_install import FrozenInstallPhase, FrozenLifecycleStage
+
+        owner_id = "plugin.video.redlight"
+        declaration = redlight_declaration()
+        record = InstallResolutionRecord(
+            owner_id, "2.6.8", InstallResolution.EXACT, ResolutionState.INSTALLED,
+            resolved_version="2.6.8", artifact_sha256="f" * 64, artifact_size=100,
+        )
+        desired = replace(
+            _desired(
+                (AddonEntry(owner_id, "enabled"),),
+                PrivateOverlayRef("local_file", overlay_id="fixture-overlay"),
+            ),
+            config=ConfigDeclarations(structured_private_resources=(declaration,)),
+        )
+        owners = _Owners(desired, [_state(InstalledAddon(owner_id, True, "2.6.8"))], (owner_id,), {})
+        transaction_id = "66666666-6666-4666-8666-666666666666"
+        transaction = SimpleNamespace(
+            transaction_id=transaction_id,
+            phase=FrozenInstallPhase.CONFIGURING,
+            lifecycle_stage=FrozenLifecycleStage.CONFIGURING,
+            activation_hold_released=False,
+            activation_hold_ids=(owner_id,),
+            configuration_manifest_path="manifest.json",
+            device_profile_id="dev",
+            manifest_fingerprint="f" * 64,
+            resolution_records=(record,),
+            private_overlay_id="fixture-overlay",
+            private_overlay_fingerprint="sha256:" + "6" * 64,
+            private_overlay_required=True,
+        )
+        calls = []
+        apply_calls = []
+        owners.owners = replace(
+            owners.owners,
+            installed_addon_source_resolver=SimpleNamespace(
+                resolve=lambda identity: calls.append(identity)
+            ),
+            private_overlay_manager=SimpleNamespace(
+                prepare=lambda *args, **kwargs: SimpleNamespace(
+                    metadata=SimpleNamespace(
+                        overlay_id="fixture-overlay",
+                        fingerprint="sha256:" + "6" * 64,
+                        required=True,
+                    ),
+                    overlay=SimpleNamespace(resources=()),
+                    resource_declarations=(declaration,),
+                ),
+                verify_configured_resources=lambda _prepared: True,
+                apply=lambda *args, **kwargs: apply_calls.append((args, kwargs)),
+            ),
+        )
+        fake_store = SimpleNamespace(inspect=lambda: transaction)
+        request = ReconcileRequest(
+            "manifest.json", "dev", install_resolutions=(record,),
+            source_software_fingerprint="f" * 64,
+            frozen_transaction_id=transaction_id,
+        )
+        with (
+            patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
+            patch("resources.lib.frozen_install.active_activation_hold_ids", return_value=frozenset({owner_id})),
+        ):
+            result = BuildManager(owners.owners).reconcile(request)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure.code, "PREFLIGHT_FAILED")
+        self.assertEqual(calls, [])
+        self.assertEqual(apply_calls, [])
+
+    def test_ordinary_resource_does_not_require_installed_owner_source(self):
+        declaration = replace(
+            redlight_declaration(), configure_before_activation=False
+        )
+        desired = replace(
+            _desired(
+                (AddonEntry("plugin.video.redlight", "enabled"),),
+                PrivateOverlayRef("local_file", overlay_id="ordinary-resource"),
+            ),
+            config=ConfigDeclarations(structured_private_resources=(declaration,)),
+        )
+        owners = _Owners(
+            desired,
+            [_state(InstalledAddon("plugin.video.redlight", True, "2.6.8"))],
+            ("plugin.video.redlight",),
+            {},
+        )
+        calls = []
+        owners.owners = replace(
+            owners.owners,
+            installed_addon_source_resolver=SimpleNamespace(
+                resolve=lambda identity: calls.append(identity)
+            ),
+            private_overlay_manager=SimpleNamespace(
+                prepare=lambda *args, **kwargs: SimpleNamespace(
+                    metadata=None,
+                    overlay=SimpleNamespace(resources=()),
+                    resource_declarations=(declaration,),
+                ),
+                verify_configured_resources=lambda _prepared: True,
+            ),
+        )
+        fake_store = SimpleNamespace(inspect=lambda: None)
+        with (
+            patch("resources.lib.frozen_install.FrozenInstallStore", return_value=fake_store),
+            patch("resources.lib.frozen_install.active_activation_hold_ids", return_value=frozenset()),
+        ):
+            result = BuildManager(owners.owners).preview(ReconcileRequest("manifest.json", "dev"))
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [])
+
+    def test_configure_exception_text_is_not_serialized(self):
+        fake_secret = "BM017F_FAKE_EXCEPTION_SECRET_92f1"
+        desired = replace(_desired(), config=ConfigDeclarations())
+        owners = _Owners(desired, [_state()], (), {})
+
+        class FailingConfigManager:
+            def apply(self, _effective):
+                raise RuntimeError(fake_secret)
+
+        owners.owners = replace(
+            owners.owners,
+            config_manager=FailingConfigManager(),
+        )
+        with (
+            patch(
+                "resources.lib.frozen_install.FrozenInstallStore",
+                return_value=SimpleNamespace(inspect=lambda: None),
+            ),
+            patch(
+                "resources.lib.frozen_install.active_activation_hold_ids",
+                return_value=frozenset(),
+            ),
+        ):
+            result = BuildManager(owners.owners).reconcile(
+                ReconcileRequest("manifest.json", "dev")
+            )
+        encoded = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertFalse(result.success)
+        self.assertEqual(result.action_results[0].action.kind, "CONFIGURE")
+        self.assertIn("ACTION_EXECUTION_FAILED", encoded)
+        self.assertNotIn(fake_secret, encoded)
 
     def test_unheld_addon_cannot_reference_held_optional_dependency(self):
         from resources.lib.frozen_install import FrozenInstallPhase, FrozenLifecycleStage

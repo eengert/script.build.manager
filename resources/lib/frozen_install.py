@@ -2500,8 +2500,11 @@ class FrozenInstallCoordinator:
                     continue
                 action = getattr(action_result, "action", None)
                 kind = getattr(action, "kind", "")
+                kind = getattr(kind, "value", kind)
+                if isinstance(kind, str):
+                    kind = kind.strip().upper()
                 addon_id = getattr(action, "addon_id", "")
-                if isinstance(kind, str) and re.fullmatch(r"[a-z_]{1,40}", kind):
+                if isinstance(kind, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,39}", kind):
                     diagnostic_parts.append(f"action={kind}")
                 if isinstance(addon_id, str) and _ADDON_ID.fullmatch(addon_id):
                     diagnostic_parts.append(f"addon={addon_id}")
@@ -2510,7 +2513,20 @@ class FrozenInstallCoordinator:
                 if isinstance(owner_code, str) and re.fullmatch(
                     r"[A-Z0-9_]{1,80}", owner_code
                 ):
-                    diagnostic_parts.append(f"owner={owner_code}")
+                    diagnostic_parts.append(f"resource_failure={owner_code}")
+                owner_id = getattr(owner_result, "owner_addon_id", "")
+                if isinstance(owner_id, str) and _ADDON_ID.fullmatch(owner_id):
+                    diagnostic_parts.append(f"owner={owner_id}")
+                resource_id = getattr(owner_result, "resource_id", "")
+                if isinstance(resource_id, str) and re.fullmatch(
+                    r"[a-z0-9][a-z0-9._-]{0,127}", resource_id
+                ):
+                    diagnostic_parts.append(f"resource={resource_id}")
+                cause_code = getattr(owner_result, "cause_code", "")
+                if isinstance(cause_code, str) and re.fullmatch(
+                    r"[A-Z0-9_]{1,80}", cause_code
+                ):
+                    diagnostic_parts.append(f"cause={cause_code}")
                 break
             error = FrozenInstallError("configuration/restart handoff failed")
             error.code = (

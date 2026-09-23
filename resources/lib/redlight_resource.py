@@ -1,11 +1,11 @@
 """Red Light 2.6.8 structured private-resource adapter (BM-017C).
 
 The public Red Light settings import path replaces whole mixed databases and
-is UI-driven, so it is not a Build Manager application API.  This adapter is a
-deliberately narrow fallback: it accepts only the audited settings table,
-only declared string fields, and only when the owner has quiesced Red Light.
-It never creates a database, changes journal mode, writes undeclared rows, or
-claims that an active runtime cache has been refreshed.
+is UI-driven, so it is not a Build Manager application API. This adapter
+accepts only the audited settings table, only declared string fields, and only
+when the owner is held disabled. For a fresh destination it creates the
+settings table from Red Light's exact package schema/default declarations,
+then applies only owned rows; it does not run service, provider, or auth setup.
 """
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ from resources.lib.private_resource import (
     StructuredResourceFieldDeclaration,
     StructuredResourceResult,
     validate_resource_overlay,
+)
+from resources.lib.installed_addon_source import (
+    PrivateResourceOwnerContext,
+    VerifiedInstalledAddonSource,
 )
 
 
@@ -155,15 +159,16 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             raise PrivateResourceNotInitializedError("Red Light settings resource is not initialized")
 
     def initialize(
-        self, declaration: StructuredPrivateResourceDeclaration
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        context: Optional[PrivateResourceOwnerContext] = None,
     ) -> StructuredResourceResult:
-        """Create a fresh Red Light settings resource through its own APIs.
+        """Create a fresh Red Light settings resource from verified package code.
 
         Existing non-empty databases are only verified. An absent or strictly
-        empty database is seeded with the exact package's default settings
-        routine, whose fresh-empty branch skips upgrade migrations and cache
-        property loading. Any partial, incompatible, or uncertain resource
-        fails closed without deletion or generic SQL repair.
+        empty database is seeded with the exact package's static defaults and
+        pure fresh-install value normalizer. Any partial, incompatible, or
+        uncertain resource fails closed without deletion or migration repair.
         """
         self._validate_declaration(declaration)
         if self._addon_version != REDLIGHT_VERSION:
@@ -186,47 +191,26 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             # initializer. Existing populated resources are an idempotent
             # read-only success, including after activation has been released.
             self._validate_quiescence()
+            installed_source = self._verified_source_context(declaration, context)
             (
-                ensure_database_tables,
+                settings_table_creators,
                 default_settings,
                 new_setting_value,
-                settings_cache,
-                addon_profile,
-                mark_defaults_initialized,
-            ) = (
-                self._redlight_initializers()
-            )
-            expected_profile = (
-                self._profile_root / "addon_data" / REDLIGHT_ADDON_ID
-            ).resolve()
-            try:
-                actual_profile = Path(addon_profile()).resolve()
-            except Exception as exc:
-                raise PrivateResourceNotInitializedError(
-                    "Red Light profile path could not be verified"
-                ) from exc
-            if actual_profile != expected_profile:
-                raise PrivateResourceCompatibilityError(
-                    "Red Light initializer resolved an unexpected add-on profile"
-                )
-
-            try:
-                empty = settings_cache.is_empty_strict()
-            except Exception as exc:
-                raise PrivateResourceNotInitializedError(
-                    "Red Light settings emptiness could not be verified"
-                ) from exc
-            if not empty:
+                set_property,
+                settings_db_synced_property,
+                settings_sync_fingerprint_property,
+            ) = self._redlight_initializers(installed_source)
+            if not self._settings_database_is_empty():
                 raise PrivateResourceCompatibilityError(
                     "Red Light settings cache disagrees with the empty database"
                 )
             if not path_existed:
-                ensure_database_tables("settings_db")
+                self._ensure_settings_database(settings_table_creators)
             # Recheck the package-owned strict empty predicate before building
             # any first-install rows.  The full sync_settings() routine also
             # performs upgrade migrations, stale-row cleanup, property
             # publication, and deferred setup; none belongs in initialization.
-            if not settings_cache.is_empty_strict():
+            if not self._settings_database_is_empty():
                 raise PrivateResourceCompatibilityError(
                     "Red Light settings changed before default initialization"
                 )
@@ -235,15 +219,22 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 raise PrivateResourceNotInitializedError(
                     "Red Light package supplied no fresh default settings"
                 )
-            settings_cache.set_many(rows, load_properties=False)
-            if settings_cache.is_empty_strict():
+            self._write_default_rows(rows)
+            if self._settings_database_is_empty():
                 raise PrivateResourceNotInitializedError(
                     "Red Light default settings were not persisted"
                 )
             outcome = "initialized"
 
             self._verify_database()
-            mark_defaults_initialized()
+            # Keep the exact fresh-install boot markers used by Red Light's
+            # service, without calling its Addon(id)-based version/profile
+            # helpers or running its broader sync/bootstrap path.
+            set_property(settings_db_synced_property, "true")
+            set_property(
+                settings_sync_fingerprint_property,
+                f"{installed_source.version}:{len(default_settings())}",
+            )
             self._initialized = True
             return StructuredResourceResult(
                 REDLIGHT_RESOURCE_ID,
@@ -281,7 +272,6 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             )
         rows = []
         seen = set()
-        instance_labels = None
         for item in settings:
             if not isinstance(item, dict):
                 raise PrivateResourceCompatibilityError(
@@ -318,44 +308,115 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                         "Red Light action default options are malformed"
                     )
                 name_default = options[setting_default]
-                if setting_id == "aiostreams.instance":
-                    if instance_labels is None:
-                        try:
-                            from apis.aiostreams_api import INSTANCE_LABELS
-                            instance_labels = INSTANCE_LABELS
-                        except Exception as exc:
-                            raise PrivateResourceNotInitializedError(
-                                "Red Light action labels could not be resolved"
-                            ) from exc
-                    name_default = instance_labels.get(setting_default, name_default)
                 name_value = options.get(value, name_default)
                 rows.append((f"{setting_id}_name", "name", name_default, name_value))
             rows.append((setting_id, setting_type, setting_default, value))
         return tuple(rows)
 
-    @staticmethod
-    def _redlight_initializers():
-        """Load only package-owned database/default helpers in isolation."""
+    def _verified_source_context(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        context: Optional[PrivateResourceOwnerContext],
+    ) -> VerifiedInstalledAddonSource:
+        if (
+            context is None
+            or not context.matches(REDLIGHT_ADDON_ID, self._addon_version)
+            or context.expected_version not in declaration.supported_versions
+        ):
+            raise PrivateResourceNotInitializedError(
+                "verified held Red Light source context is unavailable"
+            )
         try:
-            import xbmcaddon
-            addon = xbmcaddon.Addon(REDLIGHT_ADDON_ID)
-            if addon.getAddonInfo("version") != REDLIGHT_VERSION:
+            source = context.installed_source.revalidate()
+        except Exception as exc:
+            raise PrivateResourceNotInitializedError(
+                "verified Red Light installed source changed before initialization"
+            ) from exc
+        if (
+            source.addon_id != declaration.owner_addon_id
+            or source.version != self._addon_version
+            or source.installed_root.name != REDLIGHT_ADDON_ID
+        ):
+            raise PrivateResourceCompatibilityError(
+                "verified Red Light source identity does not match the resource owner"
+            )
+        return source
+
+    def _settings_database_is_empty(self) -> bool:
+        if not self.database_path.exists():
+            return True
+        return not self._has_settings_rows()
+
+    def _ensure_settings_database(self, table_creators) -> None:
+        try:
+            statements = table_creators().get("settings_db")
+            if not isinstance(statements, tuple) or not statements or any(
+                not isinstance(statement, str) or not statement.strip()
+                for statement in statements
+            ):
                 raise PrivateResourceCompatibilityError(
-                    "installed Red Light version does not match the audited initializer"
+                    "Red Light settings schema declaration is unavailable"
                 )
-            addon_path = Path(addon.getAddonInfo("path")).resolve()
-            if not addon_path.is_dir():
-                raise PrivateResourceNotInitializedError(
-                    "installed Red Light source directory is unavailable"
-                )
-        except PrivateResourceCompatibilityError:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(self.database_path, timeout=0.5)
+            try:
+                journal_mode = connection.execute(
+                    "PRAGMA journal_mode = WAL"
+                ).fetchone()[0]
+                if str(journal_mode).lower() != "wal":
+                    raise PrivateResourceCompatibilityError(
+                        "Red Light settings database could not enter audited WAL mode"
+                    )
+                for statement in statements:
+                    connection.execute(statement)
+                connection.commit()
+            finally:
+                connection.close()
+        except PrivateResourceError:
             raise
         except Exception as exc:
             raise PrivateResourceNotInitializedError(
-                "installed Red Light source could not be resolved"
+                "Red Light settings schema could not be initialized"
             ) from exc
 
-        for top_level in ("caches", "modules", "apis"):
+    def _write_default_rows(self, rows) -> None:
+        connection = None
+        try:
+            connection = sqlite3.connect(self.database_path, timeout=0.5)
+            connection.executemany(
+                "INSERT OR REPLACE INTO settings VALUES (?, ?, ?, ?)", rows
+            )
+            connection.commit()
+        except sqlite3.Error as exc:
+            if connection is not None:
+                connection.rollback()
+            raise PrivateResourceNotInitializedError(
+                "Red Light package defaults could not be persisted"
+            ) from exc
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @staticmethod
+    def _redlight_initializers(
+        installed_source: VerifiedInstalledAddonSource,
+    ):
+        """Import the audited package defaults from a revalidated installed root.
+
+        Only static package defaults, their pure fresh-install value helper,
+        and the package-owned settings-table declaration are used. The package
+        profile helper, settings sync, provider setup, and service entry points
+        are intentionally never called here.
+        """
+        try:
+            verified = installed_source.revalidate()
+            addon_path = verified.installed_root
+        except Exception as exc:
+            raise PrivateResourceNotInitializedError(
+                "verified Red Light installed source is unavailable"
+            ) from exc
+
+        for top_level in ("caches", "modules"):
             loaded = sys.modules.get(top_level)
             origin = getattr(loaded, "__file__", None) if loaded else None
             if origin is not None:
@@ -373,30 +434,24 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             base_cache = importlib.import_module("caches.base_cache")
             settings_cache_module = importlib.import_module("caches.settings_cache")
             kodi_utils = importlib.import_module("modules.kodi_utils")
-            ensure_database_tables = getattr(base_cache, "ensure_database_tables")
+            table_creators = getattr(base_cache, "table_creators")
             default_settings = getattr(settings_cache_module, "default_settings")
             new_setting_value = getattr(settings_cache_module, "_new_setting_value")
-            settings_cache = getattr(settings_cache_module, "settings_cache")
-            addon_profile = getattr(kodi_utils, "addon_profile")
-            mark_settings_sync_complete = getattr(
-                settings_cache_module, "mark_settings_sync_complete"
+            settings_db_synced_property = getattr(
+                settings_cache_module, "_SETTINGS_DB_SYNCED"
             )
-
-            def mark_defaults_initialized():
-                # Match the bounded fresh-default branch's completion markers
-                # so first service startup skips the broad upgrade/migration
-                # routine. No settings are loaded into properties here.
-                kodi_utils.set_property("redlight.settings_db_synced", "true")
-                mark_settings_sync_complete()
-                settings_cache.clear_db_cache()
+            settings_sync_fingerprint_property = getattr(
+                settings_cache_module, "_SETTINGS_SYNC_FINGERPRINT"
+            )
+            set_property = getattr(kodi_utils, "set_property")
 
             return (
-                ensure_database_tables,
+                table_creators,
                 default_settings,
                 new_setting_value,
-                settings_cache,
-                addon_profile,
-                mark_defaults_initialized,
+                set_property,
+                settings_db_synced_property,
+                settings_sync_fingerprint_property,
             )
         except PrivateResourceError:
             raise
@@ -414,7 +469,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             # this bounded import set so later Build Manager calls cannot reuse
             # Red Light's package-level cache object accidentally.
             for name, module in tuple(sys.modules.items()):
-                if name.split(".", 1)[0] not in {"caches", "modules", "apis"}:
+                if name.split(".", 1)[0] not in {"caches", "modules"}:
                     continue
                 origin = getattr(module, "__file__", None)
                 if origin is None:

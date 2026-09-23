@@ -35,6 +35,11 @@ from resources.lib.private_overlay import (
     PrivateOverlayMetadata,
     PreparedPrivateOverlay,
 )
+from resources.lib.installed_addon_source import (
+    KodiInstalledAddonSourceResolver,
+    ManagedAddonSourceIdentity,
+    PrivateResourceOwnerContext,
+)
 from resources.lib.dependencies import (
     DependencyAwareInstaller,
     DependencyResolver,
@@ -173,6 +178,42 @@ class ActionExecutionResult:
 
 
 @dataclass(frozen=True)
+class ActionFailureDiagnostic:
+    """Sanitized action error metadata; exception text is never retained."""
+
+    code: str
+    owner_addon_id: str = ""
+    resource_id: str = ""
+    cause_code: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not re.fullmatch(
+            r"[A-Z0-9_]{1,80}", self.code
+        ):
+            raise ValueError("action failure code is not safe")
+        if self.owner_addon_id and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", self.owner_addon_id
+        ):
+            raise ValueError("action failure owner is not safe")
+        if self.resource_id and not re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]{0,127}", self.resource_id
+        ):
+            raise ValueError("action failure resource is not safe")
+        if self.cause_code and not re.fullmatch(
+            r"[A-Z0-9_]{1,80}", self.cause_code
+        ):
+            raise ValueError("action failure cause code is not safe")
+
+    def to_dict(self) -> dict:
+        return {
+            "code": self.code,
+            "owner_addon_id": self.owner_addon_id,
+            "resource_id": self.resource_id,
+            "cause_code": self.cause_code,
+        }
+
+
+@dataclass(frozen=True)
 class ReconcileResult:
     """Stable aggregate returned to callers of :class:`BuildManager`."""
 
@@ -203,6 +244,11 @@ class ReconcileResult:
                     "succeeded": result.succeeded,
                     "changed": result.changed,
                     "message": result.message,
+                    "failure": (
+                        result.owner_result.to_dict()
+                        if isinstance(result.owner_result, ActionFailureDiagnostic)
+                        else None
+                    ),
                     "restart_report": result.restart_report.to_dict(),
                 }
                 for result in self.action_results
@@ -234,6 +280,7 @@ class BuildManagerOwners:
     config_loader: object
     config_manager: object
     private_overlay_manager: object = None
+    installed_addon_source_resolver: object = None
 
 
 def _runtime_addon_state_backend():
@@ -260,6 +307,7 @@ def _default_owners() -> BuildManagerOwners:
         config_loader=ConfigPackageLoader(default_packages_root()),
         config_manager=config_manager,
         private_overlay_manager=PrivateOverlayManager(config_manager),
+        installed_addon_source_resolver=KodiInstalledAddonSourceResolver(),
     )
 
 
@@ -385,6 +433,7 @@ class _PreparedReconciliation:
     plan: object
     private_prepared: Optional[PreparedPrivateOverlay] = None
     skipped_addon_ids: Tuple[str, ...] = ()
+    owner_contexts: object = None
 
 
 class BuildManager:
@@ -444,14 +493,17 @@ class BuildManager:
 
             try:
                 result = self._dispatch_action(
-                    action, execution_desired, effective, protected, prepared.private_prepared
+                    action, execution_desired, effective, protected,
+                    prepared.private_prepared, prepared.owner_contexts,
                 )
             except Exception as exc:
+                diagnostic = _action_failure_diagnostic(exc)
                 result = ActionExecutionResult(
                     action=action,
                     succeeded=False,
                     changed=False,
-                    message=f"action owner raised: {_message(exc)}",
+                    message=f"action failed safely ({diagnostic.code})",
+                    owner_result=diagnostic,
                 )
             action_results.append(result)
             reports.append(result.restart_report)
@@ -612,6 +664,7 @@ class BuildManager:
             transaction = FrozenInstallStore().inspect()
             held_ids = active_activation_hold_ids()
             execution_desired = desired
+            owner_contexts = {}
             lifecycle_resources = tuple(
                 item for item in (
                     desired.config.structured_private_resources
@@ -661,6 +714,52 @@ class BuildManager:
                 managed_ids = {item.addon_id for item in desired.addons}
                 if not held_ids.issubset(managed_ids):
                     raise ValueError("activation hold includes an unmanaged desired add-on")
+                source_resolver = getattr(
+                    self._owners, "installed_addon_source_resolver", None
+                )
+                if source_resolver is None:
+                    raise ValueError("verified installed add-on source resolver is unavailable")
+                records_by_id = {
+                    item.addon_id: item for item in transaction.resolution_records
+                }
+                for declaration in lifecycle_resources:
+                    owner_id = declaration.owner_addon_id
+                    if owner_id in owner_contexts:
+                        continue
+                    record = records_by_id.get(owner_id)
+                    registered = actual_map.get(owner_id)
+                    if (
+                        record is None
+                        or record.state is not ResolutionState.INSTALLED
+                        or record.resolution is InstallResolution.SKIPPED
+                        or not record.resolved_version
+                        or not record.artifact_sha256
+                        or record.artifact_size is None
+                        or registered is None
+                        or registered.enabled is not False
+                        or registered.version != record.resolved_version
+                        or record.resolved_version not in declaration.supported_versions
+                    ):
+                        raise ValueError(
+                            "held resource owner registry state differs from its frozen resolution"
+                        )
+                    identity = ManagedAddonSourceIdentity(
+                        addon_id=record.addon_id,
+                        version=record.resolved_version,
+                        artifact_sha256=record.artifact_sha256,
+                        artifact_size=record.artifact_size,
+                        frozen_transaction_id=transaction.transaction_id,
+                        manifest_fingerprint=transaction.manifest_fingerprint,
+                    )
+                    source = source_resolver.resolve(identity)
+                    owner_contexts[owner_id] = PrivateResourceOwnerContext(
+                        owner_addon_id=owner_id,
+                        expected_version=record.resolved_version,
+                        registry_version=registered.version,
+                        owner_enabled=registered.enabled,
+                        activation_held=owner_id in held_ids,
+                        installed_source=source,
+                    )
             else:
                 if request.frozen_transaction_id:
                     raise ValueError("frozen lifecycle request has no active activation hold")
@@ -742,6 +841,7 @@ class BuildManager:
             plan=plan,
             private_prepared=private_prepared,
             skipped_addon_ids=skipped_addon_ids,
+            owner_contexts=owner_contexts,
         ), None
 
     @staticmethod
@@ -816,6 +916,7 @@ class BuildManager:
     def _dispatch_action(
         self, action, desired, effective, protected_dependency_ids,
         private_prepared: Optional[PreparedPrivateOverlay] = None,
+        owner_contexts=None,
     ):
         if action.kind == INSTALL_REPOSITORY:
             repository = next(
@@ -889,7 +990,12 @@ class BuildManager:
                     has_pre_activation_resources
                     and public_result.restart_report.requires_restart
                 ):
-                    private_result = manager.apply(private_prepared)
+                    if owner_contexts:
+                        private_result = manager.apply(
+                            private_prepared, owner_contexts=owner_contexts
+                        )
+                    else:
+                        private_result = manager.apply(private_prepared)
             return _action_from_owner(
                 action,
                 ConfigurationApplyBundle(public_result, private_result),
@@ -909,6 +1015,27 @@ class BuildManager:
 def _message(exc: object) -> str:
     text = str(exc).strip() or exc.__class__.__name__
     return text[:500]
+
+
+def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
+    """Extract only validated codes and identifiers from an action error."""
+    code = getattr(exc, "code", "")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", code):
+        code = "ACTION_EXECUTION_FAILED"
+    owner = getattr(exc, "owner_addon_id", "")
+    if not isinstance(owner, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", owner
+    ):
+        owner = ""
+    resource = getattr(exc, "resource_id", "")
+    if not isinstance(resource, str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9._-]{0,127}", resource
+    ):
+        resource = ""
+    cause = getattr(exc, "cause_code", "")
+    if not isinstance(cause, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", cause):
+        cause = ""
+    return ActionFailureDiagnostic(code, owner, resource, cause)
 
 
 def _result_succeeded(result: object) -> bool:
