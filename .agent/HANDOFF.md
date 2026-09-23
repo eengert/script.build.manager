@@ -1,3 +1,44 @@
+# Agent Handoff — BM-017F historical audit integrated on matrix
+
+BM-017F first attempt is complete as an investigation/implementation attempt.
+Only sanitized `docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md` was integrated from
+worker commits `10512a6` and `1d9531b`, as matrix commits `ad48ff4` and
+`ed92808`; worker `.agent/*` files were excluded. Matrix tracking remains
+neutral with `active_agent: none`.
+
+Historical result: `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
+This classification requires revalidation because BM-023A-R1 reported 30 of
+31 installed managed non-system nodes artifact-backed, with
+`plugin.video.redlight` 2.6.8 among those 30. The exact pinned digest is
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. Trace
+the retained frozen-manifest reference through production ArtifactStore APIs
+before accepting the historical blocker. Do not access Family Room or inspect
+the normal Kodi profile.
+
+The BM-017F Kodi 21.1/Omega evidence showed that an ordinary newly discovered
+add-on defaulted disabled; `UpdateLocalAddons` did not start the fake service;
+the fake service started only after enable. Kodi native install/reload and
+Build Manager dependency reconciliation remain possible activation paths that
+require lifecycle coordination. A full managed-graph activation barrier is
+unresolved.
+
+A safety deviation is recorded: `/Applications/Kodi.app/Contents/MacOS/Kodi -v`
+was invoked without a disposable `HOME`. A later process check found no Kodi
+process, but transient normal-profile access could not be ruled out. The normal
+profile was not inspected. No further normal-profile investigation is
+authorized by this record.
+
+No production code changed in the first attempt. No Family Room/device access
+or real private values were used. tvOS remains NOT VALIDATED; BM-023A retry was
+not started.
+
+**Smallest next step**: resolve the pinned Red Light reference through the
+retained manifest and production ArtifactStore API. If present, validate exact
+package bytes and resume BM-017F. If absent or inconsistent, record the precise
+retained-state blocker and stop. Do not resume BM-023A.
+
+---
+
 # Agent Handoff — BM-017E audit integrated on matrix
 
 BM-017E is complete as a static investigation with result

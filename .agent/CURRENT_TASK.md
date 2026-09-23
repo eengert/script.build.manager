@@ -1,34 +1,39 @@
 # Current Task
 
-## BM-017E — Structured Private Resource Initialization & Quiescence
+## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: Complete as a static investigation. Result:
-`BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`. The sanitized audit
-was integrated from worker commit `e94046d84145ce570e3a49fa25706ae03351997a`
-as matrix commit `7075d59`; worker `.agent/*` was excluded.
+**Status**: The first investigation/implementation attempt is complete. Its
+historical result is `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`,
+but the result requires retained-manifest and ArtifactStore revalidation
+before acceptance. BM-023A-R1 reported Red Light 2.6.8 among 30 exact
+artifact-backed installed managed add-ons, with YouTube as the single exact
+artifact gap.
 
-The audited Red Light 2.6.8 package SHA-256 is
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
-Red Light's `ensure_database_tables('settings_db')` owns settings-table DDL;
-`connect_database()` establishes WAL; and `sync_settings()` seeds defaults but
-also performs migrations and other settings behavior. Normal enabled startup
-performs broader database maintenance and starts background workers. The
-observed pause/disabled signal does not prove worker quiescence. BM-022 applies
-final enabled state before private configuration, while BM-020/BM-022 resume
-cannot preserve a structured-resource lifecycle stage across another restart.
-The current production path therefore cannot prove Red Light remains safely
-quiesced through initialization and private apply.
+Only the sanitized audit was integrated as matrix commits `ad48ff4` and
+`ed92808`; no worker `.agent/*` files were copied. Matrix remains neutral with
+`active_agent: none`. Product implementation did not begin during the first
+attempt.
 
-No add-on code was run. BM-023A-R1 remains historically
-`BLOCKED_RESOURCE_NOT_INITIALIZED`; its Mac retry remains blocked and was not
-resumed. tvOS remains NOT VALIDATED. Matrix integration validated the audit
-tracking fields and `git diff --check`; no product tests were run for this
-documentation-only change.
+The disposable Kodi 21.1/Omega test found ordinary newly discovered add-ons
+disabled by default, `UpdateLocalAddons` did not start the fake service, and
+the fake service started only after enable. Kodi native install/reload and
+dependency reconciliation remain possible activation paths; the full managed
+graph activation barrier remains unresolved.
 
-**Smallest next step**: synchronize Codex with matrix, then begin the separately
-authorized BM-017F deferred-activation/lifecycle work. Do not resume BM-023A.
+The first attempt accidentally invoked
+`/Applications/Kodi.app/Contents/MacOS/Kodi -v` without disposable `HOME`. No
+process remained at the later check, but transient normal-profile access could
+not be ruled out. The normal Kodi profile was not inspected and must not be
+inspected for that deviation.
+
+BM-023A retry was not started. tvOS remains NOT VALIDATED.
+
+**Smallest next step**: trace the retained frozen-manifest reference through
+the production ArtifactStore API and check the exact object before continuing
+BM-017F. Do not resume BM-023A.
 
 ---
+
 ## BM-023B — Frozen Artifact Fallback & Install Recoverability
 
 **Status**: Complete on protected `matrix`. Reviewed substantive worker commit
