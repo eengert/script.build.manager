@@ -1,10 +1,10 @@
 {
-  "active_agent": "none",
-  "status": "blocked",
+  "active_agent": "codex",
+  "status": "in_progress",
   "task": "BM-017F",
-  "reason": "BM-017F investigation/implementation attempt complete with BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE. Exact package path redirected to non-ZIP HTML with the wrong SHA-256; user input is required to supply the pinned artifact before source-owned initialization can be selected. BM-017E history remains unchanged; no BM-023A retry or tvOS validation.",
-  "last_commit": "10512a6",
-  "matrix_sha": "ee5c5f7266b00ce7338123c74f8985a4886e848c",
+  "reason": "Resuming BM-017F after qualified matrix integration. Historical BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE requires revalidation through the retained frozen manifest and production ArtifactStore because BM-023A-R1 reported Red Light among 30 exact artifact-backed nodes. No BM-023A retry or tvOS validation.",
+  "last_commit": "fedefae",
+  "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "codex",
-  "updated_at": "2026-09-22"
+  "updated_at": "2026-09-23"
 }

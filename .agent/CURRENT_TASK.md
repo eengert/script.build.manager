@@ -1,142 +1,40 @@
 # Current Task
 
-## BM-017F — Deferred Activation & Structured-Resource Lifecycle Coordination
+## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: Complete as an investigation/implementation attempt. Result:
-`BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`.
+**Status**: Resumed after the first investigation/implementation attempt. The
+historical result `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE` requires
+revalidation because BM-023A-R1 reported Red Light 2.6.8 among 30 exact
+artifact-backed installed managed add-ons, with YouTube as the single exact
+artifact gap. The pinned Red Light SHA-256 is
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
 
-BM-017E audit `docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md` was integrated on
-protected `matrix` as `7075d59`, with neutral tracking `ee5c5f7`. Normal merge
-`071e93a0ab20c13ee1bb52ac6134664a418aa671` synchronized `agent/codex` with
-`origin/matrix`; the worker branch was pushed. BM-017E's historical result
-remains `BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
+The sanitized audit and neutral tracking are integrated on protected matrix
+through `fedefae98aa01253e6b34ecbac1b292b80c21b6a`. Worker metadata and its
+single usage row remain on `agent/codex`. The retained manifest and ArtifactStore
+lookup is in progress; no artifact outcome is claimed yet.
 
-The BM-017F audit-only commit is `10512a6`; no product implementation or new
-test file was added.
+Prior Kodi 21.1/Omega evidence: newly discovered ordinary add-ons were disabled
+by default, `UpdateLocalAddons` did not start the fake service, and the fake
+service started only after enable. Kodi native install/reload and dependency
+reconciliation remain possible activation paths; the managed-graph activation
+barrier remains unresolved.
 
-The BM-017F audit found that Kodi 21.1 staged local discovery registers a new
-ordinary add-on disabled; the disposable fake-service probe saw no start through
-scan, hold, and restart. The current BM-022 frozen installer nevertheless
-enforces final enabled state before configuration. Kodi and Build Manager can
-enable disabled dependencies while enabling another add-on; the exact
-package-specific dependency graph was not proven. BM-020/BM-022 still lack a
-single durable structured-resource stage. The exact Red Light 2.6.8 package
-could not be recovered from the published URL: it redirected to Google HTML
-with the wrong hash. No product code or BM-023A retry was performed.
+The prior run accidentally invoked
+`/Applications/Kodi.app/Contents/MacOS/Kodi -v` without disposable `HOME`. No
+process remained at the later check, but transient normal-profile access could
+not be ruled out. The normal profile was not inspected and must not be
+inspected for that deviation.
 
-Focused regressions passed **703/703**, full suite **1647/1647**, compileall,
-seven JSON files parsed, and `git diff --check` passed. The report is in
-[`docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md`](../docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md).
-No Family Room values/device were intentionally accessed; tvOS is NOT VALIDATED.
+No product implementation has started in the resumed run. No BM-023A retry or
+tvOS validation is in scope.
 
-**Smallest next step / human input**: provide a reachable local file or URL for
-the exact Red Light 2.6.8 ZIP and verify SHA-256
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927` before
-resuming this milestone. Do not resume BM-023A until lifecycle support is
-implemented and proven.
-
----
-## BM-017E — Structured Private Resource Initialization & Quiescence
-
-**Status**: Complete as a static investigation. Result:
-`BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`.
-
-The public Red Light 2.6.8 package was audited at SHA-256
-`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`. It has
-an internal settings-table initializer, but its ordinary enabled-addon startup
-performs broad database maintenance and starts background workers. Build
-Manager's current BM-020/BM-022 durable ordering cannot prove that Red Light
-stays disabled across restart, initialization, private application, and
-re-enable while updater quarantine remains active. No Red Light code was
-executed, no production implementation or live validation was attempted, and
-no Family Room database, overlay value, Kodi device, or portable Mac test
-profile was accessed. See
-[`docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md`](../docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md).
-
-BM-023A-R1 remains complete as a validation task with result
-`BLOCKED_RESOURCE_NOT_INITIALIZED`. Its production correction is integrated on
-matrix as `9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`, neutral tracking is
-`9abc4724fede1a2a936be37db501d1ab24c6d5f1`, and Codex is synchronized by normal
-merge `7b8fe386447fd345c3029d7c8a13f0a96cf300ce`. The BM-023A Mac retry remains
-blocked and was not started; tvOS remains NOT VALIDATED.
-
-The requested Luna-6 / Max was not observable in this runtime. The observed
-runtime label is GPT-6; effort and Codex usage telemetry are unavailable.
-
-**Smallest next step**: review the audit disposition and design one durable
-BM-020/BM-022 stage that holds Red Light disabled through initialization and
-private application before any later BM-023A retry is authorized.
+**Smallest next step**: use the retained frozen manifest and production
+ArtifactStore API to resolve the exact Red Light 2.6.8 artifact reference.
+Validate the pinned object if present; stop with a precise consistency blocker
+if missing or inconsistent. Do not resume BM-023A.
 
 ---
-## Previous Task — BM-023A-R1 isolated macOS validation
-
-**Status**: Complete as a validation task with result
-`BLOCKED_RESOURCE_NOT_INITIALIZED`. BM-023B is integrated on protected `matrix` at
-`d867b8029ae35d4187ecbcecb0f3f39016673517` and synchronized to `agent/codex`
-at `9b16e8a5a0585a11552233071f20073af151c0b4`. The R1 source-identity fix is
-committed on `agent/codex` as `a2ad39a`.
-
-### Destination isolation and input preflight
-
-- Only `/Applications/Kodi Build Manager Test.app` was launched, with the
-  exact command `open "/Applications/Kodi Build Manager Test.app" --args -p`.
-- The app reports Kodi 21.3 / Omega. The running Kodi executable and
-  `XBMCHelper` both resolve inside this test app; Kodi's process includes `-p`.
-- Kodi's own log maps `special://home` to the app's
-  `Contents/Resources/Kodi/portable_data` and `special://profile` through
-  `special://masterprofile` to that tree's `userdata`. Derived `addon_data`,
-  `Database`, and `addons/packages` paths resolve inside the same portable root.
-  Process open-file checks found no normal-profile handles.
-- Final path checks confirmed the Red Light `settings.db` is absent and its
-  expected destination remains inside the test app.
-- The portable profile contains only the fresh Kodi baseline (stock metadata
-  add-ons, default skin/input data, and empty library databases); it has not
-  been reset. No Build Manager install, settings change, add-on mutation, or
-  reconciliation has occurred.
-- The retained capture at
-  `/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json`
-  matches source fingerprint
-  `sha256:8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`.
-  Its graph is 37 nodes, 31 installed managed, 1 absent optional, 5 system /
-  runtime nodes, 67 required edges, and 3 optional edges. All 30 available
-  artifacts pass byte hash, size, ID/version, and ZIP validation. The packages
-  contain no native binary members in the checked formats.
-- YouTube `7.4.4+unofficial.2` remains exact-unavailable with unknown trusted
-  repository provenance. The Family Room policy is exact-first with repository
-  fallback or Skip; current actions are Skip / Cancel Build.
-
-### Result and stop condition
-
-- Protected overlay validation passed for ID, fingerprint, source binding, and
-  public Red Light declaration. YouTube Skip compatibility passed using only
-  public ownership declarations. No private values were emitted.
-- The production default adapter is hard-coded `ACTIVE` and
-  `initialized=False`; it does not create the database, and no supported
-  deterministic initialization/quiesce lifecycle exists. The clean destination
-  has no Red Light settings database, so validation stopped at the hard gate
-  with `RESOURCE_NOT_INITIALIZED` before destination mutation.
-- Build Manager bootstrap, YouTube prompt/choice, frozen installation, updater
-  quarantine, public configuration, private application, restart/resume, final
-  state, and idempotence were not attempted after this architectural gate.
-
-Focused production regressions: **288/288**. Full repository suite:
-**1647/1647**. `compileall`, JSON parsing, and `git diff --check` passed.
-No Family Room/device access occurred. tvOS remains NOT VALIDATED. The
-requested Luna-6 / Max setting was not observable; runtime label was GPT-6,
-effort and Codex usage readings unavailable.
-
-The separately authorized BM-017E task now investigates the initialization and
-quiescence gap. The Mac installation remains blocked; do not resume it during
-BM-017E.
-
-No Family Room/device access occurred. No normal Kodi profile path was selected
-or opened. tvOS remains NOT VALIDATED. The task-requested Luna-6 / Max setting
-was not observable in this runtime; the runtime label is GPT-6 and effort and
-Codex usage/quota readings are unavailable.
-
----
-
-# Previous Task Records
 
 ## BM-023B — Frozen Artifact Fallback & Install Recoverability
 

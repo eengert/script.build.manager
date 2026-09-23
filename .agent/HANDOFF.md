@@ -1,72 +1,41 @@
-# Agent Handoff — BM-017F investigation blocked on exact package
+# Agent Handoff — BM-017F resumed after qualified matrix integration
 
-## Disposition
+BM-017F first attempt is complete as an investigation/implementation attempt.
+Its historical result is `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`,
+but that result requires revalidation: BM-023A-R1 reported Red Light 2.6.8
+among 30 exact artifact-backed installed managed add-ons, with YouTube as the
+single exact-artifact gap. The pinned Red Light SHA-256 is
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
 
-BM-017F is complete as an investigation/implementation attempt with result
-`BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`. The exact pinned Red Light
-2.6.8 ZIP is required to re-inspect source and validate a source-owned
-initializer. The maintainer's Omega index and derived ZIP URLs redirected to
-generic Google HTML; the response was not a ZIP and its SHA-256 differed from
-the pinned `64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
-No alternate package was used, no Red Light code was run, and no product code or
-new test file was added. The sanitized audit is worker commit `10512a6`. The
-full investigation is in
-[`docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md`](../docs/BM017F_DEFERRED_ACTIVATION_AUDIT.md).
+The sanitized audit was integrated on protected `matrix` as `ad48ff4` and
+qualified in `ed92808`; neutral tracking is `fedefae98aa01253e6b34ecbac1b292b80c21b6a`.
+Only the audit and neutral BM-017F tracking were integrated. Worker metadata
+and the worker usage row remain on `agent/codex`. The worker now synchronizes
+by normal merge from this matrix tip; there is no reset, rebase, or force-push.
 
-Kodi 21.1/Omega source shows the staged `UpdateLocalAddons` discovery path
-registers a new ordinary addon disabled. The disposable fake-service probe
-observed registration disabled and no service marker through hold and process
-restart; the service ran only after enabling it with a fake readiness sentinel
-already present. Kodi's separate native install/load path can re-enable an
-addon, so it is not interchangeable with Build Manager's staged install. The
-existing BM-022 coordinator still applies a node's final enabled state before
-configuration. BM-020 and BM-022 have no single durable structured-resource
-stage; BM-020 resume rejects a restart requirement that persists after its
-restart boundary. BM-022's updater guard is in fact reasserted by
-`run_startup()` before BM-020 resume, then checked again before BM-022
-finalization. Kodi's `EnableAddon()` and Build Manager BM-012 can enable a
-disabled add-on through another add-on's required dependency closure; the exact
-package-specific graph was not proven, so a narrow activation barrier must also
-account for those dependency enablers.
+The audit recorded these Kodi 21.1/Omega findings: ordinary newly discovered
+add-ons defaulted disabled; `UpdateLocalAddons` did not start the fake service;
+the fake service started only after enable. Kodi native install/reload and
+Build Manager dependency reconciliation remain activation paths that require
+lifecycle coordination. The full managed-graph activation barrier is
+unresolved. The prior focused suite passed **703/703**, the full suite passed
+**1647/1647**, compileall and seven JSON parses passed, and `git diff --check`
+passed. No production code changed in that first attempt.
 
-## Integration and synchronization
+A safety deviation remains recorded: `/Applications/Kodi.app/Contents/MacOS/Kodi -v`
+was invoked without disposable `HOME`. A later check found no Kodi process, but
+transient normal-profile access could not be ruled out. The normal Kodi profile
+was not inspected and must not be inspected to investigate that deviation.
 
-Starting refs were the supplied `origin/matrix` `9abc4724fede1a2a936be37db501d1ab24c6d5f1`
-and `origin/agent/codex` `e94046d84145ce570e3a49fa25706ae03351997a`. Only
-sanitized `docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md` was integrated to matrix as
-`7075d59`; neutral tracking is `ee5c5f7266b00ce7338123c74f8985a4886e848c`.
-The normal worker merge is `071e93a0ab20c13ee1bb52ac6134664a418aa671`. Matrix
-was pushed only to `origin/matrix`, then worker synchronization only to
-`origin/agent/codex`. At the synchronization gate, `origin/matrix` was an
-ancestor, the substantive endpoint diff excluding `.agent/**` was empty,
-`git diff --check` passed, and the worker was clean. No reset, rebase, or force
-push was used.
+The resumed BM-017F run is now revalidating the retained frozen-manifest
+reference and ArtifactStore object through production APIs. No result is claimed
+yet. No Family Room/device access or real private values were used. BM-023A
+retry was not started; tvOS remains NOT VALIDATED.
 
-## Validation and boundaries
-
-- Requested focused regressions: **703/703**.
-- Full repository suite: **1647/1647**.
-- `compileall`: passed; seven repository JSON files parsed; `git diff --check`:
-  passed.
-- Disposable Kodi fake-service proof only; harness reset and stopped.
-- BM-023A retry was not resumed. Red Light lifecycle remains **UNSUPPORTED**;
-  tvOS remains **NOT VALIDATED**.
-- Usage source: runtime label GPT-6; requested Luna-6/Max not observable and
-  effort unavailable. Start usage is unknown; the only end snapshot reported
-  5-hour 28% used and weekly 62% used, so delta is unknown.
-
-One command mistake needs to remain visible: I invoked
-`/Applications/Kodi.app/Contents/MacOS/Kodi -v` while trying to query the Kodi
-version. `-v` enables verbose mode; it is not a version-only flag. This command
-did not set the disposable `HOME`. A later process check found no Kodi process
-running, but I did not inspect the normal Kodi profile, so transient startup or
-profile access cannot be ruled out. All purposeful Kodi tests used
-`tools/kodi_test.py` and its isolated `.kodi-test` HOME. No Kodi Build Manager
-Test app or Family Room device was used.
-
-**Smallest next step / human input**: provide a reachable local file or URL for
-the exact package and verify its pinned SHA-256 before continuing BM-017F. Keep
-BM-023A blocked until the lifecycle is implemented and proven.
+**Smallest next step**: finish the retained manifest and ArtifactStore lookup.
+If the exact object exists, validate its pinned bytes and resume BM-017F. If it
+is absent or inconsistent, record the precise retained-state blocker and stop.
+Do not resume BM-023A.
 
 ---
 
