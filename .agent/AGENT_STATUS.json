@@ -1,10 +1,10 @@
 {
-  "active_agent": "none",
-  "status": "complete",
-  "task": "BM-023A-R1",
-  "reason": "Validation task complete with BLOCKED_RESOURCE_NOT_INITIALIZED. Kodi 21.3/Omega ran only from /Applications/Kodi Build Manager Test.app with -p and all mutable paths resolved under portable_data; normal-profile handles were absent. The clean profile has no Red Light settings.db. Production defaults are ACTIVE/initialized=False with no supported deterministic initialization/quiesce path, so the hard gate stopped validation before destination mutation. Protected overlay metadata/source binding and public YouTube-Skip compatibility passed without emitting values. No Family Room/device access; tvOS NOT VALIDATED.",
+  "active_agent": "codex",
+  "status": "in_progress",
+  "task": "BM-017E",
+  "reason": "BM-023A-R1 source-identity correction is integrated on protected matrix at 9f05ea7, with neutral tracking at 9abc472; Codex synchronization is in progress. BM-023A-R1 remains complete as a validation task with BLOCKED_RESOURCE_NOT_INITIALIZED. Starting BM-017E with a static audit of the exact public Red Light 2.6.8 artifact. No real Family Room database, overlay values, or device will be accessed.",
   "last_commit": "a2ad39a",
-  "matrix_sha": "d867b80",
-  "next_agent": "supervisor",
+  "matrix_sha": "9abc472",
+  "next_agent": "codex",
   "updated_at": "2026-09-22"
 }

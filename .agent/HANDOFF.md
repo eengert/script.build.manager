@@ -1,3 +1,30 @@
+# Agent Handoff — BM-017E started; BM-023A-R1 synchronized
+
+The R1 production correction was integrated onto protected matrix as
+`9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; neutral tracking is
+`9abc4724fede1a2a936be37db501d1ab24c6d5f1`. The correction carries frozen
+source identity through reconciliation/restart metadata and declares the
+Family Room Red Light resource. Matrix focused validation passed **288/288**;
+full suite passed **1647/1647**. Worker tracking was excluded from matrix.
+Codex synchronization uses a normal merge, preserving its worker history.
+
+BM-023A-R1 remains complete as a validation task with result
+`BLOCKED_RESOURCE_NOT_INITIALIZED`. The isolated Kodi 21.3/Omega destination
+was proven portable. Its clean profile had no Red Light settings resource, and
+production lacked a supported deterministic initialize/quiesce lifecycle. No
+frozen software was installed, updater quarantine was not entered, and the
+YouTube prompt was not reached. The protected overlay's safe metadata and
+public YouTube-Skip compatibility passed without emitting private values.
+Family Room profile/device was not accessed; tvOS remains NOT VALIDATED.
+
+BM-017E begins with a static audit of the exact public Red Light 2.6.8 package
+whose expected SHA-256 is
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
+The task will not use the real Family Room database or protected overlay
+values. No Kodi device or the Mac test profile is part of BM-017E.
+
+---
+
 # Agent Handoff — BM-023A-R1 validation complete
 
 **Result**: `BLOCKED_RESOURCE_NOT_INITIALIZED`. BM-023A-R1 is complete as a
@@ -70,9 +97,9 @@ the secret-blind scan result is recorded as `leak_detected=false` after the
 final scan. The exact authorized test app remains at its pristine portable
 baseline and is still available to the user.
 
-**Smallest next step**: separately design/implement a supported deterministic
-Red Light database initialization and quiesce lifecycle; only then consider a
-newly authorized BM-023A-R1 retry. Do not continue to another milestone.
+**Smallest next step**: complete the separately authorized BM-017E source audit
+and lifecycle work. Keep BM-023A-R1 blocked and do not resume the Mac
+installation during BM-017E.
 
 ---
 

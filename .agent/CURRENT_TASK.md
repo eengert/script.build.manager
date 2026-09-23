@@ -1,6 +1,28 @@
 # Current Task
 
-## BM-023A-R1 — Isolated macOS Frozen Install Validation Retry
+## BM-017E — Structured Private Resource Initialization & Quiescence
+
+**Status**: In progress. The supervisor-approved BM-023A-R1 correction was
+integrated as matrix commit `9f05ea748d9c15131982d6eee2cb1e9aa41a3f8e`; neutral
+matrix tracking is `9abc4724fede1a2a936be37db501d1ab24c6d5f1`. Codex is being
+synchronized by a normal merge. BM-023A-R1 remains complete as a validation
+task with result `BLOCKED_RESOURCE_NOT_INITIALIZED`.
+
+The next action is a static audit of the exact public Red Light 2.6.8 package
+with SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927`.
+Determine the Red Light-owned database creation, schema, WAL, settings cache,
+startup, and quiescence behavior before executing any add-on code. Use only
+public package/source and fake/disposable data. Do not access the Family Room
+database or inspect protected overlay values. BM-017E is separate from the Mac
+destination retry; do not modify its portable profile.
+
+Requested Luna-6 / Max was not observable in this runtime; the runtime label is
+GPT-6 and effort/usage telemetry are unavailable.
+
+---
+
+## Previous Task — BM-023A-R1 isolated macOS validation
 
 **Status**: Complete as a validation task with result
 `BLOCKED_RESOURCE_NOT_INITIALIZED`. BM-023B is integrated on protected `matrix` at
@@ -57,9 +79,9 @@ No Family Room/device access occurred. tvOS remains NOT VALIDATED. The
 requested Luna-6 / Max setting was not observable; runtime label was GPT-6,
 effort and Codex usage readings unavailable.
 
-Do not begin another milestone. The smallest next step is a separately scoped
-production design for deterministic Red Light initialization and quiescence,
-followed by a newly authorized retry if implemented.
+The separately authorized BM-017E task now investigates the initialization and
+quiescence gap. The Mac installation remains blocked; do not resume it during
+BM-017E.
 
 No Family Room/device access occurred. No normal Kodi profile path was selected
 or opened. tvOS remains NOT VALIDATED. The task-requested Luna-6 / Max setting
