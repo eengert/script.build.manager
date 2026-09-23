@@ -1,3 +1,26 @@
+# Agent Handoff — BM-017E audit integrated on matrix
+
+BM-017E is complete as a static investigation with result
+`BLOCKED_CROSS_COORDINATOR_QUIESCENCE_STAGE_UNSUPPORTED`. Only the sanitized
+`docs/BM017E_RESOURCE_LIFECYCLE_AUDIT.md` from worker commit `e94046d` was
+integrated as matrix commit `7075d59`; worker `.agent/*` was excluded. Matrix
+tracking remains neutral with `active_agent: none`.
+
+The audit records the exact public Red Light 2.6.8 package hash, its own DDL and
+WAL paths, the broader effects of settings synchronization and normal service
+startup, and why current BM-020/BM-022 ordering cannot maintain quiescence and
+resume private configuration across another restart. No Red Light code or
+Kodi runtime was executed for this documentation-only integration. The audit
+tracking assertions and `git diff --check` passed; no product tests were run.
+
+BM-023A-R1 remains historically `BLOCKED_RESOURCE_NOT_INITIALIZED`; do not
+resume the Mac installation. tvOS remains NOT VALIDATED.
+
+**Smallest next step**: synchronize Codex normally, then begin the separately
+authorized BM-017F lifecycle work.
+
+---
+
 # Agent Handoff — BM-023A-R1 correction integrated
 
 BM-023A-R1 is complete as a validation task with result
