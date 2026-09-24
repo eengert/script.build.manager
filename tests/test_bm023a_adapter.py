@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import sys
 import tempfile
@@ -12,15 +14,18 @@ from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
 
+from resources.lib.artifacts import ArtifactStore
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import FrozenInstallCoordinator
 from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
     AdapterBootstrapError,
+    choose_missing_artifact_resolution,
     identify_adapter_result,
     parse_adapter_mode,
     recover_frozen_install,
     safe_failure_payload,
+    stage_manifest_artifacts,
     verify_build_manager_source,
 )
 from tools.build_bm023a_adapter import build_adapter, read_existing_adapter_config
@@ -222,7 +227,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.4")
+            self.assertEqual(ADAPTER_VERSION, "0.0.5")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -240,8 +245,211 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.4"', addon_xml)
+            self.assertIn('version="0.0.5"', addon_xml)
             compile(default, "generated-default.py", "exec")
+
+
+class TestBm023aRetainedArtifactStaging(unittest.TestCase):
+    @staticmethod
+    def addon_zip(addon_id="plugin.example", version="1.2.3"):
+        import io
+
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr(
+                f"{addon_id}/addon.xml",
+                f'<addon id="{addon_id}" version="{version}" />',
+            )
+            archive.writestr(f"{addon_id}/default.py", "# fixture\n")
+        return stream.getvalue()
+
+    @staticmethod
+    def node(addon_id, version, artifact, *, system=False):
+        return SimpleNamespace(
+            addon_id=addon_id,
+            version=version,
+            artifact=artifact,
+            system=system,
+        )
+
+    def test_exact_retained_artifact_is_staged_with_its_identity(self):
+        zip_bytes = self.addon_zip()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_store = ArtifactStore(root / "retained")
+            retained = source_store.import_zip(
+                zip_bytes,
+                expected_addon_id="plugin.example",
+                expected_version="1.2.3",
+                source="fixture-retained",
+            )
+            durable_root = root / "profile-local" / "frozen-artifacts"
+            durable_store = ArtifactStore(durable_root)
+            manifest = SimpleNamespace(addons=(
+                self.node("plugin.example", "1.2.3", retained),
+            ))
+
+            stage_manifest_artifacts(manifest, source_store, durable_store)
+
+            staged = durable_store.get_metadata(retained.sha256)
+            self.assertEqual(staged.sha256, retained.sha256)
+            self.assertEqual(staged.size, retained.size)
+            self.assertEqual(staged.addon_id, "plugin.example")
+            self.assertEqual(staged.version, "1.2.3")
+            self.assertEqual(staged.source, "bm023a-retained-artifact")
+            self.assertEqual(durable_store.read_bytes(retained.sha256), zip_bytes)
+
+    def test_artifactless_and_system_nodes_are_not_staged_and_resolution_is_preserved(self):
+        class TrackingSourceStore:
+            read_calls = []
+
+            def read_bytes(self, sha256):
+                self.read_calls.append(sha256)
+                raise AssertionError("artifactless node must not be read")
+
+        class TrackingDurableStore:
+            import_calls = []
+
+            def import_zip(self, *args, **kwargs):
+                self.import_calls.append((args, kwargs))
+                raise AssertionError("artifactless node must not be imported")
+
+        source_store = TrackingSourceStore()
+        durable_store = TrackingDurableStore()
+        system_artifact = SimpleNamespace(sha256="a" * 64, size=1)
+        manifest = SimpleNamespace(addons=(
+            self.node("plugin.video.youtube", "7.4.4+unofficial.2", None),
+            self.node("script.module.optional", "1.0.0", None),
+            self.node("xbmc.python", "3.0.0", system_artifact, system=True),
+        ))
+
+        stage_manifest_artifacts(manifest, source_store, durable_store)
+
+        self.assertEqual(source_store.read_calls, [])
+        self.assertEqual(durable_store.import_calls, [])
+        choices = SimpleNamespace(SKIP="skip", CANCEL="cancel")
+        self.assertEqual(
+            choose_missing_artifact_resolution(
+                SimpleNamespace(addon_id="plugin.video.youtube", skip_allowed=True),
+                choices,
+            ),
+            "skip",
+        )
+        self.assertEqual(
+            choose_missing_artifact_resolution(
+                SimpleNamespace(addon_id="plugin.video.youtube", skip_allowed=False),
+                choices,
+            ),
+            "cancel",
+        )
+        self.assertEqual(
+            choose_missing_artifact_resolution(
+                SimpleNamespace(
+                    addon_id="plugin.repository.example",
+                    skip_allowed=False,
+                    repository_id="repository.example",
+                ),
+                choices,
+            ),
+            "cancel",
+        )
+
+    def test_missing_corrupt_and_mismatched_artifacts_fail_with_safe_diagnostics(self):
+        zip_bytes = self.addon_zip()
+        digest = hashlib.sha256(zip_bytes).hexdigest()
+        cases = ("missing", "corrupt", "mismatch")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source_store = ArtifactStore(root / "retained")
+                durable_store = ArtifactStore(root / "profile-local" / "frozen-artifacts")
+                retained = SimpleNamespace(sha256=digest, size=len(zip_bytes))
+                if case == "corrupt":
+                    corrupt_path = source_store.artifact_path(digest)
+                    corrupt_path.write_bytes(b"corrupt retained ZIP bytes")
+                elif case == "mismatch":
+                    source_store.import_zip(
+                        zip_bytes,
+                        expected_addon_id="plugin.example",
+                        expected_version="1.2.3",
+                    )
+
+                    class MismatchedStore:
+                        def import_zip(self, *args, **kwargs):
+                            return SimpleNamespace(sha256="0" * 64, size=len(zip_bytes) + 1)
+
+                    durable_store = MismatchedStore()
+
+                manifest = SimpleNamespace(addons=(
+                    self.node("plugin.example", "1.2.3", retained),
+                ))
+                with self.assertRaises(AdapterBootstrapError) as raised:
+                    stage_manifest_artifacts(manifest, source_store, durable_store)
+
+                payload = safe_failure_payload(
+                    "STAGE_RETAINED_ARTIFACTS",
+                    "ArtifactStore.read_bytes",
+                    raised.exception,
+                )
+                serialized = json.dumps(payload)
+                self.assertEqual(payload["adapter_stage"], "STAGE_RETAINED_ARTIFACTS")
+                self.assertEqual(payload["failure_category"], "artifact_stage_failed")
+                self.assertNotIn(str(root), serialized)
+                self.assertNotIn("corrupt retained ZIP bytes", serialized)
+                self.assertEqual(set(payload), {
+                    "ok", "error_type", "adapter_stage", "failing_callable",
+                    "failure_category",
+                })
+
+    def test_install_coordinator_receives_profile_local_durable_store(self):
+        template = Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
+        tree = ast.parse(template.read_text(encoding="utf-8"))
+        coordinator_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "FrozenInstallCoordinator"
+        ]
+        install_call = next(
+            call for call in coordinator_calls
+            if any(keyword.arg == "configuration_runner" for keyword in call.keywords)
+        )
+        artifact_store = next(
+            keyword.value for keyword in install_call.keywords
+            if keyword.arg == "artifact_store"
+        )
+        self.assertIsInstance(artifact_store, ast.Name)
+        self.assertEqual(artifact_store.id, "durable_store")
+
+        durable_root_assignment = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "durable_root" for target in node.targets)
+        )
+        self.assertIsInstance(durable_root_assignment.value, ast.Call)
+        self.assertIsInstance(durable_root_assignment.value.func, ast.Attribute)
+        self.assertEqual(durable_root_assignment.value.func.attr, "default_frozen_install_root")
+
+        durable_store_assignment = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "durable_store" for target in node.targets)
+        )
+        self.assertIsInstance(durable_store_assignment.value, ast.Call)
+        self.assertEqual(durable_store_assignment.value.func.attr, "ArtifactStore")
+        durable_path = durable_store_assignment.value.args[0]
+        self.assertIsInstance(durable_path, ast.BinOp)
+        self.assertIsInstance(durable_path.left, ast.Name)
+        self.assertEqual(durable_path.left.id, "durable_root")
+        self.assertEqual(durable_path.right.value, "frozen-artifacts")
+
+        recovery_call = next(call for call in coordinator_calls if call is not install_call)
+        recovery_artifact_store = next(
+            keyword.value for keyword in recovery_call.keywords
+            if keyword.arg == "artifact_store"
+        )
+        self.assertIsInstance(recovery_artifact_store, ast.Call)
+        self.assertEqual(recovery_artifact_store.func.attr, "ArtifactStore")
 
 
 class TestBm023aRecoveryAdapter(unittest.TestCase):

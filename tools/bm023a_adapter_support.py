@@ -7,7 +7,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.4"
+ADAPTER_VERSION = "0.0.5"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 
@@ -19,6 +19,7 @@ ADAPTER_STAGES = frozenset({
     "LOAD_FROZEN_MANIFEST",
     "LOAD_CONFIGURATION",
     "LOAD_PRIVATE_OVERLAY",
+    "STAGE_RETAINED_ARTIFACTS",
     "BUILD_COORDINATOR",
     "INVOKE_INSTALL",
     "CHECK_RECOVERY_PRECONDITIONS",
@@ -31,6 +32,10 @@ ADAPTER_CALLABLES = frozenset({
     "importlib.import_module",
     "FrozenBuildManifest.from_json",
     "PrivateOverlayStore.import_file",
+    "ArtifactStore.__init__",
+    "ArtifactStore.read_bytes",
+    "ArtifactStore.import_zip",
+    "default_frozen_install_root",
     "BuildManager",
     "FrozenInstallCoordinator",
     "FrozenInstallCoordinator.install",
@@ -56,6 +61,7 @@ FAILURE_CATEGORIES = frozenset({
     "unsupported_recovery_state",
     "mode_missing",
     "mode_invalid",
+    "artifact_stage_failed",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -106,6 +112,51 @@ def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
     return identified
+
+
+def choose_missing_artifact_resolution(prompt: Any, resolution_choice: Any) -> Any:
+    """Keep the adapter's existing YouTube skip and all-other cancel policy."""
+    if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
+        return resolution_choice.SKIP
+    return resolution_choice.CANCEL
+
+
+def stage_manifest_artifacts(manifest: Any, source_store: Any, durable_store: Any) -> None:
+    """Copy exact captured ZIPs into the profile-local frozen artifact store."""
+    for node in manifest.addons:
+        if node.system or node.artifact is None:
+            continue
+        artifact = node.artifact
+        try:
+            zip_bytes = source_store.read_bytes(artifact.sha256)
+        except Exception:
+            raise _bootstrap_error(
+                "STAGE_RETAINED_ARTIFACTS",
+                "ArtifactStore.read_bytes",
+                "artifact_stage_failed",
+            ) from None
+        try:
+            imported = durable_store.import_zip(
+                zip_bytes,
+                expected_addon_id=node.addon_id,
+                expected_version=node.version,
+                source="bm023a-retained-artifact",
+            )
+        except Exception:
+            raise _bootstrap_error(
+                "STAGE_RETAINED_ARTIFACTS",
+                "ArtifactStore.import_zip",
+                "artifact_stage_failed",
+            ) from None
+        if (
+            getattr(imported, "sha256", None) != artifact.sha256
+            or getattr(imported, "size", None) != artifact.size
+        ):
+            raise _bootstrap_error(
+                "STAGE_RETAINED_ARTIFACTS",
+                "ArtifactStore.import_zip",
+                "artifact_stage_failed",
+            )
 
 
 def recover_frozen_install(

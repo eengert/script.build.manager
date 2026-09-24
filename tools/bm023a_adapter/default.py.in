@@ -19,10 +19,12 @@ from adapter_config import (
 )
 from adapter_support import (
     AdapterBootstrapError,
+    choose_missing_artifact_resolution,
     identify_adapter_result,
     parse_adapter_mode,
     recover_frozen_install,
     safe_failure_payload,
+    stage_manifest_artifacts,
     verify_build_manager_source,
 )
 
@@ -171,6 +173,18 @@ def main():
             FAILING_CALLABLE = "FrozenBuildManifest.from_json"
             manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
 
+            STAGE = "STAGE_RETAINED_ARTIFACTS"
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            source_store = artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT))
+            FAILING_CALLABLE = "default_frozen_install_root"
+            durable_root = frozen_install_module.default_frozen_install_root()
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            durable_store = artifacts_module.ArtifactStore(
+                durable_root / "frozen-artifacts"
+            )
+            FAILING_CALLABLE = "ArtifactStore.read_bytes"
+            stage_manifest_artifacts(manifest, source_store, durable_store)
+
             STAGE = "LOAD_CONFIGURATION"
             FAILING_CALLABLE = "pathlib.Path"
             if not Path(CONFIGURATION_PATH).is_file():
@@ -187,15 +201,15 @@ def main():
             manager = build_manager_module.BuildManager()
 
             def resolve_missing_artifact(prompt):
-                if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
-                    return frozen_install_module.ResolutionChoice.SKIP
-                return frozen_install_module.ResolutionChoice.CANCEL
+                return choose_missing_artifact_resolution(
+                    prompt, frozen_install_module.ResolutionChoice
+                )
 
             STAGE = "BUILD_COORDINATOR"
             FAILING_CALLABLE = "FrozenInstallCoordinator"
             coordinator = frozen_install_module.FrozenInstallCoordinator(
                 store=frozen_install_module.FrozenInstallStore(),
-                artifact_store=artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT)),
+                artifact_store=durable_store,
                 policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
                 installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
                 configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
