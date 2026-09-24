@@ -2,35 +2,43 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: The first investigation/implementation attempt is complete. Its
-historical result is `BLOCKED_PINNED_RED_LIGHT_2_6_8_ARTIFACT_UNAVAILABLE`,
-but the result requires retained-manifest and ArtifactStore revalidation
-before acceptance. BM-023A-R1 reported Red Light 2.6.8 among 30 exact
-artifact-backed installed managed add-ons, with YouTube as the single exact
-artifact gap.
+**Status**: `COMPLETE` on protected `matrix`. The reviewed substantive worker
+endpoint diff was reconstructed as matrix commit
+`4dfd97e180d14976adec8540d5c0c93893519249`; `.agent/**` worker history was not
+cherry-picked and worker history was not rewritten. The 33-file integration
+contains the BM-017F production lifecycle, schema, resource/import handling,
+tests, disposable validation harness, and sanitized audit. No unrelated
+product changes or disposable profile contents entered matrix.
 
-Only the sanitized audit was integrated as matrix commits `ad48ff4` and
-`ed92808`; no worker `.agent/*` files were copied. Matrix remains neutral with
-`active_agent: none`. Product implementation did not begin during the first
-attempt.
+The supervisor-provided final disposable run passed all eight steps and all
+twenty listed checks. It proved the activation hold survived restart, private
+resource initialization and verification completed before release, Red Light
+started after release, the exact artifact/dependency inputs were retained,
+and idempotency, database shape, WAL, unrelated-state preservation, and fake
+value redaction checks passed.
 
-The disposable Kodi 21.1/Omega test found ordinary newly discovered add-ons
-disabled by default, `UpdateLocalAddons` did not start the fake service, and
-the fake service started only after enable. Kodi native install/reload and
-dependency reconciliation remain possible activation paths; the full managed
-graph activation barrier remains unresolved.
+- BM-017F: `COMPLETE`.
+- Red Light structured private-resource lifecycle: `LIVE-VALIDATED`.
+- macOS BM-023A: `READY_TO_RETRY`; the retry was not started.
+- tvOS: `NOT VALIDATED`.
 
-The first attempt accidentally invoked
-`/Applications/Kodi.app/Contents/MacOS/Kodi -v` without disposable `HOME`. No
-process remained at the later check, but transient normal-profile access could
-not be ruled out. The normal Kodi profile was not inspected and must not be
-inspected for that deviation.
+Matrix automated validation passed: focused BM-017F/lifecycle/resource/import/
+harness modules **499/499**; full repository suite **1782/1782**;
+`compileall`; parsing of all **7 tracked JSON files**, including the schema;
+and `git diff --check`. During validation, one import-spy assertion was made
+order-safe after Python 3.14 `unittest.mock` target resolution was counted as
+two incidental `builtins` imports. This was a test-only correction; production
+behavior did not change.
 
-BM-023A retry was not started. tvOS remains NOT VALIDATED.
+This integration did not launch Kodi or access a normal Kodi profile, a real
+device, or private overlay values. The final live-validation evidence was
+supervisor-provided and restricted to the disposable `.kodi-test` scope.
 
-**Smallest next step**: trace the retained frozen-manifest reference through
-the production ArtifactStore API and check the exact object before continuing
-BM-017F. Do not resume BM-023A.
+**Smallest next step**: normally merge the pushed `matrix` update into
+`agent/codex`, then wait for the separately supervisor-authorized macOS
+BM-023A retry against `/Applications/Kodi Build Manager Test.app`, launched
+with `open "/Applications/Kodi Build Manager Test.app" --args -p`. Do not run
+that retry as part of this integration.
 
 ---
 

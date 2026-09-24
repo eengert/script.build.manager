@@ -1,3 +1,39 @@
+# Agent Handoff — BM-017F complete and integrated on matrix
+
+**Result**: `BM-017F COMPLETE`. Reviewed substantive changes were reconstructed
+from the `origin/matrix` to worker endpoint diff, excluding `.agent/**`, as
+matrix commit `4dfd97e180d14976adec8540d5c0c93893519249`. The integration adds
+the BM-017F lifecycle and harness work only; no tracking commits or unrelated
+product changes were integrated, and worker history was not rewritten. One
+test-only import-spy ordering correction was included after focused validation
+showed `unittest.mock` target resolution being counted as incidental imports.
+
+The supervisor-provided final disposable validation passed all eight steps
+and all twenty checks. Red Light structured private-resource lifecycle is
+`LIVE-VALIDATED`. The supervised evidence used the disposable `.kodi-test`
+scope; this integration did not launch Kodi or access a normal Kodi profile,
+real device, or private overlay values.
+
+Matrix validation passed: focused lifecycle/resource/import/harness modules
+**499/499**, full suite **1782/1782**, `compileall`, parsing all **7 tracked
+JSON files** including the schema, and `git diff --check`. The final matrix
+push and normal worker merge are the remaining repository synchronization
+steps for this handoff.
+
+BM-023A macOS is `READY_TO_RETRY`, and no retry was started. tvOS remains
+`NOT VALIDATED`.
+
+**Smallest next step**: push the reviewed matrix integration, merge it into
+`agent/codex` with a normal merge, and then wait for the next
+supervisor-authorized task: the macOS BM-023A retry against
+`/Applications/Kodi Build Manager Test.app`, launched exactly with
+`open "/Applications/Kodi Build Manager Test.app" --args -p`.
+
+This handoff supersedes older BM-017F pending/blocker records below; those
+entries remain as historical evidence.
+
+---
+
 # Agent Handoff — BM-017F historical audit integrated on matrix
 
 BM-017F first attempt is complete as an investigation/implementation attempt.
