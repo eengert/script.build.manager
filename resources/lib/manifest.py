@@ -712,6 +712,7 @@ def _parse_structured_private_resource(
     keys = {
         "resource_type", "owner_addon_id", "supported_versions", "schema_id",
         "resource_id", "fields", "adapter_id", "lifecycle", "required",
+        "configure_before_activation",
     }
     unknown = set(raw) - keys
     if unknown:
@@ -749,6 +750,7 @@ def _parse_structured_private_resource(
         adapter_id=raw["adapter_id"],
         lifecycle=raw.get("lifecycle", "quiesced"),
         required=raw.get("required", True),
+        configure_before_activation=raw.get("configure_before_activation", False),
     )
 
 

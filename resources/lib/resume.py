@@ -78,10 +78,12 @@ class ResumeCoordinator:
         *,
         store: Optional[TransactionStore] = None,
         session_id_provider: Optional[Callable[[], str]] = None,
+        before_reconcile: Optional[Callable[[RestartTransaction, ReconcileResult, str], object]] = None,
     ) -> None:
         self._build_manager = build_manager or BuildManager()
         self._store = store or TransactionStore()
         self._session_id_provider = session_id_provider or get_current_kodi_session_id
+        self._before_reconcile = before_reconcile
 
     def resume(
         self,
@@ -158,6 +160,31 @@ class ResumeCoordinator:
                 "PRIVATE_OVERLAY_FINGERPRINT_MISMATCH",
                 "private overlay identity changed before resume",
             )
+
+        if self._before_reconcile is not None:
+            try:
+                readiness = self._before_reconcile(current, preview, session_id)
+            except Exception:
+                return self._needs_attention(
+                    current,
+                    "PRE_RECONCILE_READINESS_FAILED",
+                    "pre-configuration resume readiness could not be verified",
+                )
+            if readiness is not None and not getattr(readiness, "allowed", False):
+                code = _safe_code(
+                    getattr(readiness, "code", "PRE_RECONCILE_READINESS_FAILED"),
+                    "PRE_RECONCILE_READINESS_FAILED",
+                )
+                message = getattr(
+                    readiness,
+                    "message",
+                    "pre-configuration resume readiness failed",
+                )
+                if not isinstance(message, str):
+                    message = "pre-configuration resume readiness failed"
+                return self._needs_attention(
+                    current, code, message[:512],
+                )
 
         try:
             claimed = self._store.transition_expected(

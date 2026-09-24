@@ -338,7 +338,8 @@
         },
         "adapter_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
         "lifecycle": { "type": "string", "enum": ["initialized_idle", "active", "quiesced", "restart_required"], "default": "quiesced" },
-        "required": { "type": "boolean", "default": true }
+        "required": { "type": "boolean", "default": true },
+        "configure_before_activation": { "type": "boolean", "default": false }
       }
     },
 

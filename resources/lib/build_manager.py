@@ -17,6 +17,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Tuple
 
 from resources.lib.addon_state import AddonStateReconciler
@@ -35,7 +36,15 @@ from resources.lib.private_overlay import (
     PrivateOverlayMetadata,
     PreparedPrivateOverlay,
 )
+from resources.lib.private_resource import ResourceInitializationStage
+from resources.lib.installed_addon_source import (
+    KodiInstalledAddonSourceResolver,
+    ManagedAddonSourceIdentity,
+    PrivateResourceOwnerContext,
+)
+from resources.lib.frozen import CaptureStatus, FrozenBuildManifest
 from resources.lib.dependencies import (
+    _is_system_dependency,
     DependencyAwareInstaller,
     DependencyResolver,
     DependencyStatus,
@@ -70,6 +79,13 @@ from resources.lib.skin import KodiRuntimeSkinBackend, SkinActivator
 from resources.lib.validator import ValidationReport, validate_build_state
 
 
+_SAFE_IMPORT_FAILURE_CATEGORY = re.compile(r"^[A-Z0-9_]{1,80}$")
+_SAFE_IMPORT_FAILURE_MODULE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}$"
+)
+_SAFE_IMPORT_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
+
+
 class ReconcilePhase(str, Enum):
     """Phase in which a reconciliation failure occurred."""
 
@@ -91,6 +107,7 @@ class ReconcileRequest:
     device_profile_id: str
     install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
     source_software_fingerprint: str = ""
+    frozen_transaction_id: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.manifest_path, str) or not self.manifest_path:
@@ -116,6 +133,12 @@ class ReconcileRequest:
             r"[0-9a-f]{64}", self.source_software_fingerprint
         ):
             raise ValueError("source_software_fingerprint must be a SHA-256 digest")
+        if not isinstance(self.frozen_transaction_id, str):
+            raise ValueError("frozen_transaction_id must be a string")
+        if self.frozen_transaction_id and not re.fullmatch(
+            r"[0-9a-fA-F-]{36}", self.frozen_transaction_id
+        ):
+            raise ValueError("frozen_transaction_id must be a UUID")
 
     def to_dict(self) -> dict:
         payload = {
@@ -129,6 +152,8 @@ class ReconcileRequest:
             ]
         if self.source_software_fingerprint:
             payload["source_software_fingerprint"] = self.source_software_fingerprint
+        if self.frozen_transaction_id:
+            payload["frozen_transaction_id"] = self.frozen_transaction_id
         return payload
 
     def to_json(self) -> str:
@@ -164,6 +189,77 @@ class ActionExecutionResult:
 
 
 @dataclass(frozen=True)
+class ActionFailureDiagnostic:
+    """Sanitized action error metadata; exception text is never retained."""
+
+    code: str
+    owner_addon_id: str = ""
+    resource_id: str = ""
+    cause_code: str = ""
+    initialization_stage: str = ""
+    last_completed_stage: str = ""
+    import_failure_category: str = ""
+    failing_module: str = ""
+    expected_provider: str = ""
+    actual_provider: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not re.fullmatch(
+            r"[A-Z0-9_]{1,80}", self.code
+        ):
+            raise ValueError("action failure code is not safe")
+        if self.owner_addon_id and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", self.owner_addon_id
+        ):
+            raise ValueError("action failure owner is not safe")
+        if self.resource_id and not re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]{0,127}", self.resource_id
+        ):
+            raise ValueError("action failure resource is not safe")
+        if self.cause_code and not re.fullmatch(
+            r"[A-Z0-9_]{1,80}", self.cause_code
+        ):
+            raise ValueError("action failure cause code is not safe")
+        stage_values = {item.value for item in ResourceInitializationStage}
+        if self.initialization_stage and self.initialization_stage not in stage_values:
+            raise ValueError("action failure initialization stage is unsupported")
+        if self.last_completed_stage and self.last_completed_stage not in stage_values:
+            raise ValueError("action failure completed stage is unsupported")
+        if self.import_failure_category and not _SAFE_IMPORT_FAILURE_CATEGORY.fullmatch(
+            self.import_failure_category
+        ):
+            raise ValueError("action failure import category is not safe")
+        if self.failing_module and not _SAFE_IMPORT_FAILURE_MODULE.fullmatch(
+            self.failing_module
+        ):
+            raise ValueError("action failure module is not safe")
+        for provider in (self.expected_provider, self.actual_provider):
+            if provider and not _SAFE_IMPORT_PROVIDER.fullmatch(provider):
+                raise ValueError("action failure provider is not safe")
+
+    def to_dict(self) -> dict:
+        result = {
+            "code": self.code,
+            "owner_addon_id": self.owner_addon_id,
+            "resource_id": self.resource_id,
+            "cause_code": self.cause_code,
+        }
+        if self.initialization_stage:
+            result["initialization_stage"] = self.initialization_stage
+        if self.last_completed_stage:
+            result["last_completed_stage"] = self.last_completed_stage
+        if self.import_failure_category:
+            result["import_failure_category"] = self.import_failure_category
+        if self.failing_module:
+            result["failing_module"] = self.failing_module
+        if self.expected_provider:
+            result["expected_provider"] = self.expected_provider
+        if self.actual_provider:
+            result["actual_provider"] = self.actual_provider
+        return result
+
+
+@dataclass(frozen=True)
 class ReconcileResult:
     """Stable aggregate returned to callers of :class:`BuildManager`."""
 
@@ -194,6 +290,11 @@ class ReconcileResult:
                     "succeeded": result.succeeded,
                     "changed": result.changed,
                     "message": result.message,
+                    "failure": (
+                        result.owner_result.to_dict()
+                        if isinstance(result.owner_result, ActionFailureDiagnostic)
+                        else None
+                    ),
                     "restart_report": result.restart_report.to_dict(),
                 }
                 for result in self.action_results
@@ -225,6 +326,8 @@ class BuildManagerOwners:
     config_loader: object
     config_manager: object
     private_overlay_manager: object = None
+    installed_addon_source_resolver: object = None
+    frozen_manifest_loader: object = None
 
 
 def _runtime_addon_state_backend():
@@ -251,7 +354,149 @@ def _default_owners() -> BuildManagerOwners:
         config_loader=ConfigPackageLoader(default_packages_root()),
         config_manager=config_manager,
         private_overlay_manager=PrivateOverlayManager(config_manager),
+        installed_addon_source_resolver=KodiInstalledAddonSourceResolver(),
+        frozen_manifest_loader=_load_frozen_manifest_file,
     )
+
+
+def _load_frozen_manifest_file(path: str) -> FrozenBuildManifest:
+    """Read frozen graph metadata from the transaction's fingerprinted file."""
+    return FrozenBuildManifest.from_json(Path(path).read_text(encoding="utf-8"))
+
+
+_RESOURCE_REQUIRED_PYTHON_MODULES = {
+    # Red Light 2.6.8's audited initializer import chain reaches
+    # requests.adapters.Retry through modules.http_defaults.
+    "redlight.sqlite.settings.v1": {"requests": "script.module.requests"},
+}
+
+
+def _verified_python_dependency_sources(
+    *,
+    frozen_manifest: FrozenBuildManifest,
+    transaction: object,
+    owner_addon_id: str,
+    required_module_providers: dict[str, str],
+    records_by_id: dict[str, InstallResolutionRecord],
+    actual_by_id: dict[str, object],
+    source_resolver: object,
+) -> tuple:
+    """Resolve only the required Python-module subtree of a frozen owner."""
+    if not isinstance(frozen_manifest, FrozenBuildManifest):
+        raise ValueError("frozen dependency graph is unavailable")
+    if frozen_manifest.fingerprint() != transaction.manifest_fingerprint:
+        raise ValueError("frozen dependency graph does not match the active transaction")
+    nodes = tuple(frozen_manifest.addons)
+    nodes_by_id = {node.addon_id: node for node in nodes}
+    if len(nodes_by_id) != len(nodes):
+        raise ValueError("frozen dependency graph contains duplicate add-ons")
+    owner = nodes_by_id.get(owner_addon_id)
+    owner_record = records_by_id.get(owner_addon_id)
+    owner_registered = actual_by_id.get(owner_addon_id)
+    if (
+        owner is None
+        or owner.system
+        or owner.status is not CaptureStatus.COMPLETE
+        or owner.artifact is None
+        or owner_record is None
+        or owner_record.resolution is not InstallResolution.EXACT
+        or owner_record.state is not ResolutionState.INSTALLED
+        or owner_record.captured_version != owner.version
+        or owner_record.resolved_version != owner.version
+        or owner_record.artifact_sha256 != owner.artifact.sha256
+        or owner_record.artifact_size != owner.artifact.size
+        or owner_record.desired_enabled is not owner.desired_enabled
+        or owner_registered is None
+        or owner_registered.version != owner_record.resolved_version
+    ):
+        raise ValueError("frozen resource owner is missing from the dependency graph")
+
+    requested_roots = tuple(sorted(set(required_module_providers.values())))
+    for dependency_id in requested_roots:
+        if not any(
+            edge.addon_id == dependency_id and not edge.optional
+            for edge in owner.dependency_edges
+        ):
+            raise ValueError("required Python module is not a required owner dependency")
+
+    visited = set()
+    dependency_ids = set()
+    pending = list(reversed(requested_roots))
+    while pending:
+        addon_id = pending.pop()
+        if addon_id in visited:
+            continue
+        visited.add(addon_id)
+        node = nodes_by_id.get(addon_id)
+        if node is None and _is_system_dependency(addon_id):
+            continue
+        if node is None:
+            raise ValueError("frozen Python dependency is absent from the dependency graph")
+        if node.system:
+            continue
+        if (
+            node.status is not CaptureStatus.COMPLETE
+            or node.artifact is None
+            or not node.artifact.sha256
+            or node.artifact.size <= 0
+        ):
+            raise ValueError("frozen Python dependency has no complete exact artifact")
+        record = records_by_id.get(addon_id)
+        registered = actual_by_id.get(addon_id)
+        if (
+            record is None
+            or record.resolution is not InstallResolution.EXACT
+            or record.state is not ResolutionState.INSTALLED
+            or record.captured_version != node.version
+            or record.resolved_version != node.version
+            or record.artifact_sha256 != node.artifact.sha256
+            or record.artifact_size != node.artifact.size
+            or record.desired_enabled is not node.desired_enabled
+            or registered is None
+            or registered.version != record.resolved_version
+            or registered.enabled is not record.desired_enabled
+        ):
+            raise ValueError(
+                "installed Python dependency state differs from the exact frozen graph"
+            )
+        dependency_ids.add(addon_id)
+        for edge in reversed(node.dependency_edges):
+            if not edge.optional:
+                pending.append(edge.addon_id)
+
+    resolved = []
+    for addon_id in sorted(dependency_ids):
+        record = records_by_id[addon_id]
+        identity = ManagedAddonSourceIdentity(
+            addon_id=addon_id,
+            version=record.resolved_version,
+            artifact_sha256=record.artifact_sha256,
+            artifact_size=record.artifact_size,
+            frozen_transaction_id=transaction.transaction_id,
+            manifest_fingerprint=transaction.manifest_fingerprint,
+        )
+        source = source_resolver.resolve(identity)
+        # A required root must expose its provider from the verified Kodi
+        # module extension. Other exact graph nodes are included only when
+        # their installed metadata declares Python modules.
+        try:
+            roots = source.python_module_roots()
+        except Exception as exc:
+            if addon_id in requested_roots:
+                raise ValueError("required Python dependency root is unavailable") from exc
+            if getattr(exc, "code", "") == "PYTHON_MODULE_ROOT_MISSING":
+                continue
+            raise
+        if not roots:
+            if addon_id in requested_roots:
+                raise ValueError("required Python dependency root is unavailable")
+            continue
+        resolved.append(source)
+
+    resolved_ids = {source.addon_id for source in resolved}
+    if not set(requested_roots).issubset(resolved_ids):
+        raise ValueError("required Python dependency source is unavailable")
+    return tuple(resolved)
 
 
 def _canonical_json(value: object) -> str:
@@ -369,12 +614,14 @@ def _config_declarations_payload(desired: ResolvedBuild) -> Optional[dict]:
 @dataclass(frozen=True)
 class _PreparedReconciliation:
     desired: ResolvedBuild
+    execution_desired: ResolvedBuild
     effective: Optional[EffectiveConfiguration]
     fingerprint: str
     protected_dependency_ids: frozenset
     plan: object
     private_prepared: Optional[PreparedPrivateOverlay] = None
     skipped_addon_ids: Tuple[str, ...] = ()
+    owner_contexts: object = None
 
 
 class BuildManager:
@@ -403,6 +650,7 @@ class BuildManager:
             return failure
         assert prepared is not None
         desired = prepared.desired
+        execution_desired = prepared.execution_desired
         effective = prepared.effective
         fingerprint = prepared.fingerprint
         protected = prepared.protected_dependency_ids
@@ -433,14 +681,17 @@ class BuildManager:
 
             try:
                 result = self._dispatch_action(
-                    action, desired, effective, protected, prepared.private_prepared
+                    action, execution_desired, effective, protected,
+                    prepared.private_prepared, prepared.owner_contexts,
                 )
             except Exception as exc:
+                diagnostic = _action_failure_diagnostic(exc)
                 result = ActionExecutionResult(
                     action=action,
                     succeeded=False,
                     changed=False,
-                    message=f"action owner raised: {_message(exc)}",
+                    message=f"action failed safely ({diagnostic.code})",
+                    owner_result=diagnostic,
                 )
             action_results.append(result)
             reports.append(result.restart_report)
@@ -459,7 +710,7 @@ class BuildManager:
 
         try:
             final_actual = self._owners.inspector.inspect()
-            final_closure = self._final_dependency_closure(desired)
+            final_closure = self._final_dependency_closure(execution_desired)
             if final_closure is not None and skipped_addon_ids:
                 skipped_required_dependencies = {
                     node.addon_id
@@ -472,7 +723,7 @@ class BuildManager:
                     )
             config_state = self._config_validation_state(action_results)
             validation = validate_build_state(
-                desired, final_actual,
+                execution_desired, final_actual,
                 dependency_closure=final_closure,
                 configuration_state=config_state,
                 effective_configuration=effective,
@@ -586,9 +837,174 @@ class BuildManager:
                     raise ValueError(
                         "cannot prove frozen skip compatibility while managed add-ons are not installed"
                     )
+
+            # BM-022 is the sole lifecycle owner. While a durable activation
+            # hold exists, accept only its exact configuration request and
+            # project every held owner/dependent to disabled for planning and
+            # validation. A normal second reconciliation is read-only with
+            # respect to configured lifecycle resources.
+            from resources.lib.frozen_install import (
+                FrozenInstallPhase,
+                FrozenInstallStore,
+                FrozenLifecycleStage,
+                active_activation_hold_ids,
+            )
+            transaction = FrozenInstallStore().inspect()
+            held_ids = active_activation_hold_ids()
+            execution_desired = desired
+            owner_contexts = {}
+            lifecycle_resources = tuple(
+                item for item in (
+                    desired.config.structured_private_resources
+                    if desired.config is not None else ()
+                )
+                if item.configure_before_activation
+            )
+            if held_ids:
+                if transaction is None or transaction.activation_hold_released:
+                    raise ValueError("activation hold has no authoritative frozen transaction")
+                stage_owns_configuration = (
+                    transaction.phase is FrozenInstallPhase.CONFIGURING
+                    and transaction.lifecycle_stage is FrozenLifecycleStage.CONFIGURING
+                ) or (
+                    transaction.phase is FrozenInstallPhase.AWAITING_RESTART
+                    and transaction.lifecycle_stage
+                    is FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART
+                )
+                if (
+                    request.frozen_transaction_id != transaction.transaction_id
+                    or request.manifest_path != transaction.configuration_manifest_path
+                    or request.device_profile_id != transaction.device_profile_id
+                    or request.source_software_fingerprint != transaction.manifest_fingerprint
+                    or tuple(request.install_resolutions) != tuple(transaction.resolution_records)
+                    or not stage_owns_configuration
+                ):
+                    raise ValueError("active activation hold belongs to another coordinator stage")
+                if not lifecycle_resources or not {
+                    item.owner_addon_id for item in lifecycle_resources
+                }.issubset(held_ids):
+                    raise ValueError("configuration resources are not covered by the activation hold")
+                if transaction.private_overlay_id:
+                    metadata = private_prepared.metadata if private_prepared else None
+                    if (
+                        metadata is None
+                        or metadata.overlay_id != transaction.private_overlay_id
+                        or metadata.fingerprint != transaction.private_overlay_fingerprint
+                        or metadata.required != transaction.private_overlay_required
+                    ):
+                        raise ValueError("private overlay identity differs from the lifecycle transaction")
+                actual_map = {item.addon_id: item for item in actual.addons}
+                if any(
+                    addon_id not in actual_map or actual_map[addon_id].enabled
+                    for addon_id in held_ids
+                ):
+                    raise ValueError("held add-ons are not all installed and disabled")
+                managed_ids = {item.addon_id for item in desired.addons}
+                if not held_ids.issubset(managed_ids):
+                    raise ValueError("activation hold includes an unmanaged desired add-on")
+                source_resolver = getattr(
+                    self._owners, "installed_addon_source_resolver", None
+                )
+                if source_resolver is None:
+                    raise ValueError("verified installed add-on source resolver is unavailable")
+                records_by_id = {
+                    item.addon_id: item for item in transaction.resolution_records
+                }
+                for declaration in lifecycle_resources:
+                    owner_id = declaration.owner_addon_id
+                    if owner_id in owner_contexts:
+                        continue
+                    record = records_by_id.get(owner_id)
+                    registered = actual_map.get(owner_id)
+                    if (
+                        record is None
+                        or record.state is not ResolutionState.INSTALLED
+                        or record.resolution is InstallResolution.SKIPPED
+                        or not record.resolved_version
+                        or not record.artifact_sha256
+                        or record.artifact_size is None
+                        or registered is None
+                        or registered.enabled is not False
+                        or registered.version != record.resolved_version
+                        or record.resolved_version not in declaration.supported_versions
+                    ):
+                        raise ValueError(
+                            "held resource owner registry state differs from its frozen resolution"
+                        )
+                    identity = ManagedAddonSourceIdentity(
+                        addon_id=record.addon_id,
+                        version=record.resolved_version,
+                        artifact_sha256=record.artifact_sha256,
+                        artifact_size=record.artifact_size,
+                        frozen_transaction_id=transaction.transaction_id,
+                        manifest_fingerprint=transaction.manifest_fingerprint,
+                    )
+                    source = source_resolver.resolve(identity)
+                    required_module_providers = _RESOURCE_REQUIRED_PYTHON_MODULES.get(
+                        declaration.adapter_id, {}
+                    )
+                    dependency_sources = ()
+                    if required_module_providers:
+                        frozen_manifest_loader = getattr(
+                            self._owners, "frozen_manifest_loader", None
+                        )
+                        if not callable(frozen_manifest_loader):
+                            raise ValueError("frozen dependency graph loader is unavailable")
+                        frozen_manifest = frozen_manifest_loader(transaction.manifest_path)
+                        dependency_sources = _verified_python_dependency_sources(
+                            frozen_manifest=frozen_manifest,
+                            transaction=transaction,
+                            owner_addon_id=owner_id,
+                            required_module_providers=required_module_providers,
+                            records_by_id=records_by_id,
+                            actual_by_id=actual_map,
+                            source_resolver=source_resolver,
+                        )
+                    owner_contexts[owner_id] = PrivateResourceOwnerContext(
+                        owner_addon_id=owner_id,
+                        expected_version=record.resolved_version,
+                        registry_version=registered.version,
+                        owner_enabled=registered.enabled,
+                        activation_held=owner_id in held_ids,
+                        installed_source=source,
+                        python_dependency_sources=dependency_sources,
+                    )
+            else:
+                if request.frozen_transaction_id:
+                    raise ValueError("frozen lifecycle request has no active activation hold")
+                if lifecycle_resources:
+                    if private_prepared is None:
+                        raise ValueError("pre-activation resources have no validated overlay")
+                    manager = self._owners.private_overlay_manager
+                    if manager is None or not manager.verify_configured_resources(private_prepared):
+                        raise ValueError(
+                            "pre-activation resource state requires its frozen lifecycle hold"
+                        )
+
             dependency_closure = self._preflight_dependencies(
                 desired, actual, include_disabled=bool(skipped_addon_ids)
             )
+            if held_ids:
+                enabled_roots = {
+                    item.addon_id for item in desired.addons
+                    if item.state == "enabled" and item.addon_id not in held_ids
+                }
+                for node in dependency_closure.nodes:
+                    if node.addon_id in held_ids:
+                        if enabled_roots.intersection(node.required_by):
+                            raise ValueError(
+                                "an unheld desired add-on references a held dependency"
+                            )
+                if desired.skin is not None and desired.skin.addon_id in held_ids:
+                    raise ValueError("a held add-on cannot be activated as the desired skin")
+                execution_desired = replace(
+                    desired,
+                    addons=tuple(
+                        replace(addon, state="disabled")
+                        if addon.addon_id in held_ids else addon
+                        for addon in desired.addons
+                    ),
+                )
             protected = frozenset(
                 node.addon_id
                 for node in dependency_closure.nodes
@@ -611,7 +1027,7 @@ class BuildManager:
             return None, self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
 
         try:
-            plan = plan_changes(desired, actual)
+            plan = plan_changes(execution_desired, actual)
         except Exception as exc:
             return None, self._failed(
                 request, ReconcilePhase.PLAN, "PLANNING_FAILED", exc,
@@ -627,12 +1043,14 @@ class BuildManager:
                 )
         return _PreparedReconciliation(
             desired=desired,
+            execution_desired=execution_desired,
             effective=effective,
             fingerprint=fingerprint,
             protected_dependency_ids=protected,
             plan=plan,
             private_prepared=private_prepared,
             skipped_addon_ids=skipped_addon_ids,
+            owner_contexts=owner_contexts,
         ), None
 
     @staticmethod
@@ -707,6 +1125,7 @@ class BuildManager:
     def _dispatch_action(
         self, action, desired, effective, protected_dependency_ids,
         private_prepared: Optional[PreparedPrivateOverlay] = None,
+        owner_contexts=None,
     ):
         if action.kind == INSTALL_REPOSITORY:
             repository = next(
@@ -772,7 +1191,20 @@ class BuildManager:
                 manager = self._owners.private_overlay_manager
                 if manager is None:
                     return _failed_action(action, "private overlay support is unavailable")
-                private_result = manager.apply(private_prepared)
+                has_pre_activation_resources = any(
+                    item.configure_before_activation
+                    for item in private_prepared.resource_declarations
+                )
+                if not (
+                    has_pre_activation_resources
+                    and public_result.restart_report.requires_restart
+                ):
+                    if owner_contexts:
+                        private_result = manager.apply(
+                            private_prepared, owner_contexts=owner_contexts
+                        )
+                    else:
+                        private_result = manager.apply(private_prepared)
             return _action_from_owner(
                 action,
                 ConfigurationApplyBundle(public_result, private_result),
@@ -792,6 +1224,68 @@ class BuildManager:
 def _message(exc: object) -> str:
     text = str(exc).strip() or exc.__class__.__name__
     return text[:500]
+
+
+def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
+    """Extract only validated codes and identifiers from an action error."""
+    code = getattr(exc, "code", "")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", code):
+        code = "ACTION_EXECUTION_FAILED"
+    owner = getattr(exc, "owner_addon_id", "")
+    if not isinstance(owner, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", owner
+    ):
+        owner = ""
+    resource = getattr(exc, "resource_id", "")
+    if not isinstance(resource, str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9._-]{0,127}", resource
+    ):
+        resource = ""
+    cause = getattr(exc, "cause_code", "")
+    if not isinstance(cause, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", cause):
+        cause = ""
+    initialization_stage = getattr(exc, "initialization_stage", "")
+    initialization_stage = getattr(
+        initialization_stage, "value", initialization_stage
+    )
+    last_completed_stage = getattr(exc, "last_completed_stage", "")
+    last_completed_stage = getattr(last_completed_stage, "value", last_completed_stage)
+    if initialization_stage not in {item.value for item in ResourceInitializationStage}:
+        initialization_stage = ""
+    if last_completed_stage not in {item.value for item in ResourceInitializationStage}:
+        last_completed_stage = ""
+    import_failure_category = getattr(exc, "import_failure_category", "")
+    if not isinstance(import_failure_category, str) or not _SAFE_IMPORT_FAILURE_CATEGORY.fullmatch(
+        import_failure_category
+    ):
+        import_failure_category = ""
+    failing_module = getattr(exc, "failing_module", "")
+    if not isinstance(failing_module, str) or not _SAFE_IMPORT_FAILURE_MODULE.fullmatch(
+        failing_module
+    ):
+        failing_module = ""
+    expected_provider = getattr(exc, "expected_provider", "")
+    if not isinstance(expected_provider, str) or not _SAFE_IMPORT_PROVIDER.fullmatch(
+        expected_provider
+    ):
+        expected_provider = ""
+    actual_provider = getattr(exc, "actual_provider", "")
+    if not isinstance(actual_provider, str) or not _SAFE_IMPORT_PROVIDER.fullmatch(
+        actual_provider
+    ):
+        actual_provider = ""
+    return ActionFailureDiagnostic(
+        code,
+        owner,
+        resource,
+        cause,
+        initialization_stage,
+        last_completed_stage,
+        import_failure_category,
+        failing_module,
+        expected_provider,
+        actual_provider,
+    )
 
 
 def _result_succeeded(result: object) -> bool:

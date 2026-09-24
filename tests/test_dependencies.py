@@ -771,6 +771,25 @@ class TestReconcileDependencies(unittest.TestCase):
         self.assertEqual(enable_actions[0].addon_id, "dis.dep")
         self.assertTrue(result.all_required_satisfied)
 
+    def test_activation_hold_blocks_required_dependency_enable_before_mutation(self) -> None:
+        xml = _xml("root", requires=_imp("held.dep"))
+        backend = FakeDependencyBackend(
+            installed={"held.dep": _info("held.dep", enabled=False)},
+            addon_xmls={"root": xml, "held.dep": _xml("held.dep")},
+        )
+        resolver = DependencyResolver(
+            backend,
+            activation_hold_provider=lambda: frozenset({"held.dep"}),
+        )
+        result = resolver.reconcile_dependencies(["root"])
+        self.assertFalse(result.all_required_satisfied)
+        self.assertEqual(backend.set_enabled_calls, [])
+        self.assertEqual(backend.install_calls, [])
+        self.assertEqual(
+            [item.kind for item in result.actions],
+            [DependencyActionKind.FAILED_ACTIVATION_HOLD],
+        )
+
     def test_install_failure_recorded_as_failed_install(self) -> None:
         xml = _xml("root", requires=_imp("broken.dep"))
         r = self._resolver(

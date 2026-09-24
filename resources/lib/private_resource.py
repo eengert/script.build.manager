@@ -15,11 +15,61 @@ import math
 import re
 from typing import Mapping, Optional, Sequence
 
+from resources.lib.installed_addon_source import PrivateResourceOwnerContext
+
+
+class ResourceInitializationStage(str, Enum):
+    """Safe, typed stages in an owner-specific structured-resource initializer."""
+
+    VALIDATE_RESOURCE_DECLARATION = "VALIDATE_RESOURCE_DECLARATION"
+    VALIDATE_EXISTING_RESOURCE = "VALIDATE_EXISTING_RESOURCE"
+    SOURCE_REVALIDATION = "SOURCE_REVALIDATION"
+    LOAD_INITIALIZER_DECLARATIONS = "LOAD_INITIALIZER_DECLARATIONS"
+    LOAD_SCHEMA_DECLARATION = "LOAD_SCHEMA_DECLARATION"
+    VALIDATE_RESOURCE_EMPTY = "VALIDATE_RESOURCE_EMPTY"
+    CREATE_ADDON_DATA_DIRECTORY = "CREATE_ADDON_DATA_DIRECTORY"
+    CREATE_DATABASE_DIRECTORY = "CREATE_DATABASE_DIRECTORY"
+    OPEN_SETTINGS_DATABASE = "OPEN_SETTINGS_DATABASE"
+    SET_WAL_MODE = "SET_WAL_MODE"
+    CREATE_SCHEMA = "CREATE_SCHEMA"
+    INSERT_DEFAULTS = "INSERT_DEFAULTS"
+    FINAL_RESOURCE_VALIDATION = "FINAL_RESOURCE_VALIDATION"
+    PUBLISH_SYNC_MARKER = "PUBLISH_SYNC_MARKER"
+
+
+class ResourceInitializationCause(str, Enum):
+    """Allowlisted causes for safe structured-resource initialization errors."""
+
+    RESOURCE_DECLARATION_INVALID = "RESOURCE_DECLARATION_INVALID"
+    EXISTING_RESOURCE_VALIDATION_FAILED = "EXISTING_RESOURCE_VALIDATION_FAILED"
+    SOURCE_REVALIDATION_FAILED = "SOURCE_REVALIDATION_FAILED"
+    INITIALIZER_IMPORT_FAILED = "INITIALIZER_IMPORT_FAILED"
+    SCHEMA_DECLARATION_FAILED = "SCHEMA_DECLARATION_FAILED"
+    RESOURCE_STATE_VALIDATION_FAILED = "RESOURCE_STATE_VALIDATION_FAILED"
+    DIRECTORY_CREATION_FAILED = "DIRECTORY_CREATION_FAILED"
+    DATABASE_OPEN_FAILED = "DATABASE_OPEN_FAILED"
+    WAL_SETUP_FAILED = "WAL_SETUP_FAILED"
+    SCHEMA_CREATION_FAILED = "SCHEMA_CREATION_FAILED"
+    DEFAULT_INITIALIZATION_FAILED = "DEFAULT_INITIALIZATION_FAILED"
+    FINAL_VALIDATION_FAILED = "FINAL_VALIDATION_FAILED"
+    MARKER_PUBLICATION_FAILED = "MARKER_PUBLICATION_FAILED"
+    INITIALIZATION_STAGE_FAILED = "INITIALIZATION_STAGE_FAILED"
+
 
 class PrivateResourceError(Exception):
     """Base class for fail-closed structured resource errors."""
 
     code = "PRIVATE_RESOURCE_ERROR"
+
+    def __init__(self, message: str = "") -> None:
+        self.initialization_stage: Optional[ResourceInitializationStage] = None
+        self.initialization_cause_code: Optional[ResourceInitializationCause] = None
+        self.last_completed_stage: Optional[ResourceInitializationStage] = None
+        self.import_failure_category = ""
+        self.failing_module = ""
+        self.expected_provider = ""
+        self.actual_provider = ""
+        super().__init__(message)
 
 
 class PrivateResourceValidationError(PrivateResourceError):
@@ -61,6 +111,10 @@ _ADDON = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 _SENSITIVITY = frozenset({"secret", "credential", "token", "private_identifier"})
 _TYPES = frozenset(item.value for item in StructuredValueType)
 _LIFECYCLES = frozenset(item.value for item in ResourceLifecycle)
+_IMPORT_FAILURE_CATEGORY = re.compile(r"^[A-Z0-9_]{1,80}$")
+_IMPORT_FAILURE_MODULE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,31}$"
+)
 
 
 def _id(value: object, label: str) -> str:
@@ -73,6 +127,75 @@ def _addon(value: object, label: str) -> str:
     if not isinstance(value, str) or not _ADDON.fullmatch(value):
         raise PrivateResourceValidationError(f"{label} is not a safe add-on ID")
     return value
+
+
+class StructuredResourceInitializationError(PrivateResourceError):
+    """Sanitized initialization failure with safe resource ownership metadata."""
+
+    code = "PRIVATE_RESOURCE_INITIALIZATION_FAILED"
+
+    def __init__(
+        self,
+        owner_addon_id: str,
+        resource_id: str,
+        cause_code: str | ResourceInitializationCause = "",
+        *,
+        initialization_stage: Optional[ResourceInitializationStage] = None,
+        last_completed_stage: Optional[ResourceInitializationStage] = None,
+        import_failure_category: str = "",
+        failing_module: str = "",
+        expected_provider: str = "",
+        actual_provider: str = "",
+    ):
+        self.owner_addon_id = _addon(owner_addon_id, "resource failure owner")
+        self.resource_id = _id(resource_id, "resource failure resource_id")
+        super().__init__("structured private resource initialization failed")
+        cause_value = (
+            cause_code.value
+            if isinstance(cause_code, ResourceInitializationCause)
+            else cause_code
+        )
+        self.cause_code = (
+            cause_value
+            if isinstance(cause_value, str)
+            and re.fullmatch(r"[A-Z0-9_]{1,80}", cause_value)
+            else ""
+        )
+        self.initialization_cause_code = (
+            cause_code if isinstance(cause_code, ResourceInitializationCause) else None
+        )
+        self.initialization_stage = (
+            initialization_stage
+            if isinstance(initialization_stage, ResourceInitializationStage)
+            else None
+        )
+        self.last_completed_stage = (
+            last_completed_stage
+            if isinstance(last_completed_stage, ResourceInitializationStage)
+            else None
+        )
+        self.import_failure_category = (
+            import_failure_category
+            if isinstance(import_failure_category, str)
+            and _IMPORT_FAILURE_CATEGORY.fullmatch(import_failure_category)
+            else ""
+        )
+        self.failing_module = (
+            failing_module
+            if isinstance(failing_module, str)
+            and _IMPORT_FAILURE_MODULE.fullmatch(failing_module)
+            else ""
+        )
+        self.expected_provider = (
+            expected_provider
+            if isinstance(expected_provider, str) and _ADDON.fullmatch(expected_provider)
+            else ""
+        )
+        self.actual_provider = (
+            actual_provider
+            if isinstance(actual_provider, str) and _ADDON.fullmatch(actual_provider)
+            else ""
+        )
 
 
 def validate_typed_value(value: object, value_type: StructuredValueType, label: str) -> object:
@@ -132,6 +255,7 @@ class StructuredPrivateResourceDeclaration:
     adapter_id: str
     lifecycle: str = ResourceLifecycle.QUIESCED.value
     required: bool = True
+    configure_before_activation: bool = False
 
     def __post_init__(self) -> None:
         _id(self.resource_type, "resource_type")
@@ -147,6 +271,10 @@ class StructuredPrivateResourceDeclaration:
             raise PrivateResourceValidationError("resource lifecycle is unsupported")
         if not isinstance(self.required, bool):
             raise PrivateResourceValidationError("resource required must be boolean")
+        if not isinstance(self.configure_before_activation, bool):
+            raise PrivateResourceValidationError(
+                "resource configure_before_activation must be boolean"
+            )
         if not self.fields:
             raise PrivateResourceValidationError("resource must declare at least one field")
         seen = set()
@@ -170,6 +298,7 @@ class StructuredPrivateResourceDeclaration:
             "adapter_id": self.adapter_id,
             "lifecycle": self.lifecycle,
             "required": self.required,
+            "configure_before_activation": self.configure_before_activation,
         }
 
 
@@ -301,7 +430,7 @@ class StructuredResourceResult:
 
     @property
     def succeeded(self) -> bool:
-        return self.outcome == "applied"
+        return self.outcome in {"applied", "initialized", "already_initialized"}
 
     @property
     def changed(self) -> bool:
@@ -321,6 +450,35 @@ class StructuredPrivateResourceAdapter:
     """Adapter interface; implementations must keep values out of results."""
 
     adapter_id = ""
+
+    def initialize(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        context: Optional[PrivateResourceOwnerContext] = None,
+    ) -> Optional[StructuredResourceResult]:
+        """Initialize an absent resource through its owner-specific safe API.
+
+        Adapters that do not declare ``configure_before_activation`` may keep
+        the default no-op. Lifecycle adapters must override this method and
+        return a sanitized result without exposing resource values.
+        """
+        if declaration.configure_before_activation:
+            raise PrivateResourceNotInitializedError(
+                "resource adapter has no safe initializer"
+            )
+        return None
+
+    def verify(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        overlay: StructuredPrivateResourceOverlay,
+    ) -> StructuredResourceResult:
+        """Read-only verification used after activation has been released."""
+        if declaration.configure_before_activation:
+            raise PrivateResourceNotInitializedError(
+                "resource adapter cannot verify its configured state"
+            )
+        raise NotImplementedError
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration) -> tuple[StructuredPrivateResourceOverlay, StructuredResourceResult]:
         raise NotImplementedError
@@ -351,7 +509,49 @@ class StructuredPrivateResourceManager:
     def capture(self, declaration: StructuredPrivateResourceDeclaration):
         return self._adapter(declaration).capture(declaration)
 
-    def apply(
+    def initialize(
+        self,
+        declarations: Sequence[StructuredPrivateResourceDeclaration],
+        *,
+        owner_contexts: Optional[Mapping[str, PrivateResourceOwnerContext]] = None,
+    ) -> tuple[StructuredResourceResult, ...]:
+        results = []
+        for declaration in declarations:
+            if not declaration.configure_before_activation:
+                continue
+            context = (owner_contexts or {}).get(declaration.owner_addon_id)
+            adapter = self._adapter(declaration)
+            try:
+                result = adapter.initialize(declaration, context)
+            except StructuredResourceInitializationError:
+                raise
+            except Exception as exc:
+                cause_code = getattr(exc, "initialization_cause_code", None)
+                if not isinstance(cause_code, ResourceInitializationCause):
+                    cause_code = getattr(exc, "code", "")
+                raise StructuredResourceInitializationError(
+                    declaration.owner_addon_id,
+                    declaration.resource_id,
+                    cause_code,
+                    initialization_stage=getattr(exc, "initialization_stage", None),
+                    last_completed_stage=getattr(exc, "last_completed_stage", None),
+                    import_failure_category=getattr(
+                        exc, "import_failure_category", ""
+                    ),
+                    failing_module=getattr(exc, "failing_module", ""),
+                    expected_provider=getattr(exc, "expected_provider", ""),
+                    actual_provider=getattr(exc, "actual_provider", ""),
+                ) from exc
+            if result is None or not result.succeeded:
+                raise StructuredResourceInitializationError(
+                    declaration.owner_addon_id,
+                    declaration.resource_id,
+                    "RESOURCE_NOT_INITIALIZED",
+                )
+            results.append(result)
+        return tuple(results)
+
+    def verify(
         self,
         declarations: Sequence[StructuredPrivateResourceDeclaration],
         overlays: Sequence[StructuredPrivateResourceOverlay],
@@ -362,6 +562,35 @@ class StructuredPrivateResourceManager:
         overlays_by_id = {item.resource_id: item for item in overlays}
         if len(overlays_by_id) != len(overlays):
             raise PrivateResourceValidationError("duplicate resource overlays")
+        results = []
+        for declaration in declarations:
+            overlay = overlays_by_id.get(declaration.resource_id)
+            if overlay is None:
+                if declaration.required:
+                    raise PrivateResourceValidationError("required resource overlay is missing")
+                continue
+            result = self._adapter(declaration).verify(declaration, overlay)
+            if not result.succeeded:
+                raise PrivateResourceNotInitializedError(
+                    "structured resource values are not verified"
+                )
+            results.append(result)
+        return tuple(results)
+
+    def apply(
+        self,
+        declarations: Sequence[StructuredPrivateResourceDeclaration],
+        overlays: Sequence[StructuredPrivateResourceOverlay],
+        *,
+        owner_contexts: Optional[Mapping[str, PrivateResourceOwnerContext]] = None,
+    ) -> tuple[StructuredResourceResult, ...]:
+        declarations_by_id = {item.resource_id: item for item in declarations}
+        if len(declarations_by_id) != len(declarations):
+            raise PrivateResourceValidationError("duplicate resource ownership")
+        overlays_by_id = {item.resource_id: item for item in overlays}
+        if len(overlays_by_id) != len(overlays):
+            raise PrivateResourceValidationError("duplicate resource overlays")
+        self.initialize(declarations, owner_contexts=owner_contexts)
         results = []
         for declaration in declarations:
             overlay = overlays_by_id.get(declaration.resource_id)

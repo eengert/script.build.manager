@@ -4,6 +4,7 @@ BM-009 unit tests for tools/kodi_test.py.
 Tests cover path safety, process state, command dispatch, install paths, and
 readiness — all without launching real Kodi.
 """
+import json
 import os
 import sys
 import tempfile
@@ -136,7 +137,7 @@ class TestVerifyIsolation(unittest.TestCase):
                     PROJECT=project, ROOT=root_outside, HOME=home,
                     KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
                 ):
-                    with self.assertRaisesRegex(RuntimeError, "not inside PROJECT"):
+                    with self.assertRaisesRegex(RuntimeError, "exact .kodi-test"):
                         harness.verify_isolation()
 
     def test_home_outside_root_rejected(self):
@@ -147,7 +148,7 @@ class TestVerifyIsolation(unittest.TestCase):
                 PROJECT=project, ROOT=root, HOME=home_outside,
                 KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "not inside ROOT"):
+                with self.assertRaisesRegex(RuntimeError, "exact disposable .kodi-test/home"):
                     harness.verify_isolation()
 
     def test_appdata_outside_home_rejected(self):
@@ -158,31 +159,38 @@ class TestVerifyIsolation(unittest.TestCase):
                 PROJECT=project, ROOT=root, HOME=home,
                 KODI_APPDATA_DIR=appdata_outside, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "not inside HOME"):
+                with self.assertRaisesRegex(RuntimeError, "derived from the disposable HOME"):
                     harness.verify_isolation()
 
-    def test_real_profile_overlap_rejected(self):
+    def test_profile_path_check_does_not_resolve_or_probe_normal_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project, root, home, appdata, _ = self._make_valid_layout(Path(tmp))
-            # normal IS appdata — direct overlap
+            project, root, home, appdata, normal = self._make_valid_layout(Path(tmp))
             with _patch_constants(
                 PROJECT=project, ROOT=root, HOME=home,
-                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=appdata,
+                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "overlaps real profile"):
+                with patch.object(Path, "resolve", side_effect=AssertionError("path resolution is forbidden")):
                     harness.verify_isolation()
 
-    def test_real_profile_parent_of_appdata_rejected(self):
+    def test_profile_symlink_is_rejected_before_descendant_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project, root, home, appdata, _ = self._make_valid_layout(Path(tmp))
-            # normal is a parent of appdata — still overlaps
-            normal_parent = appdata.parent
+            project, root, home, appdata, normal = self._make_valid_layout(Path(tmp))
+            appdata.parent.mkdir(parents=True)
+            appdata.symlink_to(normal, target_is_directory=True)
             with _patch_constants(
                 PROJECT=project, ROOT=root, HOME=home,
-                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal_parent,
+                KODI_APPDATA_DIR=appdata, NORMAL_APPDATA_DIR=normal,
             ):
-                with self.assertRaisesRegex(RuntimeError, "overlaps real profile"):
+                with self.assertRaisesRegex(RuntimeError, "symlink-based"):
                     harness.verify_isolation()
+
+
+class TestDisposableEnvironment(unittest.TestCase):
+    def test_env_forces_exact_disposable_home_and_removes_kodi_home_override(self):
+        with patch.dict(os.environ, {"HOME": "/tmp/normal-home", "KODI_HOME": "/tmp/other"}):
+            env = harness._env()
+        self.assertEqual(env["HOME"], str(harness.HOME))
+        self.assertNotIn("KODI_HOME", env)
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +637,309 @@ class TestReadiness(unittest.TestCase):
         with patch.object(harness, "jsonrpc", return_value="nope"):
             with self.assertRaises(TimeoutError):
                 harness.wait_for_ready(timeout=0.05, interval=0.001)
+
+
+# ---------------------------------------------------------------------------
+# BM-017F — staged resume poll response shape
+# ---------------------------------------------------------------------------
+
+class TestBm017fResumePoll(unittest.TestCase):
+    def test_jsonrpc_result_shape_completes_resume_poll(self):
+        payload = {
+            "result": {
+                "addon": {
+                    "addonid": "plugin.video.redlight",
+                    "enabled": True,
+                    "version": "2.6.8",
+                },
+            },
+        }
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
+
+        with patch.object(harness.urllib.request, "urlopen", return_value=response):
+            detail_response = harness.jsonrpc("Addons.GetAddonDetails", {
+                "addonid": "plugin.video.redlight",
+                "properties": ["enabled", "version", "broken"],
+            })
+
+        owner_details, complete = harness._bm017f_resume_poll_status(detail_response, None)
+        self.assertEqual(owner_details["addonid"], "plugin.video.redlight")
+        self.assertTrue(complete)
+
+    def test_enabled_addon_without_transaction_completes(self):
+        owner_details, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": True, "version": "2.6.8"}},
+            None,
+        )
+        self.assertTrue(owner_details["enabled"])
+        self.assertTrue(complete)
+
+    def test_disabled_addon_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": False}},
+            None,
+        )
+        self.assertFalse(complete)
+
+    def test_missing_addon_does_not_complete(self):
+        owner_details, complete = harness._bm017f_resume_poll_status({}, None)
+        self.assertEqual(owner_details, {})
+        self.assertFalse(complete)
+
+    def test_present_transaction_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": True}},
+            {"phase": "configuring"},
+        )
+        self.assertFalse(complete)
+
+    def test_needs_attention_raises_even_if_addon_is_enabled(self):
+        with self.assertRaises(RuntimeError) as raised:
+            harness._bm017f_resume_poll_status(
+                {"addon": {"enabled": True}},
+                {
+                    "phase": "needs_attention",
+                    "status_code": "E_CONFIG",
+                    "status_message": "configuration failed",
+                },
+            )
+        self.assertIn("needs attention (E_CONFIG; configuration failed)", str(raised.exception))
+
+    def test_double_wrapped_result_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"result": {"addon": {"enabled": True}}},
+            None,
+        )
+        self.assertFalse(complete)
+
+    def test_existing_http_addon_details_consumer_keeps_unwrapped_contract(self):
+        with patch.object(harness, "jsonrpc", return_value={
+            "addon": {
+                "addonid": "plugin.video.redlight",
+                "enabled": True,
+                "version": "2.6.8",
+            },
+        }):
+            details = harness._HttpAddonStateBackend().get_addon_details(
+                "plugin.video.redlight"
+            )
+
+        self.assertIsNotNone(details)
+        self.assertTrue(details.enabled)
+        self.assertEqual(details.version, "2.6.8")
+
+
+class TestBm017fLifecycleMarkerOrder(unittest.TestCase):
+    MARKERS = {
+        "guard": "Build Manager BM-022 updater guard reasserted before BM-020 startup",
+        "bm020": "Build Manager BM-020C startup",
+        "private": "Build Manager BM-022 private resource verified; activation remains held",
+        "release": "Build Manager BM-022 activation hold released after private verification",
+        "service": "Main Monitor Service Starting",
+    }
+
+    def log(self, *names):
+        return "\n".join(self.MARKERS[name] for name in names)
+
+    def test_observed_post_resume_classification_order_is_accepted(self):
+        indexes = harness._validate_bm017f_lifecycle_marker_order(
+            self.log("guard", "private", "release", "bm020", "service")
+        )
+        self.assertLess(indexes["updater_guard"], indexes["private_verified"])
+        self.assertLess(indexes["private_verified"], indexes["activation_released"])
+        self.assertLess(indexes["activation_released"], indexes["service_start"])
+
+    def test_classification_before_private_verification_is_also_accepted(self):
+        harness._validate_bm017f_lifecycle_marker_order(
+            self.log("guard", "bm020", "private", "release", "service")
+        )
+
+    def test_private_verification_after_hold_release_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "release", "private", "service", "bm020")
+            )
+
+    def test_service_start_before_hold_release_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "private", "service", "release", "bm020")
+            )
+
+    def test_service_start_before_private_verification_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "service", "private", "release", "bm020")
+            )
+
+    def test_updater_guard_after_private_verification_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("private", "guard", "release", "service", "bm020")
+            )
+
+    def test_missing_bm020_classification_is_marker_incomplete(self):
+        with self.assertRaisesRegex(RuntimeError, "markers were incomplete.*bm020"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "private", "release", "service")
+            )
+
+    def test_missing_each_safety_marker_is_marker_incomplete(self):
+        for missing in ("guard", "private", "release", "service"):
+            with self.subTest(missing=missing):
+                log = self.log(*(name for name in self.MARKERS if name != missing))
+                with self.assertRaisesRegex(RuntimeError, "markers were incomplete"):
+                    harness._validate_bm017f_lifecycle_marker_order(log)
+
+    def test_old_chained_classification_order_is_not_required(self):
+        log = self.log("guard", "private", "release", "bm020", "service")
+        indexes = harness._validate_bm017f_lifecycle_marker_order(log)
+        self.assertGreater(indexes["bm020_classification"], indexes["private_verified"])
+
+
+class TestBm017fServiceStartWait(unittest.TestCase):
+    MARKERS = TestBm017fLifecycleMarkerOrder.MARKERS
+
+    def write_log(self, path, *names):
+        path.write_text(
+            "\n".join(self.MARKERS[name] for name in names),
+            encoding="utf-8",
+        )
+
+    def test_marker_already_present_returns_without_sleep(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+            sleep.assert_not_called()
+
+    def test_delayed_marker_is_observed_on_a_later_poll(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("activation released", encoding="utf-8")
+
+            def release_marker(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\nMain Monitor Service Starting")
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=release_marker) as sleep,
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+            sleep.assert_called_once_with(0.25)
+
+    def test_timeout_has_specific_service_start_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("activation released", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25, 0.5]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "BM-017F Red Light service did not start after activation release",
+                ):
+                    harness._wait_for_bm017f_service_start(timeout=0.5, interval=0.25)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.25, 0.25])
+
+    def test_step_four_marker_validation_runs_after_delayed_service_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            self.write_log(log, "guard", "private", "release", "bm020")
+
+            def append_service(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\n" + self.MARKERS["service"])
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=append_service),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+                result = harness._validate_bm017f_lifecycle_marker_order(
+                    harness.KODI_LOG_FILE.read_text(encoding="utf-8")
+                )
+            self.assertGreater(result["service_start"], result["activation_released"])
+
+    def test_delayed_service_marker_does_not_relax_invalid_safety_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            self.write_log(log, "guard", "release", "private", "bm020")
+
+            def append_service(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\n" + self.MARKERS["service"])
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=append_service),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+                with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+                    harness._validate_bm017f_lifecycle_marker_order(
+                        harness.KODI_LOG_FILE.read_text(encoding="utf-8")
+                    )
+
+    def test_poll_uses_bounded_quarter_second_intervals_not_a_fixed_delay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25, 0.5]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(RuntimeError):
+                    harness._wait_for_bm017f_service_start(timeout=0.5, interval=0.25)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.25, 0.25])
+
+    def test_reads_only_the_current_log_path_not_a_rotated_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current_log = root / "kodi.log"
+            old_log = root / "kodi.old.log"
+            current_log.write_text("", encoding="utf-8")
+            old_log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", current_log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25]),
+                patch.object(harness.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "did not start"):
+                    harness._wait_for_bm017f_service_start(timeout=0.25, interval=0.25)
+
+    def test_missing_current_log_is_polled_until_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "did not start"):
+                    harness._wait_for_bm017f_service_start(timeout=0.0, interval=0.25)
+
+    def test_marker_text_in_current_log_suffices_for_poll_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0]),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
 
 
 # ---------------------------------------------------------------------------

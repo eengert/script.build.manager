@@ -212,6 +212,7 @@ class DependencyActionKind(str, Enum):
     FAILED_INSTALL = "failed_install"
     FAILED_ENABLE = "failed_enable"
     FAILED_CONFLICT = "failed_conflict"
+    FAILED_ACTIVATION_HOLD = "failed_activation_hold"
     SKIPPED_VERSION_INSUFFICIENT = "skipped_version_insufficient"
 
 
@@ -323,6 +324,7 @@ class DependencyResult:
                     DependencyActionKind.FAILED_INSTALL,
                     DependencyActionKind.FAILED_ENABLE,
                     DependencyActionKind.FAILED_CONFLICT,
+                    DependencyActionKind.FAILED_ACTIVATION_HOLD,
                 ),
                 operation=f"dependency:{action.addon_id}",
             )
@@ -821,8 +823,9 @@ class DependencyResolver:
         resolver = DependencyResolver(backend)
     """
 
-    def __init__(self, backend: DependencyBackend) -> None:
+    def __init__(self, backend: DependencyBackend, *, activation_hold_provider=None) -> None:
         self._backend = backend
+        self._activation_hold_provider = activation_hold_provider
 
     def resolve_closure(
         self,
@@ -1003,6 +1006,51 @@ class DependencyResolver:
             root_addon_ids,
             require_root_metadata=require_root_metadata,
         )
+        try:
+            from resources.lib.activation import current_activation_holds
+            activation_holds = current_activation_holds(
+                self._activation_hold_provider
+            )
+        except Exception:
+            failures = tuple(DependencyAction(
+                addon_id=addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="activation hold could not be inspected safely",
+                required_by=(),
+            ) for addon_id in sorted(set(root_addon_ids)))
+            return DependencyResult(
+                closure=preflight_closure,
+                actions=failures,
+                all_required_satisfied=False,
+                unresolved=preflight_closure.nodes,
+            )
+        blocked_nodes = tuple(
+            node for node in preflight_closure.nodes
+            if node.addon_id in activation_holds and not node.optional
+        )
+        blocked_roots = tuple(
+            addon_id for addon_id in sorted(set(root_addon_ids))
+            if addon_id in activation_holds
+        )
+        if blocked_nodes or blocked_roots:
+            failures = [DependencyAction(
+                addon_id=node.addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="required dependency is held for structured-resource configuration",
+                required_by=node.required_by,
+            ) for node in blocked_nodes]
+            failures.extend(DependencyAction(
+                addon_id=addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="add-on installation or activation is held for structured-resource configuration",
+                required_by=(),
+            ) for addon_id in blocked_roots)
+            return DependencyResult(
+                closure=preflight_closure,
+                actions=tuple(failures),
+                all_required_satisfied=False,
+                unresolved=blocked_nodes,
+            )
         root_ids = frozenset(root_addon_ids)
         conflicts = tuple(
             node for node in preflight_closure.nodes
@@ -1359,12 +1407,27 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
 
     def install_addon(self, addon_id: str, desired_state: str = "enabled"):
         """Install via BM-011 AddonManager(KodiRuntimeAddonBackend())."""
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise DependencyError(
+                "add-on installation is held or activation-hold state is unavailable"
+            ) from exc
         from resources.lib.addons import AddonManager, KodiRuntimeAddonBackend  # noqa: PLC0415
         mgr = AddonManager(KodiRuntimeAddonBackend())
         return mgr.install(addon_id, desired_state=desired_state)
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
         """Set enabled state via Addons.SetAddonEnabled JSON-RPC."""
+        if enabled:
+            try:
+                from resources.lib.activation import reject_held_activation
+                reject_held_activation(addon_id)
+            except Exception as exc:
+                raise DependencyError(
+                    "add-on activation is held or activation-hold state is unavailable"
+                ) from exc
         import json  # noqa: PLC0415
         xbmc = self._xbmc()
         req = json.dumps({

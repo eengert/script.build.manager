@@ -270,6 +270,7 @@ def _validate_config_declarations(config, *, label):
             allowed = {
                 "resource_type", "owner_addon_id", "supported_versions", "schema_id",
                 "resource_id", "fields", "adapter_id", "lifecycle", "required",
+                "configure_before_activation",
             }
             _assert(set(declaration) <= allowed, f"{resource_label}: unknown key")
             required_keys = {
@@ -288,6 +289,11 @@ def _validate_config_declarations(config, *, label):
             _assert(declaration.get("lifecycle", "quiesced") in {"initialized_idle", "active", "quiesced", "restart_required"}, f"{resource_label}.lifecycle: invalid lifecycle")
             if "required" in declaration:
                 _assert(isinstance(declaration["required"], bool), f"{resource_label}.required: must be a boolean")
+            if "configure_before_activation" in declaration:
+                _assert(
+                    isinstance(declaration["configure_before_activation"], bool),
+                    f"{resource_label}.configure_before_activation: must be a boolean",
+                )
             fields = declaration["fields"]
             _assert(isinstance(fields, list) and fields, f"{resource_label}.fields: must be a non-empty array")
             seen_fields = set()

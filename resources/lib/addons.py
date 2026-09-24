@@ -955,6 +955,13 @@ class KodiRuntimeAddonBackend(AddonBackend):
         Sequence: resolve URL → download → validate → staged extract →
         UpdateLocalAddons. Does not enable; that is set_addon_enabled()'s job.
         """
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise AddonInstallError(
+                "add-on installation is held or activation-hold state is unavailable"
+            ) from exc
         # 1. Resolve package URL from configured repositories
         pkg_url, version = self._resolve_package_url(addon_id)
 
@@ -980,6 +987,14 @@ class KodiRuntimeAddonBackend(AddonBackend):
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
         """Set enabled state of addon_id via Addons.SetAddonEnabled JSON-RPC."""
+        if enabled:
+            try:
+                from resources.lib.activation import reject_held_activation
+                reject_held_activation(addon_id)
+            except Exception as exc:
+                raise AddonInstallError(
+                    "add-on activation is held or activation-hold state is unavailable"
+                ) from exc
         xbmc = self._xbmc()
         req = json.dumps({
             "jsonrpc": "2.0",

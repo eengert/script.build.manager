@@ -40,6 +40,7 @@ Commands
   validate-frozen-capture BM-021B disposable exact-artifact capture proof
   validate-updater-guard BM-021B disposable global updater-guard proof
   validate-frozen-install BM-022 disposable exact frozen-install proof
+  validate-bm017f-lifecycle BM-017F retained Red Light deferred-activation proof
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved relative to this file's location
@@ -106,11 +107,12 @@ _process: Optional[subprocess.Popen] = None  # type: ignore[type-arg]
 
 
 def _inside(child: Path, parent: Path) -> bool:
-    """True if child equals parent or is nested inside it (both resolved)."""
+    """True if child equals parent or is nested inside it lexically."""
     try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-    except ValueError:
+        child_path = os.path.normpath(os.path.abspath(os.fspath(child)))
+        parent_path = os.path.normpath(os.path.abspath(os.fspath(parent)))
+        return os.path.commonpath((child_path, parent_path)) == parent_path
+    except (OSError, ValueError):
         return False
 
 
@@ -125,30 +127,51 @@ def _overlaps(a: Path, b: Path) -> bool:
 
 
 def verify_isolation() -> None:
-    """Raise RuntimeError if disposable paths would overlap the real profile.
+    """Require Kodi's profile paths to use the exact disposable HOME.
 
     Called by reset, install, configure_webserver, and launch before they
     touch the filesystem or spawn a process. Fails closed on any violation.
+
+    This check is deliberately lexical: it never resolves, stats, or otherwise
+    probes the normal Kodi profile. It proves the configured disposable HOME
+    is exactly below this project and rejects symlinks in its profile path
+    before any operation can follow one.
     """
-    if ROOT.resolve() == Path("/").resolve():
+    project = Path(os.path.normpath(os.path.abspath(os.fspath(PROJECT))))
+    root = Path(os.path.normpath(os.path.abspath(os.fspath(ROOT))))
+    home = Path(os.path.normpath(os.path.abspath(os.fspath(HOME))))
+    appdata = Path(os.path.normpath(os.path.abspath(os.fspath(KODI_APPDATA_DIR))))
+    expected_root = project / ".kodi-test"
+    expected_home = expected_root / "home"
+    expected_appdata = expected_home / "Library" / "Application Support" / "Kodi"
+
+    if root == Path("/"):
         raise RuntimeError("ROOT must not be the filesystem root")
-    if not _inside(ROOT, PROJECT):
+    if root != expected_root:
         raise RuntimeError(
-            f"Safety: ROOT {ROOT} is not inside PROJECT {PROJECT}"
+            "Safety: ROOT must be the project's exact .kodi-test directory"
         )
-    if not _inside(HOME, ROOT):
+    if home != expected_home:
         raise RuntimeError(
-            f"Safety: HOME {HOME} is not inside ROOT {ROOT}"
+            "Safety: HOME must be the exact disposable .kodi-test/home directory"
         )
-    if not _inside(KODI_APPDATA_DIR, HOME):
+    if appdata != expected_appdata:
         raise RuntimeError(
-            f"Safety: KODI_APPDATA_DIR {KODI_APPDATA_DIR} is not inside HOME {HOME}"
+            "Safety: KODI_APPDATA_DIR must be derived from the disposable HOME"
         )
-    if _overlaps(KODI_APPDATA_DIR, NORMAL_APPDATA_DIR):
-        raise RuntimeError(
-            f"Safety: disposable profile {KODI_APPDATA_DIR} "
-            f"overlaps real profile {NORMAL_APPDATA_DIR}"
-        )
+    # Check each disposable path component in order. If an ancestor is a
+    # symlink, stop before any descendant lookup could follow it elsewhere.
+    for path in (
+        ROOT,
+        HOME,
+        HOME / "Library",
+        HOME / "Library" / "Application Support",
+        KODI_APPDATA_DIR,
+    ):
+        if path.is_symlink():
+            raise RuntimeError(
+                "Safety: symlink-based disposable Kodi profile paths are unsupported"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -4065,6 +4088,24 @@ def main():
             from resources.lib.frozen_install import FrozenInstallStore
             transaction = FrozenInstallStore().inspect()
             payload = {"transaction": transaction.to_dict() if transaction else None}
+        elif job.get("mode") == "bm017f_second_reconcile":
+            from resources.lib.build_manager import BuildManager, ReconcileRequest
+            result = BuildManager().reconcile(ReconcileRequest(
+                manifest_path=job["manifest_path"],
+                device_profile_id=job["device_profile_id"],
+                source_software_fingerprint=job.get("source_software_fingerprint", ""),
+            ))
+            payload = {
+                "success": result.success,
+                "planned_action_count": len(result.planned_actions),
+                "changed_action_count": sum(
+                    1 for item in result.action_results if item.changed
+                ),
+                "failed_action_count": sum(
+                    1 for item in result.action_results if not item.succeeded
+                ),
+                "failure_code": result.failure.code if result.failure else "",
+            }
         elif job.get("mode") == "frozen_observe_setting":
             import xbmcaddon
             addon = xbmcaddon.Addon(job["addon_id"])
@@ -6944,6 +6985,450 @@ def _prepare_bm022_fixture() -> Dict[str, Path]:
     }
 
 
+def _prepare_bm017f_fixture(
+    retained_manifest_path: Path,
+    retained_artifact_root: Path,
+) -> Dict[str, Any]:
+    """Copy only Red Light's retained exact required closure into .kodi-test."""
+    from dataclasses import replace
+    from resources.lib.artifacts import ArtifactStore, validate_addon_zip
+    from resources.lib.frozen import CaptureStatus, FrozenBuildManifest
+    from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayStore
+    from resources.lib.private_resource import (
+        StructuredPrivateResourceOverlay,
+        StructuredPrivateValue,
+    )
+    from resources.lib.redlight_resource import (
+        REDLIGHT_ADDON_ID,
+        REDLIGHT_RESOURCE_ID,
+        REDLIGHT_SCHEMA_ID,
+        REDLIGHT_VERSION,
+        redlight_declaration,
+    )
+
+    retained = FrozenBuildManifest.from_json(
+        Path(retained_manifest_path).read_text(encoding="utf-8")
+    )
+    retained_nodes = {node.addon_id: node for node in retained.addons}
+    redlight = retained_nodes.get(REDLIGHT_ADDON_ID)
+    if (
+        redlight is None
+        or redlight.version != REDLIGHT_VERSION
+        or redlight.artifact is None
+        or redlight.artifact.sha256
+        != "64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927"
+    ):
+        raise RuntimeError("retained manifest does not contain the pinned Red Light artifact")
+
+    retained_store = ArtifactStore(Path(retained_artifact_root))
+    disposable_store = ArtifactStore(
+        KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen-artifacts"
+    )
+    selected: Dict[str, Any] = {}
+    hashes: Dict[str, str] = {}
+    pending = [REDLIGHT_ADDON_ID]
+    while pending:
+        addon_id = pending.pop()
+        if addon_id in selected:
+            continue
+        node = retained_nodes.get(addon_id)
+        if node is None or node.is_absent_optional_dependency:
+            raise RuntimeError("retained Red Light required dependency graph is incomplete")
+        if node.system:
+            selected[addon_id] = node
+            continue
+        if node.artifact is None or node.status is not CaptureStatus.COMPLETE:
+            raise RuntimeError("retained Red Light required dependency artifact is incomplete")
+        metadata = retained_store.get_metadata(node.artifact.sha256)
+        if (
+            metadata.addon_id != node.addon_id
+            or metadata.version != node.version
+            or metadata.size != node.artifact.size
+        ):
+            raise RuntimeError("retained Red Light dependency metadata is inconsistent")
+        data = retained_store.read_bytes(metadata.sha256)
+        verified = validate_addon_zip(
+            data,
+            expected_addon_id=node.addon_id,
+            expected_version=node.version,
+        )
+        if verified.sha256 != metadata.sha256 or verified.size != metadata.size:
+            raise RuntimeError("retained Red Light dependency bytes failed validation")
+        copied = disposable_store.import_zip(
+            data,
+            expected_addon_id=node.addon_id,
+            expected_version=node.version,
+            source="BM-017F disposable retained artifact",
+        )
+        if copied.sha256 != metadata.sha256 or copied.size != metadata.size:
+            raise RuntimeError("disposable Red Light fixture changed an artifact")
+        selected[addon_id] = replace(node, artifact=copied)
+        hashes[addon_id] = copied.sha256
+        pending.extend(
+            edge.addon_id for edge in node.dependency_edges if not edge.optional
+        )
+
+    manifest = FrozenBuildManifest(
+        schema_version=1,
+        build_id="bm017f-redlight-lifecycle",
+        name="BM-017F disposable Red Light lifecycle",
+        created_at="2026-09-23T00:00:00Z",
+        kodi_version=retained.kodi_version,
+        platform=retained.platform,
+        capture_status=CaptureStatus.COMPLETE,
+        addons=tuple(selected[key] for key in sorted(selected)),
+        source_metadata={"fixture": "retained-exact-artifacts"},
+    )
+    manifest_path = ROOT / "bm017f-frozen-manifest.json"
+    manifest_path.write_text(manifest.to_json(), encoding="utf-8")
+
+    declaration = redlight_declaration()
+    fake_value = "BM017F_FAKE_PRIVATE_" + __import__("uuid").uuid4().hex
+    resource_overlay = StructuredPrivateResourceOverlay(
+        REDLIGHT_RESOURCE_ID,
+        REDLIGHT_ADDON_ID,
+        REDLIGHT_VERSION,
+        REDLIGHT_SCHEMA_ID,
+        (StructuredPrivateValue("pm.account_id", "string", fake_value),),
+    )
+    overlay_id = "bm017f-redlight-lifecycle"
+    overlay = PrivateOverlay(
+        overlay_id=overlay_id,
+        target_build_id=f"sha256:{manifest.fingerprint()}",
+        entries=(),
+        resources=(resource_overlay,),
+    )
+    PrivateOverlayStore(KODI_USERDATA_DIR).save(overlay)
+
+    configuration_path = ROOT / "bm017f-configuration-manifest.json"
+    configuration_path.write_text(json.dumps({
+        "schema_version": 1,
+        "engine_min_version": "0.1.0",
+        "build": {
+            "id": "bm017f-redlight-lifecycle",
+            "version": "1.0.0",
+            "name": "BM-017F disposable lifecycle",
+            "description": "Disposable-only deferred structured-resource fixture.",
+        },
+        "repositories": [],
+        "addons": [{"addon_id": REDLIGHT_ADDON_ID, "state": "enabled"}],
+        "config": {
+            "packages": [],
+            "managed_settings": [],
+            "managed_files": [],
+            "structured_private_resources": [declaration.safe_dict()],
+        },
+        "platform_profiles": {"disposable": {"label": "BM-017F disposable"}},
+        "device_profiles": {
+            "bm017f-disposable": {
+                "label": "BM-017F disposable lifecycle",
+                "extends": "disposable",
+            }
+        },
+        "private_overlay": {
+            "type": "local_file",
+            "overlay_id": overlay_id,
+            "required": True,
+        },
+        "restart_policy": {"allow_skin_reload": True, "allow_kodi_restart": True},
+    }, indent=2) + "\n", encoding="utf-8")
+    return {
+        "artifact_root": disposable_store.root,
+        "manifest_path": manifest_path,
+        "configuration_path": configuration_path,
+        "hashes": hashes,
+        "software_fingerprint": manifest.fingerprint(),
+        "versions": {
+            addon_id: node.version for addon_id, node in selected.items()
+            if not node.system
+        },
+        "fake_value": fake_value,
+        "overlay_id": overlay_id,
+        "owner_id": REDLIGHT_ADDON_ID,
+    }
+
+
+def _bm017f_resume_poll_status(
+    detail_response: Any,
+    transaction: Any,
+) -> Tuple[Dict[str, Any], bool]:
+    """Interpret the unwrapped JSON-RPC add-on result and durable transaction."""
+    owner_details: Dict[str, Any] = {}
+    if isinstance(detail_response, dict):
+        addon_details = detail_response.get("addon", {})
+        if isinstance(addon_details, dict):
+            owner_details = addon_details
+
+    if isinstance(transaction, dict) and transaction.get("phase") == "needs_attention":
+        code = str(transaction.get("status_code", "UNKNOWN"))
+        detail = str(transaction.get("status_message", ""))
+        raise RuntimeError(
+            f"BM-017F restart resume needs attention ({code}; {detail})"
+        )
+
+    resume_complete = owner_details.get("enabled") is True and transaction is None
+    return owner_details, resume_complete
+
+
+def _validate_bm017f_lifecycle_marker_order(log_text: str) -> Dict[str, int]:
+    """Require all lifecycle markers and enforce only the production safety order.
+
+    BM-020's startup classification is logged after the resume call returns,
+    so it is a required diagnostic marker but has no ordering constraint here.
+    """
+    markers = {
+        "updater_guard": "Build Manager BM-022 updater guard reasserted before BM-020 startup",
+        "bm020_classification": "Build Manager BM-020C startup",
+        "private_verified": "Build Manager BM-022 private resource verified; activation remains held",
+        "activation_released": "Build Manager BM-022 activation hold released after private verification",
+        "service_start": "Main Monitor Service Starting",
+    }
+    indexes = {name: log_text.find(marker) for name, marker in markers.items()}
+    missing = [name for name, index in indexes.items() if index < 0]
+    if missing:
+        raise RuntimeError(
+            "BM-017F lifecycle markers were incomplete in disposable Kodi log: "
+            + ", ".join(missing)
+        )
+    safety_order = (
+        indexes["updater_guard"],
+        indexes["private_verified"],
+        indexes["activation_released"],
+        indexes["service_start"],
+    )
+    if not all(before < after for before, after in zip(safety_order, safety_order[1:])):
+        raise RuntimeError(
+            "BM-017F updater/private-verification/activation/service ordering was invalid"
+        )
+    return indexes
+
+
+def _wait_for_bm017f_service_start(timeout: float = 30.0, interval: float = 0.25) -> None:
+    """Wait for Red Light's asynchronous service entrypoint in this run's log."""
+    deadline = time.monotonic() + timeout
+    marker = "Main Monitor Service Starting"
+    while True:
+        try:
+            current_log = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            current_log = ""
+        if marker in current_log:
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                "BM-017F Red Light service did not start after activation release"
+            )
+        time.sleep(min(interval, remaining))
+
+
+def validate_bm017f_lifecycle(
+    retained_manifest_path: Path,
+    retained_artifact_root: Path,
+) -> None:
+    """Exercise retained Red Light through BM-022/BM-020 in disposable Kodi."""
+    import sqlite3
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import AddonUpdatePolicy, KodiJsonRpcUpdatePolicyBackend
+
+    print("=== Build Manager BM-017F disposable Red Light lifecycle ===")
+    verify_isolation()
+    try:
+        print("\n[1/8] reset disposable profile and prepare exact retained dependency closure")
+        reset()
+        install(source=PROJECT)
+        fixture = _prepare_bm017f_fixture(retained_manifest_path, retained_artifact_root)
+        _install_bm015_config_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        for addon_id in (ADDON_ID, _BM015_RUNNER_ADDON_ID):
+            jsonrpc("Addons.SetAddonEnabled", {
+                "addonid": addon_id,
+                "enabled": True,
+            })
+            detail = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id,
+                "properties": ["enabled"],
+            }).get("addon", {})
+            if detail.get("enabled") is not True:
+                raise RuntimeError("Build Manager disposable runner could not be enabled")
+
+        original_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        print("  test profile is isolated; BM runner and retained exact artifacts are ready ✓")
+
+        print("\n[2/8] start the production frozen coordinator and verify the durable hold")
+        started = _bm015_run_job({
+            "mode": "frozen_install",
+            "manifest_path": str(fixture["manifest_path"]),
+            "configuration_manifest_path": str(fixture["configuration_path"]),
+            "artifact_root": str(fixture["artifact_root"]),
+            "device_profile_id": "bm017f-disposable",
+        }, timeout=180.0)
+        if not started.get("ok"):
+            raise RuntimeError(
+                "BM-017F frozen coordinator failed in the disposable profile "
+                f"({started.get('error_type', 'unknown')})"
+            )
+        tx = started.get("transaction") or {}
+        if (
+            started.get("outcome") != "awaiting_restart"
+            or tx.get("lifecycle_stage") != "quiescence_awaiting_restart"
+            or tx.get("activation_hold_released") is not False
+            or fixture["owner_id"] not in tx.get("activation_hold_ids", ())
+        ):
+            raise RuntimeError(
+                "BM-017F quiescence checkpoint mismatch: "
+                f"outcome={started.get('outcome', '')}, code={started.get('code', '')}, "
+                f"phase={tx.get('phase', '')}, stage={tx.get('lifecycle_stage', '')}, "
+                f"owner_held={fixture['owner_id'] in tx.get('activation_hold_ids', ())}, "
+                f"released={tx.get('activation_hold_released', '')}, "
+                f"detail={tx.get('status_message', '')}, "
+                f"attempted={','.join(started.get('installation_order', ()))}, "
+                f"installed_count={sum(1 for value in started.get('installed', {}).values() if value)}"
+            )
+        if started.get("policy") != int(AddonUpdatePolicy.NEVER_CHECK):
+            raise RuntimeError("BM-017F did not quarantine the updater before installation")
+        if set(started.get("installation_order", ())) != set(fixture["versions"]):
+            raise RuntimeError("BM-017F did not install the exact required closure")
+        for addon_id, version in fixture["versions"].items():
+            details = started.get("installed", {}).get(addon_id)
+            if not isinstance(details, dict) or details.get("version") != version:
+                raise RuntimeError("BM-017F installed an unexpected exact artifact version")
+            if addon_id == fixture["owner_id"] and details.get("enabled") is not False:
+                raise RuntimeError("Red Light was enabled before private configuration")
+        db_path = (
+            KODI_USERDATA_DIR / "addon_data" / fixture["owner_id"]
+            / "databases" / "settings.db"
+        )
+        if db_path.exists():
+            raise RuntimeError("Red Light settings database appeared before held initialization")
+        time.sleep(1.5)
+        initial_log = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        if "Main Monitor Service Starting" in initial_log:
+            raise RuntimeError("Red Light service started before private configuration")
+        current_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if current_policy is not AddonUpdatePolicy.NEVER_CHECK:
+            raise RuntimeError("updater quarantine did not persist through staged installation")
+        print("  exact versions installed disabled; settings DB absent; no Red Light service start; updater guarded ✓")
+        print("  BM-022 persisted its hold and requested a full Kodi session boundary ✓")
+
+        print("\n[3/8] restart only the disposable Kodi instance and wait for BM-020/BM-022 resume")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        deadline = time.time() + 180.0
+        owner_details = {}
+        final_transaction = None
+        resume_complete = False
+        while time.time() < deadline:
+            detail_response = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": fixture["owner_id"],
+                "properties": ["enabled", "version", "broken"],
+            })
+            tx_path = (
+                KODI_USERDATA_DIR / "addon_data" / ADDON_ID
+                / "frozen_install_transaction.json"
+            )
+            try:
+                final_transaction = json.loads(tx_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                final_transaction = None
+            owner_details, resume_complete = _bm017f_resume_poll_status(
+                detail_response,
+                final_transaction,
+            )
+            if resume_complete:
+                break
+            time.sleep(0.5)
+        if not resume_complete:
+            raise RuntimeError("BM-017F did not finish its staged restart resume")
+        if owner_details.get("version") != fixture["versions"][fixture["owner_id"]]:
+            raise RuntimeError("Red Light version changed across lifecycle resume")
+        print("  updater guard was reasserted before BM-020 startup; lifecycle hold survived restart ✓")
+
+        print("  waiting up to 30 seconds for the Red Light service-start marker in the current disposable log")
+        _wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+
+        print("\n[4/8] verify private verification, hold release, and service-start ordering")
+        log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        _validate_bm017f_lifecycle_marker_order(log_after)
+        if fixture["fake_value"] in log_after:
+            raise RuntimeError("fake private marker leaked into the disposable Kodi log")
+        policy_after = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if policy_after is not original_policy:
+            raise RuntimeError("the original updater policy was not restored after lifecycle completion")
+        print("  private verification → hold release → first service start ordering verified ✓")
+        print("  original updater policy restored after successful completion ✓")
+
+        print("\n[5/8] run a second Build Manager reconciliation against the same configuration")
+        second = _bm015_run_job({
+            "mode": "bm017f_second_reconcile",
+            "manifest_path": str(fixture["configuration_path"]),
+            "device_profile_id": "bm017f-disposable",
+            "source_software_fingerprint": fixture["software_fingerprint"],
+        }, timeout=120.0)
+        if not second.get("ok") or second.get("success") is not True:
+            raise RuntimeError("second BM-017F reconciliation did not succeed")
+        if second.get("changed_action_count") != 0 or second.get("failed_action_count") != 0:
+            raise RuntimeError("second BM-017F reconciliation was not a no-op")
+        print("  second reconciliation verified configured values read-only with no changes ✓")
+
+        print("\n[6/8] stop disposable Kodi and read back the isolated Red Light settings DB")
+        stop()
+        if not db_path.is_file():
+            raise RuntimeError("Red Light settings database was not initialized")
+        uri = f"file:{db_path}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=1.0) as connection:
+            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            table_columns = tuple(
+                row[1] for row in connection.execute("PRAGMA table_info(settings)")
+            )
+            private_row = connection.execute(
+                "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
+                ("pm.account_id",),
+            ).fetchone()
+            unrelated_row = connection.execute(
+                "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
+                ("auto_start_redlight",),
+            ).fetchone()
+            row_count = connection.execute("SELECT count(*) FROM settings").fetchone()[0]
+        if table_columns != ("setting_id", "setting_type", "setting_default", "setting_value"):
+            raise RuntimeError("Red Light settings schema read-back was invalid")
+        if journal_mode != "wal":
+            raise RuntimeError("Red Light settings DB is not in audited WAL mode")
+        if not private_row or private_row[0] != "string" or private_row[1] != fixture["fake_value"]:
+            raise RuntimeError("fake private field read-back did not match")
+        if not unrelated_row or unrelated_row[0] != "boolean" or unrelated_row[1] != "false":
+            raise RuntimeError("unrelated Red Light default row was not preserved")
+        if row_count < 100:
+            raise RuntimeError("Red Light package defaults were not initialized completely")
+        if fixture["fake_value"] in log_after:
+            raise RuntimeError("fake private marker leaked into lifecycle diagnostics")
+        transaction_path = KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen_install_transaction.json"
+        if transaction_path.exists() and fixture["fake_value"] in transaction_path.read_text(encoding="utf-8"):
+            raise RuntimeError("fake private marker leaked into BM-022 transaction state")
+        print("  exact schema, WAL, default rows, and fake private read-back verified without displaying values ✓")
+        print("  test marker absent from Kodi logs and durable lifecycle state ✓")
+
+        print("\n[7/8] verify disposable files contain the exact retained root package identity")
+        root_sha = fixture["hashes"][fixture["owner_id"]]
+        if root_sha != "64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927":
+            raise RuntimeError("BM-017F disposable root artifact digest changed")
+        print(f"  plugin.video.redlight {fixture['versions'][fixture['owner_id']]} SHA-256={root_sha} ✓")
+        print(f"  required exact dependency artifacts staged: {len(fixture['hashes']) - 1} ✓")
+
+        print("\n[8/8] validation complete; all inspection remained inside .kodi-test")
+    finally:
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("\n=== BM-017F disposable lifecycle validation PASSED ===\n")
+
+
 def validate_frozen_install() -> None:
     """Prove exact install, restart reassertion, configuration, and release."""
     if str(PROJECT) not in sys.path:
@@ -7150,6 +7635,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-frozen-capture", help="BM-021B disposable exact-artifact capture proof")
     sub.add_parser("validate-updater-guard", help="BM-021B disposable global updater-guard proof")
     sub.add_parser("validate-frozen-install", help="BM-022 disposable exact frozen-install proof")
+    p_bm017f = sub.add_parser(
+        "validate-bm017f-lifecycle",
+        help="BM-017F retained Red Light deferred-activation proof",
+    )
+    p_bm017f.add_argument("--retained-manifest", type=Path, required=True)
+    p_bm017f.add_argument("--artifact-store", type=Path, required=True)
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -7208,6 +7699,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_updater_guard()
         elif cmd == "validate-frozen-install":
             validate_frozen_install()
+        elif cmd == "validate-bm017f-lifecycle":
+            validate_bm017f_lifecycle(args.retained_manifest, args.artifact_store)
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
