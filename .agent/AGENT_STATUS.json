@@ -1,10 +1,10 @@
 {
-  "active_agent": "codex",
+  "active_agent": "none",
   "status": "blocked",
-  "task": "BM-023A offline CONFIGURE diagnostics and Red Light hold correction",
-  "reason": "Offline implementation and regression validation are complete: safe public/private CONFIGURE diagnostics, validated present overlay identity persistence with required kept distinct, and Red Light configure_before_activation correction. Focused suites passed 686 tests; full suite passed 1851; compileall, 7 tracked JSON/schema parses, and diff check passed. No Kodi launch, recovery, retry, profile/device access, updater/skin mutation, or private value inspection. Historical CONFIGURE sub-action remains unknown; awaiting supervisor direction for recovery and the single diagnostic retry.",
-  "last_commit": "6ce2947",
+  "task": "BM-023A durable restart-artifact correction",
+  "reason": "Adapter 0.0.5 offline correction is complete at ee31e3e: exact retained artifacts are staged into the profile-local durable store before install. Adapter 39/39, related artifact/frozen 86/86, full suite 1855/1855, compileall, 7 JSON parses, and diff check passed. Live Test.app remains needs_attention after FROZEN_MANIFEST_INVALID with Red Light hold unreleased; requires supervisor-reviewed held-transaction recovery before another live retry.",
+  "last_commit": "ee31e3e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
-  "next_agent": "eric",
+  "next_agent": "supervisor",
   "updated_at": "2026-09-24"
 }

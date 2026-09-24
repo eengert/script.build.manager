@@ -1,3 +1,69 @@
+# Current Handoff - BM-023A durable restart-artifact correction (2026-09-24)
+
+**Result:** offline adapter correction complete and validated. The live Test.app
+transaction remains intentionally untouched in needs_attention after the
+post-quiescence restart.
+
+### Live evidence that motivated this correction
+
+The single authorized 0.0.4 install invocation reached
+QUIESCENCE_RESTART_REQUIRED with Red Light held and updater quarantine active.
+After the manually authorized full Test.app restart, startup resume failed
+closed with FROZEN_MANIFEST_INVALID. Read-only reproduction proved the
+retained manifest fingerprint still matched but the profile-local
+frozen-artifacts store was empty, so exact artifact validation failed for the
+captured package set. The temporary adapter had used the external retained
+artifact store for the initial coordinator while production startup correctly
+reconstructed the durable profile-local store.
+
+The live transaction currently remains at needs_attention, lifecycle stage
+quiescence_awaiting_restart, restart count 1, with the Red Light activation
+hold unreleased and the updater guard still required. No retry or recovery was
+performed after this diagnosis.
+
+### Offline correction
+
+Implementation commit: ee31e3eb3810bd167a7185694631b705c3692b5e.
+
+Temporary adapter 0.0.5 now:
+- stages every declared non-system exact artifact from the retained source
+  store into the profile-local frozen-artifacts store through existing
+  ArtifactStore.read_bytes / import_zip validation;
+- verifies the imported SHA-256 and size against the frozen manifest;
+- leaves artifact=None and system nodes unstaged so existing YouTube
+  skip/repository resolution semantics remain unchanged;
+- constructs the install coordinator with the durable profile-local store;
+- keeps recovery dispatch separate and preserves safe, allowlisted failure
+  diagnostics without paths or raw exception text.
+
+Production resources/lib/frozen_install.py was not changed.
+
+### Validation
+
+- BM-023A adapter: **39/39** passed.
+- Related artifact/frozen lifecycle modules: **86/86** passed.
+- Full offline suite: **1,855/1,855** passed.
+- compileall passed for resources, tools, and tests.
+- All **7** tracked JSON files parsed.
+- git diff --check passed.
+
+### Status / next step
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
+- tvOS: NOT VALIDATED.
+- Protected matrix was not changed.
+- No Kodi/Test.app mutation, recovery, install invocation, real-device access,
+  normal-profile access, or private-value inspection occurred during the
+  offline correction.
+
+The existing generic bm023a-recover path must **not** be invoked blindly:
+its current preconditions reject an unreleased activation hold. The next step is
+a supervisor-reviewed recovery path for this specific held needs_attention
+state, followed by a separately authorized adapter 0.0.5 live retry.
+
+---
+
 # Current Handoff — BM-023A offline CONFIGURE correction (2026-09-24)
 
 Result: offline implementation and regression validation complete. The live

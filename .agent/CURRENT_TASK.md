@@ -1,5 +1,41 @@
 # Current Task
 
+## BM-023A durable restart-artifact correction - 2026-09-24
+
+**Status:** OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
+
+Post-restart read-only diagnosis proved the temporary 0.0.4 adapter installed
+from the retained external artifact store while startup resume correctly
+validated against the profile-local durable frozen-artifacts store. That
+durable store was empty, producing FROZEN_MANIFEST_INVALID after the
+quiescence restart even though the retained manifest fingerprint matched.
+
+Commit ee31e3eb3810bd167a7185694631b705c3692b5e updates only the temporary
+BM-023A adapter/support/tests. Adapter 0.0.5 stages manifest-declared exact
+artifacts into the durable profile-local store with existing validated
+content-addressed APIs, explicitly checks SHA-256/size identity, preserves
+artifactless skip/repository behavior, and gives the install coordinator the
+durable store. Production frozen lifecycle code is unchanged.
+
+Validation: adapter 39/39; related artifact/frozen modules 86/86; full suite
+1,855/1,855; compileall; all 7 tracked JSON files; git diff --check.
+
+The live Test.app transaction remains needs_attention at
+quiescence_awaiting_restart, restart count 1, with the Red Light hold
+unreleased and updater guard still required. Do not invoke the existing generic
+recovery path until its unreleased-hold limitation is reviewed. No live retry
+was performed by this offline task.
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
+- tvOS: NOT VALIDATED.
+
+Smallest next step: design/review a bounded recovery for the held transaction,
+then separately authorize adapter 0.0.5 installation and one fresh live retry.
+
+---
+
+
 ## BM-023A offline CONFIGURE diagnostics and Red Light hold correction — 2026-09-24
 
 **Status:** OFFLINE_IMPLEMENTATION_COMPLETE; BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
