@@ -7170,6 +7170,39 @@ def _bm017f_resume_poll_status(
     return owner_details, resume_complete
 
 
+def _validate_bm017f_lifecycle_marker_order(log_text: str) -> Dict[str, int]:
+    """Require all lifecycle markers and enforce only the production safety order.
+
+    BM-020's startup classification is logged after the resume call returns,
+    so it is a required diagnostic marker but has no ordering constraint here.
+    """
+    markers = {
+        "updater_guard": "Build Manager BM-022 updater guard reasserted before BM-020 startup",
+        "bm020_classification": "Build Manager BM-020C startup",
+        "private_verified": "Build Manager BM-022 private resource verified; activation remains held",
+        "activation_released": "Build Manager BM-022 activation hold released after private verification",
+        "service_start": "Main Monitor Service Starting",
+    }
+    indexes = {name: log_text.find(marker) for name, marker in markers.items()}
+    missing = [name for name, index in indexes.items() if index < 0]
+    if missing:
+        raise RuntimeError(
+            "BM-017F lifecycle markers were incomplete in disposable Kodi log: "
+            + ", ".join(missing)
+        )
+    safety_order = (
+        indexes["updater_guard"],
+        indexes["private_verified"],
+        indexes["activation_released"],
+        indexes["service_start"],
+    )
+    if not all(before < after for before, after in zip(safety_order, safety_order[1:])):
+        raise RuntimeError(
+            "BM-017F updater/private-verification/activation/service ordering was invalid"
+        )
+    return indexes
+
+
 def validate_bm017f_lifecycle(
     retained_manifest_path: Path,
     retained_artifact_root: Path,
@@ -7298,18 +7331,7 @@ def validate_bm017f_lifecycle(
 
         print("\n[4/8] verify private verification, hold release, and service-start ordering")
         log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
-        guard_marker = "Build Manager BM-022 updater guard reasserted before BM-020 startup"
-        bm020_marker = "Build Manager BM-020C startup"
-        private_marker = "Build Manager BM-022 private resource verified; activation remains held"
-        release_marker = "Build Manager BM-022 activation hold released after private verification"
-        service_marker = "Main Monitor Service Starting"
-        indexes = [log_after.find(item) for item in (
-            guard_marker, bm020_marker, private_marker, release_marker, service_marker
-        )]
-        if any(index < 0 for index in indexes):
-            raise RuntimeError("BM-017F lifecycle markers were incomplete in disposable Kodi log")
-        if not (indexes[0] < indexes[1] < indexes[2] < indexes[3] < indexes[4]):
-            raise RuntimeError("BM-017F updater/configuration/activation/service ordering was invalid")
+        _validate_bm017f_lifecycle_marker_order(log_after)
         if fixture["fake_value"] in log_after:
             raise RuntimeError("fake private marker leaked into the disposable Kodi log")
         policy_after = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()

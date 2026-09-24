@@ -2,7 +2,7 @@
   "active_agent": "codex",
   "status": "implemented_pending_bm017f_lifecycle_live_validation",
   "task": "BM-017F",
-  "reason": "Implemented the BM-017F harness poll fix to read the unwrapped top-level addon details returned by jsonrpc(); immediate needs_attention handling and the enabled/no-transaction completion requirements remain intact. Added eight regression tests. tests.test_kodi_harness passed 106 tests, including 8 BM-017F poll cases; compileall and git diff --check passed. No Kodi launch or lifecycle harness run was performed. The complete BM-017F gate remains not live-validated and awaits supervisor direction.",
+  "reason": "Corrected only the BM-017F harness step-4 ordering assertion: it still requires all five markers, but orders only updater guard < private verification < activation release < Red Light service start. BM-020 startup classification remains required and is treated as post-resume diagnostic. Added nine ordering regressions; tests.test_kodi_harness passed 115 tests, compileall and git diff --check passed. No production code changed and no Kodi/live harness was run. The complete BM-017F lifecycle remains pending supervisor live validation.",
   "last_commit": "8456ae2f7b051ffa163be0c38c0a250fa8f29c10",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",

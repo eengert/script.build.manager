@@ -730,6 +730,74 @@ class TestBm017fResumePoll(unittest.TestCase):
         self.assertEqual(details.version, "2.6.8")
 
 
+class TestBm017fLifecycleMarkerOrder(unittest.TestCase):
+    MARKERS = {
+        "guard": "Build Manager BM-022 updater guard reasserted before BM-020 startup",
+        "bm020": "Build Manager BM-020C startup",
+        "private": "Build Manager BM-022 private resource verified; activation remains held",
+        "release": "Build Manager BM-022 activation hold released after private verification",
+        "service": "Main Monitor Service Starting",
+    }
+
+    def log(self, *names):
+        return "\n".join(self.MARKERS[name] for name in names)
+
+    def test_observed_post_resume_classification_order_is_accepted(self):
+        indexes = harness._validate_bm017f_lifecycle_marker_order(
+            self.log("guard", "private", "release", "bm020", "service")
+        )
+        self.assertLess(indexes["updater_guard"], indexes["private_verified"])
+        self.assertLess(indexes["private_verified"], indexes["activation_released"])
+        self.assertLess(indexes["activation_released"], indexes["service_start"])
+
+    def test_classification_before_private_verification_is_also_accepted(self):
+        harness._validate_bm017f_lifecycle_marker_order(
+            self.log("guard", "bm020", "private", "release", "service")
+        )
+
+    def test_private_verification_after_hold_release_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "release", "private", "service", "bm020")
+            )
+
+    def test_service_start_before_hold_release_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "private", "service", "release", "bm020")
+            )
+
+    def test_service_start_before_private_verification_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "service", "private", "release", "bm020")
+            )
+
+    def test_updater_guard_after_private_verification_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("private", "guard", "release", "service", "bm020")
+            )
+
+    def test_missing_bm020_classification_is_marker_incomplete(self):
+        with self.assertRaisesRegex(RuntimeError, "markers were incomplete.*bm020"):
+            harness._validate_bm017f_lifecycle_marker_order(
+                self.log("guard", "private", "release", "service")
+            )
+
+    def test_missing_each_safety_marker_is_marker_incomplete(self):
+        for missing in ("guard", "private", "release", "service"):
+            with self.subTest(missing=missing):
+                log = self.log(*(name for name in self.MARKERS if name != missing))
+                with self.assertRaisesRegex(RuntimeError, "markers were incomplete"):
+                    harness._validate_bm017f_lifecycle_marker_order(log)
+
+    def test_old_chained_classification_order_is_not_required(self):
+        log = self.log("guard", "private", "release", "bm020", "service")
+        indexes = harness._validate_bm017f_lifecycle_marker_order(log)
+        self.assertGreater(indexes["bm020_classification"], indexes["private_verified"])
+
+
 # ---------------------------------------------------------------------------
 # WEBSERVER CONFIGURATION
 # ---------------------------------------------------------------------------

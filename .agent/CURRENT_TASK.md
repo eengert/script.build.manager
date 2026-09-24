@@ -2,18 +2,118 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_BM017F_LIFECYCLE_LIVE_VALIDATION` on
-`agent/codex`. The Requests alias correction commit is `81e8b2c`; verified
-import roots were first implemented in
-`93be55a3e3a900de488d388c88fbf39aca885869`. The BM-017F harness poll now
-consumes the unwrapped JSON-RPC `addon` result. The full lifecycle gate remains
-**NOT YET LIVE-VALIDATED** and needs the supervisor-directed manual command
-below. The latest supervisor-run disposable session had already passed private
-resource verification, activation release, BM-020's `no_transaction` startup
-result, and the first Red Light service start. macOS BM-023A remains
-**STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+**Status**: `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION` on `agent/codex`.
+The harness response-shape fix is committed as `8456ae2` and pushed; status
+metadata is `3fd2a30`. The supervisor-run disposable lifecycle reached step
+[4/8]; its safety order held, but the old harness predicate incorrectly put
+the post-resume BM-020 classification before private verification. The
+harness-only predicate and nine regressions are now corrected as recorded
+below. The complete eight-step gate remains **NOT YET LIVE-VALIDATED**.
+macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
 
-### Latest staged-resume diagnosis (2026-09-23)
+### Offline harness correction (2026-09-23)
+
+Corrected only the harness step-[4/8] marker-order predicate. Presence of all
+five markers remains mandatory, including BM-020 startup classification; the
+safety predicate now orders only updater guard `<` private-resource
+verification `<` activation-hold release `<` Red Light service start. The
+BM-020 classification is treated as a required post-resume diagnostic marker
+with no relative-order constraint. Production lifecycle code was not changed.
+
+Added nine focused regression tests covering observed order, BM-020 before
+private verification, each unsafe safety-marker ordering, missing BM-020,
+missing safety markers, and acceptance of the observed post-resume marker
+placement. `python3 -m unittest tests.test_kodi_harness` passed **115/115**;
+compileall for `tools/kodi_test.py` and `tests/test_kodi_harness.py`, and
+`git diff --check` passed. No Kodi process or BM-017F lifecycle command was
+run. BM-017F is now `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION`, not live
+complete. macOS BM-023A remains blocked; tvOS remains not validated.
+
+Steps [5/8]-[8/8] remain unchanged: [5] a second production BM-015
+reconciliation must succeed with zero changed and zero failed actions; [6]
+Kodi is stopped and the isolated Red Light DB is read-only checked for exact
+four-column schema, WAL mode, fake private-field match, preservation of the
+unrelated `auto_start_redlight=false` row, at least 100 initialized defaults,
+and absence of the fake value from Kodi logs/durable BM-022 state; [7] the
+Red Light root artifact must retain exact SHA-256
+`64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927` and the
+fixture's exact dependency artifacts are reported; [8] records successful
+completion with all inspection inside `.kodi-test`. Step [3] still requires
+the resumed add-on enabled at the exact version and the durable transaction
+absent; step [4] still requires all lifecycle markers, the safety ordering,
+fake-value log exclusion, and restoration of the original updater policy.
+No later lifecycle step was weakened.
+
+### Latest offline step-4 ordering diagnosis (2026-09-23)
+
+Step [4/8] reads only the current disposable `kodi.log`. It calls `find()` for
+five literal markers, then requires these first textual positions to satisfy
+`guard < BM-020 startup < private verified < hold released < service start`.
+It does not parse timestamps, reject duplicates, or select markers by Kodi
+session ID. If any marker is absent it raises
+`BM-017F lifecycle markers were incomplete in disposable Kodi log`; the
+reported ordering error occurs only after all five markers were found and the
+strict chained comparison returned false. `find()` selects the first duplicate.
+Step [4/8] then checks that the fake marker is absent from the log and that the
+current updater policy equals the original policy captured before installation.
+
+The current log contains each required marker once, in this order:
+
+| Marker | Source | Timestamp |
+|---|---|---|
+| Updater guard reasserted | `ensure_frozen_install_guard` after setting and verifying quarantine | 21:02:46.407 |
+| Private resource verified | BM-022 after successful structured-resource results are durably recorded | 21:02:48.057 |
+| Activation hold released | BM-022 after final-validator success and durable release transition | 21:02:48.062 |
+| BM-020 startup classification (`no_transaction`) | `service.py`, after `run_frozen_install_startup()` returns | 21:02:48.094 |
+| Red Light service start | Red Light service emits `Main Monitor Service Starting` | 21:02:48.267 |
+
+The actual order is `guard < private verified < hold released < BM-020 startup
+classification < service start`. Thus all markers are present, the core
+production invariant holds, and the exact failed comparison is
+`BM-020 startup < private verified` (false). The BM-020 line is a completion
+classification emitted after BM-022 resume/finalization, not a resume-start
+marker. There is no separate BM-022 resume-start timestamp; the first progress
+checkpoint is registry readiness at 21:02:46.685 (`before_refresh`), with the
+owner registered at 2.6.8 and `enabled=false`. No resource-initialization-start,
+Kodi Enabled-transition, or `Addons.SetAddonEnabled` event was logged. The
+stage-[3] poll completed with final enabled state true and no transaction file;
+Addons33's installed-state row also reports enabled.
+
+BM-022 source order is: private verification; final software/config validator;
+activation release; enable and final-state/version checks; COMPLETE transition
+and resolution persistence; restore original updater policy; clear transaction.
+`service.py` writes the BM-020 classification only after that call returns.
+There is no timestamped restore or clear marker, but the absent frozen
+transaction, successful stage-[3] poll, and lack of a BM-022 failure outcome
+place successful finalization by 21:02:48.094, before service start. The
+disposable settings database exists, passes integrity, is in WAL mode, and has
+the expected `settings` schema. No setting values were read. The current
+updater-policy read-back maps to `NEVER_CHECK`; transaction clearing follows a
+successful restore to the captured original policy. The original scalar is not
+separately retained in the preserved state after clear. No frozen/restart
+transaction JSON or pending restart remains; lock sidecar files remain. No
+`needs_attention` state is recorded.
+
+Log provenance is current-run only: `reset()` removes the disposable root,
+including prior logs and result files. Kodi rotated the first session into
+`kodi.old.log` (startup 21:02:31.204) and the second session began in
+`kodi.log` at 21:02:44.910. Step [4/8] reads only `kodi.log`. The old log has
+one BM-020 classification from the first session but no private, release, or
+service marker; each required marker appears once in the current log. Current
+fixture and BM-015 job/result file modification times follow this run's reset,
+so no stale result file contaminated the predicate. One separate ERROR-level
+`unknown addon` diagnostic naming Red Light appears at 21:02:47.286; step [4/8]
+does not read it, and the retained evidence does not identify its producer.
+
+**Root cause**: `BLOCKED_BM017F_HARNESS_ORDERING_MARKER_DEFECT`, not a failure
+of the observed private-verification/activation/service ordering. Smallest
+recommendation only: keep marker-presence checks, but order the safety markers
+as `guard < private verified < hold released < service start`; treat the
+BM-020 startup classification as a post-resume diagnostic rather than placing
+it before private verification. No implementation or lifecycle rerun was
+performed in this diagnosis.
+
+### Earlier staged-resume diagnosis (2026-09-23; prior run)
 
 The preserved `.kodi-test` evidence shows the transaction's quiescence
 checkpoint at `phase=awaiting_restart`,
@@ -60,15 +160,15 @@ Validation: `tests.test_kodi_harness` **106 passed**, including the BM-017F
 poll cases **8 passed**; compileall for the touched Python files and
 `git diff --check` passed. No Kodi process, lifecycle harness command, normal
 profile, real device, or private overlay values were accessed in this
-correction. The requested live lifecycle check remains pending supervisor
-direction.
+correction. A later supervisor-run command reached step [4/8] but failed the
+ordering predicate documented above.
 
 Review confirmed the remaining harness success gates are unchanged: lifecycle
 marker ordering and updater-policy restoration, a zero-change/zero-failure
 second reconciliation, isolated settings database read-back, and exact root
 artifact hash plus dependency count.
 
-Next manual command, not run by this task:
+Command executed later by the supervisor (not during the response-shape fix):
 
 ```sh
 cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex

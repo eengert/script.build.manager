@@ -1,37 +1,88 @@
-# Current Handoff — BM-017F harness poll correction
+# Current Handoff — BM-017F step-4 harness ordering correction
+
+The harness-only ordering defect is corrected and the regression suite passes.
+Step [4/8] continues to require every marker but now asserts the production
+safety invariant `updater guard < private verification < activation release <
+service start`. The BM-020 startup-classification marker remains required but
+is treated as a post-resume diagnostic with no ordering constraint. No
+production lifecycle behavior changed.
+
+Nine focused ordering regressions cover the observed order, BM-020 before
+private verification, invalid safety orders, missing markers, and rejection
+of the old chained classification predicate. `python3 -m unittest
+tests.test_kodi_harness` passed **115/115**; targeted compileall and
+`git diff --check` passed. No Kodi launch or live lifecycle validation was
+performed. BM-017F is `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION`; the
+supervisor must run the manual command below. BM-023A remains blocked and
+tvOS remains not validated.
+
+Unchanged remaining gates: [5] second BM-015 reconciliation succeeds with
+zero changed/failed actions; [6] stopped-Kodi read-only DB checks verify exact
+schema, WAL, fake private field, unrelated-row preservation, initialized
+defaults, and fake-value absence from logs/transaction; [7] exact Red Light
+artifact SHA and dependency artifacts; [8] completion while inspection stays
+inside `.kodi-test`. Step [3] still requires enabled exact-version Red Light
+and no durable transaction. Step [4] still checks complete marker presence,
+safety order, fake-value log absence, and original updater-policy restoration.
+These later gates were inspected, not executed.
 
 ## Result
 
-Corrected `tools/kodi_test.py` so the staged-resume poll consumes the top-level
-`addon` object returned by `jsonrpc()`. Immediate `needs_attention` handling,
-the enabled add-on requirement, and the absent-transaction requirement remain
-in force. Added eight regression cases, including the raw JSON-RPC body and an
-existing correct `_HttpAddonStateBackend` consumer.
+The following timestamps and diagnosis are the pre-correction evidence that
+motivated the harness fix above; the stale ordering predicate was corrected
+without changing production behavior.
 
-Validation: `python -m unittest tests.test_kodi_harness` — **106 passed**;
-`TestBm017fResumePoll` — **8 passed**; compileall for the two changed Python
-files and `git diff --check` passed. No Kodi launch or lifecycle harness run
-was performed. No normal profile, real device, or private overlay values were
-accessed. The earlier supervisor-run disposable evidence had reached private
-resource verification, activation release, BM-020 `no_transaction`, and the
-first Red Light service start; the full BM-017F gate still needs a new
-supervisor-directed live validation.
+The latest supervisor-run disposable log contains every step-[4/8] marker
+once, but not in the order the harness requires. Its expected sequence is
+`guard < BM-020 startup classification < private verified < hold released <
+service start`; actual local timestamps (2026-09-23, America/New_York) show:
 
-Reviewed remaining checks are intact: lifecycle marker order and updater
-policy restoration, a zero-change/zero-failure second reconciliation, isolated
-settings database read-back, and exact root artifact hash plus dependency
-count.
+- Updater guard reasserted: 21:02:46.407.
+- Held Red Light registry state: 21:02:46.685, registered at 2.6.8 and disabled.
+- Private resource verified: 21:02:48.057.
+- Activation hold released: 21:02:48.062.
+- BM-020 classification `no_transaction`: 21:02:48.094.
+- Red Light service start: 21:02:48.267.
+
+Thus the exact false term is `BM-020 startup classification < private
+verified`. `service.py` emits that classification after
+`run_frozen_install_startup()` returns, so the observed order
+`guard < private verified < hold released < BM-020 classification < service
+start` is expected. The live safety invariant
+`private verification < activation release < service start` held, and the
+updater guard was active before resumed registry/config work.
+
+The stage-[3] poll reached step [4/8] only after reading the owner as enabled
+and the frozen transaction as absent. The settings DB exists, passes
+`integrity_check`, is WAL, and has the expected schema; no setting values were
+read. The final policy read-back maps to `NEVER_CHECK`; source ordering plus
+transaction clear shows restore to the captured original succeeded, though
+the original enum is not separately retained. No restart transaction or
+`needs_attention` state remains. A separate ERROR-level `unknown addon`
+diagnostic at 21:02:47.286 is outside the step-[4/8] predicate and its
+producer is not identified by retained evidence.
+
+`reset()` deletes the disposable root before each run. Kodi rotated the first
+session into `kodi.old.log` (startup 21:02:31.204); the second session began
+in `kodi.log` at 21:02:44.910. Step [4/8] reads only the latter. Each required
+marker appears once there; the BM-020 marker in the old log belongs to the
+first session and is excluded. Current fixture/result file times follow the
+reset, so stale artifacts did not affect the comparison.
 
 ## Classification and next step
 
-- BM-017F: `IMPLEMENTED_PENDING_BM017F_LIFECYCLE_LIVE_VALIDATION`.
-- Red Light lifecycle: `NOT YET LIVE-VALIDATED` as a complete harness gate.
+- BM-017F: `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION`.
+- Red Light core safety ordering: **LIVE-PROVEN**; complete eight-step gate:
+  **NOT YET LIVE-VALIDATED**. Step-[4/8] harness correction passed offline
+  regression tests; supervisor manual live validation remains required.
 - macOS BM-023A: `STILL BLOCKED`.
 - tvOS: `NOT VALIDATED`.
 - No normal Kodi profile, real device, or private overlay values were accessed.
 
-Smallest next step: supervisor may run the following command once in the
-disposable harness. It was not run during this correction.
+The response-shape fix was exercised by the supervisor with the command below.
+This harness-ordering correction did not run it. The supervisor should run the
+command below to validate the corrected step [4/8] and continue gates [5/8]
+through [8/8].
 
 ```sh
 cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
