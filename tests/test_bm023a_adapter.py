@@ -387,12 +387,14 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             fixture = self.fixture(Path(tmp) / "store")
             fixture[3].abandon = lambda **kwargs: (_ for _ in ()).throw(RuntimeError(secret))
-            with self.assertRaises(RuntimeError) as raised:
+            with self.assertRaises(AdapterBootstrapError) as raised:
                 self.run_recovery(fixture)
             payload = safe_failure_payload(
-                "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", raised.exception
+                "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", raised.exception
             )
             self.assertNotIn(secret, json.dumps(payload))
+            self.assertEqual(payload["adapter_stage"], "INVOKE_RECOVERY")
+            self.assertEqual(payload["failing_callable"], "FrozenInstallCoordinator.abandon")
             self.assertEqual(set(payload), {
                 "ok", "error_type", "adapter_stage", "failing_callable", "failure_category"
             })

@@ -147,21 +147,41 @@ def recover_frozen_install(
 
     # This is the sole recovery call; no transaction files, locks, add-ons,
     # updater settings, or restart records are manually edited here.
-    result = coordinator.abandon(acknowledge_restore_failure=False)
+    try:
+        result = coordinator.abandon(acknowledge_restore_failure=False)
+    except Exception:
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", "operation_failed"
+        ) from None
     outcome = getattr(getattr(result, "outcome", None), "value", getattr(result, "outcome", None))
     if outcome != "complete":
         raise _bootstrap_error(
             "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", "operation_failed"
         )
 
-    transaction_cleared = store.inspect() is None
-    policy_after = policy_backend.get_policy()
-    policy_after = update_policy_type(policy_after)
+    try:
+        transaction_cleared = store.inspect() is None
+    except Exception:
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "FrozenInstallStore.inspect", "operation_failed"
+        ) from None
+    try:
+        policy_after = update_policy_type(policy_backend.get_policy())
+    except Exception:
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "UpdatePolicyBackend.get_policy", "operation_failed"
+        ) from None
     restart_present_after = bool(restart_transaction_path.exists())
-    af3_installed = installer.get_addon_details(af3_addon_id) is not None
-    addons_retained = all(
-        installer.get_addon_details(addon_id) is not None for addon_id in observed_ids
-    )
+    try:
+        af3_installed = installer.get_addon_details(af3_addon_id) is not None
+        addons_retained = all(
+            installer.get_addon_details(addon_id) is not None for addon_id in observed_ids
+        )
+    except Exception:
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "KodiRuntimeFrozenArtifactBackend.get_addon_details",
+            "operation_failed",
+        ) from None
     if not (
         transaction_cleared
         and policy_after == original_policy
