@@ -47,7 +47,8 @@ transaction or starting the single diagnostic retry.
 - macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
 - tvOS: NOT VALIDATED.
 - Worker branch: agent/codex; protected matrix was not changed.
-- Implementation commit: 6ce2947; tracking/handoff commit follows separately.
+- Implementation commit: 6ce2947; task tracking is kept in separate metadata
+  commits on the same worker branch.
 - Matrix SHA: 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
 - Usage snapshot: start 5h 0% used / weekly 79% used; end 5h 3% used /
   weekly 80% used; observed delta 5h +3 pp / weekly +1 pp. Runtime label GPT-6;
