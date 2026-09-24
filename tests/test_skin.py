@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 from resources.lib.skin import (
     KodiRuntimeSkinBackend,
     KodiRuntimeSkinSettingsBackend,
+    _SkinRpcError,
     SkinActivator,
     SkinBackend,
     SkinError,
+    SkinFailureCode,
     SkinResult,
     SkinState,
     SkinStatus,
@@ -105,18 +107,27 @@ class TestSkinActivator(unittest.TestCase):
         result = SkinActivator(backend).activate("skin.foo")
         self.assertEqual(result.status, SkinStatus.ALREADY_ACTIVE)
         self.assertEqual(backend.calls, ["get_active"])
+        self.assertIsNone(result.failure_code)
 
     def test_missing_and_disabled_are_non_mutating_failures(self):
         for state in (SkinState(False, False), SkinState(True, False)):
             backend = FakeSkinBackend(skins={"skin.foo": state})
             result = self._activate(backend)
             self.assertEqual(result.status, SkinStatus.FAILED)
+            self.assertEqual(
+                result.failure_code,
+                SkinFailureCode.TARGET_SKIN_NOT_AVAILABLE
+                if not state.installed else SkinFailureCode.TARGET_SKIN_DISABLED,
+            )
             self.assertNotIn("set_setting:skin.foo", backend.calls)
 
     def test_pre_existing_dialog_is_mutation_free_failure(self):
         backend = _backend(dialog_visibility=[True])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
+        self.assertEqual(
+            result.failure_code, SkinFailureCode.PREEXISTING_CONFIRMATION_DIALOG
+        )
         self.assertIn("pre-existing Yes/No dialog", result.message)
         self.assertNotIn("set_setting:skin.foo", backend.calls)
         self.assertNotIn("confirm", backend.calls)
@@ -125,6 +136,7 @@ class TestSkinActivator(unittest.TestCase):
         backend = _backend()
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.ACTIVATED)
+        self.assertIsNone(result.failure_code)
         self.assertEqual(backend.calls, [
             "get_active", "get_state:skin.foo", "dialog:False",
             "set_setting:skin.foo", "get_active", "dialog:True",
@@ -137,12 +149,14 @@ class TestSkinActivator(unittest.TestCase):
         backend = _backend(dialog_visibility=[False])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
+        self.assertEqual(result.failure_code, SkinFailureCode.CONFIRMATION_NOT_OBSERVED)
         self.assertNotIn("confirm", backend.calls)
 
     def test_confirmation_never_closes_is_failure(self):
         backend = _backend(dialog_visibility=[False, True, True])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
+        self.assertEqual(result.failure_code, SkinFailureCode.CONFIRMATION_NOT_CLOSED)
         self.assertIn("confirm", backend.calls)
         self.assertNotIn("get_setting", backend.calls)
 
@@ -151,6 +165,7 @@ class TestSkinActivator(unittest.TestCase):
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("Loaded skin", result.message)
+        self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_ACTIVE)
 
     def test_persisted_setting_mismatch_is_failure(self):
         class NonPersisting(FakeSkinBackend):
@@ -164,12 +179,14 @@ class TestSkinActivator(unittest.TestCase):
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("Persisted skin setting", result.message)
+        self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_PERSISTED)
 
     def test_loaded_skin_mismatch_is_failure(self):
         backend = _backend(active_reads=["skin.estuary", "skin.foo", "skin.other"])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("Loaded skin", result.message)
+        self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_ACTIVE)
 
     def test_backend_exception_is_failure(self):
         class Broken(FakeSkinBackend):
@@ -179,6 +196,196 @@ class TestSkinActivator(unittest.TestCase):
         result = self._activate(Broken(skins={"skin.foo": SkinState(True, True)}))
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertIn("settings unavailable", result.message)
+        self.assertEqual(result.failure_code, SkinFailureCode.SET_SKIN_COMMAND_FAILED)
+
+    def test_initial_and_target_state_read_failures_have_distinct_codes(self):
+        class InitialReadFails(FakeSkinBackend):
+            def get_active_skin(self):
+                raise RuntimeError("private path and secret")
+
+        class TargetReadFails(FakeSkinBackend):
+            def get_skin_state(self, _addon_id):
+                raise RuntimeError("private path and secret")
+
+        for backend, expected in (
+            (InitialReadFails(), SkinFailureCode.INITIAL_SKIN_STATE_READ_FAILED),
+            (
+                TargetReadFails(skins={"skin.foo": SkinState(True, True)}),
+                SkinFailureCode.TARGET_SKIN_STATE_READ_FAILED,
+            ),
+        ):
+            with self.subTest(expected=expected):
+                result = self._activate(backend)
+                self.assertEqual(result.failure_code, expected)
+                self.assertNotIn("private", result.failure_code.value.lower())
+
+    def test_confirmation_state_read_and_preparation_failures_have_distinct_codes(self):
+        class DialogReadFails(FakeSkinBackend):
+            def is_confirmation_visible(self):
+                raise RuntimeError("private dialog path")
+
+        class PreparationFails(FakeSkinBackend):
+            def prepare_skin_change(self):
+                raise RuntimeError("private preparation path")
+
+        for backend, expected in (
+            (
+                DialogReadFails(skins={"skin.foo": SkinState(True, True)}),
+                SkinFailureCode.CONFIRMATION_STATE_READ_FAILED,
+            ),
+            (
+                PreparationFails(skins={"skin.foo": SkinState(True, True)}),
+                SkinFailureCode.SKIN_CHANGE_PREPARATION_FAILED,
+            ),
+        ):
+            with self.subTest(expected=expected):
+                self.assertEqual(self._activate(backend).failure_code, expected)
+
+    def test_confirmation_poll_read_failures_are_distinct_from_timeouts(self):
+        class PollDialogReadFails(FakeSkinBackend):
+            def __init__(self):
+                super().__init__(
+                    active_reads=["skin.estuary", "skin.foo"],
+                    skins={"skin.foo": SkinState(True, True)},
+                )
+                self.dialog_reads = 0
+
+            def is_confirmation_visible(self):
+                self.dialog_reads += 1
+                if self.dialog_reads == 1:
+                    return False
+                raise RuntimeError("untrusted dialog diagnostic")
+
+        result = self._activate(PollDialogReadFails())
+        self.assertEqual(
+            result.failure_code, SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
+        )
+
+    def test_confirmation_close_poll_read_failure_is_safely_reported(self):
+        class ClosePollReadFails(FakeSkinBackend):
+            def __init__(self):
+                super().__init__(
+                    active_reads=["skin.estuary", "skin.foo"],
+                    skins={"skin.foo": SkinState(True, True)},
+                )
+                self.dialog_reads = 0
+
+            def is_confirmation_visible(self):
+                self.dialog_reads += 1
+                if self.dialog_reads == 1:
+                    return False
+                if self.dialog_reads == 2:
+                    self.observed_dialog = True
+                    return True
+                raise RuntimeError("untrusted dialog diagnostic")
+
+        result = self._activate(ClosePollReadFails())
+        self.assertEqual(
+            result.failure_code, SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
+        )
+
+    def test_stability_poll_read_failure_is_safely_reported(self):
+        class StabilityReadFails(FakeSkinBackend):
+            def __init__(self):
+                super().__init__(
+                    active_reads=["skin.estuary", "skin.foo"],
+                    skins={"skin.foo": SkinState(True, True)},
+                )
+                self.setting_reads = 0
+
+            def get_skin_setting(self):
+                self.setting_reads += 1
+                if self.setting_reads == 1:
+                    return self.setting
+                raise RuntimeError("untrusted persisted setting")
+
+        result = self._activate(StabilityReadFails())
+        self.assertEqual(
+            result.failure_code, SkinFailureCode.PERSISTED_SKIN_READ_FAILED
+        )
+
+    def test_jsonrpc_failure_uses_only_static_code(self):
+        class RpcFails(FakeSkinBackend):
+            def set_skin_setting(self, _addon_id):
+                raise _SkinRpcError(
+                    "/private/profile/secret-token", code=-1,
+                    failure_code=SkinFailureCode.JSONRPC_FAILURE,
+                )
+
+        result = self._activate(RpcFails(
+            active_reads=["skin.estuary", "skin.foo"],
+            skins={"skin.foo": SkinState(True, True)},
+        ))
+        self.assertEqual(result.failure_code, SkinFailureCode.JSONRPC_FAILURE)
+        self.assertRegex(result.failure_code.value, r"^[A-Z0-9_]+$")
+        self.assertNotIn("/private", result.failure_code.value)
+        self.assertNotIn("secret-token", result.failure_code.value)
+
+    def test_confirmation_action_failure_has_static_code(self):
+        class ConfirmationFails(FakeSkinBackend):
+            def confirm_skin_change(self):
+                raise RuntimeError("private confirmation path")
+
+        result = self._activate(ConfirmationFails(
+            active_reads=["skin.estuary", "skin.foo"],
+            skins={"skin.foo": SkinState(True, True)},
+        ))
+        self.assertEqual(result.failure_code, SkinFailureCode.CONFIRMATION_ACTION_FAILED)
+
+    def test_persisted_and_active_read_failures_have_distinct_codes(self):
+        class PersistedReadFails(FakeSkinBackend):
+            def get_skin_setting(self):
+                raise RuntimeError("private settings path")
+
+        class ActiveReadFails(FakeSkinBackend):
+            def __init__(self):
+                super().__init__(
+                    active_reads=["skin.estuary", "skin.foo"],
+                    skins={"skin.foo": SkinState(True, True)},
+                )
+                self.active_count = 0
+
+            def get_active_skin(self):
+                self.active_count += 1
+                if self.active_count == 3:
+                    raise RuntimeError("private skin path")
+                return super().get_active_skin()
+
+        self.assertEqual(
+            self._activate(PersistedReadFails(
+                active_reads=["skin.estuary", "skin.foo"],
+                skins={"skin.foo": SkinState(True, True)},
+            )).failure_code,
+            SkinFailureCode.PERSISTED_SKIN_READ_FAILED,
+        )
+        self.assertEqual(
+            self._activate(ActiveReadFails()).failure_code,
+            SkinFailureCode.ACTIVE_SKIN_READ_FAILED,
+        )
+
+    def test_unstable_skin_after_confirmation_has_distinct_code(self):
+        backend = _backend(
+            active_reads=["skin.estuary", "skin.foo", "skin.foo", "skin.estuary"]
+        )
+        result = self._activate(backend)
+        self.assertEqual(result.failure_code, SkinFailureCode.SKIN_DID_NOT_REMAIN_STABLE)
+
+    def test_failure_codes_are_finite_and_results_retain_compatibility(self):
+        values = {item.value for item in SkinFailureCode}
+        self.assertEqual(len(values), len(SkinFailureCode))
+        self.assertTrue(all(value.isascii() and value.isupper() for value in values))
+        # Existing positional constructors remain valid; successful callers
+        # gain the new optional field without changing their argument order.
+        result = SkinResult("skin.foo", SkinStatus.ACTIVATED, "skin.foo", "ok")
+        self.assertIsNone(result.failure_code)
+
+    def test_unknown_failure_fallback_does_not_retain_untrusted_code_text(self):
+        result = SkinActivator._failed(
+            "skin.foo", "skin.estuary", "/private/secret diagnostic",
+            "/private/secret-code",
+        )
+        self.assertEqual(result.failure_code, SkinFailureCode.UNKNOWN_SAFE_FAILURE)
+        self.assertNotIn("private", result.failure_code.value.lower())
 
 
 class TestKodiRuntimeSkinBackend(unittest.TestCase):
@@ -202,8 +409,11 @@ class TestKodiRuntimeSkinBackend(unittest.TestCase):
             "jsonrpc": "2.0", "error": {"code": -1, "message": "bad"}, "id": 1,
         }])
         with patch.dict(sys.modules, {"xbmc": xbmc}):
-            with self.assertRaises(SkinError):
+            with self.assertRaises(SkinError) as caught:
                 backend.set_skin_setting("skin.foo")
+        self.assertEqual(
+            caught.exception.failure_code, SkinFailureCode.JSONRPC_FAILURE
+        )
 
     def test_setting_mutation_malformed_response_is_failure(self):
         backend, xbmc = self._backend([{"jsonrpc": "2.0", "id": 1}])

@@ -34,6 +34,7 @@ from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.build_manager import ReconcileRequest
+from resources.lib.skin import SkinFailureCode
 from resources.lib.private_resource import ResourceInitializationStage
 from resources.lib.frozen import (
     AddonCaptureNode,
@@ -2515,6 +2516,17 @@ class FrozenInstallCoordinator:
                 if isinstance(addon_id, str) and _ADDON_ID.fullmatch(addon_id):
                     diagnostic_parts.append(f"addon={addon_id}")
                 owner_result = getattr(action_result, "owner_result", None)
+                if kind == "SET_SKIN":
+                    skin_failure_code = getattr(owner_result, "failure_code", None)
+                    skin_failure_code = getattr(
+                        skin_failure_code, "value", skin_failure_code
+                    )
+                    if skin_failure_code in {
+                        item.value for item in SkinFailureCode
+                    }:
+                        diagnostic_parts.append(
+                            f"skin_failure_code={skin_failure_code}"
+                        )
                 owner_code = getattr(owner_result, "code", "")
                 if isinstance(owner_code, str) and re.fullmatch(
                     r"[A-Z0-9_]{1,80}", owner_code

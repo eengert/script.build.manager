@@ -10,7 +10,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib.artifacts import ArtifactStore
-from resources.lib.build_manager import ActionFailureDiagnostic
+from resources.lib.build_manager import (
+    ActionExecutionResult,
+    ActionFailureDiagnostic,
+    ReconcileFailure,
+    ReconcilePhase,
+    ReconcileResult,
+)
 from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureStatus,
@@ -35,6 +41,8 @@ from resources.lib.frozen_install import (
 )
 from resources.lib.startup import StartupClassification, StartupStatus
 from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
+from resources.lib.planner import PlanAction, SET_SKIN
+from resources.lib.skin import SkinFailureCode, SkinResult, SkinStatus
 
 
 SESSION_A = "11111111-1111-4111-8111-111111111111"
@@ -401,6 +409,64 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertIn("expected_provider=script.module.urllib3", transaction.status_message)
         self.assertIn("actual_provider=script.module.requests", transaction.status_message)
         self.assertNotIn(fake_exception, transaction.status_message)
+
+    def test_skin_failure_code_is_persisted_without_raw_result_text(self):
+        fake_secret = "/private/fake/profile/secret-token BM023A_FAILURE_TEXT"
+        skin_result = SkinResult(
+            "skin.arctic.fuse.3",
+            SkinStatus.FAILED,
+            "skin.estuary",
+            f"unsafe diagnostic: {fake_secret}",
+            failure_code=SkinFailureCode.TARGET_SKIN_NOT_ACTIVE,
+        )
+        action = ActionExecutionResult(
+            action=PlanAction(
+                SET_SKIN, "skin.arctic.fuse.3", "active", "skin.estuary",
+                "skin activation required",
+            ),
+            succeeded=False,
+            changed=False,
+            message=skin_result.message,
+            owner_result=skin_result,
+        )
+        reconcile = ReconcileResult(
+            success=False,
+            request=None,
+            desired_fingerprint=None,
+            action_results=(action,),
+            failure=ReconcileFailure(
+                ReconcilePhase.EXECUTE, "ACTION_FAILED", fake_secret
+            ),
+        )
+        configuration_result = SimpleNamespace(
+            outcome="failed",
+            failure=None,
+            reconcile_result=reconcile,
+            private_overlay=None,
+        )
+
+        result = self._coordinator(
+            configuration_runner=lambda _request: configuration_result
+        ).install(
+            self._manifest(), manifest_path="/fixture.json", device_profile_id="test"
+        )
+
+        self.assertEqual(result.outcome, "needs_attention")
+        transaction = self.store.inspect()
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertEqual(
+            transaction.status_code, "FROZEN_CONFIGURATION_ACTION_FAILED"
+        )
+        self.assertIn("action=SET_SKIN", transaction.status_message)
+        self.assertIn("addon=skin.arctic.fuse.3", transaction.status_message)
+        self.assertIn(
+            "skin_failure_code=TARGET_SKIN_NOT_ACTIVE",
+            transaction.status_message,
+        )
+        self.assertNotIn(fake_secret, transaction.status_message)
+        self.assertNotIn("/private/", transaction.status_message)
+        self.assertNotIn("BM023A_FAILURE_TEXT", transaction.status_message)
 
     def test_restart_boundary_reasserts_and_finalizes(self):
         restart = SimpleNamespace(

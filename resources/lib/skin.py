@@ -24,6 +24,29 @@ from resources.lib.restart import (
 )
 
 
+class SkinFailureCode(str, Enum):
+    """Allowlisted, value-free reasons for a failed skin activation."""
+
+    INITIAL_SKIN_STATE_READ_FAILED = "INITIAL_SKIN_STATE_READ_FAILED"
+    TARGET_SKIN_STATE_READ_FAILED = "TARGET_SKIN_STATE_READ_FAILED"
+    TARGET_SKIN_NOT_AVAILABLE = "TARGET_SKIN_NOT_AVAILABLE"
+    TARGET_SKIN_DISABLED = "TARGET_SKIN_DISABLED"
+    PREEXISTING_CONFIRMATION_DIALOG = "PREEXISTING_CONFIRMATION_DIALOG"
+    CONFIRMATION_STATE_READ_FAILED = "CONFIRMATION_STATE_READ_FAILED"
+    SKIN_CHANGE_PREPARATION_FAILED = "SKIN_CHANGE_PREPARATION_FAILED"
+    SET_SKIN_COMMAND_FAILED = "SET_SKIN_COMMAND_FAILED"
+    CONFIRMATION_NOT_OBSERVED = "CONFIRMATION_NOT_OBSERVED"
+    CONFIRMATION_ACTION_FAILED = "CONFIRMATION_ACTION_FAILED"
+    CONFIRMATION_NOT_CLOSED = "CONFIRMATION_NOT_CLOSED"
+    PERSISTED_SKIN_READ_FAILED = "PERSISTED_SKIN_READ_FAILED"
+    TARGET_SKIN_NOT_PERSISTED = "TARGET_SKIN_NOT_PERSISTED"
+    ACTIVE_SKIN_READ_FAILED = "ACTIVE_SKIN_READ_FAILED"
+    TARGET_SKIN_NOT_ACTIVE = "TARGET_SKIN_NOT_ACTIVE"
+    SKIN_DID_NOT_REMAIN_STABLE = "SKIN_DID_NOT_REMAIN_STABLE"
+    JSONRPC_FAILURE = "JSONRPC_FAILURE"
+    UNKNOWN_SAFE_FAILURE = "UNKNOWN_SAFE_FAILURE"
+
+
 class SkinError(Exception):
     """Base class for skin activation errors."""
 
@@ -35,9 +58,16 @@ class SkinValidationError(SkinError):
 class _SkinRpcError(SkinError):
     """A Kodi JSON-RPC error with its machine-readable code preserved."""
 
-    def __init__(self, message: str, *, code=None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code=None,
+        failure_code: Optional[SkinFailureCode] = None,
+    ):
         super().__init__(message)
         self.code = code
+        self.failure_code = failure_code
 
 
 class _SkinSettingUnavailable(_SkinRpcError):
@@ -61,6 +91,7 @@ class SkinResult:
     active_skin: Optional[str]
     message: str
     restart_requirement: RestartRequirement = RestartRequirement.NONE
+    failure_code: Optional[SkinFailureCode] = None
 
     @property
     def restart_report(self) -> RestartReport:
@@ -140,7 +171,9 @@ class SkinActivator:
         """Make ``addon_id`` active, or return a deterministic failure result."""
         _validate_addon_id(addon_id)
         active: Optional[str] = None
+        failure_code = SkinFailureCode.UNKNOWN_SAFE_FAILURE
         try:
+            failure_code = SkinFailureCode.INITIAL_SKIN_STATE_READ_FAILED
             active = self._backend.get_active_skin()
             if active == addon_id:
                 return SkinResult(
@@ -148,63 +181,93 @@ class SkinActivator:
                     "Skin is already active; no mutation performed",
                 )
 
-            state = self._backend.get_skin_state(addon_id)
-            if not state.installed:
-                return self._failed(addon_id, active, "Skin is not installed")
-            if not state.enabled:
-                return self._failed(addon_id, active, "Skin is installed but disabled")
-
             # Do not claim ownership of a dialog that predates this operation.
             # The post-mutation visibility check must observe a newly-created
             # confirmation dialog before SendClick(11) is permitted.
+            failure_code = SkinFailureCode.TARGET_SKIN_STATE_READ_FAILED
+            state = self._backend.get_skin_state(addon_id)
+            if not state.installed:
+                return self._failed(
+                    addon_id, active, "Skin is not installed",
+                    SkinFailureCode.TARGET_SKIN_NOT_AVAILABLE,
+                )
+            if not state.enabled:
+                return self._failed(
+                    addon_id, active, "Skin is installed but disabled",
+                    SkinFailureCode.TARGET_SKIN_DISABLED,
+                )
+
+            failure_code = SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
             if self._backend.is_confirmation_visible():
                 return self._failed(
                     addon_id, active,
                     "A pre-existing Yes/No dialog prevents safe skin activation",
+                    SkinFailureCode.PREEXISTING_CONFIRMATION_DIALOG,
                 )
 
             # The setting mutation is synchronous only as an API call; Kodi's
             # UI confirmation is asynchronous and must be observed separately.
+            failure_code = SkinFailureCode.SKIN_CHANGE_PREPARATION_FAILED
             prepare = getattr(self._backend, "prepare_skin_change", None)
             if callable(prepare):
                 prepare()
+            failure_code = SkinFailureCode.SET_SKIN_COMMAND_FAILED
             self._backend.set_skin_setting(addon_id)
-            if not self._wait_for_confirmation(addon_id):
+            failure_code = SkinFailureCode.CONFIRMATION_NOT_OBSERVED
+            wait_failure = self._wait_for_confirmation(addon_id)
+            if wait_failure is not None:
                 return self._failed(
                     addon_id, self._safe_active_skin(),
                     "Skin confirmation dialog did not appear before timeout",
+                    wait_failure,
                 )
 
+            failure_code = SkinFailureCode.CONFIRMATION_ACTION_FAILED
             self._backend.confirm_skin_change()
-            if not self._wait_for_confirmation_close(addon_id):
+            failure_code = SkinFailureCode.CONFIRMATION_NOT_CLOSED
+            wait_failure = self._wait_for_confirmation_close(addon_id)
+            if wait_failure is not None:
                 return self._failed(
                     addon_id, self._safe_active_skin(),
                     "Skin confirmation dialog did not close before timeout",
+                    wait_failure,
                 )
 
+            failure_code = SkinFailureCode.PERSISTED_SKIN_READ_FAILED
             persisted = self._backend.get_skin_setting()
+            failure_code = SkinFailureCode.ACTIVE_SKIN_READ_FAILED
             active = self._backend.get_active_skin()
             if persisted != addon_id:
                 return self._failed(
                     addon_id, active,
                     f"Persisted skin setting is {persisted!r}, expected {addon_id!r}",
+                    SkinFailureCode.TARGET_SKIN_NOT_PERSISTED,
                 )
             if active != addon_id:
                 return self._failed(
                     addon_id, active,
                     f"Loaded skin is {active!r}, expected {addon_id!r}",
+                    SkinFailureCode.TARGET_SKIN_NOT_ACTIVE,
                 )
-            if not self._wait_for_stable_skin(addon_id):
+            failure_code = SkinFailureCode.SKIN_DID_NOT_REMAIN_STABLE
+            wait_failure = self._wait_for_stable_skin(addon_id)
+            if wait_failure is not None:
                 return self._failed(
                     addon_id, self._safe_active_skin(),
                     "Skin setting or loaded skin did not remain stable after confirmation",
+                    wait_failure,
                 )
             return SkinResult(
                 addon_id, SkinStatus.ACTIVATED, active,
                 "Skin activated and persisted state verified",
             )
         except Exception as exc:
-            return self._failed(addon_id, active, f"Skin activation failed: {exc}")
+            safe_code = getattr(exc, "failure_code", None)
+            if not isinstance(safe_code, SkinFailureCode):
+                safe_code = failure_code
+            return self._failed(
+                addon_id, active, f"Skin activation failed: {exc}", safe_code,
+            )
 
     def _wait_for_visibility(self, expected: bool) -> bool:
         deadline = self._clock() + self._timeout
@@ -215,25 +278,39 @@ class SkinActivator:
                 return False
             self._sleep(self._interval)
 
-    def _wait_for_confirmation(self, addon_id: str) -> bool:
+    def _wait_for_confirmation(
+        self, addon_id: str,
+    ) -> Optional[SkinFailureCode]:
         """Wait until the requested skin is loaded and its dialog is visible."""
         deadline = self._clock() + self._timeout
+        last_read_failure = None
         while True:
             try:
-                if (
-                    self._backend.get_active_skin() == addon_id
-                    and self._backend.is_confirmation_visible()
-                ):
-                    return True
+                active = self._backend.get_active_skin()
             except Exception:
-                pass
+                last_read_failure = SkinFailureCode.ACTIVE_SKIN_READ_FAILED
+            else:
+                if active == addon_id:
+                    try:
+                        visible = self._backend.is_confirmation_visible()
+                    except Exception:
+                        last_read_failure = SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
+                    else:
+                        if visible:
+                            return None
+                        last_read_failure = None
+                else:
+                    last_read_failure = None
             if self._clock() >= deadline:
-                return False
+                return last_read_failure or SkinFailureCode.CONFIRMATION_NOT_OBSERVED
             self._sleep(self._interval)
 
-    def _wait_for_confirmation_close(self, addon_id: str) -> bool:
+    def _wait_for_confirmation_close(
+        self, addon_id: str,
+    ) -> Optional[SkinFailureCode]:
         """Require the dialog to stay closed while the requested skin is active."""
         deadline = self._clock() + self._timeout
+        last_read_failure = None
         samples_required = (
             2 if self._timeout < 1.0
             else max(2, min(4, int(1.0 / max(self._interval, 0.25))))
@@ -242,18 +319,23 @@ class SkinActivator:
         while True:
             try:
                 if not self._backend.is_confirmation_visible():
+                    last_read_failure = None
                     samples += 1
                     if samples >= samples_required:
-                        return True
+                        return None
                 else:
                     samples = 0
+                    last_read_failure = None
             except Exception:
                 samples = 0
+                last_read_failure = SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
             if self._clock() >= deadline:
-                return False
+                return last_read_failure or SkinFailureCode.CONFIRMATION_NOT_CLOSED
             self._sleep(self._interval)
 
-    def _wait_for_stable_skin(self, addon_id: str) -> bool:
+    def _wait_for_stable_skin(
+        self, addon_id: str,
+    ) -> Optional[SkinFailureCode]:
         """Require several consecutive desired-state samples after confirmation."""
         deadline = self._clock() + self._timeout
         # At the default interval this covers roughly two seconds of Kodi's
@@ -263,21 +345,33 @@ class SkinActivator:
             else max(2, min(8, int(2.0 / max(self._interval, 0.25))))
         )
         samples = 0
+        last_read_failure = None
         while True:
             try:
-                if (
-                    self._backend.get_skin_setting() == addon_id
-                    and self._backend.get_active_skin() == addon_id
-                ):
-                    samples += 1
-                    if samples >= samples_required:
-                        return True
-                else:
-                    samples = 0
+                persisted = self._backend.get_skin_setting()
             except Exception:
                 samples = 0
+                last_read_failure = SkinFailureCode.PERSISTED_SKIN_READ_FAILED
+            else:
+                try:
+                    active = (
+                        self._backend.get_active_skin()
+                        if persisted == addon_id else None
+                    )
+                except Exception:
+                    samples = 0
+                    last_read_failure = SkinFailureCode.ACTIVE_SKIN_READ_FAILED
+                else:
+                    if persisted == addon_id and active == addon_id:
+                        last_read_failure = None
+                        samples += 1
+                        if samples >= samples_required:
+                            return None
+                    else:
+                        samples = 0
+                        last_read_failure = None
             if self._clock() >= deadline:
-                return False
+                return last_read_failure or SkinFailureCode.SKIN_DID_NOT_REMAIN_STABLE
             self._sleep(self._interval)
 
     def _safe_active_skin(self) -> Optional[str]:
@@ -287,8 +381,18 @@ class SkinActivator:
             return None
 
     @staticmethod
-    def _failed(addon_id: str, active: Optional[str], message: str) -> SkinResult:
-        return SkinResult(addon_id, SkinStatus.FAILED, active, message)
+    def _failed(
+        addon_id: str,
+        active: Optional[str],
+        message: str,
+        failure_code: SkinFailureCode,
+    ) -> SkinResult:
+        if not isinstance(failure_code, SkinFailureCode):
+            failure_code = SkinFailureCode.UNKNOWN_SAFE_FAILURE
+        return SkinResult(
+            addon_id, SkinStatus.FAILED, active, message,
+            failure_code=failure_code,
+        )
 
 
 class KodiRuntimeSkinBackend(SkinBackend):
@@ -312,13 +416,27 @@ class KodiRuntimeSkinBackend(SkinBackend):
         try:
             response = json.loads(xbmc.executeJSONRPC(request))
         except Exception as exc:
-            raise SkinError(f"{method} JSON-RPC transport/JSON failure: {exc}") from exc
+            raise _SkinRpcError(
+                f"{method} JSON-RPC transport/JSON failure: {exc}",
+                failure_code=SkinFailureCode.JSONRPC_FAILURE,
+            ) from exc
         if not isinstance(response, dict):
-            raise SkinError(f"{method} returned malformed response: {response!r}")
+            raise _SkinRpcError(
+                f"{method} returned malformed response: {response!r}",
+                failure_code=SkinFailureCode.JSONRPC_FAILURE,
+            )
         if "error" in response and not allow_error:
-            raise SkinError(f"{method} JSON-RPC error: {response['error']!r}")
+            error = response["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            raise _SkinRpcError(
+                f"{method} JSON-RPC error: {error!r}", code=code,
+                failure_code=SkinFailureCode.JSONRPC_FAILURE,
+            )
         if "error" not in response and "result" not in response:
-            raise SkinError(f"{method} response lacks result: {response!r}")
+            raise _SkinRpcError(
+                f"{method} response lacks result: {response!r}",
+                failure_code=SkinFailureCode.JSONRPC_FAILURE,
+            )
         return response
 
     def get_active_skin(self) -> str:
@@ -339,7 +457,11 @@ class KodiRuntimeSkinBackend(SkinBackend):
             # Other protocol errors remain failures and are never reclassified.
             if isinstance(error, dict) and error.get("code") == self._NOT_FOUND:
                 return SkinState(installed=False, enabled=False)
-            raise SkinError(f"Addons.GetAddonDetails JSON-RPC error: {error!r}")
+            raise _SkinRpcError(
+                f"Addons.GetAddonDetails JSON-RPC error: {error!r}",
+                code=error.get("code") if isinstance(error, dict) else None,
+                failure_code=SkinFailureCode.JSONRPC_FAILURE,
+            )
         result = response["result"]
         if not isinstance(result, dict) or "addon" not in result:
             raise SkinError(
