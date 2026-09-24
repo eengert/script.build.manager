@@ -7,7 +7,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.2"
+ADAPTER_VERSION = "0.0.3"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 
@@ -21,6 +21,8 @@ ADAPTER_STAGES = frozenset({
     "LOAD_PRIVATE_OVERLAY",
     "BUILD_COORDINATOR",
     "INVOKE_INSTALL",
+    "CHECK_RECOVERY_PRECONDITIONS",
+    "INVOKE_RECOVERY",
     "SERIALIZE_RESULT",
 })
 ADAPTER_CALLABLES = frozenset({
@@ -32,6 +34,10 @@ ADAPTER_CALLABLES = frozenset({
     "BuildManager",
     "FrozenInstallCoordinator",
     "FrozenInstallCoordinator.install",
+    "FrozenInstallStore.inspect",
+    "FrozenInstallCoordinator.abandon",
+    "UpdatePolicyBackend.get_policy",
+    "KodiRuntimeFrozenArtifactBackend.get_addon_details",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -43,6 +49,11 @@ FAILURE_CATEGORIES = frozenset({
     "module_import_failed",
     "invalid_input",
     "operation_failed",
+    "transaction_missing",
+    "recovery_phase_mismatch",
+    "transaction_identity_invalid",
+    "original_policy_missing",
+    "unsupported_recovery_state",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -66,6 +77,111 @@ class AdapterBootstrapError(Exception):
 
 def _bootstrap_error(stage: str, callable_name: str, category: str) -> AdapterBootstrapError:
     return AdapterBootstrapError(stage, callable_name, category)
+
+
+def parse_adapter_mode(arguments: list[str]) -> str:
+    """Accept only the no-argument install default or one explicit mode token."""
+    if not arguments or arguments == [""]:
+        return "install"
+    if len(arguments) != 1:
+        raise _bootstrap_error(
+            "LOCATE_BUILD_MANAGER", "result_serializer", "invalid_input"
+        )
+    if arguments[0] in ("install", "recover"):
+        return arguments[0]
+    raise _bootstrap_error(
+        "LOCATE_BUILD_MANAGER", "result_serializer", "invalid_input"
+    )
+
+
+def recover_frozen_install(
+    coordinator: Any,
+    store: Any,
+    policy_backend: Any,
+    installer: Any,
+    restart_transaction_path: Any,
+    *,
+    needs_attention_phase: Any,
+    update_policy_type: Any,
+    af3_addon_id: str = "skin.arctic.fuse.3",
+) -> Dict[str, Any]:
+    """Run only the fixed, supported BM-023A abandon operation and summarize safely."""
+    from uuid import UUID
+
+    if not store.root.is_dir():
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "pathlib.Path", "path_missing_or_unreadable"
+        )
+    transaction = store.inspect()
+    if transaction is None:
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "transaction_missing"
+        )
+    try:
+        UUID(transaction.transaction_id)
+    except (AttributeError, TypeError, ValueError):
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "transaction_identity_invalid"
+        ) from None
+    if transaction.phase != needs_attention_phase:
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "recovery_phase_mismatch"
+        )
+    original_policy = transaction.original_update_policy
+    if not isinstance(original_policy, update_policy_type):
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "original_policy_missing"
+        )
+    if transaction.activation_hold_ids and not transaction.activation_hold_released:
+        raise _bootstrap_error(
+            "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "unsupported_recovery_state"
+        )
+
+    # Observe only add-ons named by the validated transaction; abandon must not
+    # uninstall or otherwise mutate those add-ons.
+    observed_ids = []
+    for record in transaction.resolution_records:
+        if installer.get_addon_details(record.addon_id) is not None:
+            observed_ids.append(record.addon_id)
+    restart_present_before = bool(restart_transaction_path.exists())
+
+    # This is the sole recovery call; no transaction files, locks, add-ons,
+    # updater settings, or restart records are manually edited here.
+    result = coordinator.abandon(acknowledge_restore_failure=False)
+    outcome = getattr(getattr(result, "outcome", None), "value", getattr(result, "outcome", None))
+    if outcome != "complete":
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", "operation_failed"
+        )
+
+    transaction_cleared = store.inspect() is None
+    policy_after = policy_backend.get_policy()
+    policy_after = update_policy_type(policy_after)
+    restart_present_after = bool(restart_transaction_path.exists())
+    af3_installed = installer.get_addon_details(af3_addon_id) is not None
+    addons_retained = all(
+        installer.get_addon_details(addon_id) is not None for addon_id in observed_ids
+    )
+    if not (
+        transaction_cleared
+        and policy_after == original_policy
+        and restart_present_after == restart_present_before
+        and addons_retained
+    ):
+        raise _bootstrap_error(
+            "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", "operation_failed"
+        )
+    return {
+        "ok": True,
+        "adapter_mode": "recover",
+        "transaction_cleared": transaction_cleared,
+        "original_update_policy": int(original_policy),
+        "update_policy_after": int(policy_after),
+        "updater_policy_restored": policy_after == original_policy,
+        "restart_transaction_present": restart_present_after,
+        "af3_installed": af3_installed,
+        "frozen_addons_retained": addons_retained,
+    }
 
 
 def verify_build_manager_source(

@@ -7,14 +7,18 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from enum import IntEnum
 from pathlib import Path
 from types import ModuleType
+from types import SimpleNamespace
 
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import FrozenInstallCoordinator
 from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
     AdapterBootstrapError,
+    parse_adapter_mode,
+    recover_frozen_install,
     safe_failure_payload,
     verify_build_manager_source,
 )
@@ -217,8 +221,9 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.2")
+            self.assertEqual(ADAPTER_VERSION, "0.0.3")
             with zipfile.ZipFile(archive_path) as archive:
+                self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
                 self.assertEqual(names, {
                     "script.build.manager.bm023a_driver/addon.xml",
@@ -234,7 +239,172 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.2"', addon_xml)
+            self.assertIn('version="0.0.3"', addon_xml)
+            compile(default, "generated-default.py", "exec")
+
+
+class TestBm023aRecoveryAdapter(unittest.TestCase):
+    class Policy(IntEnum):
+        ORIGINAL = 1
+        GUARDED = 2
+
+    class Phase:
+        NEEDS_ATTENTION = "needs_attention"
+
+    def fixture(self, root: Path, *, phase="needs_attention", transaction_id=None):
+        root.mkdir(parents=True, exist_ok=True)
+        transaction = SimpleNamespace(
+            transaction_id=transaction_id or "3f920c0f-dc69-4684-914b-1bb370a17ba0",
+            phase=phase,
+            original_update_policy=self.Policy.ORIGINAL,
+            activation_hold_ids=(),
+            activation_hold_released=True,
+            resolution_records=(SimpleNamespace(addon_id="plugin.example"),),
+        )
+        store = SimpleNamespace(root=root, current=transaction)
+        store.inspect = lambda: store.current
+        policy = SimpleNamespace(current=self.Policy.GUARDED)
+        policy.get_policy = lambda: policy.current
+        installer = SimpleNamespace(present={"plugin.example", "skin.arctic.fuse.3"})
+        installer.get_addon_details = lambda addon_id: (
+            object() if addon_id in installer.present else None
+        )
+        calls = []
+
+        def abandon(*, acknowledge_restore_failure=True):
+            calls.append(acknowledge_restore_failure)
+            policy.current = transaction.original_update_policy
+            store.current = None
+            return SimpleNamespace(outcome="complete")
+
+        coordinator = SimpleNamespace(abandon=abandon)
+        restart_path = root / "restart_transaction.json"
+        restart_path.write_text("retained", encoding="utf-8")
+        return store, policy, installer, coordinator, restart_path, calls
+
+    def run_recovery(self, fixture):
+        return recover_frozen_install(
+            fixture[3], fixture[0], fixture[1], fixture[2], fixture[4],
+            needs_attention_phase=self.Phase.NEEDS_ATTENTION,
+            update_policy_type=self.Policy,
+        )
+
+    def test_default_and_explicit_install_mode_preserve_install_default(self):
+        self.assertEqual(parse_adapter_mode([]), "install")
+        self.assertEqual(parse_adapter_mode([""]), "install")
+        self.assertEqual(parse_adapter_mode(["install"]), "install")
+
+    def test_explicit_recover_selects_only_fixed_recovery_mode(self):
+        self.assertEqual(parse_adapter_mode(["recover"]), "recover")
+        for args in (["eval:1"], ["recover", "extra"], ["module.method"]):
+            with self.subTest(args=args), self.assertRaises(AdapterBootstrapError):
+                parse_adapter_mode(list(args))
+
+    def test_unknown_mode_is_rejected_before_mutation(self):
+        with self.assertRaises(AdapterBootstrapError):
+            parse_adapter_mode(["install;recover"])
+
+    def test_recovery_calls_abandon_once_with_false_and_reports_safe_postconditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            payload = self.run_recovery(fixture)
+            self.assertEqual(fixture[-1], [False])
+            self.assertEqual(payload, {
+                "ok": True,
+                "adapter_mode": "recover",
+                "transaction_cleared": True,
+                "original_update_policy": 1,
+                "update_policy_after": 1,
+                "updater_policy_restored": True,
+                "restart_transaction_present": True,
+                "af3_installed": True,
+                "frozen_addons_retained": True,
+            })
+            self.assertEqual(fixture[4].read_text(encoding="utf-8"), "retained")
+
+    def test_no_transaction_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[0].current = None
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "transaction_missing")
+            self.assertEqual(fixture[-1], [])
+
+    def test_wrong_phase_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store", phase="complete")
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "recovery_phase_mismatch")
+            self.assertEqual(fixture[-1], [])
+
+    def test_invalid_transaction_identity_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store", transaction_id="not-a-uuid")
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "transaction_identity_invalid")
+            self.assertEqual(fixture[-1], [])
+
+    def test_missing_original_policy_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[0].current.original_update_policy = None
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "original_policy_missing")
+            self.assertEqual(fixture[-1], [])
+
+    def test_unreleased_activation_hold_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[0].current.activation_hold_ids = ("plugin.example",)
+            fixture[0].current.activation_hold_released = False
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "unsupported_recovery_state")
+            self.assertEqual(fixture[-1], [])
+
+    def test_missing_store_directory_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[0].root = Path(tmp) / "missing"
+            with self.assertRaises(AdapterBootstrapError):
+                self.run_recovery(fixture)
+            self.assertEqual(fixture[-1], [])
+
+    def test_recovery_preserves_installed_addons_and_restart_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            before = fixture[4].read_bytes()
+            self.run_recovery(fixture)
+            self.assertEqual(fixture[2].present, {"plugin.example", "skin.arctic.fuse.3"})
+            self.assertEqual(fixture[4].read_bytes(), before)
+
+    def test_abandon_exception_is_sanitized(self):
+        secret = "private-token-should-never-escape"
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[3].abandon = lambda **kwargs: (_ for _ in ()).throw(RuntimeError(secret))
+            with self.assertRaises(RuntimeError) as raised:
+                self.run_recovery(fixture)
+            payload = safe_failure_payload(
+                "INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", raised.exception
+            )
+            self.assertNotIn(secret, json.dumps(payload))
+            self.assertEqual(set(payload), {
+                "ok", "error_type", "adapter_stage", "failing_callable", "failure_category"
+            })
+
+    def test_adapter_has_no_arbitrary_dispatch_and_keeps_install_branch(self):
+        root = Path(__file__).parents[1]
+        source = (root / "tools/bm023a_adapter/default.py.in").read_text()
+        self.assertIn('if mode == "recover":', source)
+        self.assertIn('coordinator.install(', source)
+        self.assertNotIn("eval(", source)
+        self.assertNotIn("exec(", source)
+        self.assertEqual(parse_adapter_mode([]), "install")
 
 
 if __name__ == "__main__":

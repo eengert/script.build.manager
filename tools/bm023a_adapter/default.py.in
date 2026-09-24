@@ -19,6 +19,8 @@ from adapter_config import (
 )
 from adapter_support import (
     AdapterBootstrapError,
+    parse_adapter_mode,
+    recover_frozen_install,
     safe_failure_payload,
     verify_build_manager_source,
 )
@@ -107,6 +109,7 @@ def main():
             raise AdapterBootstrapError(
                 "LOCATE_BUILD_MANAGER", "pathlib.Path", "addon_root_mismatch"
             )
+        mode = parse_adapter_mode(sys.argv[2:])
 
         sys.path.insert(0, str(addon_root))
         STAGE = "IMPORT_RESOURCES"
@@ -120,87 +123,115 @@ def main():
         STAGE = "IMPORT_PRODUCTION_MODULES"
         FAILING_CALLABLE = "importlib.import_module"
         artifacts_module = importlib.import_module("resources.lib.artifacts")
-        build_manager_module = importlib.import_module("resources.lib.build_manager")
-        frozen_module = importlib.import_module("resources.lib.frozen")
         frozen_install_module = importlib.import_module("resources.lib.frozen_install")
-        private_overlay_module = importlib.import_module("resources.lib.private_overlay")
         restart_module = importlib.import_module("resources.lib.restart_coordinator")
         update_guard_module = importlib.import_module("resources.lib.update_guard")
 
-        STAGE = "LOAD_FROZEN_MANIFEST"
-        FAILING_CALLABLE = "pathlib.Path"
-        manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
-        FAILING_CALLABLE = "FrozenBuildManifest.from_json"
-        manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
-
-        STAGE = "LOAD_CONFIGURATION"
-        FAILING_CALLABLE = "pathlib.Path"
-        if not Path(CONFIGURATION_PATH).is_file():
-            raise AdapterBootstrapError(
-                STAGE, FAILING_CALLABLE, "path_missing_or_unreadable"
+        if mode == "recover":
+            STAGE = "CHECK_RECOVERY_PRECONDITIONS"
+            FAILING_CALLABLE = "pathlib.Path"
+            frozen_root = frozen_install_module.default_frozen_install_root()
+            artifact_root = Path(ARTIFACT_ROOT)
+            if not frozen_root.is_dir() or not (artifact_root / "artifacts").is_dir():
+                raise AdapterBootstrapError(
+                    STAGE, FAILING_CALLABLE, "path_missing_or_unreadable"
+                )
+            store = frozen_install_module.FrozenInstallStore(root=frozen_root)
+            policy_backend = update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc)
+            installer = frozen_install_module.KodiRuntimeFrozenArtifactBackend()
+            coordinator = frozen_install_module.FrozenInstallCoordinator(
+                store=store,
+                artifact_store=artifacts_module.ArtifactStore(artifact_root),
+                policy_backend=policy_backend,
+                installer=installer,
             )
-
-        STAGE = "LOAD_PRIVATE_OVERLAY"
-        FAILING_CALLABLE = "PrivateOverlayStore.import_file"
-        imported_overlay = private_overlay_module.PrivateOverlayStore().import_file(OVERLAY_SOURCE)
-        if imported_overlay.overlay_id != EXPECTED_OVERLAY_ID:
-            raise AdapterBootstrapError(
-                STAGE, FAILING_CALLABLE, "invalid_input"
+            STAGE = "CHECK_RECOVERY_PRECONDITIONS"
+            FAILING_CALLABLE = "FrozenInstallStore.inspect"
+            payload = recover_frozen_install(
+                coordinator,
+                store,
+                policy_backend,
+                installer,
+                Path(restart_module.TransactionStore().transaction_path),
+                needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
+                update_policy_type=update_guard_module.AddonUpdatePolicy,
             )
+        else:
+            build_manager_module = importlib.import_module("resources.lib.build_manager")
+            frozen_module = importlib.import_module("resources.lib.frozen")
+            private_overlay_module = importlib.import_module("resources.lib.private_overlay")
 
-        STAGE = "BUILD_COORDINATOR"
-        FAILING_CALLABLE = "FrozenInstallCoordinator"
-        manager = build_manager_module.BuildManager()
+            STAGE = "LOAD_FROZEN_MANIFEST"
+            FAILING_CALLABLE = "pathlib.Path"
+            manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
+            FAILING_CALLABLE = "FrozenBuildManifest.from_json"
+            manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
 
-        def resolve_missing_artifact(prompt):
-            if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
-                return frozen_install_module.ResolutionChoice.SKIP
-            return frozen_install_module.ResolutionChoice.CANCEL
+            STAGE = "LOAD_CONFIGURATION"
+            FAILING_CALLABLE = "pathlib.Path"
+            if not Path(CONFIGURATION_PATH).is_file():
+                raise AdapterBootstrapError(
+                    STAGE, FAILING_CALLABLE, "path_missing_or_unreadable"
+                )
 
-        coordinator = frozen_install_module.FrozenInstallCoordinator(
-            store=frozen_install_module.FrozenInstallStore(),
-            artifact_store=artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT)),
-            policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
-            installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
-            configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
-            resolution_decider=resolve_missing_artifact,
-        )
+            STAGE = "LOAD_PRIVATE_OVERLAY"
+            FAILING_CALLABLE = "PrivateOverlayStore.import_file"
+            imported_overlay = private_overlay_module.PrivateOverlayStore().import_file(OVERLAY_SOURCE)
+            if imported_overlay.overlay_id != EXPECTED_OVERLAY_ID:
+                raise AdapterBootstrapError(STAGE, FAILING_CALLABLE, "invalid_input")
 
-        STAGE = "INVOKE_INSTALL"
-        FAILING_CALLABLE = "FrozenInstallCoordinator.install"
-        result = coordinator.install(
-            manifest,
-            manifest_path=MANIFEST_PATH,
-            device_profile_id=DEVICE_PROFILE_ID,
-            configuration_manifest_path=CONFIGURATION_PATH,
-            interactive=True,
-        )
-        transaction = frozen_install_module.FrozenInstallStore().inspect()
-        installed = {}
-        for node in manifest.addons:
-            if node.system:
-                continue
-            detail = coordinator.installer.get_addon_details(node.addon_id)
-            installed[node.addon_id] = None if detail is None else {
-                "version": detail.version,
-                "enabled": detail.enabled,
-                "broken": detail.broken,
+            manager = build_manager_module.BuildManager()
+
+            def resolve_missing_artifact(prompt):
+                if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
+                    return frozen_install_module.ResolutionChoice.SKIP
+                return frozen_install_module.ResolutionChoice.CANCEL
+
+            STAGE = "BUILD_COORDINATOR"
+            FAILING_CALLABLE = "FrozenInstallCoordinator"
+            coordinator = frozen_install_module.FrozenInstallCoordinator(
+                store=frozen_install_module.FrozenInstallStore(),
+                artifact_store=artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT)),
+                policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
+                installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
+                configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
+                resolution_decider=resolve_missing_artifact,
+            )
+            STAGE = "INVOKE_INSTALL"
+            FAILING_CALLABLE = "FrozenInstallCoordinator.install"
+            result = coordinator.install(
+                manifest,
+                manifest_path=MANIFEST_PATH,
+                device_profile_id=DEVICE_PROFILE_ID,
+                configuration_manifest_path=CONFIGURATION_PATH,
+                interactive=True,
+            )
+            transaction = frozen_install_module.FrozenInstallStore().inspect()
+            installed = {}
+            for node in manifest.addons:
+                if node.system:
+                    continue
+                detail = coordinator.installer.get_addon_details(node.addon_id)
+                installed[node.addon_id] = None if detail is None else {
+                    "version": detail.version,
+                    "enabled": detail.enabled,
+                    "broken": detail.broken,
+                }
+            policy_result = _rpc("Settings.GetSettingValue", {"setting": "general.addonupdates"})
+
+            STAGE = "SERIALIZE_RESULT"
+            FAILING_CALLABLE = "result_serializer"
+            payload = {
+                "ok": True,
+                "outcome": result.outcome,
+                "code": result.code,
+                "frozen_manifest_fingerprint": manifest.fingerprint(),
+                "overlay_imported": True,
+                "transaction": _safe_transaction(transaction),
+                "installation_order": list(coordinator.installer.install_order),
+                "installed": installed,
+                "updater_policy": policy_result.get("value") if isinstance(policy_result, dict) else None,
             }
-        policy_result = _rpc("Settings.GetSettingValue", {"setting": "general.addonupdates"})
-
-        STAGE = "SERIALIZE_RESULT"
-        FAILING_CALLABLE = "result_serializer"
-        payload = {
-            "ok": True,
-            "outcome": result.outcome,
-            "code": result.code,
-            "frozen_manifest_fingerprint": manifest.fingerprint(),
-            "overlay_imported": True,
-            "transaction": _safe_transaction(transaction),
-            "installation_order": list(coordinator.installer.install_order),
-            "installed": installed,
-            "updater_policy": policy_result.get("value") if isinstance(policy_result, dict) else None,
-        }
     except Exception as exc:
         payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
     _write_result(payload)

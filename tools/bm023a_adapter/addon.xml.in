@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<addon id="script.build.manager.bm023a_driver" name="BM-023A live invocation adapter" version="0.0.2" provider-name="Build Manager validation">
+<addon id="script.build.manager.bm023a_driver" name="BM-023A live invocation adapter" version="0.0.3" provider-name="Build Manager validation">
   <requires>
     <import addon="xbmc.python" version="3.0.0" />
     <import addon="script.build.manager" version="0.1.0" />
