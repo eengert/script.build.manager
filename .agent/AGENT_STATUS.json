@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "implemented_pending_final_live_validation",
+  "status": "complete",
   "task": "BM-017F",
-  "reason": "Added a 30-second monotonic poll at 0.25-second intervals for Main Monitor Service Starting in only the current disposable kodi.log after the unchanged BM-017F step-3 enabled/exact-version/transaction-absent checks. Step 4 still requires all five markers and the existing safety order; BM-020 classification remains presence-only. Poll and harness tests pass 124/124; compileall and git diff --check pass. No Kodi launch or BM-017F lifecycle command was run; final live validation remains pending. The observed pre-release Unknown addon id exception is retained as diagnostic only and did not prompt a production change.",
-  "last_commit": "8456ae2f7b051ffa163be0c38c0a250fa8f29c10",
-  "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
+  "reason": "BM-017F COMPLETE and synchronized with protected matrix tip 66b0fd8a123ef778b23ba42703937b07eefc4e6f. Substantive matrix reconstruction is 4dfd97e180d14976adec8540d5c0c93893519249. Supervisor-provided disposable validation passed all 8 steps and 20 checks; Red Light structured private-resource lifecycle is LIVE-VALIDATED. BM-023A macOS is READY_TO_RETRY and was not started; tvOS is NOT VALIDATED. No private values are recorded.",
+  "last_commit": "4dfd97e180d14976adec8540d5c0c93893519249",
+  "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-24"
 }

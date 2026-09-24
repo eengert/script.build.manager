@@ -2,14 +2,42 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION` on `agent/codex`.
-The harness response-shape fix is committed as `8456ae2` and pushed; status
-metadata is `3fd2a30`. The supervisor-run disposable lifecycle reached step
-[4/8]; its safety order held, but the old harness predicate incorrectly put
-the post-resume BM-020 classification before private verification. The
-harness-only predicate and nine regressions are now corrected as recorded
-below. The complete eight-step gate remains **NOT YET LIVE-VALIDATED**.
-macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+**Status**: `COMPLETE` on `agent/codex`, synchronized with protected matrix
+at `66b0fd8a123ef778b23ba42703937b07eefc4e6f`. The reviewed substantive
+endpoint diff was reconstructed as matrix commit
+`4dfd97e180d14976adec8540d5c0c93893519249`; worker history was not rewritten
+and `.agent/**` history was not integrated as product work. BM-017F includes
+the deferred-activation lifecycle, staged restart and dependency hold safety,
+verified installed-source/import handling, Red Light resource initialization,
+compatibility-alias ownership, safe diagnostics, the disposable validation
+harness, and associated tests.
+
+The supervisor-provided final disposable validation passed all eight steps
+and all twenty checks. Red Light structured private-resource lifecycle is
+`LIVE-VALIDATED`. The final live run stayed in the disposable `.kodi-test`
+scope. This integration did not launch Kodi or access a normal profile, a
+real device, or private overlay values.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `READY_TO_RETRY`; no retry was started.
+- tvOS: `NOT VALIDATED`.
+
+On matrix, focused lifecycle/resource/import/harness modules passed **499/499**;
+the full suite passed **1782/1782**; `compileall`, parsing of all **7 tracked
+JSON files** including the schema, and `git diff --check` passed. A test-only
+import-spy ordering correction ensures `unittest.mock` target resolution is
+not counted as an add-on import under Python 3.14.
+
+The next supervisor-authorized task is the macOS BM-023A retry against
+`/Applications/Kodi Build Manager Test.app`, launched exactly with
+`open "/Applications/Kodi Build Manager Test.app" --args -p`. Do not start
+that retry until the separate supervisor direction arrives.
+
+## Historical pre-final-validation implementation and diagnosis
+
+The entries below preserve earlier BM-017F test and diagnosis checkpoints.
+Their pending-live-validation and BM-023A-blocked statements are historical;
+the final supervisor run and current classification above supersede them.
 
 ### Bounded service-start poll implementation (2026-09-24)
 

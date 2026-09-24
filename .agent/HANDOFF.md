@@ -1,4 +1,37 @@
-# Current Handoff — BM-017F bounded service-start poll
+# Current Handoff — BM-017F complete and synchronized (2026-09-24)
+
+**Result**: `BM-017F COMPLETE`. The reviewed substantive endpoint diff was
+reconstructed onto protected matrix as `4dfd97e180d14976adec8540d5c0c93893519249`;
+neutral matrix tracking brings its pushed tip to
+`66b0fd8a123ef778b23ba42703937b07eefc4e6f`. The worker was synchronized by a
+normal merge. No worker history was rewritten, and no unrelated product
+changes or disposable profile contents entered matrix. The only follow-up
+correction during matrix validation reordered test mocks so the import spy
+records add-on imports rather than its own `unittest.mock` target resolution.
+
+The supervisor-provided final disposable validation passed all eight steps
+and all twenty checks. Red Light structured private-resource lifecycle is
+`LIVE-VALIDATED`. The evidence was restricted to `.kodi-test`; this
+integration did not launch Kodi or access a normal Kodi profile, real device,
+or private overlay values.
+
+Matrix validation: focused lifecycle/resource/import/harness modules
+**499/499**; full repository suite **1782/1782**; `compileall`; all **7
+tracked JSON files** parsed, including the schema; `git diff --check` passed.
+
+BM-023A macOS is `READY_TO_RETRY`; no retry was started. tvOS remains
+`NOT VALIDATED`.
+
+**Smallest next step**: wait for the next supervisor-authorized task, the
+actual macOS BM-023A retry against `/Applications/Kodi Build Manager Test.app`,
+launched exactly with `open "/Applications/Kodi Build Manager Test.app" --args -p`.
+
+The historical BM-017F pending and blocker records below are retained for
+audit context and are superseded by this completion handoff.
+
+---
+
+# Historical Handoff — BM-017F bounded service-start poll
 
 Implemented the narrowly scoped disposable-harness fix. After unchanged
 step-[3/8] completion checks (enabled, exact Red Light version, frozen

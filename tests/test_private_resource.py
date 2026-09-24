@@ -453,8 +453,8 @@ class StructuredResourceTest(unittest.TestCase):
 
         with (
             patch.dict("sys.modules", {"xbmcaddon": SimpleNamespace(Addon=forbidden_addon)}),
-            patch("resources.lib.verified_addon_imports.importlib.import_module", side_effect=track_import),
             patch("builtins.__import__", side_effect=guarded_import),
+            patch("resources.lib.verified_addon_imports.importlib.import_module", side_effect=track_import),
         ):
             result = self.adapter.initialize(self.declaration, source_context)
             self.assertTrue(result.succeeded)
