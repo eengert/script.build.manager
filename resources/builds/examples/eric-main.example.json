@@ -46,6 +46,7 @@
         "adapter_id": "redlight.sqlite.settings.v1",
         "lifecycle": "quiesced",
         "required": true,
+        "configure_before_activation": true,
         "fields": [
           {"field_id": "mdblist.refresh", "type": "string", "required": false, "sensitivity": "token"},
           {"field_id": "mdblist.token", "type": "string", "required": false, "sensitivity": "token"},

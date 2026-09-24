@@ -942,6 +942,10 @@ class TestBuildManager(unittest.TestCase):
         encoded = json.dumps(result.to_dict(), sort_keys=True)
         self.assertFalse(result.success)
         self.assertEqual(result.action_results[0].action.kind, "CONFIGURE")
+        self.assertEqual(
+            result.action_results[0].owner_result.configuration_scope, "public"
+        )
+        self.assertIn('"configuration_scope": "public"', encoded)
         self.assertIn("ACTION_EXECUTION_FAILED", encoded)
         self.assertNotIn(fake_secret, encoded)
 

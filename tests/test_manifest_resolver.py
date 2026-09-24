@@ -793,6 +793,16 @@ class TestEricMain(unittest.TestCase):
         rl = next(a for a in r.addons if a.addon_id == "plugin.video.redlight")
         self.assertEqual(rl.state, "enabled")
 
+    def test_bonus_room_redlight_resource_requires_pre_activation_configuration(self):
+        r = resolve_manifest(self.manifest, "bonus-room")
+        resource = next(
+            item for item in r.config.structured_private_resources
+            if item.resource_id == "redlight.settings"
+        )
+        self.assertEqual(resource.owner_addon_id, "plugin.video.redlight")
+        self.assertTrue(resource.required)
+        self.assertTrue(resource.configure_before_activation)
+
     def test_bonus_room_tmdb_helper_disabled(self):
         r = resolve_manifest(self.manifest, "bonus-room")
         tmdb = next(

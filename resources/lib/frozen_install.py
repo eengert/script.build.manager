@@ -33,7 +33,7 @@ from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
-from resources.lib.build_manager import ReconcileRequest
+from resources.lib.build_manager import ActionFailureDiagnostic, ReconcileRequest
 from resources.lib.skin import SkinFailureCode
 from resources.lib.private_resource import ResourceInitializationStage
 from resources.lib.frozen import (
@@ -79,6 +79,14 @@ class FrozenInstallError(Exception):
     """Base class for safe frozen-install failures."""
 
     code = "FROZEN_INSTALL_ERROR"
+
+
+class FrozenConfigurationFailure(FrozenInstallError):
+    """Safe CONFIGURE failure with validated transaction metadata updates."""
+
+    def __init__(self, message: str, *, transaction_updates=None):
+        super().__init__(message)
+        self.transaction_updates = transaction_updates or {}
 
 
 class FrozenInstallValidationError(FrozenInstallError):
@@ -1377,6 +1385,118 @@ def _default_manifest_loader(path: str) -> FrozenBuildManifest:
         raise FrozenInstallValidationError("could not load frozen manifest") from exc
 
 
+def _configuration_failure_parts(owner_result: object) -> list[str]:
+    """Return only safe, typed diagnostics for a failed CONFIGURE action."""
+    from resources.lib.config import ConfigApplyResult
+    from resources.lib.private_overlay import (
+        ConfigurationApplyBundle,
+        PrivateOverlayApplyResult,
+    )
+
+    def token(value: object, pattern: str) -> str:
+        value = getattr(value, "value", value)
+        if isinstance(value, str) and re.fullmatch(pattern, value):
+            return value
+        return ""
+
+    def public_parts(result: ConfigApplyResult) -> list[str]:
+        failed = result.failed
+        if not failed:
+            return []
+        parts = [
+            "configuration_scope=public",
+            "cause=PUBLIC_CONFIGURATION_OPERATION_FAILED",
+        ]
+        owner = token(getattr(failed[0], "addon_id", ""), _ADDON_ID.pattern)
+        if owner:
+            parts.append(f"owner={owner}")
+        return parts
+
+    def private_parts(result: PrivateOverlayApplyResult) -> list[str]:
+        if result.succeeded:
+            return []
+        failed_resources = tuple(
+            item for item in result.resource_results
+            if not getattr(item, "succeeded", False)
+        )
+        failed_settings = tuple(
+            item for item in result.results
+            if token(getattr(item, "status", ""), r"[a-z_]{1,40}") == "failed"
+            or getattr(item, "verified", True) is False
+        )
+        if failed_resources:
+            cause = "PRIVATE_RESOURCE_APPLICATION_FAILED"
+        elif failed_settings:
+            cause = "PRIVATE_SETTING_APPLICATION_FAILED"
+        else:
+            cause = "PRIVATE_OVERLAY_APPLICATION_FAILED"
+        parts = ["configuration_scope=private", f"cause={cause}"]
+        if failed_resources:
+            resource = token(
+                getattr(failed_resources[0], "resource_id", ""),
+                r"[a-z0-9][a-z0-9._-]{0,127}",
+            )
+            owner = token(
+                getattr(failed_resources[0], "owner_addon_id", ""),
+                _ADDON_ID.pattern,
+            )
+            if owner:
+                parts.append(f"owner={owner}")
+            if resource:
+                parts.append(f"resource={resource}")
+        elif failed_settings:
+            owner = token(
+                getattr(failed_settings[0], "addon_id", ""),
+                _ADDON_ID.pattern,
+            )
+            if owner:
+                parts.append(f"owner={owner}")
+        return parts
+
+    if isinstance(owner_result, ActionFailureDiagnostic):
+        scope = owner_result.configuration_scope
+        if not scope and (
+            owner_result.owner_addon_id
+            or owner_result.resource_id
+            or owner_result.cause_code
+            or owner_result.code.startswith(("PRIVATE_", "STRUCTURED_RESOURCE_"))
+        ):
+            scope = "private"
+        return [f"configuration_scope={scope}"] if scope in {"public", "private"} else []
+
+    # The dispatcher returns a direct ConfigApplyResult when public apply fails;
+    # private apply is never reached in that case.
+    if isinstance(owner_result, ConfigApplyResult):
+        return public_parts(owner_result)
+
+    if isinstance(owner_result, ConfigurationApplyBundle):
+        public_result = owner_result.public_result
+        if isinstance(public_result, ConfigApplyResult) and not public_result.all_applied:
+            return public_parts(public_result)
+        private_result = owner_result.private_result
+        if isinstance(private_result, PrivateOverlayApplyResult):
+            return private_parts(private_result)
+        return []
+
+    if isinstance(owner_result, PrivateOverlayApplyResult):
+        return private_parts(owner_result)
+
+    return []
+
+
+def _overlay_failure_transaction_updates(overlay: object) -> dict:
+    """Return transaction fields only for validated, present overlay metadata."""
+    from resources.lib.private_overlay import PrivateOverlayMetadata
+
+    if not isinstance(overlay, PrivateOverlayMetadata) or not overlay.present:
+        return {}
+    return {
+        "private_overlay_id": overlay.overlay_id,
+        "private_overlay_fingerprint": overlay.fingerprint,
+        "private_overlay_required": overlay.required,
+    }
+
+
 class FrozenInstallCoordinator:
     """Coordinate exact software, existing configuration, restart, and release."""
 
@@ -2149,6 +2269,10 @@ class FrozenInstallCoordinator:
                 message,
                 recoverability=plan.summary,
                 resolution_manifest=resolution_manifest,
+                transaction_updates=(
+                    exc.transaction_updates
+                    if isinstance(exc, FrozenConfigurationFailure) else None
+                ),
             )
 
     def _restore_resolution(self, manifest, transaction, *, allow_uninstalled=False):
@@ -2449,16 +2573,24 @@ class FrozenInstallCoordinator:
         return FrozenInstallResult("complete", message="frozen installation explicitly abandoned; software was not rolled back")
 
     def _handle_configuration_result(self, transaction, result):
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+
         outcome = getattr(getattr(result, "outcome", None), "value", getattr(result, "outcome", ""))
         reconcile_result = getattr(result, "reconcile_result", None) or result
         overlay = getattr(result, "private_overlay", None)
         if overlay is None:
             overlay = getattr(reconcile_result, "private_overlay", None)
         overlay_kwargs = {
-            "private_overlay_id": overlay.overlay_id if overlay else "",
-            "private_overlay_fingerprint": overlay.fingerprint if overlay else "",
-            "private_overlay_required": overlay.required if overlay else False,
+            "private_overlay_id": "",
+            "private_overlay_fingerprint": "",
+            "private_overlay_required": False,
         }
+        if isinstance(overlay, PrivateOverlayMetadata):
+            overlay_kwargs.update({
+                "private_overlay_id": overlay.overlay_id,
+                "private_overlay_fingerprint": overlay.fingerprint,
+                "private_overlay_required": overlay.required,
+            })
         if outcome in ("manual_restart_required", "awaiting_restart"):
             if (
                 transaction.activation_hold_ids
@@ -2516,6 +2648,10 @@ class FrozenInstallCoordinator:
                 if isinstance(addon_id, str) and _ADDON_ID.fullmatch(addon_id):
                     diagnostic_parts.append(f"addon={addon_id}")
                 owner_result = getattr(action_result, "owner_result", None)
+                if kind == "CONFIGURE":
+                    diagnostic_parts.extend(
+                        _configuration_failure_parts(owner_result)
+                    )
                 if kind == "SET_SKIN":
                     skin_failure_code = getattr(owner_result, "failure_code", None)
                     skin_failure_code = getattr(
@@ -2602,7 +2738,10 @@ class FrozenInstallCoordinator:
                     part for part in diagnostic_parts
                     if not part.startswith(("outcome=", "phase=", "failure="))
                 ]
-            error = FrozenInstallError("configuration/restart handoff failed")
+            error = FrozenConfigurationFailure(
+                "configuration/restart handoff failed",
+                transaction_updates=_overlay_failure_transaction_updates(overlay),
+            )
             error.code = (
                 f"FROZEN_CONFIGURATION_{failure_code}"
                 if isinstance(failure_code, str)
@@ -2786,17 +2925,37 @@ class FrozenInstallCoordinator:
 
     def _attention(
         self, transaction, code: str, message: str, *,
-        recoverability=None, resolution_manifest=None,
+        recoverability=None, resolution_manifest=None, transaction_updates=None,
     ) -> FrozenInstallResult:
         try:
             current = self.store.inspect() or transaction
             if current.phase is not FrozenInstallPhase.NEEDS_ATTENTION:
+                updates = {}
+                if isinstance(transaction_updates, dict) and set(transaction_updates) == {
+                    "private_overlay_id",
+                    "private_overlay_fingerprint",
+                    "private_overlay_required",
+                }:
+                    overlay_id = transaction_updates.get("private_overlay_id")
+                    fingerprint = transaction_updates.get(
+                        "private_overlay_fingerprint"
+                    )
+                    required = transaction_updates.get("private_overlay_required")
+                    if (
+                        isinstance(overlay_id, str)
+                        and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", overlay_id)
+                        and isinstance(fingerprint, str)
+                        and re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint)
+                        and isinstance(required, bool)
+                    ):
+                        updates = dict(transaction_updates)
                 current = self.store.transition_expected(
                     transaction_id=current.transaction_id,
                     expected_phase=current.phase,
                     new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
                     status_code=_bounded(code, _MAX_CODE, "FROZEN_INSTALL_FAILED"),
                     status_message=_bounded(message, _MAX_MESSAGE, "frozen install requires attention"),
+                    **updates,
                 )
         except Exception:
             current = transaction

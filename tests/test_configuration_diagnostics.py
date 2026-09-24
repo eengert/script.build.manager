@@ -13,8 +13,20 @@ from resources.lib.build_manager import (
     ReconcileResult,
     _action_failure_diagnostic,
 )
+from resources.lib.config import (
+    ConfigApplyResult,
+    ConfigOperationKind,
+    ConfigOperationResult,
+    ConfigOperationStatus,
+)
 from resources.lib.frozen_install import FrozenInstallCoordinator, FrozenInstallError
-from resources.lib.planner import CONFIGURE, PlanAction
+from resources.lib.planner import CONFIGURE, SET_SKIN, PlanAction
+from resources.lib.private_overlay import (
+    ConfigurationApplyBundle,
+    PrivateOverlayApplyResult,
+    PrivateOverlayOutcome,
+    PrivateSettingResult,
+)
 from resources.lib.private_resource import (
     ResourceInitializationCause,
     ResourceInitializationStage,
@@ -55,10 +67,13 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             expected_provider,
             actual_provider,
         )
+        return self._frozen_error(diagnostic, action_kind=action_kind)
+
+    def _frozen_error(self, owner_result, *, action_kind=CONFIGURE):
         action_result = SimpleNamespace(
             action=SimpleNamespace(kind=action_kind, addon_id=""),
             succeeded=False,
-            owner_result=diagnostic,
+            owner_result=owner_result,
         )
         reconcile = SimpleNamespace(
             failure=ReconcileFailure(
@@ -99,6 +114,64 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
         self.assertIn("cause=RESOURCE_NOT_INITIALIZED", error.safe_detail)
         self.assertNotIn(FAKE_SECRET, error.safe_detail)
 
+    def test_public_configuration_result_is_classified_without_private_claim(self):
+        raw_private_text = "/private/fake/profile/PRIVATE_TOKEN_PUBLIC_CASE"
+        public_result = ConfigApplyResult(results=(ConfigOperationResult(
+            ConfigOperationKind.SETTING,
+            "public-package",
+            ConfigOperationStatus.FAILED,
+            raw_private_text,
+            raw_private_text,
+            raw_private_text,
+            addon_id="plugin.video.publicfixture",
+            key="private.token",
+        ),))
+        error = self._frozen_error(public_result)
+
+        self.assertIn("action=CONFIGURE", error.safe_detail)
+        self.assertIn("configuration_scope=public", error.safe_detail)
+        self.assertIn(
+            "cause=PUBLIC_CONFIGURATION_OPERATION_FAILED", error.safe_detail
+        )
+        self.assertIn("owner=plugin.video.publicfixture", error.safe_detail)
+        self.assertNotIn("addon=", error.safe_detail)
+        self.assertNotIn("configuration_scope=private", error.safe_detail)
+        self.assertNotIn(raw_private_text, error.safe_detail)
+        self.assertNotIn("private.token", error.safe_detail)
+
+    def test_private_bundle_failure_is_unwrapped_using_safe_fields_only(self):
+        raw_private_text = "/private/fake/profile/PRIVATE_TOKEN_BUNDLE_CASE"
+        private_result = PrivateOverlayApplyResult(
+            PrivateOverlayOutcome.FAILED,
+            metadata=None,
+            results=(PrivateSettingResult(
+                "plugin.video.redlight",
+                "private.token",
+                "failed",
+                False,
+                False,
+                raw_private_text,
+            ),),
+        )
+        bundle = ConfigurationApplyBundle(ConfigApplyResult(), private_result)
+        error = self._frozen_error(bundle)
+
+        self.assertIn("action=CONFIGURE", error.safe_detail)
+        self.assertIn("configuration_scope=private", error.safe_detail)
+        self.assertIn("cause=PRIVATE_SETTING_APPLICATION_FAILED", error.safe_detail)
+        self.assertIn("owner=plugin.video.redlight", error.safe_detail)
+        self.assertNotIn("addon=", error.safe_detail)
+        self.assertNotIn(raw_private_text, error.safe_detail)
+        self.assertNotIn("private.token", error.safe_detail)
+
+    def test_non_configure_action_diagnostics_keep_existing_fields_without_scope(self):
+        error = self._frozen_failure(SET_SKIN)
+
+        self.assertIn("action=SET_SKIN", error.safe_detail)
+        self.assertIn("owner=plugin.video.redlight", error.safe_detail)
+        self.assertIn("resource=redlight.settings", error.safe_detail)
+        self.assertNotIn("configuration_scope=", error.safe_detail)
+
     def test_stage_and_typed_cause_survive_configure_diagnostic(self):
         error = self._frozen_failure(
             "configure",
@@ -110,6 +183,7 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             "resource_failure=PRIVATE_RESOURCE_INITIALIZATION_FAILED",
             error.safe_detail,
         )
+        self.assertIn("configuration_scope=private", error.safe_detail)
         self.assertIn("action=CONFIGURE", error.safe_detail)
         self.assertIn("owner=plugin.video.redlight", error.safe_detail)
         self.assertIn("resource=redlight.settings", error.safe_detail)
@@ -157,6 +231,16 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
         self.assertNotIn("/private/", json.dumps(diagnostic.to_dict()))
         self.assertNotIn(FAKE_SECRET, json.dumps(diagnostic.to_dict()))
 
+    def test_configuration_scope_is_explicit_and_allowlisted(self):
+        diagnostic = _action_failure_diagnostic(
+            RuntimeError(FAKE_SECRET), configuration_scope="private"
+        )
+
+        self.assertEqual(diagnostic.to_dict()["configuration_scope"], "private")
+        self.assertNotIn(FAKE_SECRET, json.dumps(diagnostic.to_dict()))
+        with self.assertRaises(ValueError):
+            ActionFailureDiagnostic("ACTION_EXECUTION_FAILED", configuration_scope="unknown")
+
     def test_action_diagnostic_extracts_typed_stage_metadata(self):
         error = StructuredResourceInitializationError(
             "plugin.video.redlight",
@@ -165,7 +249,9 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             initialization_stage=ResourceInitializationStage.SET_WAL_MODE,
             last_completed_stage=ResourceInitializationStage.OPEN_SETTINGS_DATABASE,
         )
-        diagnostic = _action_failure_diagnostic(error)
+        diagnostic = _action_failure_diagnostic(
+            error, configuration_scope="private"
+        )
         self.assertEqual(
             diagnostic.initialization_stage,
             ResourceInitializationStage.SET_WAL_MODE.value,
@@ -175,18 +261,13 @@ class ConfigurationDiagnosticsTest(unittest.TestCase):
             ResourceInitializationStage.OPEN_SETTINGS_DATABASE.value,
         )
         self.assertEqual(diagnostic.cause_code, "WAL_SETUP_FAILED")
+        self.assertEqual(diagnostic.configuration_scope, "private")
         self.assertEqual(
             set(diagnostic.to_dict()),
             {
                 "code", "owner_addon_id", "resource_id", "cause_code",
                 "initialization_stage", "last_completed_stage",
-            },
-        )
-        self.assertEqual(
-            set(diagnostic.to_dict()),
-            {
-                "code", "owner_addon_id", "resource_id", "cause_code",
-                "initialization_stage", "last_completed_stage",
+                "configuration_scope",
             },
         )
 

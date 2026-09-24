@@ -202,6 +202,7 @@ class ActionFailureDiagnostic:
     failing_module: str = ""
     expected_provider: str = ""
     actual_provider: str = ""
+    configuration_scope: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, str) or not re.fullmatch(
@@ -236,6 +237,12 @@ class ActionFailureDiagnostic:
         for provider in (self.expected_provider, self.actual_provider):
             if provider and not _SAFE_IMPORT_PROVIDER.fullmatch(provider):
                 raise ValueError("action failure provider is not safe")
+        if not isinstance(self.configuration_scope, str) or (
+            self.configuration_scope and self.configuration_scope not in {
+                "public", "private"
+            }
+        ):
+            raise ValueError("configuration failure scope is not safe")
 
     def to_dict(self) -> dict:
         result = {
@@ -256,6 +263,8 @@ class ActionFailureDiagnostic:
             result["expected_provider"] = self.expected_provider
         if self.actual_provider:
             result["actual_provider"] = self.actual_provider
+        if self.configuration_scope:
+            result["configuration_scope"] = self.configuration_scope
         return result
 
 
@@ -1183,14 +1192,30 @@ class BuildManager:
             )
 
         if action.kind == CONFIGURE:
-            public_result = self._owners.config_manager.apply(effective)
+            try:
+                public_result = self._owners.config_manager.apply(effective)
+            except Exception as exc:
+                diagnostic = _action_failure_diagnostic(
+                    exc, configuration_scope="public"
+                )
+                return ActionExecutionResult(
+                    action, False, False,
+                    f"action failed safely ({diagnostic.code})", diagnostic,
+                )
             if not public_result.all_applied:
                 return _action_from_owner(action, public_result)
             private_result = None
             if private_prepared is not None:
                 manager = self._owners.private_overlay_manager
                 if manager is None:
-                    return _failed_action(action, "private overlay support is unavailable")
+                    diagnostic = ActionFailureDiagnostic(
+                        "PRIVATE_OVERLAY_SUPPORT_UNAVAILABLE",
+                        configuration_scope="private",
+                    )
+                    return ActionExecutionResult(
+                        action, False, False,
+                        f"action failed safely ({diagnostic.code})", diagnostic,
+                    )
                 has_pre_activation_resources = any(
                     item.configure_before_activation
                     for item in private_prepared.resource_declarations
@@ -1200,11 +1225,29 @@ class BuildManager:
                     and public_result.restart_report.requires_restart
                 ):
                     if owner_contexts:
-                        private_result = manager.apply(
-                            private_prepared, owner_contexts=owner_contexts
-                        )
+                        try:
+                            private_result = manager.apply(
+                                private_prepared, owner_contexts=owner_contexts
+                            )
+                        except Exception as exc:
+                            diagnostic = _action_failure_diagnostic(
+                                exc, configuration_scope="private"
+                            )
+                            return ActionExecutionResult(
+                                action, False, False,
+                                f"action failed safely ({diagnostic.code})", diagnostic,
+                            )
                     else:
-                        private_result = manager.apply(private_prepared)
+                        try:
+                            private_result = manager.apply(private_prepared)
+                        except Exception as exc:
+                            diagnostic = _action_failure_diagnostic(
+                                exc, configuration_scope="private"
+                            )
+                            return ActionExecutionResult(
+                                action, False, False,
+                                f"action failed safely ({diagnostic.code})", diagnostic,
+                            )
             return _action_from_owner(
                 action,
                 ConfigurationApplyBundle(public_result, private_result),
@@ -1226,7 +1269,9 @@ def _message(exc: object) -> str:
     return text[:500]
 
 
-def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
+def _action_failure_diagnostic(
+    exc: object, *, configuration_scope: str = ""
+) -> ActionFailureDiagnostic:
     """Extract only validated codes and identifiers from an action error."""
     code = getattr(exc, "code", "")
     if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,80}", code):
@@ -1285,6 +1330,7 @@ def _action_failure_diagnostic(exc: object) -> ActionFailureDiagnostic:
         failing_module,
         expected_provider,
         actual_provider,
+        configuration_scope,
     )
 
 

@@ -398,10 +398,10 @@ class FrozenResolutionTest(unittest.TestCase):
         ).install(
             manifest,
             manifest_path="/fixture.json",
-            configuration_manifest_path="resources/builds/examples/eric-main.example.json",
             device_profile_id="family-room",
+            install_policies=(self._policy(),),
         )
-        self.assertEqual("complete", result.outcome)
+        self.assertEqual("complete", result.outcome, (result.code, result.message))
         self.assertNotIn(YOUTUBE, self.backend.installed)
         self.assertNotIn(PYSOCKS, self.backend.installed)
         self.assertNotIn(PYSOCKS, [record.addon_id for record in result.resolution_manifest.records])

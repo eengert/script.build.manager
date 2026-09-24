@@ -1,6 +1,7 @@
 """Focused BM-022 frozen-install transaction and exact-artifact tests."""
 
 import io
+import json
 import tempfile
 import unittest
 import zipfile
@@ -41,7 +42,7 @@ from resources.lib.frozen_install import (
 )
 from resources.lib.startup import StartupClassification, StartupStatus
 from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
-from resources.lib.planner import PlanAction, SET_SKIN
+from resources.lib.planner import CONFIGURE, PlanAction, SET_SKIN
 from resources.lib.skin import SkinFailureCode, SkinResult, SkinStatus
 
 
@@ -352,6 +353,11 @@ class FrozenInstallTest(unittest.TestCase):
 
     def test_configuration_failure_keeps_quarantine_and_transaction(self):
         fake_exception = "BM017F_FAKE_STAGE_EXCEPTION_SECRET_4831"
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "9" * 64, False, True
+        )
         diagnostic = ActionFailureDiagnostic(
             "PRIVATE_RESOURCE_INITIALIZATION_FAILED",
             "plugin.video.redlight",
@@ -363,6 +369,7 @@ class FrozenInstallTest(unittest.TestCase):
             "requests.packages.urllib3.exceptions",
             "script.module.urllib3",
             "script.module.requests",
+            "private",
         )
         reconcile_result = SimpleNamespace(
             failure=SimpleNamespace(
@@ -380,7 +387,7 @@ class FrozenInstallTest(unittest.TestCase):
             outcome="failed",
             failure=None,
             reconcile_result=reconcile_result,
-            private_overlay=None,
+            private_overlay=overlay_meta,
         )
         result = self._coordinator(
             configuration_runner=lambda _request: configuration_result
@@ -395,6 +402,7 @@ class FrozenInstallTest(unittest.TestCase):
             transaction.status_code, "FROZEN_CONFIGURATION_ACTION_FAILED"
         )
         self.assertIn("action=CONFIGURE", transaction.status_message)
+        self.assertIn("configuration_scope=private", transaction.status_message)
         self.assertIn("resource_failure=PRIVATE_RESOURCE_INITIALIZATION_FAILED", transaction.status_message)
         self.assertIn("owner=plugin.video.redlight", transaction.status_message)
         self.assertIn("resource=redlight.settings", transaction.status_message)
@@ -408,7 +416,206 @@ class FrozenInstallTest(unittest.TestCase):
         )
         self.assertIn("expected_provider=script.module.urllib3", transaction.status_message)
         self.assertIn("actual_provider=script.module.requests", transaction.status_message)
+        self.assertEqual(transaction.private_overlay_id, overlay_meta.overlay_id)
+        self.assertEqual(
+            transaction.private_overlay_fingerprint, overlay_meta.fingerprint
+        )
+        self.assertFalse(transaction.private_overlay_required)
         self.assertNotIn(fake_exception, transaction.status_message)
+
+    def test_public_configure_failure_persists_scope_and_safe_cause(self):
+        from resources.lib.config import (
+            ConfigApplyResult,
+            ConfigOperationKind,
+            ConfigOperationResult,
+            ConfigOperationStatus,
+        )
+
+        fake_private_text = "/private/fake/profile/PRIVATE_TOKEN_PUBLIC_FAILURE"
+        public_result = ConfigApplyResult(results=(ConfigOperationResult(
+            ConfigOperationKind.SETTING,
+            "fixture-public-package",
+            ConfigOperationStatus.FAILED,
+            fake_private_text,
+            fake_private_text,
+            fake_private_text,
+            addon_id="plugin.video.publicfixture",
+            key="private.token",
+        ),))
+        reconcile_result = ReconcileResult(
+            success=False,
+            request=None,
+            desired_fingerprint="a" * 64,
+            action_results=(ActionExecutionResult(
+                PlanAction(CONFIGURE, "", "", "", "configuration required"),
+                False,
+                False,
+                fake_private_text,
+                public_result,
+            ),),
+            failure=ReconcileFailure(
+                ReconcilePhase.EXECUTE, "ACTION_FAILED", fake_private_text
+            ),
+        )
+        configuration_result = SimpleNamespace(
+            outcome="failed",
+            failure=None,
+            reconcile_result=reconcile_result,
+            private_overlay=None,
+        )
+        result = self._coordinator(
+            configuration_runner=lambda _request: configuration_result
+        ).install(
+            self._manifest(), manifest_path="/fixture.json", device_profile_id="test"
+        )
+
+        self.assertEqual(result.outcome, "needs_attention")
+        transaction = self.store.inspect()
+        self.assertEqual(transaction.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertIn("action=CONFIGURE", transaction.status_message)
+        self.assertIn("configuration_scope=public", transaction.status_message)
+        self.assertIn(
+            "cause=PUBLIC_CONFIGURATION_OPERATION_FAILED", transaction.status_message
+        )
+        self.assertIn("owner=plugin.video.publicfixture", transaction.status_message)
+        self.assertNotIn("addon=", transaction.status_message)
+        self.assertNotIn("configuration_scope=private", transaction.status_message)
+        self.assertNotIn("private.token", transaction.status_message)
+        self.assertNotIn(fake_private_text, json.dumps(transaction.to_dict()))
+
+    def test_example_redlight_declaration_establishes_activation_hold(self):
+        from resources.lib.manifest import load_manifest_file
+        from resources.lib.resolver import resolve_manifest
+
+        example_path = (
+            Path(__file__).resolve().parents[1]
+            / "resources/builds/examples/eric-main.example.json"
+        )
+        desired = resolve_manifest(
+            load_manifest_file(str(example_path)), "bonus-room"
+        )
+        owner = AddonCaptureNode(
+            "plugin.video.redlight",
+            "2.6.8",
+            "xbmc.python.pluginsource",
+            True,
+            ProvenanceStatus.VERIFIED_REPOSITORY,
+        )
+        plan = SimpleNamespace(install_order=(owner,))
+
+        self.assertEqual(
+            FrozenInstallCoordinator._activation_hold_ids(plan, desired),
+            ("plugin.video.redlight",),
+        )
+
+    def test_configuration_failure_after_restart_keeps_redlight_held(self):
+        from resources.lib.private_overlay import PrivateOverlayMetadata
+        from resources.lib.redlight_resource import redlight_declaration
+
+        manifest = self._manifest()
+        owner_id = "plugin.video.bm022.fixture"
+        overlay_meta = PrivateOverlayMetadata(
+            "fixture-overlay", "sha256:" + "8" * 64, False, True
+        )
+        declaration = replace(redlight_declaration(), owner_addon_id=owner_id)
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="fixture-overlay"),
+            build=SimpleNamespace(id="bm022-fixture"),
+            config=SimpleNamespace(
+                private_settings=(), structured_private_resources=(declaration,)
+            ),
+        )
+        fake_secret = "/private/fake/profile/PRIVATE_TOKEN_4721"
+        diagnostic = ActionFailureDiagnostic(
+            "PRIVATE_RESOURCE_INITIALIZATION_FAILED",
+            owner_id,
+            "redlight.settings",
+            "DATABASE_OPEN_FAILED",
+            "OPEN_SETTINGS_DATABASE",
+            "CREATE_DATABASE_DIRECTORY",
+            configuration_scope="private",
+        )
+        action_result = ActionExecutionResult(
+            PlanAction(CONFIGURE, "", "", "", "fixture action"),
+            False,
+            False,
+            fake_secret,
+            diagnostic,
+        )
+
+        def configure(request):
+            reconcile = ReconcileResult(
+                success=False,
+                request=request,
+                desired_fingerprint="a" * 64,
+                action_results=(action_result,),
+                failure=ReconcileFailure(
+                    ReconcilePhase.EXECUTE, "ACTION_FAILED", fake_secret
+                ),
+                private_overlay=overlay_meta,
+            )
+            return SimpleNamespace(
+                outcome="failed",
+                failure=None,
+                reconcile_result=reconcile,
+            )
+
+        metadata_provider = lambda _profile, _fingerprint: (
+            overlay_meta.overlay_id,
+            overlay_meta.fingerprint,
+            overlay_meta.required,
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(
+            FrozenInstallCoordinator,
+            "_private_overlay_metadata",
+            side_effect=lambda _profile, _fingerprint: (
+                overlay_meta.overlay_id,
+                overlay_meta.fingerprint,
+                overlay_meta.required,
+            ),
+        ):
+            first = self._coordinator(
+                configuration_runner=configure,
+                private_overlay_metadata_provider=metadata_provider,
+            ).install(
+                manifest,
+                manifest_path="/fixture-frozen.json",
+                configuration_manifest_path="/fixture-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+            self.assertEqual(first.outcome, "awaiting_restart")
+            self.assertFalse(self.backend.installed[owner_id].enabled)
+            resumed = FrozenInstallCoordinator(
+                store=self.store,
+                artifact_store=self.artifacts,
+                policy_backend=self.policy,
+                installer=self.backend,
+                manifest_loader=lambda _path: manifest,
+                session_id_provider=lambda: SESSION_B,
+                configuration_runner=configure,
+                registry_backend=InMemoryRegistryBackend(self.backend),
+                private_overlay_metadata_provider=metadata_provider,
+            ).resume_after_restart(current_session_id=SESSION_B)
+
+        self.assertEqual(resumed.outcome, "needs_attention")
+        transaction = self.store.inspect()
+        self.assertEqual(transaction.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertFalse(transaction.activation_hold_released)
+        self.assertEqual(
+            active_activation_hold_ids(self.store), frozenset({owner_id})
+        )
+        self.assertFalse(self.backend.installed[owner_id].enabled)
+        self.assertEqual(transaction.private_overlay_id, overlay_meta.overlay_id)
+        self.assertEqual(
+            transaction.private_overlay_fingerprint, overlay_meta.fingerprint
+        )
+        self.assertFalse(transaction.private_overlay_required)
+        self.assertNotIn(fake_secret, transaction.status_message)
+        self.assertNotIn(fake_secret, json.dumps(transaction.to_dict()))
 
     def test_skin_failure_code_is_persisted_without_raw_result_text(self):
         fake_secret = "/private/fake/profile/secret-token BM023A_FAILURE_TEXT"
