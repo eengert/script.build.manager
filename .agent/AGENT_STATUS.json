@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
   "status": "blocked",
-  "task": "BM-023A offline skin failure instrumentation",
-  "reason": "Added static allowlisted SkinFailureCode values to SkinResult and safe frozen SET_SKIN propagation. The prior portable transaction remains untouched at needs_attention/FROZEN_CONFIGURATION_ACTION_FAILED. Focused skin tests 44/44, frozen/configuration diagnostic tests 9/9, full suite 1810/1810, compileall, JSON/schema parsing, and diff check passed. AF3 3.3.1 Timers.xml evidence is correlated only; retained ZIP and installed tree differ in three HomeSwitcher XML files. No Kodi launch/retry/recovery or normal-profile/device/private-value access. Await supervisor review and separately authorized diagnostic retry. BM-017F COMPLETE; tvOS NOT VALIDATED.",
-  "last_commit": "20bb8f09c8804c4bb1ea1405f1a1b2c7845974b9",
+  "task": "BM-023A allowlisted recovery adapter mode",
+  "reason": "Offline-only adapter recovery mode implemented in c972c8a; adapter tests 29/29, BM harness 124/124, full suite 1837/1837, compileall, JSON parsing, ZIP integrity, and diff check passed. The generated package version is 0.0.3. No Kodi was launched, the adapter was not installed or invoked, and neither recovery nor BM-023A retry was performed. Await supervisor review and separate authorization for any live action. BM-017F COMPLETE; tvOS NOT VALIDATED.",
+  "last_commit": "c972c8a",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-24"

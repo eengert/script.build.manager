@@ -1,49 +1,44 @@
 # Current Task
 
-## macOS BM-023A — offline skin failure instrumentation
+## BM-023A allowlisted recovery adapter mode — 2026-09-24
 
-**Status:** `BLOCKED_PENDING_DIAGNOSTIC_RETRY`.
+**Status:** `OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RECOVERY_NOT_RUN`.
 
-Added allowlisted static `SkinFailureCode` values to `SkinResult` and retained
-the code through frozen-install diagnostics only for failed `SET_SKIN` actions.
-Durable status continues to use `FROZEN_CONFIGURATION_ACTION_FAILED` and now
-includes `action=SET_SKIN`, the validated add-on identity, and
-`skin_failure_code=<enum value>`. Raw result messages, exception text, paths,
-setting values, and arbitrary code-shaped text are not copied into the
-transaction diagnostic.
+Added a strict `install`/`recover` mode to the tracked BM-023A adapter and
+bumped only the temporary adapter package from 0.0.2 to 0.0.3. No-argument
+invocation remains the original install path. Recovery accepts exactly one
+fixed mode token and calls only
+`FrozenInstallCoordinator.abandon(acknowledge_restore_failure=False)` after
+checking for the existing store, a validated transaction identity, the
+`needs_attention` phase, a valid saved updater policy, and no unreleased
+activation hold. Recovery does not load/import the private overlay or frozen
+manifest and does not manually change add-ons, updater settings, frozen
+transaction files, locks, or restart state.
 
-The activation method order, confirmation/`SendClick`, bounded waits,
-read-back order, rollback/revert behavior (there is no explicit production
-rollback), and planner ordering are unchanged. Polling helpers now classify a
-terminal state-read error separately from the same wait expiring without a
-read error.
+Success output contains only fixed safe postcondition fields. Failure output
+uses the adapter's allowlisted stage/callable/category/error type labels and
+omits raw exception text. A successful result is emitted only after confirming
+transaction clearance, policy restoration, add-on retention, and unchanged
+restart-record presence. The existing install setup and call path remain in the
+install branch.
 
-Static audit: retained AF3 3.3.1 artifact `4d10cb10…` is a valid ZIP and has no
-`Timers.xml` member or exact `Timers.xml` reference in its XML. The portable
-installed tree also lacks that exact file and has no AF3 XML reference to it;
-its existing/referenced `MyPVRTimers.xml` is a different file. The installed
-tree and retained ZIP share the same 3,700-file path set but differ in three
-HomeSwitcher XML files, so they are not byte-identical. The warning remains
-`correlated warning only`, not a demonstrated packaging defect or activation
-cause.
-
-Focused skin tests passed **44/44**; frozen/CONFIGURE diagnostic tests passed
-**9/9**; full suite passed **1810/1810**. `compileall`, tracking/schema JSON
-parsing, and `git diff --check` passed. The existing portable
-`needs_attention` transaction remains untouched. No Kodi launch, retry,
-recovery, or code-side live invocation occurred. No normal Kodi profile, real
-device, or private overlay value was accessed.
+Commit `c972c8a` contains only the adapter support/template/version and focused
+tests. Adapter tests passed **29/29**; BM harness tests passed **124/124**; full
+offline suite passed **1837/1837**. Python compilation, generated ZIP CRC
+integrity and source compilation, tracked JSON parsing, and `git diff --check`
+passed. No production Build Manager code changed. No Kodi app was launched, no
+adapter ZIP was installed or invoked, and the transaction was not recovered;
+BM-023A was not retried. No normal profile, real device, or private overlay
+value was accessed.
 
 - BM-017F: `COMPLETE`.
-- macOS BM-023A: `BLOCKED_PENDING_DIAGNOSTIC_RETRY`.
+- macOS BM-023A: live recovery and retry remain pending separate review and
+  authorization.
 - tvOS: `NOT VALIDATED`.
 
-**Next step:** supervisor review, then a separately authorized diagnostic
-retry. Do not recover or clear the current transaction before that direction.
-
-Implementation/test commit: `20bb8f09c8804c4bb1ea1405f1a1b2c7845974b9`.
-Sanitized tracking is committed separately.
-
+**Smallest next step:** supervisor review of the offline 0.0.3 adapter; any
+later live install/recovery must be separately authorized. Do not retry BM-023A
+as part of this offline implementation task.
 ---
 
 ## Historical BM-023A offline skin activation diagnosis (pre-instrumentation)

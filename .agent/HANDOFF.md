@@ -1,4 +1,38 @@
-# Current Handoff — BM-023A adapter bootstrap corrected offline (2026-09-24)
+# Current Handoff — BM-023A recovery adapter implemented offline (2026-09-24)
+
+**Result:** `OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RECOVERY_NOT_RUN`.
+
+Commit `c972c8a` adds strictly allowlisted adapter modes `install` and
+`recover`, bumping the temporary package to 0.0.3. Default invocation remains
+the existing install path. Recovery uses the production store/coordinator and
+runtime/policy/artifact backends, rejects missing/invalid/non-`needs_attention`
+transactions and unreleased activation holds, and invokes exactly one
+`abandon(acknowledge_restore_failure=False)`. It does not load the private
+overlay or frozen manifest; it performs no manual add-on, updater, transaction,
+lock, or restart-state changes. Recovery success is fail-closed on transaction
+clearance, updater-policy restoration, add-on retention, and restart-record
+presence being unchanged. Both success and failure output are restricted to
+safe, fixed fields.
+
+Tests: adapter **29/29**, BM harness **124/124**, full offline suite
+**1837/1837**. Compilation, generated-package ZIP CRC integrity, generated
+source compilation, tracked JSON parsing, and `git diff --check` passed. No
+production Build Manager code changed. No Kodi app was launched; the 0.0.3
+adapter was not installed or invoked, and no recovery or BM-023A retry was
+performed. No normal profile, real device, or private overlay value was
+accessed.
+
+The generated ZIP in tests uses fixture-only configuration; no
+machine-configured package containing private paths was built. BM-017F remains
+`COMPLETE`; BM-023A live recovery/retry remain pending separate review and
+authorization; tvOS remains `NOT VALIDATED`.
+
+**Smallest next step:** supervisor review of commit `c972c8a`. Do not perform a
+live adapter installation/recovery or BM-023A retry without a separate
+authorization.
+---
+
+# Prior handoff — BM-023A adapter bootstrap corrected offline (2026-09-24)
 
 BM-017F remains complete and synchronized to matrix `66b0fd8`.
 
