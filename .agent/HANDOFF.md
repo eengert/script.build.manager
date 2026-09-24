@@ -1,28 +1,58 @@
-# Current Handoff — BM-023A adapter dispatch corrected offline (2026-09-24)
+# Current Handoff — BM-023A offline CONFIGURE correction (2026-09-24)
 
-**Result:** `OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
+Result: offline implementation and regression validation complete. The live
+transaction remains untouched and macOS BM-023A is
+BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
 
-The failed 0.0.3 dispatch is explained by an argv indexing mismatch. The prior
-JSON-RPC call targeted `script.build.manager.bm023a_driver` with the string
-parameter `recover`; Kodi places it at `sys.argv[1]`, but the adapter read
-`sys.argv[2:]`. The old empty-argument default selected install. Adapter 0.0.4
-now reads `sys.argv[1:]`, accepts only one explicit `install`/`recover` token
-(or its exact `?mode=...` form), and fails closed for missing/invalid input.
-Every result is tagged `install`, `recover`, or `unselected` before mode
-selection. Recovery remains bound to exactly
-`abandon(acknowledge_restore_failure=False)`.
+### What changed
 
-Adapter tests **35/35**; Kodi harness **124/124**; full suite **1843/1843**;
-compileall, JSON parsing, generated ZIP integrity/source checks, and
-`git diff --check` passed. No production Build Manager code changed. No Kodi
-launch, corrected adapter install/invocation, recovery, BM-023A retry, updater
-change, real-profile/device access, or private-value access occurred. ZIP test
-used fixture-only configuration.
+- resources/lib/build_manager.py: tags public and private CONFIGURE
+  exceptions with a validated scope; existing safe resource/import fields stay
+  available.
+- resources/lib/frozen_install.py: unwraps only typed configuration results
+  and persists safe nested fields. When already validated overlay metadata is
+  present, the failed transaction retains its ID, fingerprint, and required
+  flag.
+- resources/builds/examples/eric-main.example.json: declares Red Light's
+  required structured resource with configure_before_activation=true.
+- Added regressions for public/private failure scope, empty CONFIGURE add-on
+  identity, typed stage/cause retention, redaction, overlay identity with
+  required=false, Red Light holds across restart and failed configuration,
+  and unchanged unrelated resolution behavior.
+- Updated .agent task tracking; prior history remains below.
 
-BM-017F remains `COMPLETE`; macOS BM-023A remains
-`BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`; tvOS remains
-`NOT VALIDATED`. Smallest next step: Eric manually installs adapter 0.0.4.
-Do not invoke or retry without separate explicit authorization.
+### Validation
+
+- Focused related suites: 686 tests passed.
+- Full offline suite: 1,851 tests passed.
+- Compileall passed for resources, tools, and tests.
+- All 7 tracked JSON/schema files parsed.
+- git diff --check passed.
+
+### Not done
+
+No Kodi was launched. No recovery, retry, updater/skin/profile mutation,
+real-device access, or private overlay value inspection occurred. The historical
+CONFIGURE sub-action is still unknown; online recovery and the single retry
+remain separate supervisor-gated work.
+
+### Smallest next step
+
+Await supervisor direction before recovering the preserved needs_attention
+transaction or starting the single diagnostic retry.
+
+### Status
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+- tvOS: NOT VALIDATED.
+- Worker branch: agent/codex; protected matrix was not changed.
+- Implementation commit: 6ce2947; tracking/handoff commit follows separately.
+- Matrix SHA: 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
+- Usage snapshot: start 5h 0% used / weekly 79% used; end 5h 3% used /
+  weekly 80% used; observed delta 5h +3 pp / weekly +1 pp. Runtime label GPT-6;
+  user-requested Luna-6/Max was not independently observable, and no
+  model/effort switch was made.
 
 ---
 

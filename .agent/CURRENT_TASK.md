@@ -1,35 +1,47 @@
 # Current Task
 
-## BM-023A recovery adapter dispatch correction — 2026-09-24
+## BM-023A offline CONFIGURE diagnostics and Red Light hold correction — 2026-09-24
 
-**Status:** `OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
+**Status:** OFFLINE_IMPLEMENTATION_COMPLETE; BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
 
-Offline reconstruction of the prior request (`Addons.ExecuteAddon`, add-on
-`script.build.manager.bm023a_driver`, `params` string `"recover"`) established
-the dispatch bug: Kodi supplies the script path as `sys.argv[0]` and the first
-add-on argument as `sys.argv[1]`, but adapter 0.0.3 sliced `sys.argv[2:]`.
-That discarded `recover`, leaving an empty list that the old parser treated as
-the mutating install default. The adapter now reads `sys.argv[1:]` and requires
-exactly one explicit allowlisted `install` or `recover` token (also accepting
-the fixed `?mode=...` form). Missing/invalid input fails before dispatch; every
-result identifies `install`, `recover`, or the safe preselection value
-`unselected`. Temporary adapter version is 0.0.4; product version unchanged.
+The CONFIGURE failure path now records a safe configuration_scope and unwraps
+typed public/private apply results into allowlisted owner, resource, cause, and
+initialization/import-stage fields. The intentionally empty planner CONFIGURE
+add-on ID remains empty. Raw messages, exception text, paths, operation keys,
+and private values are not copied into durable diagnostics.
 
-Recovery still invokes only
-`FrozenInstallCoordinator.abandon(acknowledge_restore_failure=False)` after
-its existing preconditions. No production Build Manager code changed. Adapter
-tests **35/35**; BM harness **124/124**; full offline suite **1843/1843**;
-compileall, tracked JSON parsing, generated ZIP integrity/source checks, and
-`git diff --check` passed. No Kodi was launched, corrected adapter installed or
-invoked, transaction recovered, BM-023A retried, updater changed, real profile
-or device accessed, or private value read.
+A validated, present PrivateOverlayMetadata now carries its ID, fingerprint,
+and independent required flag into the failed frozen transaction. An optional
+imported overlay can therefore remain identified with required=false; absent
+or unvalidated metadata is not presented as imported.
 
-- BM-017F: `COMPLETE`.
-- macOS BM-023A: `BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
-- tvOS: `NOT VALIDATED`.
+The authoritative Red Light declaration in
+resources/builds/examples/eric-main.example.json now sets
+configure_before_activation=true. The existing generalized lifecycle
+establishes the owner hold, crosses the quiescence restart, runs configuration
+while held, verifies the private resource, and releases only on success.
+Failure coverage confirms the hold remains unreleased and the owner disabled.
 
-**Smallest next step:** Eric may install corrected adapter 0.0.4 manually. Do
-not invoke it or retry BM-023A without separate explicit authorization.
+Validation: focused related suites passed 686 tests; full
+python3 -m unittest discover tests passed 1,851 tests. Compileall passed for
+resources, tools, and tests; all 7 tracked JSON/schema files parsed;
+git diff --check passed.
+
+Implementation commit: 6ce2947 on agent/codex. The live transaction remains
+untouched; protected matrix remains at 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
+
+No Kodi launch, recovery, BM-023A retry, updater/skin/profile mutation, real
+device access, or private overlay value inspection occurred. The historical
+CONFIGURE sub-action remains unknown until the separately authorized recovery
+and single diagnostic retry.
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+- tvOS: NOT VALIDATED.
+
+Smallest next step: wait for supervisor direction before recovering the
+existing needs_attention transaction or attempting the single diagnostic
+retry.
 
 ---
 

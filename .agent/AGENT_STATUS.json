@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
   "status": "blocked",
-  "task": "BM-023A recovery adapter dispatch correction",
-  "reason": "Offline diagnosis proved the Addons.ExecuteAddon params string recover was delivered as sys.argv[1], while adapter 0.0.3 parsed sys.argv[2:] and silently selected its no-argument install default. Adapter-only correction now parses argv[1:], requires one explicit allowlisted install/recover mode, identifies preselection failures as unselected, and bumps the temporary adapter to 0.0.4. Adapter tests 35/35, BM harness 124/124, full suite 1843/1843, compileall, JSON parsing, ZIP integrity/source checks, and diff check passed. No Kodi was launched; corrected adapter not installed or invoked; no recovery or retry performed. BM-017F COMPLETE; macOS BM-023A BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL; tvOS NOT VALIDATED.",
-  "last_commit": "d38079a",
+  "task": "BM-023A offline CONFIGURE diagnostics and Red Light hold correction",
+  "reason": "Offline implementation and regression validation are complete: safe public/private CONFIGURE diagnostics, validated present overlay identity persistence with required kept distinct, and Red Light configure_before_activation correction. Focused suites passed 686 tests; full suite passed 1851; compileall, 7 tracked JSON/schema parses, and diff check passed. No Kodi launch, recovery, retry, profile/device access, updater/skin mutation, or private value inspection. Historical CONFIGURE sub-action remains unknown; awaiting supervisor direction for recovery and the single diagnostic retry.",
+  "last_commit": "6ce2947",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "eric",
   "updated_at": "2026-09-24"
