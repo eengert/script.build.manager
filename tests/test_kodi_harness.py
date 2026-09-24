@@ -798,6 +798,150 @@ class TestBm017fLifecycleMarkerOrder(unittest.TestCase):
         self.assertGreater(indexes["bm020_classification"], indexes["private_verified"])
 
 
+class TestBm017fServiceStartWait(unittest.TestCase):
+    MARKERS = TestBm017fLifecycleMarkerOrder.MARKERS
+
+    def write_log(self, path, *names):
+        path.write_text(
+            "\n".join(self.MARKERS[name] for name in names),
+            encoding="utf-8",
+        )
+
+    def test_marker_already_present_returns_without_sleep(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+            sleep.assert_not_called()
+
+    def test_delayed_marker_is_observed_on_a_later_poll(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("activation released", encoding="utf-8")
+
+            def release_marker(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\nMain Monitor Service Starting")
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=release_marker) as sleep,
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+            sleep.assert_called_once_with(0.25)
+
+    def test_timeout_has_specific_service_start_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("activation released", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25, 0.5]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "BM-017F Red Light service did not start after activation release",
+                ):
+                    harness._wait_for_bm017f_service_start(timeout=0.5, interval=0.25)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.25, 0.25])
+
+    def test_step_four_marker_validation_runs_after_delayed_service_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            self.write_log(log, "guard", "private", "release", "bm020")
+
+            def append_service(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\n" + self.MARKERS["service"])
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=append_service),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+                result = harness._validate_bm017f_lifecycle_marker_order(
+                    harness.KODI_LOG_FILE.read_text(encoding="utf-8")
+                )
+            self.assertGreater(result["service_start"], result["activation_released"])
+
+    def test_delayed_service_marker_does_not_relax_invalid_safety_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            self.write_log(log, "guard", "release", "private", "bm020")
+
+            def append_service(_delay):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write("\n" + self.MARKERS["service"])
+
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep", side_effect=append_service),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+                with self.assertRaisesRegex(RuntimeError, "ordering was invalid"):
+                    harness._validate_bm017f_lifecycle_marker_order(
+                        harness.KODI_LOG_FILE.read_text(encoding="utf-8")
+                    )
+
+    def test_poll_uses_bounded_quarter_second_intervals_not_a_fixed_delay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25, 0.5]),
+                patch.object(harness.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(RuntimeError):
+                    harness._wait_for_bm017f_service_start(timeout=0.5, interval=0.25)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.25, 0.25])
+
+    def test_reads_only_the_current_log_path_not_a_rotated_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current_log = root / "kodi.log"
+            old_log = root / "kodi.old.log"
+            current_log.write_text("", encoding="utf-8")
+            old_log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", current_log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0, 0.25]),
+                patch.object(harness.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "did not start"):
+                    harness._wait_for_bm017f_service_start(timeout=0.25, interval=0.25)
+
+    def test_missing_current_log_is_polled_until_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0, 0.0]),
+                patch.object(harness.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "did not start"):
+                    harness._wait_for_bm017f_service_start(timeout=0.0, interval=0.25)
+
+    def test_marker_text_in_current_log_suffices_for_poll_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "kodi.log"
+            log.write_text("Main Monitor Service Starting", encoding="utf-8")
+            with (
+                patch.object(harness, "KODI_LOG_FILE", log),
+                patch.object(harness.time, "monotonic", side_effect=[0.0]),
+            ):
+                harness._wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+
+
 # ---------------------------------------------------------------------------
 # WEBSERVER CONFIGURATION
 # ---------------------------------------------------------------------------

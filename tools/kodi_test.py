@@ -7203,6 +7203,26 @@ def _validate_bm017f_lifecycle_marker_order(log_text: str) -> Dict[str, int]:
     return indexes
 
 
+def _wait_for_bm017f_service_start(timeout: float = 30.0, interval: float = 0.25) -> None:
+    """Wait for Red Light's asynchronous service entrypoint in this run's log."""
+    deadline = time.monotonic() + timeout
+    marker = "Main Monitor Service Starting"
+    while True:
+        try:
+            current_log = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            current_log = ""
+        if marker in current_log:
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                "BM-017F Red Light service did not start after activation release"
+            )
+        time.sleep(min(interval, remaining))
+
+
 def validate_bm017f_lifecycle(
     retained_manifest_path: Path,
     retained_artifact_root: Path,
@@ -7328,6 +7348,9 @@ def validate_bm017f_lifecycle(
         if owner_details.get("version") != fixture["versions"][fixture["owner_id"]]:
             raise RuntimeError("Red Light version changed across lifecycle resume")
         print("  updater guard was reasserted before BM-020 startup; lifecycle hold survived restart ✓")
+
+        print("  waiting up to 30 seconds for the Red Light service-start marker in the current disposable log")
+        _wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
 
         print("\n[4/8] verify private verification, hold release, and service-start ordering")
         log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""

@@ -1,4 +1,60 @@
-# Current Handoff — BM-017F step-4 harness ordering correction
+# Current Handoff — BM-017F bounded service-start poll
+
+Implemented the narrowly scoped disposable-harness fix. After unchanged
+step-[3/8] completion checks (enabled, exact Red Light version, frozen
+transaction absent), the harness polls only the current disposable
+`.kodi-test/home/Library/Logs/kodi.log` for `Main Monitor Service Starting`,
+using a monotonic 30-second deadline and 0.25-second intervals. A timeout has
+a specific Red Light service-start diagnostic. Step [4/8] still checks all
+five markers and its safety order; BM-020 classification remains required
+presence-only. No production lifecycle code changed.
+
+Added nine service-start-poll regressions. BM-017F poll/resume/order tests
+passed 26/26; `tests.test_kodi_harness` passed 124/124; compileall and
+`git diff --check` passed. No Kodi process or live BM-017F command was run.
+The complete lifecycle remains `IMPLEMENTED_PENDING_FINAL_LIVE_VALIDATION`.
+The supervisor still needs to run the full disposable live gate using the
+manual command below. The earlier `Unknown addon id 'plugin.video.redlight'`
+exception remains an observed diagnostic only, from before release while the
+add-on was disabled; it did not prompt a production change. BM-023A remains
+blocked; tvOS remains not validated; no new milestone started.
+
+# Prior offline service-start marker diagnosis
+
+Latest disposable-run evidence supports a harness service-start race, not a
+proven Red Light startup failure. Step 3 breaks as soon as the owner is
+enabled and the frozen transaction is absent. It does not wait for Red
+Light's asynchronous `xbmc.service` entrypoint. Step 4 reads the log
+immediately; if the marker is absent, its exception path runs the `finally`
+block, which stops Kodi. The marker check is before the stop, not after it.
+
+Current-run timeline: second session `Starting Kodi` 21:41:07.403; JSON-RPC
+and webserver ready by 21:41:10.800; updater guard 21:41:11.237; held Red
+Light registry state registered at 2.6.8/disabled 21:41:11.591; an
+`Unknown addon id 'plugin.video.redlight'` exception 21:41:12.245; private
+verification 21:41:12.972; activation release 21:41:12.976; BM-020C
+`no_transaction` 21:41:13.002. The service-start marker is absent from both
+logs for this run. No service-specific traceback, dependency failure, or
+service-start attempt was found. Kodi's final Addons33 state is enabled for
+Red Light, and both durable BM transaction files are absent. Current test
+updater policy is AUTOMATIC; exact equality with the in-memory original
+captured by the harness was not logged because step 4 failed before that
+read-back.
+
+The pre-release Unknown addon id exception is notable but does not evidence
+service startup failure: it occurred while the add-on was recorded disabled,
+and BM-022 subsequently logged private verification, activation release, and
+transaction completion. Kodi shutdown time was not preserved; the stop is
+inferred from the harness `finally` path and absent PID file. A prior run took
+205 ms from release to service marker; this run reached the BM-020 marker 26
+ms after release and then checked immediately, so stopping within a plausible
+asynchronous service-scheduling window is consistent with the evidence.
+
+At diagnosis time the state was `BLOCKED_BM017F_HARNESS_SERVICE_START_RACE`.
+The requested bounded poll is now implemented; it does not itself prove live
+service startup. Final disposable validation remains pending.
+
+## Prior checkpoint: step-4 ordering correction
 
 The harness-only ordering defect is corrected and the regression suite passes.
 Step [4/8] continues to require every marker but now asserts the production

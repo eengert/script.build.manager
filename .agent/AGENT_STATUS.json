@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
-  "status": "implemented_pending_bm017f_lifecycle_live_validation",
+  "status": "implemented_pending_final_live_validation",
   "task": "BM-017F",
-  "reason": "Corrected only the BM-017F harness step-4 ordering assertion: it still requires all five markers, but orders only updater guard < private verification < activation release < Red Light service start. BM-020 startup classification remains required and is treated as post-resume diagnostic. Added nine ordering regressions; tests.test_kodi_harness passed 115 tests, compileall and git diff --check passed. No production code changed and no Kodi/live harness was run. The complete BM-017F lifecycle remains pending supervisor live validation.",
+  "reason": "Added a 30-second monotonic poll at 0.25-second intervals for Main Monitor Service Starting in only the current disposable kodi.log after the unchanged BM-017F step-3 enabled/exact-version/transaction-absent checks. Step 4 still requires all five markers and the existing safety order; BM-020 classification remains presence-only. Poll and harness tests pass 124/124; compileall and git diff --check pass. No Kodi launch or BM-017F lifecycle command was run; final live validation remains pending. The observed pre-release Unknown addon id exception is retained as diagnostic only and did not prompt a production change.",
   "last_commit": "8456ae2f7b051ffa163be0c38c0a250fa8f29c10",
   "matrix_sha": "fedefae98aa01253e6b34ecbac1b292b80c21b6a",
   "next_agent": "supervisor",
-  "updated_at": "2026-09-23"
+  "updated_at": "2026-09-24"
 }
