@@ -2,13 +2,81 @@
 
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
-**Status**: `IMPLEMENTED_PENDING_ALIAS_LIVE_VALIDATION` on `agent/codex`.
-Latest alias correction commit: `81e8b2c`; verified import roots were first
-implemented in `93be55a3e3a900de488d388c88fbf39aca885869`. The historical
-`BLOCKED_RED_LIGHT_REQUESTS_ALIAS_SOURCE_MISMATCH` is corrected offline and
-awaits live proof. Red Light's clean-destination lifecycle remains **NOT YET
-LIVE-VALIDATED**. macOS BM-023A remains **STILL BLOCKED**; tvOS remains **NOT
-VALIDATED**.
+**Status**: `IMPLEMENTED_PENDING_BM017F_LIFECYCLE_LIVE_VALIDATION` on
+`agent/codex`. The Requests alias correction commit is `81e8b2c`; verified
+import roots were first implemented in
+`93be55a3e3a900de488d388c88fbf39aca885869`. The BM-017F harness poll now
+consumes the unwrapped JSON-RPC `addon` result. The full lifecycle gate remains
+**NOT YET LIVE-VALIDATED** and needs the supervisor-directed manual command
+below. The latest supervisor-run disposable session had already passed private
+resource verification, activation release, BM-020's `no_transaction` startup
+result, and the first Red Light service start. macOS BM-023A remains
+**STILL BLOCKED**; tvOS remains **NOT VALIDATED**.
+
+### Latest staged-resume diagnosis (2026-09-23)
+
+The preserved `.kodi-test` evidence shows the transaction's quiescence
+checkpoint at `phase=awaiting_restart`,
+`lifecycle_stage=quiescence_awaiting_restart`,
+`lifecycle_restart_count=1`, and the Red Light activation hold unreleased.
+After the full process boundary, the logs show updater-guard reassertion,
+private-resource verification, activation-hold release, BM-020 startup
+classification `no_transaction`, and Red Light service start. The current
+disposable state has Red Light enabled, no frozen-install or BM-020 restart
+transaction JSON, and `general.addonupdates=AUTOMATIC`, matching the saved
+original policy. `settings.db` passes integrity, is in WAL mode, has the
+`settings` table, and contains 592 rows.
+
+There are no explicit per-stage success records. The initializer stages
+through source revalidation, declaration loading, database creation/default
+insertion, final validation, and marker publication passed by inference from
+the later successful private-resource-verification event, which requires all
+structured-resource results to succeed. This proves the Requests alias
+ownership check passed during this live run, although no module-level marker
+was logged. Since the held add-on was enabled, the updater policy restored,
+and the transaction cleared after activation release, no second restart stage
+was left pending. The final phase is inferred to have been `complete` before
+the transaction file was cleared; terminal transaction history is not
+preserved.
+
+The diagnosis found that the inline 180-second poll in `tools/kodi_test.py`
+requires both `owner_details.enabled is True` and no frozen transaction file. The shared
+`jsonrpc()` helper returns `body["result"]`; the poll then incorrectly looks
+for `detail_response["result"]["addon"]`, making `owner_details` empty. The
+generic harness error therefore reflects a harness response-shape mismatch,
+not a transaction-stall marker. This offline diagnosis led to the correction
+recorded below; it did not trigger a Kodi launch or a second lifecycle run.
+
+### Harness response-shape correction (2026-09-23)
+
+`_bm017f_resume_poll_status` reads the top-level `addon` object returned by
+`jsonrpc()`, preserves immediate `needs_attention` failure, and reports
+completion only when the add-on is enabled and the durable transaction is
+absent. Eight regression tests cover raw JSON-RPC unwrapping, enabled and
+disabled states, missing details, pending transaction, `needs_attention`, a
+double-wrapped negative, and the existing HTTP add-on-state consumer.
+
+Validation: `tests.test_kodi_harness` **106 passed**, including the BM-017F
+poll cases **8 passed**; compileall for the touched Python files and
+`git diff --check` passed. No Kodi process, lifecycle harness command, normal
+profile, real device, or private overlay values were accessed in this
+correction. The requested live lifecycle check remains pending supervisor
+direction.
+
+Review confirmed the remaining harness success gates are unchanged: lifecycle
+marker ordering and updater-policy restoration, a zero-change/zero-failure
+second reconciliation, isolated settings database read-back, and exact root
+artifact hash plus dependency count.
+
+Next manual command, not run by this task:
+
+```sh
+cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+
+python tools/kodi_test.py validate-bm017f-lifecycle \
+  --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
+  --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+```
 
 ### Verified package import context
 

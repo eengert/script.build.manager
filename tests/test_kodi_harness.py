@@ -4,6 +4,7 @@ BM-009 unit tests for tools/kodi_test.py.
 Tests cover path safety, process state, command dispatch, install paths, and
 readiness — all without launching real Kodi.
 """
+import json
 import os
 import sys
 import tempfile
@@ -636,6 +637,97 @@ class TestReadiness(unittest.TestCase):
         with patch.object(harness, "jsonrpc", return_value="nope"):
             with self.assertRaises(TimeoutError):
                 harness.wait_for_ready(timeout=0.05, interval=0.001)
+
+
+# ---------------------------------------------------------------------------
+# BM-017F — staged resume poll response shape
+# ---------------------------------------------------------------------------
+
+class TestBm017fResumePoll(unittest.TestCase):
+    def test_jsonrpc_result_shape_completes_resume_poll(self):
+        payload = {
+            "result": {
+                "addon": {
+                    "addonid": "plugin.video.redlight",
+                    "enabled": True,
+                    "version": "2.6.8",
+                },
+            },
+        }
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
+
+        with patch.object(harness.urllib.request, "urlopen", return_value=response):
+            detail_response = harness.jsonrpc("Addons.GetAddonDetails", {
+                "addonid": "plugin.video.redlight",
+                "properties": ["enabled", "version", "broken"],
+            })
+
+        owner_details, complete = harness._bm017f_resume_poll_status(detail_response, None)
+        self.assertEqual(owner_details["addonid"], "plugin.video.redlight")
+        self.assertTrue(complete)
+
+    def test_enabled_addon_without_transaction_completes(self):
+        owner_details, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": True, "version": "2.6.8"}},
+            None,
+        )
+        self.assertTrue(owner_details["enabled"])
+        self.assertTrue(complete)
+
+    def test_disabled_addon_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": False}},
+            None,
+        )
+        self.assertFalse(complete)
+
+    def test_missing_addon_does_not_complete(self):
+        owner_details, complete = harness._bm017f_resume_poll_status({}, None)
+        self.assertEqual(owner_details, {})
+        self.assertFalse(complete)
+
+    def test_present_transaction_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"addon": {"enabled": True}},
+            {"phase": "configuring"},
+        )
+        self.assertFalse(complete)
+
+    def test_needs_attention_raises_even_if_addon_is_enabled(self):
+        with self.assertRaises(RuntimeError) as raised:
+            harness._bm017f_resume_poll_status(
+                {"addon": {"enabled": True}},
+                {
+                    "phase": "needs_attention",
+                    "status_code": "E_CONFIG",
+                    "status_message": "configuration failed",
+                },
+            )
+        self.assertIn("needs attention (E_CONFIG; configuration failed)", str(raised.exception))
+
+    def test_double_wrapped_result_does_not_complete(self):
+        _, complete = harness._bm017f_resume_poll_status(
+            {"result": {"addon": {"enabled": True}}},
+            None,
+        )
+        self.assertFalse(complete)
+
+    def test_existing_http_addon_details_consumer_keeps_unwrapped_contract(self):
+        with patch.object(harness, "jsonrpc", return_value={
+            "addon": {
+                "addonid": "plugin.video.redlight",
+                "enabled": True,
+                "version": "2.6.8",
+            },
+        }):
+            details = harness._HttpAddonStateBackend().get_addon_details(
+                "plugin.video.redlight"
+            )
+
+        self.assertIsNotNone(details)
+        self.assertTrue(details.enabled)
+        self.assertEqual(details.version, "2.6.8")
 
 
 # ---------------------------------------------------------------------------

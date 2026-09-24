@@ -64,7 +64,7 @@ import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved relative to this file's location
@@ -7148,6 +7148,28 @@ def _prepare_bm017f_fixture(
     }
 
 
+def _bm017f_resume_poll_status(
+    detail_response: Any,
+    transaction: Any,
+) -> Tuple[Dict[str, Any], bool]:
+    """Interpret the unwrapped JSON-RPC add-on result and durable transaction."""
+    owner_details: Dict[str, Any] = {}
+    if isinstance(detail_response, dict):
+        addon_details = detail_response.get("addon", {})
+        if isinstance(addon_details, dict):
+            owner_details = addon_details
+
+    if isinstance(transaction, dict) and transaction.get("phase") == "needs_attention":
+        code = str(transaction.get("status_code", "UNKNOWN"))
+        detail = str(transaction.get("status_message", ""))
+        raise RuntimeError(
+            f"BM-017F restart resume needs attention ({code}; {detail})"
+        )
+
+    resume_complete = owner_details.get("enabled") is True and transaction is None
+    return owner_details, resume_complete
+
+
 def validate_bm017f_lifecycle(
     retained_manifest_path: Path,
     retained_artifact_root: Path,
@@ -7247,12 +7269,12 @@ def validate_bm017f_lifecycle(
         deadline = time.time() + 180.0
         owner_details = {}
         final_transaction = None
+        resume_complete = False
         while time.time() < deadline:
             detail_response = jsonrpc("Addons.GetAddonDetails", {
                 "addonid": fixture["owner_id"],
                 "properties": ["enabled", "version", "broken"],
             })
-            owner_details = detail_response.get("result", {}).get("addon", {})
             tx_path = (
                 KODI_USERDATA_DIR / "addon_data" / ADDON_ID
                 / "frozen_install_transaction.json"
@@ -7261,16 +7283,14 @@ def validate_bm017f_lifecycle(
                 final_transaction = json.loads(tx_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, json.JSONDecodeError, OSError):
                 final_transaction = None
-            if final_transaction and final_transaction.get("phase") == "needs_attention":
-                code = str(final_transaction.get("status_code", "UNKNOWN"))
-                detail = str(final_transaction.get("status_message", ""))
-                raise RuntimeError(
-                    f"BM-017F restart resume needs attention ({code}; {detail})"
-                )
-            if owner_details.get("enabled") is True and final_transaction is None:
+            owner_details, resume_complete = _bm017f_resume_poll_status(
+                detail_response,
+                final_transaction,
+            )
+            if resume_complete:
                 break
             time.sleep(0.5)
-        if not owner_details.get("enabled") or final_transaction is not None:
+        if not resume_complete:
             raise RuntimeError("BM-017F did not finish its staged restart resume")
         if owner_details.get("version") != fixture["versions"][fixture["owner_id"]]:
             raise RuntimeError("Red Light version changed across lifecycle resume")

@@ -1,4 +1,49 @@
-# Current Handoff — BM-017F Requests alias correction ready for live validation
+# Current Handoff — BM-017F harness poll correction
+
+## Result
+
+Corrected `tools/kodi_test.py` so the staged-resume poll consumes the top-level
+`addon` object returned by `jsonrpc()`. Immediate `needs_attention` handling,
+the enabled add-on requirement, and the absent-transaction requirement remain
+in force. Added eight regression cases, including the raw JSON-RPC body and an
+existing correct `_HttpAddonStateBackend` consumer.
+
+Validation: `python -m unittest tests.test_kodi_harness` — **106 passed**;
+`TestBm017fResumePoll` — **8 passed**; compileall for the two changed Python
+files and `git diff --check` passed. No Kodi launch or lifecycle harness run
+was performed. No normal profile, real device, or private overlay values were
+accessed. The earlier supervisor-run disposable evidence had reached private
+resource verification, activation release, BM-020 `no_transaction`, and the
+first Red Light service start; the full BM-017F gate still needs a new
+supervisor-directed live validation.
+
+Reviewed remaining checks are intact: lifecycle marker order and updater
+policy restoration, a zero-change/zero-failure second reconciliation, isolated
+settings database read-back, and exact root artifact hash plus dependency
+count.
+
+## Classification and next step
+
+- BM-017F: `IMPLEMENTED_PENDING_BM017F_LIFECYCLE_LIVE_VALIDATION`.
+- Red Light lifecycle: `NOT YET LIVE-VALIDATED` as a complete harness gate.
+- macOS BM-023A: `STILL BLOCKED`.
+- tvOS: `NOT VALIDATED`.
+- No normal Kodi profile, real device, or private overlay values were accessed.
+
+Smallest next step: supervisor may run the following command once in the
+disposable harness. It was not run during this correction.
+
+```sh
+cd /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+
+python tools/kodi_test.py validate-bm017f-lifecycle \
+  --retained-manifest /private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json \
+  --artifact-store /private/tmp/bm022v-familyroom.ygB0t5/artifact-store
+```
+
+---
+
+# Previous Handoff — BM-017F Requests alias correction ready for live validation
 
 ## Result
 
