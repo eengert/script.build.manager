@@ -22,8 +22,9 @@ transaction clearance, policy restoration, add-on retention, and unchanged
 restart-record presence. The existing install setup and call path remain in the
 install branch.
 
-Commit `c972c8a` contains only the adapter support/template/version and focused
-tests. Adapter tests passed **29/29**; BM harness tests passed **124/124**; full
+Commits `c972c8a` and `f182774` contain only the adapter support/template/version
+and focused tests, including the final safe failure-attribution correction.
+Adapter tests passed **29/29**; BM harness tests passed **124/124**; full
 offline suite passed **1837/1837**. Python compilation, generated ZIP CRC
 integrity and source compilation, tracked JSON parsing, and `git diff --check`
 passed. No production Build Manager code changed. No Kodi app was launched, no

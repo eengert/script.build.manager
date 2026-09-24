@@ -2,7 +2,7 @@
 
 **Result:** `OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RECOVERY_NOT_RUN`.
 
-Commit `c972c8a` adds strictly allowlisted adapter modes `install` and
+Commits `c972c8a` and `f182774` add strictly allowlisted adapter modes `install` and
 `recover`, bumping the temporary package to 0.0.3. Default invocation remains
 the existing install path. Recovery uses the production store/coordinator and
 runtime/policy/artifact backends, rejects missing/invalid/non-`needs_attention`
