@@ -1,0 +1,209 @@
+"""Temporary in-process trigger for the authorized BM-023A macOS validation."""
+import importlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import xbmc
+import xbmcvfs
+
+from adapter_config import (
+    ARTIFACT_ROOT,
+    CONFIGURATION_PATH,
+    DEVICE_PROFILE_ID,
+    EXPECTED_OVERLAY_ID,
+    MANIFEST_PATH,
+    OVERLAY_SOURCE,
+)
+from adapter_support import (
+    AdapterBootstrapError,
+    safe_failure_payload,
+    verify_build_manager_source,
+)
+
+
+RESULT_PATH = None
+STAGE = "LOCATE_BUILD_MANAGER"
+FAILING_CALLABLE = "xbmcvfs.translatePath"
+
+
+def _rpc(method, params):
+    response = json.loads(xbmc.executeJSONRPC(json.dumps({
+        "jsonrpc": "2.0", "method": method, "params": params, "id": 1,
+    })))
+    if "error" in response:
+        raise RuntimeError("jsonrpc_error")
+    return response.get("result", {})
+
+
+def _safe_transaction(transaction):
+    if transaction is None:
+        return None
+    return {
+        "phase": getattr(transaction.phase, "value", transaction.phase),
+        "lifecycle_stage": getattr(transaction.lifecycle_stage, "value", transaction.lifecycle_stage),
+        "lifecycle_restart_count": transaction.lifecycle_restart_count,
+        "activation_hold_ids": list(transaction.activation_hold_ids),
+        "activation_hold_released": transaction.activation_hold_released,
+        "private_overlay_required": transaction.private_overlay_required,
+        "original_update_policy": transaction.original_update_policy,
+        "updater_guard_required": transaction.updater_guard_required,
+        "status_code": transaction.status_code,
+        "resolution_records": [
+            {
+                "addon_id": record.addon_id,
+                "resolution": getattr(record.resolution, "value", record.resolution),
+                "state": getattr(record.state, "value", record.state),
+                "resolved_version": record.resolved_version,
+                "desired_enabled": record.desired_enabled,
+                "repository_id": record.repository_id,
+            }
+            for record in transaction.resolution_records
+        ],
+    }
+
+
+def _write_result(payload):
+    RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".bm023a-result.", suffix=".tmp", dir=str(RESULT_PATH.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, RESULT_PATH)
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def main():
+    global STAGE, FAILING_CALLABLE, RESULT_PATH
+    payload = {"ok": False, "error_type": "not_started"}
+    try:
+        STAGE = "LOCATE_BUILD_MANAGER"
+        FAILING_CALLABLE = "xbmcvfs.translatePath"
+        profile_root = Path(xbmcvfs.translatePath("special://profile/")).resolve(strict=True)
+        RESULT_PATH = profile_root / "addon_data" / "script.build.manager" / "bm023a_live_result.json"
+        addons_root = Path(xbmcvfs.translatePath("special://home/addons")).resolve(strict=True)
+        addon_root = Path(
+            xbmcvfs.translatePath("special://home/addons/script.build.manager")
+        ).resolve(strict=True)
+        if (
+            profile_root.name != "userdata"
+            or profile_root.parent.name != "portable_data"
+            or "Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data" not in str(profile_root)
+        ):
+            raise AdapterBootstrapError(
+                "LOCATE_BUILD_MANAGER", "xbmcvfs.translatePath", "addon_root_mismatch"
+            )
+        if not addon_root.is_dir():
+            raise AdapterBootstrapError(
+                "LOCATE_BUILD_MANAGER", "pathlib.Path", "addon_root_mismatch"
+            )
+
+        sys.path.insert(0, str(addon_root))
+        STAGE = "IMPORT_RESOURCES"
+        FAILING_CALLABLE = "importlib.import_module"
+        resources_lib = importlib.import_module("resources.lib")
+
+        STAGE = "VERIFY_BUILD_MANAGER_SOURCE"
+        FAILING_CALLABLE = "pathlib.Path"
+        verify_build_manager_source(addons_root, addon_root, resources_lib)
+
+        STAGE = "IMPORT_PRODUCTION_MODULES"
+        FAILING_CALLABLE = "importlib.import_module"
+        artifacts_module = importlib.import_module("resources.lib.artifacts")
+        build_manager_module = importlib.import_module("resources.lib.build_manager")
+        frozen_module = importlib.import_module("resources.lib.frozen")
+        frozen_install_module = importlib.import_module("resources.lib.frozen_install")
+        private_overlay_module = importlib.import_module("resources.lib.private_overlay")
+        restart_module = importlib.import_module("resources.lib.restart_coordinator")
+        update_guard_module = importlib.import_module("resources.lib.update_guard")
+
+        STAGE = "LOAD_FROZEN_MANIFEST"
+        FAILING_CALLABLE = "pathlib.Path"
+        manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
+        FAILING_CALLABLE = "FrozenBuildManifest.from_json"
+        manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+
+        STAGE = "LOAD_CONFIGURATION"
+        FAILING_CALLABLE = "pathlib.Path"
+        if not Path(CONFIGURATION_PATH).is_file():
+            raise AdapterBootstrapError(
+                STAGE, FAILING_CALLABLE, "path_missing_or_unreadable"
+            )
+
+        STAGE = "LOAD_PRIVATE_OVERLAY"
+        FAILING_CALLABLE = "PrivateOverlayStore.import_file"
+        imported_overlay = private_overlay_module.PrivateOverlayStore().import_file(OVERLAY_SOURCE)
+        if imported_overlay.overlay_id != EXPECTED_OVERLAY_ID:
+            raise AdapterBootstrapError(
+                STAGE, FAILING_CALLABLE, "invalid_input"
+            )
+
+        STAGE = "BUILD_COORDINATOR"
+        FAILING_CALLABLE = "FrozenInstallCoordinator"
+        manager = build_manager_module.BuildManager()
+
+        def resolve_missing_artifact(prompt):
+            if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
+                return frozen_install_module.ResolutionChoice.SKIP
+            return frozen_install_module.ResolutionChoice.CANCEL
+
+        coordinator = frozen_install_module.FrozenInstallCoordinator(
+            store=frozen_install_module.FrozenInstallStore(),
+            artifact_store=artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT)),
+            policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
+            installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
+            configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
+            resolution_decider=resolve_missing_artifact,
+        )
+
+        STAGE = "INVOKE_INSTALL"
+        FAILING_CALLABLE = "FrozenInstallCoordinator.install"
+        result = coordinator.install(
+            manifest,
+            manifest_path=MANIFEST_PATH,
+            device_profile_id=DEVICE_PROFILE_ID,
+            configuration_manifest_path=CONFIGURATION_PATH,
+            interactive=True,
+        )
+        transaction = frozen_install_module.FrozenInstallStore().inspect()
+        installed = {}
+        for node in manifest.addons:
+            if node.system:
+                continue
+            detail = coordinator.installer.get_addon_details(node.addon_id)
+            installed[node.addon_id] = None if detail is None else {
+                "version": detail.version,
+                "enabled": detail.enabled,
+                "broken": detail.broken,
+            }
+        policy_result = _rpc("Settings.GetSettingValue", {"setting": "general.addonupdates"})
+
+        STAGE = "SERIALIZE_RESULT"
+        FAILING_CALLABLE = "result_serializer"
+        payload = {
+            "ok": True,
+            "outcome": result.outcome,
+            "code": result.code,
+            "frozen_manifest_fingerprint": manifest.fingerprint(),
+            "overlay_imported": True,
+            "transaction": _safe_transaction(transaction),
+            "installation_order": list(coordinator.installer.install_order),
+            "installed": installed,
+            "updater_policy": policy_result.get("value") if isinstance(policy_result, dict) else None,
+        }
+    except Exception as exc:
+        payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
+    _write_result(payload)
+
+
+main()

@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "complete",
-  "task": "BM-017F",
-  "reason": "BM-017F COMPLETE and synchronized with protected matrix tip 66b0fd8a123ef778b23ba42703937b07eefc4e6f. Substantive matrix reconstruction is 4dfd97e180d14976adec8540d5c0c93893519249. Supervisor-provided disposable validation passed all 8 steps and 20 checks; Red Light structured private-resource lifecycle is LIVE-VALIDATED. BM-023A macOS is READY_TO_RETRY and was not started; tvOS is NOT VALIDATED. No private values are recorded.",
-  "last_commit": "4dfd97e180d14976adec8540d5c0c93893519249",
+  "status": "ready_to_retry",
+  "task": "BM-023A offline adapter bootstrap correction",
+  "reason": "Corrected the adapter bootstrap offline using a tracked generator/template at version 0.0.2. Concrete resources.lib provenance is canonicalized and constrained beneath the exact installed Build Manager add-on root; namespace resources.__file__ is not dereferenced. Failure output uses only allowlisted adapter_stage, failing_callable, failure_category, and error_type fields without traceback, raw exception text, paths, or private values. Adapter regressions passed 16/16 and BM harness tests passed 124/124; compileall, JSON parsing, and git diff --check passed. Corrected ZIP regenerated under /private/tmp from the authoritative generator. No Kodi executable/profile, normal profile, real device, or private-overlay file was accessed and no live retry occurred. BM-017F is COMPLETE on matrix 66b0fd8a123ef778b23ba42703937b07eefc4e6f; macOS BM-023A is READY_TO_RETRY, not passed; tvOS remains NOT VALIDATED.",
+  "last_commit": "0bf949641bf736e6e14c49c8892a34add60c8540",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-24"

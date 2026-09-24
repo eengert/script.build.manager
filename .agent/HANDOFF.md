@@ -1,4 +1,38 @@
-# Current Handoff — BM-017F complete and synchronized (2026-09-24)
+# Current Handoff — BM-023A adapter bootstrap corrected offline (2026-09-24)
+
+BM-017F remains complete and synchronized to matrix `66b0fd8`.
+
+BM-023A's namespace-package TypeError is corrected offline. The authoritative
+source is now the tracked `tools/build_bm023a_adapter.py` generator with
+templates in `tools/bm023a_adapter/` and strict source-check/diagnostic helpers
+in `tools/bm023a_adapter_support.py`. The prior one-off existed only under
+`/private/tmp`; no project generator was found. The one-off was intentionally
+outside Git because it embeds machine-specific portable paths and the
+private-overlay source path. The tracked builder preserves those values only
+in generated output and carries them forward only from six allowlisted string
+assignments. Adapter version advanced from 0.0.1 to 0.0.2 to ensure Kodi sees
+the corrected ZIP as an upgrade; packaging retains the built-in ZIP-installer
+layout.
+
+The fixed bootstrap imports `resources.lib`, resolves its concrete `__file__`,
+and requires it to be exactly the package initializer inside the canonical
+installed `script.build.manager` tree. The add-on root must be the direct
+child of the canonical installed add-ons root. Host/project collisions,
+wrong roots, and symlink/path escapes fail closed. The namespace package's
+`resources.__file__` is never dereferenced. Failures expose only allowlisted
+`adapter_stage`, `failing_callable`, `failure_category`, and `error_type`;
+there is no raw exception text, traceback, or path in diagnostics. The
+successful result also omits private overlay ID/fingerprint.
+
+Offline validation: adapter/bootstrap tests **16/16**, BM harness tests
+**124/124**, compileall, JSON parsing, and `git diff --check` pass. The corrected
+0.0.2 ZIP was regenerated under `/private/tmp` from the tracked source. No
+Kodi app/profile, normal profile, real device, or private-overlay file was
+accessed; no live retry was run. macOS BM-023A is **READY_TO_RETRY**, not
+passed; BM-017F remains complete; tvOS is not validated. The supervisor may
+authorize the separate live retry.
+
+## Prior handoff — BM-017F complete and synchronized (2026-09-24)
 
 **Result**: `BM-017F COMPLETE`. The reviewed substantive endpoint diff was
 reconstructed onto protected matrix as `4dfd97e180d14976adec8540d5c0c93893519249`;
@@ -1719,6 +1753,35 @@ Focused tests passed 1391/1391 and the full suite passed 1472/1472.
 `git diff --check` passed. BM-020B/C and BM-017 remain unstarted. The real
 Kodi profile, Apple TV, and all devices remained untouched. Family-room
 distribution/source work remains separate and was not started.
+
+## BM-023A macOS retry — 2026-09-24
+
+**Status:** `BLOCKED_BM023A_ADAPTER_NAMESPACE_PACKAGE_PATH_TYPEERROR` after one authorized live attempt and offline diagnosis.
+
+**What was done:** Confirmed the dedicated Kodi 21.3 app remained in portable
+mode and was the only Kodi process. Installed Build Manager 0.1.0 and the
+temporary BM-023A invocation adapter through Kodi's built-in ZIP installer in
+the test app's portable profile. Invoked the adapter once. It returned
+`ok=false`, `error_type=TypeError` without an outcome, code, transaction, or
+lifecycle stage. Offline reproduction located it at the temporary adapter's
+`Path(resources.__file__)` source check: `resources` is a namespace package
+and `__file__` is `None`. The filtered target log has no traceback. The
+updater policy read-back remained 0, equal to the pre-run value.
+
+**What was not done:** No frozen transaction or imported overlay file appeared
+in the portable profile, and none of the 32 non-system manifest add-ons had an
+installed add-on directory. Red Light resource initialization, private apply,
+activation release, restart/resume, and final validation have no positive
+evidence. No product code change or test suite run. No normal Kodi profile or
+real device was accessed. The exact test-app process was subsequently stopped
+and verified exited; no second attempt occurred.
+
+**Smallest next step:** Supervisor review of the adapter guard correction
+recommendation. The adapter can validate `resources.lib.__file__` or
+`resources.__path__`; any live retry requires separate supervisor direction.
+
+**Human input:** Supervisor direction before changing the adapter or resuming
+macOS BM-023A. tvOS remains unvalidated.
 
 ## BM-023B — protected matrix integration and Codex synchronization
 

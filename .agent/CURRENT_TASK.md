@@ -19,7 +19,7 @@ scope. This integration did not launch Kodi or access a normal profile, a
 real device, or private overlay values.
 
 - BM-017F: `COMPLETE`.
-- macOS BM-023A: `READY_TO_RETRY`; no retry was started.
+- macOS BM-023A: bootstrap blocker corrected offline; `READY_TO_RETRY`. No Kodi retry was run and BM-023A is not passed.
 - tvOS: `NOT VALIDATED`.
 
 On matrix, focused lifecycle/resource/import/harness modules passed **499/499**;
@@ -28,10 +28,114 @@ JSON files** including the schema, and `git diff --check` passed. A test-only
 import-spy ordering correction ensures `unittest.mock` target resolution is
 not counted as an add-on import under Python 3.14.
 
-The next supervisor-authorized task is the macOS BM-023A retry against
-`/Applications/Kodi Build Manager Test.app`, launched exactly with
-`open "/Applications/Kodi Build Manager Test.app" --args -p`. Do not start
-that retry until the separate supervisor direction arrives.
+The authorized macOS BM-023A attempt and offline diagnosis are recorded below.
+The dedicated test-app process was stopped. This task does not relaunch it or
+resume the live retry; supervisor authorization remains required.
+
+## BM-023A adapter bootstrap correction — 2026-09-24
+
+The prior adapter source existed only as a one-off under `/private/tmp`; a
+read-only search of this repository, sibling worktrees, and shared tools found
+no tracked generator or staging source. The one-off kept portable-profile
+paths and the private-overlay source path out of the public repository. To
+make future retries reproducible without committing those machine-specific
+values, added the authoritative project generator `tools/build_bm023a_adapter.py`,
+templates under `tools/bm023a_adapter/`, and independently tested support code
+at `tools/bm023a_adapter_support.py`. The generator can carry forward only six
+literal configuration fields from the old adapter or accept them explicitly.
+The adapter ZIP layout mirrors the prior Kodi built-in ZIP-installer format.
+
+Adapter version is **0.0.2** (up from 0.0.1) so Kodi's add-on updater/install
+path sees a newer package. The adapter now imports concrete `resources.lib`,
+resolves its `__file__`, and verifies the canonical package path is exactly
+inside the expected installed `script.build.manager/resources/lib` tree. It
+also proves the canonical add-on root is a direct child of the installed
+add-ons directory. Escapes, symlinks to outside sources, wrong roots, and
+host/project module collisions fail closed. `resources.__file__` is never
+dereferenced.
+
+Failures serialize only allowlisted `adapter_stage`, `failing_callable`,
+`failure_category`, and `error_type` labels; raw exception text, tracebacks,
+paths, and private values are omitted. Successful transaction diagnostics no
+longer include private overlay ID or fingerprint. Offline regressions passed
+16/16, including the old namespace-package TypeError reproduction and the
+corrected fixture, API signature binding, provenance/path escapes, diagnostic
+redaction, and generated ZIP/version checks. The corrected 0.0.2 ZIP was
+regenerated under `/private/tmp` from the tracked generator and previous
+allowlisted adapter configuration. No Kodi executable, portable profile,
+normal profile, device, or private-overlay file was accessed; no live retry
+was run. macOS BM-023A is `READY_TO_RETRY`, not passed. BM-017F remains
+`COMPLETE`; tvOS remains `NOT VALIDATED`.
+
+## macOS BM-023A retry — 2026-09-24
+
+The dedicated Kodi 21.3 test application was confirmed in portable mode and
+launched with the required `-p` argument. Its only Kodi process remained the
+test-app binary. The user confirmed `addons.unknownsources=true` for this test
+profile. Kodi's built-in ZIP installer installed the repository Build Manager
+package (0.1.0) and a temporary invocation adapter (0.0.1) into the app's
+portable add-ons directory. The adapter was invoked once.
+
+The adapter result is `ok=false`, `error_type=TypeError`; it saved no outcome,
+code, transaction, or lifecycle stage, and the filtered test-app log contains
+no traceback. No frozen transaction file or imported overlay file was present
+in the portable profile. None of the 32 non-system add-ons in the retained
+manifest had an installed add-on directory. The updater policy read-back was
+0, matching its pre-run value. The live result did not record its stage; the
+offline diagnosis below identifies the adapter failure before Build Manager
+modules were imported. Activation holds, artifact installs, Red Light resource
+initialization/private apply, restart/resume, and final validation have no
+positive evidence.
+
+No product code changed and no test suite was run. No normal Kodi profile or
+real device was accessed. The exact test-app process was later stopped with a
+graceful termination signal and verified exited. No second attempt occurred.
+
+### Offline TypeError diagnosis — 2026-09-24
+
+**Classification:** `BLOCKED_BM023A_ADAPTER_NAMESPACE_PACKAGE_PATH_TYPEERROR`.
+
+The temporary adapter entrypoint is `default.py` `main()`. After adding the
+installed Build Manager directory to `sys.path`, it imports the top-level
+`resources` directory and evaluates `Path(resources.__file__).resolve()` at
+line 86. The installed add-on has no `resources/__init__.py`, so Python loads
+`resources` as a namespace package with `__file__ is None`; constructing
+`Path(None)` raises `TypeError: expected str, bytes or os.PathLike object,
+not NoneType`. The offline reproduction used the installed portable add-on
+source under Python 3.10.9 and Kodi API stubs; it reproduced this exact
+expression failure without reading the private overlay input or writing to
+the portable profile.
+
+The adapter stops before importing `resources.lib`, `BuildManager`, or
+`FrozenInstallCoordinator`. It therefore constructs no manifest/config
+request, imports no private overlay, calls no BM production function, and
+does not reach `FrozenInstallStore.create()` (`resources/lib/frozen_install.py`
+line 1874). The later `ReconcileRequest` construction at line 2109 is also
+unreached. This is adapter stage A: before the Build Manager production
+entrypoint. The coordinator constructor and `install()` arguments do bind to
+the current worker API when checked offline; there is no signature mismatch.
+
+The installed Build Manager is version 0.1.0 and its 45 runtime files match
+the current worker byte-for-byte. The installed adapter is version 0.0.1 and
+matches its temporary source byte-for-byte. No source skew was found. The
+portable result still contains only `ok=false` and `error_type=TypeError`;
+the filtered portable log has no traceback. No transaction JSON or add-on
+installation appeared. Zero-byte transaction lock files predate the adapter
+result and are not transaction records.
+
+The smallest correction is to make the temporary adapter verify an actual
+regular package module such as `resources.lib.__file__`, or verify the
+namespace package's `resources.__path__`; do not dereference
+`resources.__file__`. For a future authorized run, add a stage label and
+allowlisted failure category/callable fields while omitting tracebacks, raw
+exception strings, and private data. No correction or live retry was made in
+this diagnosis.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `BLOCKED_BM023A_ADAPTER_NAMESPACE_PACKAGE_PATH_TYPEERROR`;
+  supervisor direction is required before adapter correction or another live
+  attempt.
+- tvOS: `NOT VALIDATED`.
 
 ## Historical pre-final-validation implementation and diagnosis
 

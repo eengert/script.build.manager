@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="script.build.manager.bm023a_driver" name="BM-023A live invocation adapter" version="0.0.2" provider-name="Build Manager validation">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0" />
+    <import addon="script.build.manager" version="0.1.0" />
+  </requires>
+  <extension point="xbmc.python.script" library="default.py">
+    <provides>executable</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Temporary invocation adapter for the authorized macOS validation</summary>
+    <platform>all</platform>
+  </extension>
+</addon>
