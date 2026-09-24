@@ -1,10 +1,10 @@
 {
   "active_agent": "codex",
   "status": "blocked",
-  "task": "BM-023A allowlisted recovery adapter mode",
-  "reason": "Offline-only adapter recovery mode and safe failure attribution implemented in c972c8a and f182774; adapter tests 29/29, BM harness 124/124, full suite 1837/1837, compileall, JSON parsing, ZIP integrity, and diff check passed. The generated package version is 0.0.3. No Kodi was launched, the adapter was not installed or invoked, and neither recovery nor BM-023A retry was performed. Await supervisor review and separate authorization for any live action. BM-017F COMPLETE; tvOS NOT VALIDATED.",
-  "last_commit": "f182774",
+  "task": "BM-023A recovery adapter dispatch correction",
+  "reason": "Offline diagnosis proved the Addons.ExecuteAddon params string recover was delivered as sys.argv[1], while adapter 0.0.3 parsed sys.argv[2:] and silently selected its no-argument install default. Adapter-only correction now parses argv[1:], requires one explicit allowlisted install/recover mode, identifies preselection failures as unselected, and bumps the temporary adapter to 0.0.4. Adapter tests 35/35, BM harness 124/124, full suite 1843/1843, compileall, JSON parsing, ZIP integrity/source checks, and diff check passed. No Kodi was launched; corrected adapter not installed or invoked; no recovery or retry performed. BM-017F COMPLETE; macOS BM-023A BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL; tvOS NOT VALIDATED.",
+  "last_commit": "pending",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
-  "next_agent": "supervisor",
+  "next_agent": "eric",
   "updated_at": "2026-09-24"
 }

@@ -1,4 +1,32 @@
-# Current Handoff — BM-023A recovery adapter implemented offline (2026-09-24)
+# Current Handoff — BM-023A adapter dispatch corrected offline (2026-09-24)
+
+**Result:** `OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
+
+The failed 0.0.3 dispatch is explained by an argv indexing mismatch. The prior
+JSON-RPC call targeted `script.build.manager.bm023a_driver` with the string
+parameter `recover`; Kodi places it at `sys.argv[1]`, but the adapter read
+`sys.argv[2:]`. The old empty-argument default selected install. Adapter 0.0.4
+now reads `sys.argv[1:]`, accepts only one explicit `install`/`recover` token
+(or its exact `?mode=...` form), and fails closed for missing/invalid input.
+Every result is tagged `install`, `recover`, or `unselected` before mode
+selection. Recovery remains bound to exactly
+`abandon(acknowledge_restore_failure=False)`.
+
+Adapter tests **35/35**; Kodi harness **124/124**; full suite **1843/1843**;
+compileall, JSON parsing, generated ZIP integrity/source checks, and
+`git diff --check` passed. No production Build Manager code changed. No Kodi
+launch, corrected adapter install/invocation, recovery, BM-023A retry, updater
+change, real-profile/device access, or private-value access occurred. ZIP test
+used fixture-only configuration.
+
+BM-017F remains `COMPLETE`; macOS BM-023A remains
+`BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`; tvOS remains
+`NOT VALIDATED`. Smallest next step: Eric manually installs adapter 0.0.4.
+Do not invoke or retry without separate explicit authorization.
+
+---
+
+# Historical handoff — BM-023A recovery adapter implemented offline (2026-09-24)
 
 **Result:** `OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RECOVERY_NOT_RUN`.
 

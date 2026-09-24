@@ -17,6 +17,7 @@ from resources.lib.frozen_install import FrozenInstallCoordinator
 from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
     AdapterBootstrapError,
+    identify_adapter_result,
     parse_adapter_mode,
     recover_frozen_install,
     safe_failure_payload,
@@ -221,7 +222,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.3")
+            self.assertEqual(ADAPTER_VERSION, "0.0.4")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -239,7 +240,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.3"', addon_xml)
+            self.assertIn('version="0.0.4"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -289,10 +290,27 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
             update_policy_type=self.Policy,
         )
 
-    def test_default_and_explicit_install_mode_preserve_install_default(self):
-        self.assertEqual(parse_adapter_mode([]), "install")
-        self.assertEqual(parse_adapter_mode([""]), "install")
+    def test_previous_jsonrpc_shape_reproduces_old_sysargv_slice_bug_offline(self):
+        # The old request supplied params="recover". Kodi exposes the script
+        # path as argv[0] and that one add-on argument as argv[1].
+        simulated_sys_argv = ["default.py", "recover"]
+        self.assertEqual(simulated_sys_argv[2:], [])
+        with self.assertRaises(AdapterBootstrapError) as raised:
+            parse_adapter_mode(simulated_sys_argv[2:])
+        self.assertEqual(raised.exception.failure_category, "mode_missing")
+        self.assertEqual(parse_adapter_mode(simulated_sys_argv[1:]), "recover")
+
+    def test_corrected_jsonrpc_argument_shapes_select_recover(self):
+        self.assertEqual(parse_adapter_mode(["recover"]), "recover")
+        self.assertEqual(parse_adapter_mode(["?mode=recover"]), "recover")
+
+    def test_install_requires_an_explicit_allowlisted_mode(self):
         self.assertEqual(parse_adapter_mode(["install"]), "install")
+        self.assertEqual(parse_adapter_mode(["?mode=install"]), "install")
+        for args in ([], [""]):
+            with self.subTest(args=args), self.assertRaises(AdapterBootstrapError) as raised:
+                parse_adapter_mode(list(args))
+            self.assertEqual(raised.exception.failure_category, "mode_missing")
 
     def test_explicit_recover_selects_only_fixed_recovery_mode(self):
         self.assertEqual(parse_adapter_mode(["recover"]), "recover")
@@ -301,8 +319,23 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
                 parse_adapter_mode(list(args))
 
     def test_unknown_mode_is_rejected_before_mutation(self):
-        with self.assertRaises(AdapterBootstrapError):
-            parse_adapter_mode(["install;recover"])
+        for args in (["install;recover"], ["?mode=recover&mode=install"], ["recover", "extra"]):
+            with self.subTest(args=args), self.assertRaises(AdapterBootstrapError) as raised:
+                parse_adapter_mode(list(args))
+            self.assertEqual(raised.exception.failure_category, "mode_invalid")
+
+    def test_result_identity_distinguishes_modes_and_preselection_failure(self):
+        self.assertEqual(
+            identify_adapter_result({"ok": True}, "install"),
+            {"ok": True, "adapter_mode": "install"},
+        )
+        self.assertEqual(
+            identify_adapter_result({"ok": True}, "recover"),
+            {"ok": True, "adapter_mode": "recover"},
+        )
+        failure = identify_adapter_result({"ok": False, "failure_category": "mode_missing"}, "unselected")
+        self.assertEqual(failure["adapter_mode"], "unselected")
+        self.assertEqual(failure["failure_category"], "mode_missing")
 
     def test_recovery_calls_abandon_once_with_false_and_reports_safe_postconditions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -321,6 +354,30 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
                 "frozen_addons_retained": True,
             })
             self.assertEqual(fixture[4].read_text(encoding="utf-8"), "retained")
+
+    def test_recovery_result_remains_explicitly_tagged_and_install_path_is_not_called(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            # An install callable is deliberately present and must remain unused.
+            install_calls = []
+            fixture[3].install = lambda *args, **kwargs: install_calls.append(True)
+            payload = identify_adapter_result(self.run_recovery(fixture), "recover")
+            self.assertEqual(payload["adapter_mode"], "recover")
+            self.assertEqual(fixture[-1], [False])
+            self.assertEqual(install_calls, [])
+
+    def test_install_result_is_explicitly_tagged(self):
+        payload = identify_adapter_result({"ok": True, "outcome": "complete"}, "install")
+        self.assertEqual(payload["adapter_mode"], "install")
+
+    def test_recovery_and_install_calls_are_in_disjoint_dispatch_branches(self):
+        source = (Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in").read_text()
+        dispatch = source.split('if mode == "recover":', 1)[1]
+        recovery_branch, install_branch = dispatch.split("        else:", 1)
+        self.assertIn("recover_frozen_install(", recovery_branch)
+        self.assertNotIn("coordinator.install(", recovery_branch)
+        self.assertIn("coordinator.install(", install_branch)
+        self.assertNotIn("recover_frozen_install(", install_branch)
 
     def test_no_transaction_is_rejected_without_abandon(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -398,15 +455,19 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
             self.assertEqual(set(payload), {
                 "ok", "error_type", "adapter_stage", "failing_callable", "failure_category"
             })
+            tagged = identify_adapter_result(payload, "unselected")
+            self.assertEqual(tagged["adapter_mode"], "unselected")
+            self.assertNotIn(secret, json.dumps(tagged))
 
     def test_adapter_has_no_arbitrary_dispatch_and_keeps_install_branch(self):
         root = Path(__file__).parents[1]
         source = (root / "tools/bm023a_adapter/default.py.in").read_text()
         self.assertIn('if mode == "recover":', source)
+        self.assertIn("parse_adapter_mode(sys.argv[1:])", source)
         self.assertIn('coordinator.install(', source)
         self.assertNotIn("eval(", source)
         self.assertNotIn("exec(", source)
-        self.assertEqual(parse_adapter_mode([]), "install")
+        self.assertNotIn("sys.argv[2:]", source)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from adapter_config import (
 )
 from adapter_support import (
     AdapterBootstrapError,
+    identify_adapter_result,
     parse_adapter_mode,
     recover_frozen_install,
     safe_failure_payload,
@@ -88,6 +89,7 @@ def _write_result(payload):
 def main():
     global STAGE, FAILING_CALLABLE, RESULT_PATH
     payload = {"ok": False, "error_type": "not_started"}
+    mode = "unselected"
     try:
         STAGE = "LOCATE_BUILD_MANAGER"
         FAILING_CALLABLE = "xbmcvfs.translatePath"
@@ -109,7 +111,9 @@ def main():
             raise AdapterBootstrapError(
                 "LOCATE_BUILD_MANAGER", "pathlib.Path", "addon_root_mismatch"
             )
-        mode = parse_adapter_mode(sys.argv[2:])
+        # Kodi's script argv is [script_path, first_addon_argument, ...].
+        # The mode must be taken from argv[1], not argv[2].
+        mode = parse_adapter_mode(sys.argv[1:])
 
         sys.path.insert(0, str(addon_root))
         STAGE = "IMPORT_RESOURCES"
@@ -234,6 +238,7 @@ def main():
             }
     except Exception as exc:
         payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
+    payload = identify_adapter_result(payload, mode)
     _write_result(payload)
 
 

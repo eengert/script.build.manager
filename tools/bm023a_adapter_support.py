@@ -7,7 +7,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.3"
+ADAPTER_VERSION = "0.0.4"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 
@@ -54,6 +54,8 @@ FAILURE_CATEGORIES = frozenset({
     "transaction_identity_invalid",
     "original_policy_missing",
     "unsupported_recovery_state",
+    "mode_missing",
+    "mode_invalid",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -80,18 +82,30 @@ def _bootstrap_error(stage: str, callable_name: str, category: str) -> AdapterBo
 
 
 def parse_adapter_mode(arguments: list[str]) -> str:
-    """Accept only the no-argument install default or one explicit mode token."""
+    """Accept one explicit allowlisted token; never default to a mutating mode."""
     if not arguments or arguments == [""]:
-        return "install"
-    if len(arguments) != 1:
         raise _bootstrap_error(
-            "LOCATE_BUILD_MANAGER", "result_serializer", "invalid_input"
+            "LOCATE_BUILD_MANAGER", "result_serializer", "mode_missing"
         )
-    if arguments[0] in ("install", "recover"):
-        return arguments[0]
+    if len(arguments) == 1:
+        token = arguments[0]
+        if token in ("install", "recover"):
+            return token
+        if token == "?mode=install":
+            return "install"
+        if token == "?mode=recover":
+            return "recover"
     raise _bootstrap_error(
-        "LOCATE_BUILD_MANAGER", "result_serializer", "invalid_input"
+        "LOCATE_BUILD_MANAGER", "result_serializer", "mode_invalid"
     )
+
+
+def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    """Tag every result with the selected mode or the safe preselection value."""
+    safe_mode = mode if mode in ("install", "recover") else "unselected"
+    identified = dict(payload)
+    identified["adapter_mode"] = safe_mode
+    return identified
 
 
 def recover_frozen_install(

@@ -1,45 +1,36 @@
 # Current Task
 
-## BM-023A allowlisted recovery adapter mode — 2026-09-24
+## BM-023A recovery adapter dispatch correction — 2026-09-24
 
-**Status:** `OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RECOVERY_NOT_RUN`.
+**Status:** `OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
 
-Added a strict `install`/`recover` mode to the tracked BM-023A adapter and
-bumped only the temporary adapter package from 0.0.2 to 0.0.3. No-argument
-invocation remains the original install path. Recovery accepts exactly one
-fixed mode token and calls only
+Offline reconstruction of the prior request (`Addons.ExecuteAddon`, add-on
+`script.build.manager.bm023a_driver`, `params` string `"recover"`) established
+the dispatch bug: Kodi supplies the script path as `sys.argv[0]` and the first
+add-on argument as `sys.argv[1]`, but adapter 0.0.3 sliced `sys.argv[2:]`.
+That discarded `recover`, leaving an empty list that the old parser treated as
+the mutating install default. The adapter now reads `sys.argv[1:]` and requires
+exactly one explicit allowlisted `install` or `recover` token (also accepting
+the fixed `?mode=...` form). Missing/invalid input fails before dispatch; every
+result identifies `install`, `recover`, or the safe preselection value
+`unselected`. Temporary adapter version is 0.0.4; product version unchanged.
+
+Recovery still invokes only
 `FrozenInstallCoordinator.abandon(acknowledge_restore_failure=False)` after
-checking for the existing store, a validated transaction identity, the
-`needs_attention` phase, a valid saved updater policy, and no unreleased
-activation hold. Recovery does not load/import the private overlay or frozen
-manifest and does not manually change add-ons, updater settings, frozen
-transaction files, locks, or restart state.
-
-Success output contains only fixed safe postcondition fields. Failure output
-uses the adapter's allowlisted stage/callable/category/error type labels and
-omits raw exception text. A successful result is emitted only after confirming
-transaction clearance, policy restoration, add-on retention, and unchanged
-restart-record presence. The existing install setup and call path remain in the
-install branch.
-
-Commits `c972c8a` and `f182774` contain only the adapter support/template/version
-and focused tests, including the final safe failure-attribution correction.
-Adapter tests passed **29/29**; BM harness tests passed **124/124**; full
-offline suite passed **1837/1837**. Python compilation, generated ZIP CRC
-integrity and source compilation, tracked JSON parsing, and `git diff --check`
-passed. No production Build Manager code changed. No Kodi app was launched, no
-adapter ZIP was installed or invoked, and the transaction was not recovered;
-BM-023A was not retried. No normal profile, real device, or private overlay
-value was accessed.
+its existing preconditions. No production Build Manager code changed. Adapter
+tests **35/35**; BM harness **124/124**; full offline suite **1843/1843**;
+compileall, tracked JSON parsing, generated ZIP integrity/source checks, and
+`git diff --check` passed. No Kodi was launched, corrected adapter installed or
+invoked, transaction recovered, BM-023A retried, updater changed, real profile
+or device accessed, or private value read.
 
 - BM-017F: `COMPLETE`.
-- macOS BM-023A: live recovery and retry remain pending separate review and
-  authorization.
+- macOS BM-023A: `BLOCKED_PENDING_CORRECTED_RECOVERY_ADAPTER_INSTALL`.
 - tvOS: `NOT VALIDATED`.
 
-**Smallest next step:** supervisor review of the offline 0.0.3 adapter; any
-later live install/recovery must be separately authorized. Do not retry BM-023A
-as part of this offline implementation task.
+**Smallest next step:** Eric may install corrected adapter 0.0.4 manually. Do
+not invoke it or retry BM-023A without separate explicit authorization.
+
 ---
 
 ## Historical BM-023A offline skin activation diagnosis (pre-instrumentation)
