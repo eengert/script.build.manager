@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
-  "status": "ready_to_retry",
-  "task": "BM-023A offline adapter bootstrap correction",
-  "reason": "Corrected the adapter bootstrap offline using a tracked generator/template at version 0.0.2. Concrete resources.lib provenance is canonicalized and constrained beneath the exact installed Build Manager add-on root; namespace resources.__file__ is not dereferenced. Failure output uses only allowlisted adapter_stage, failing_callable, failure_category, and error_type fields without traceback, raw exception text, paths, or private values. Adapter regressions passed 16/16 and BM harness tests passed 124/124; compileall, JSON parsing, and git diff --check passed. Corrected ZIP regenerated under /private/tmp from the authoritative generator. No Kodi executable/profile, normal profile, real device, or private-overlay file was accessed and no live retry occurred. BM-017F is COMPLETE on matrix 66b0fd8a123ef778b23ba42703937b07eefc4e6f; macOS BM-023A is READY_TO_RETRY, not passed; tvOS remains NOT VALIDATED.",
-  "last_commit": "0bf949641bf736e6e14c49c8892a34add60c8540",
+  "status": "blocked",
+  "task": "BM-023A offline skin failure instrumentation",
+  "reason": "Added static allowlisted SkinFailureCode values to SkinResult and safe frozen SET_SKIN propagation. The prior portable transaction remains untouched at needs_attention/FROZEN_CONFIGURATION_ACTION_FAILED. Focused skin tests 44/44, frozen/configuration diagnostic tests 9/9, full suite 1810/1810, compileall, JSON/schema parsing, and diff check passed. AF3 3.3.1 Timers.xml evidence is correlated only; retained ZIP and installed tree differ in three HomeSwitcher XML files. No Kodi launch/retry/recovery or normal-profile/device/private-value access. Await supervisor review and separately authorized diagnostic retry. BM-017F COMPLETE; tvOS NOT VALIDATED.",
+  "last_commit": "20bb8f09c8804c4bb1ea1405f1a1b2c7845974b9",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-24"

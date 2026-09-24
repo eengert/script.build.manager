@@ -1,5 +1,89 @@
 # Current Task
 
+## macOS BM-023A — offline skin failure instrumentation
+
+**Status:** `BLOCKED_PENDING_DIAGNOSTIC_RETRY`.
+
+Added allowlisted static `SkinFailureCode` values to `SkinResult` and retained
+the code through frozen-install diagnostics only for failed `SET_SKIN` actions.
+Durable status continues to use `FROZEN_CONFIGURATION_ACTION_FAILED` and now
+includes `action=SET_SKIN`, the validated add-on identity, and
+`skin_failure_code=<enum value>`. Raw result messages, exception text, paths,
+setting values, and arbitrary code-shaped text are not copied into the
+transaction diagnostic.
+
+The activation method order, confirmation/`SendClick`, bounded waits,
+read-back order, rollback/revert behavior (there is no explicit production
+rollback), and planner ordering are unchanged. Polling helpers now classify a
+terminal state-read error separately from the same wait expiring without a
+read error.
+
+Static audit: retained AF3 3.3.1 artifact `4d10cb10…` is a valid ZIP and has no
+`Timers.xml` member or exact `Timers.xml` reference in its XML. The portable
+installed tree also lacks that exact file and has no AF3 XML reference to it;
+its existing/referenced `MyPVRTimers.xml` is a different file. The installed
+tree and retained ZIP share the same 3,700-file path set but differ in three
+HomeSwitcher XML files, so they are not byte-identical. The warning remains
+`correlated warning only`, not a demonstrated packaging defect or activation
+cause.
+
+Focused skin tests passed **44/44**; frozen/CONFIGURE diagnostic tests passed
+**9/9**; full suite passed **1810/1810**. `compileall`, tracking/schema JSON
+parsing, and `git diff --check` passed. The existing portable
+`needs_attention` transaction remains untouched. No Kodi launch, retry,
+recovery, or code-side live invocation occurred. No normal Kodi profile, real
+device, or private overlay value was accessed.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `BLOCKED_PENDING_DIAGNOSTIC_RETRY`.
+- tvOS: `NOT VALIDATED`.
+
+**Next step:** supervisor review, then a separately authorized diagnostic
+retry. Do not recover or clear the current transaction before that direction.
+
+Implementation/test commit: `20bb8f09c8804c4bb1ea1405f1a1b2c7845974b9`.
+Sanitized tracking is committed separately.
+
+---
+
+## Historical BM-023A offline skin activation diagnosis (pre-instrumentation)
+
+**Status:** `BLOCKED_BM023A_SKIN_ACTIVATION_FAILURE_REASON_UNPERSISTED`.
+
+The preserved portable result identifies the first failed reconciliation action
+as `SET_SKIN` for `skin.arctic.fuse.3`. The portable profile's persisted
+`lookandfeel.skin` remains `skin.estuary`. This is a skin activation failure;
+no `CONFIGURE` action ran because reconciliation stops at the first failed
+action.
+
+The durable diagnostic does not include a nested skin failure code or message.
+The portable Kodi log has two warnings about loading the target skin's
+`Timers.xml`, which is absent from the installed skin directory, but the
+preserved evidence does not prove those warnings caused the activation
+failure. This is classified as a production diagnostic gap; do not infer or
+apply a skin-package fix from the warnings alone.
+
+The transaction remains `needs_attention`. No Kodi launch, adapter invocation,
+retry, recovery, production edit, or test run occurred. Only portable test-app
+evidence and repository sources were inspected. No normal profile, real device,
+or private overlay values were accessed. No product commit was made.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `BLOCKED_BM023A_SKIN_ACTIVATION_FAILURE_REASON_UNPERSISTED`.
+- tvOS: `NOT VALIDATED`.
+
+**Smallest recommendation:** add and persist an allowlisted static failure code
+to `SkinResult` and pass it through frozen-configuration diagnostics without
+storing raw exception or setting text. Keep the current transaction until a
+reviewed correction and supervisor direction.
+
+**Next step:** supervisor review of the diagnostic-gap classification and
+correction recommendation. No live retry is authorized by this offline task.
+
+---
+
+## Historical prior task record (preserved; superseded for current status)
+
 ## BM-017F — Deferred Activation & Structured-Resource Lifecycle
 
 **Status**: `COMPLETE` on `agent/codex`, synchronized with protected matrix

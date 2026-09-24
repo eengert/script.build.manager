@@ -1802,3 +1802,165 @@ BM-023A-R1 is separately authorized and architecturally unblocked; it had not
 started at this synchronization checkpoint. The next action is the isolated
 macOS destination preflight using only `/Applications/Kodi Build Manager Test.app`.
 tvOS remains NOT VALIDATED.
+
+## macOS BM-023A offline skin activation diagnosis — 2026-09-24
+
+**Classification:** `BLOCKED_BM023A_SKIN_ACTIVATION_FAILURE_REASON_UNPERSISTED`.
+
+The worker was clean on `agent/codex` before this task. Only the dedicated
+portable test-app profile and repository files were inspected. No Kodi launch,
+adapter invocation, retry, recovery, production edit, or test run occurred. No
+normal Kodi profile, real device, or private overlay values were accessed; no
+product commit was made.
+
+The preserved adapter 0.0.2 result is `ok=true`, `outcome=needs_attention`,
+`code=FROZEN_CONFIGURATION_ACTION_FAILED`. The durable transaction is still
+present at phase `needs_attention`; its safe status detail is
+`outcome=failed; phase=execute; failure=ACTION_FAILED; action=SET_SKIN;
+addon=skin.arctic.fuse.3`. The transaction is at configuration execution,
+`lifecycle_stage=none`, restart count 0, with no activation-hold IDs and
+`activation_hold_released=true`. The updater guard is required: current policy
+2 (`NEVER_CHECK`), original policy 0 (`AUTOMATIC`).
+
+`skin.arctic.fuse.3` is installed, enabled, unbroken at 3.3.1. The portable
+`lookandfeel.skin` value remains `skin.estuary`. Red Light 2.6.8 is installed,
+enabled, and unbroken. YouTube is recorded as skipped and absent, consistent
+with policy. The adapter imported the overlay, but the failed `SET_SKIN` action
+preceded any `CONFIGURE` action; private application, structured-resource
+initialization, private verification, activation release, and final validation
+were not reached. The durable `private_overlay_required=false` was not updated
+with result overlay metadata because `_handle_configuration_result` raises on
+failure before its later persistence transition; do not treat it as evidence
+that the overlay was not imported or required.
+
+The planner orders `SET_SKIN` before `CONFIGURE`, and `BuildManager.reconcile`
+returns on the first failed action. Therefore no public/private CONFIGURE
+action failed here; the failure is specifically skin activation through
+`BuildManager._dispatch_action` and `SkinActivator.activate`, wrapped by
+`FrozenInstallCoordinator._handle_configuration_result` as
+`FROZEN_CONFIGURATION_ACTION_FAILED`. The resulting `SkinResult` has status
+`FAILED`, but neither its message nor a typed failure code is persisted. The
+final portable setting shows the target skin was not persisted. The exact
+inner branch (dialog timeout, JSON-RPC error, read-back mismatch, or another
+skin activation failure) cannot be determined from the preserved result.
+
+In the current portable Kodi log, two warnings at approximately 10:20:12.589
+and 10:20:13.350 report a failed `Timers.xml` load while the target skin is
+referenced; the installed target skin directory contains no `Timers.xml`. A
+generic error follows at approximately 10:20:13.714. No safe log marker
+identifies the SkinResult failure branch, and no JSON-RPC error, Python
+traceback/TypeError, database error, private verification, or activation
+release marker was found in the correlated interval. The XML warnings are a
+correlated clue, not proven root cause.
+
+No restart was requested because reconciliation stopped during action
+execution before RestartCoordinator could handle a successful reconciliation.
+The zero restart count is expected at this failure point. The no-hold state
+also means the BM-022 private-verification/release stages did not apply.
+
+**Smallest correction recommendation:** add an allowlisted static failure code
+to each `SkinResult` failure path and preserve that code in frozen diagnostics;
+do not persist the raw result/exception message. Review whether the missing
+`Timers.xml` warning is causal before considering any skin package correction.
+Do not clear the `needs_attention` transaction. This task made no correction.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `BLOCKED_BM023A_SKIN_ACTIVATION_FAILURE_REASON_UNPERSISTED`.
+- tvOS: `NOT VALIDATED`.
+
+**Human input:** supervisor review of this classification and correction
+recommendation before any production change or live retry.
+
+## BM-023A offline skin failure instrumentation — 2026-09-24
+
+**Classification:** `BLOCKED_PENDING_DIAGNOSTIC_RETRY`. This is an
+observability correction only; the AF3 activation failure itself is not fixed.
+
+Added `SkinFailureCode` and optional `SkinResult.failure_code`. Successful and
+already-active results retain `None`; existing positional `SkinResult`
+construction remains compatible. Failure codes are static enum values and
+never incorporate Kodi text, values, paths, or exceptions. The activation
+algorithm retains its previous command order, Home preparation, `SendClick(11)`
+path, timeout durations, post-confirmation persisted/active read-back order,
+stability check, and implicit keep/revert behavior. The code has no explicit
+rollback/revert operation.
+
+Audited failure paths and assignments:
+
+- Invalid add-on ID: existing `SkinValidationError` is raised before backend
+  access; no `SkinResult` or mutation.
+- Initial active-skin read error → `INITIAL_SKIN_STATE_READ_FAILED`; already
+  active remains successful with no failure code.
+- Target state read error → `TARGET_SKIN_STATE_READ_FAILED`; absent and
+  disabled targets → `TARGET_SKIN_NOT_AVAILABLE` and `TARGET_SKIN_DISABLED`.
+- Pre-existing confirmation dialog → `PREEXISTING_CONFIRMATION_DIALOG`;
+  failure reading the initial dialog state →
+  `CONFIRMATION_STATE_READ_FAILED`.
+- Home/preparation failure → `SKIN_CHANGE_PREPARATION_FAILED`; failure to set
+  the skin → `SET_SKIN_COMMAND_FAILED`, unless a typed Kodi JSON-RPC failure
+  gives `JSONRPC_FAILURE`.
+- Confirmation polling expires without a state-read error →
+  `CONFIRMATION_NOT_OBSERVED`; terminal active/dialog read errors are separately
+  `ACTIVE_SKIN_READ_FAILED` or `CONFIRMATION_STATE_READ_FAILED`.
+- Yes/click failure → `CONFIRMATION_ACTION_FAILED`; close polling expires with
+  the dialog still visible → `CONFIRMATION_NOT_CLOSED`; terminal visibility
+  read error → `CONFIRMATION_STATE_READ_FAILED`.
+- Persisted setting read failure → `PERSISTED_SKIN_READ_FAILED`; a completed
+  read-back with a different skin → `TARGET_SKIN_NOT_PERSISTED`.
+- Loaded-skin read failure → `ACTIVE_SKIN_READ_FAILED`; completed read-back
+  with a different skin → `TARGET_SKIN_NOT_ACTIVE`.
+- Stability polling timeout → `SKIN_DID_NOT_REMAIN_STABLE`; terminal setting or
+  active-skin read error is identified as `PERSISTED_SKIN_READ_FAILED` or
+  `ACTIVE_SKIN_READ_FAILED`. The final fallback is
+  `UNKNOWN_SAFE_FAILURE`.
+
+Frozen `needs_attention` diagnostics retain the existing top-level
+`FROZEN_CONFIGURATION_ACTION_FAILED` and add `skin_failure_code=<allowlisted
+enum>` only for failed `SET_SKIN`. Existing `action=SET_SKIN` and
+`addon=skin.arctic.fuse.3` identify the action/owner. `SkinResult.message` is
+not copied. Regression coverage proved fake exception text, a private-looking
+path, and secret text are absent from the durable transaction; existing
+CONFIGURE diagnostics remain unchanged.
+
+**Read-only AF3 package audit:** retained package metadata identifies
+`skin.arctic.fuse.3` 3.3.1, SHA-256
+`4d10cb10b9358a12a79519a813e82864b513370c627b85406e2840357b07729c`; ZIP
+integrity passed. Neither that ZIP nor the portable installed 3.3.1 directory
+contains exact `Timers.xml`, and a scan of package XML found no exact
+`Timers.xml` reference in `addon.xml` or other AF3 XML. AF3 references to
+`MyPVRTimers.xml` point to that distinct file, which is present. The installed
+directory and retained ZIP have the same 3,700-file path set but three content
+mismatches: `1080i/Includes_Home.xml`, `1080i/Includes_Labels.xml`, and
+`1080i/Includes_SkinSettings.xml` (HomeSwitcher changes). Thus version matches,
+but the retained ZIP is not byte-identical to the installed directory. The
+warning is **correlated warning only**, not a demonstrated packaging defect or
+cause of SET_SKIN failure. No source evidence established Kodi's precise
+caller for the `Timers.xml` lookup.
+
+The current portable failed transaction was not read for additional values,
+modified, cleared, or recovered during this instrumentation task. No Kodi
+application was launched; no adapter was invoked; no normal Kodi profile, real
+device, or private overlay value was accessed. No skin behavior, AF3 package,
+planner order, frozen lifecycle, transaction, or current portable policy was
+changed.
+
+Validation: skin activation tests **44/44**; skin frozen-diagnostic integration
+and existing CONFIGURE diagnostics **9/9**; full suite **1810/1810**;
+`compileall`, `.agent/AGENT_STATUS.json` and schema JSON parsing, and
+`git diff --check` passed. Codex usage figures were unavailable; recorded as
+unavailable rather than estimated. Requested Luna-6/High was not independently
+observable in the runtime label.
+
+**Implementation/test commit:**
+`20bb8f09c8804c4bb1ea1405f1a1b2c7845974b9`. The sanitized tracking commit is
+separate. Matrix remains
+`66b0fd8a123ef778b23ba42703937b07eefc4e6f`; this work is only on
+`agent/codex`.
+
+- BM-017F: `COMPLETE`.
+- macOS BM-023A: `BLOCKED_PENDING_DIAGNOSTIC_RETRY`.
+- tvOS: `NOT VALIDATED`.
+
+**Next step:** supervisor reviews this safe diagnostic change and authorizes a
+separate live retry/recovery plan. Do not launch, rerun, or clear the current
+transaction without that authorization.
