@@ -604,6 +604,9 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertEqual(resumed.outcome, "needs_attention")
         transaction = self.store.inspect()
         self.assertEqual(transaction.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertEqual(
+            transaction.lifecycle_stage, FrozenLifecycleStage.CONFIGURING
+        )
         self.assertFalse(transaction.activation_hold_released)
         self.assertEqual(
             active_activation_hold_ids(self.store), frozenset({owner_id})
