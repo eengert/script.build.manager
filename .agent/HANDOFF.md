@@ -1,71 +1,44 @@
-# Current Handoff - BM-023A bounded held-retry adapter dispatch (2026-09-25)
+# Current Handoff - BM-023A generated-entrypoint dispatch coverage (2026-09-25)
 
-**Result:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
+**Result:** OFFLINE_COVERAGE_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
-## Adapter mode contract
+## What changed
 
-The generated adapter accepts exactly one argument from the allowlist:
-`install`, `recover`, or `retry`, or the matching `?mode=<token>` form. Empty,
-extra, or unknown arguments fail before dispatch. The new mode is `retry`.
+Added one executable offline test in `tests/test_bm023a_adapter.py`. It builds
+the adapter package and runs its generated `default.py` for `install`,
+`recover`, and `retry` with temporary paths and stubbed Kodi/production
+modules. Each invocation proves the selected branch is the only dispatch:
+install calls only `coordinator.install`, recover calls only the recovery
+helper, and retry calls the packaged retry helper and
+`retry_held_quiescence` once.
 
-`retry` parses the reviewed configured frozen manifest, then loads the durable
-`FrozenInstallTransaction` snapshot. It validates the snapshot type and UUID,
-`NEEDS_ATTENTION` plus `FROZEN_MANIFEST_INVALID`,
-`QUIESCENCE_AWAITING_RESTART`, restart count 1, exactly the unreleased
-`plugin.video.redlight` activation hold, required updater guard, original
-`AUTOMATIC` updater policy, nonempty plan/resolution/overlay identity fields,
-and exact manifest path/build/fingerprint, configuration path/profile, and
-expected overlay ID. Missing or mismatched evidence fails closed before retry.
-
-After validation, the support helper calls
-`FrozenInstallCoordinator.retry_held_quiescence` exactly once with the loaded
-snapshot, retained `ARTIFACT_ROOT` source store, and profile-local shared BM-020
-`TransactionStore`. The coordinator's artifact target remains the durable
-profile-local frozen-artifacts store. The retry callback constructs
-`RestartCoordinator` with that same BM-020 store and forwards the scoped
-`transaction_access` capability. The production continuation still enforces
-full-snapshot frozen CAS, updater quarantine, exact Red Light state/version,
-configuration and private-overlay identity, post-restart session boundary,
-the unreleased activation hold until verified configuration succeeds, and
-BM-020 race exclusion. Generic abandon still rejects the held state.
-
-Retry output is limited to `ok`, `adapter_mode`, `retry_invoked`, an allowlisted
-outcome, and a sanitized transaction lifecycle summary. It omits exception or
-status text, paths, fingerprints, and private values. The temporary adapter is
-version 0.0.7 so Kodi can recognize it as an upgrade from 0.0.6.
+The retry fixture uses the actual packaged `retry_held_frozen_install` checks.
+Its stub coordinator invokes the configuration callback at runtime; assertions
+prove the callback reaches the stub `RestartCoordinator.reconcile` with the
+same manager, BM-020 store, request, and scoped `transaction_access`. No
+product code change was needed. The test uses no source slicing.
 
 ## Validation
 
+- Generated-entrypoint dispatcher test: **1/1 passed**.
 - Focused adapter, frozen-install, transaction, and restart-coordinator suites:
-  **135/135 passed**.
-- Full offline suite: **1,875/1,875 passed**.
+  **136/136 passed**.
+- Full offline suite: **1,876/1,876 passed**. The first run had one
+  readiness-timeout failure in the unrelated transaction child-process test;
+  that test passed alone and the full rerun passed.
 - `python3 -m compileall -q resources tools tests`: passed.
-- All **7** tracked JSON files parsed.
-- Generated adapter v0.0.7 ZIP CRC, exact four-member set, embedded version,
-  retry support inclusion, and generated entrypoint compilation: passed.
-- `git diff --check`: passed after tracking updates.
+- All **7** tracked JSON files parsed; `git diff --check` passed.
 
-## Changed files and boundaries
+Only `tests/test_bm023a_adapter.py` has product-tree changes. Tracking is
+updated in `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`,
+`.agent/USAGE_HISTORY.md`, and this handoff. Work is uncommitted on
+`agent/supervised-codex` at `bb5460e`; no push or matrix integration occurred.
 
-Changed code/package files: `tools/bm023a_adapter_support.py`,
-`tools/bm023a_adapter/default.py.in`, and
-`tools/bm023a_adapter/addon.xml.in`. Changed tests:
-`tests/test_bm023a_adapter.py` and `tests/test_frozen_install.py`.
-Tracking is in `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`,
-`.agent/USAGE_HISTORY.md`, and this handoff. The changes are uncommitted on
-`agent/supervised-codex`, with `fb083fc` as the current commit. No push or
-matrix integration occurred.
-
-No Kodi/Test.app, Kodi profile, real device, network, LAN, private value, or
-host action was accessed. No live retry was run. All validation used offline
-fixtures. Supervisor app-server snapshots reported 16% weekly remaining at
-task start and 16% before handoff; the reset was not observed.
-
-Smallest next step: independent review of mode gating, snapshot preconditions,
-exactly-once dispatch, result sanitization, package update semantics, and
-capability forwarding through the actual retry continuation. This work item
-does not authorize a live retry.
+No Kodi/Test.app was launched or accessed; no profile, device, network, LAN,
+private value, host action, adapter install, or live retry/recovery was used.
+All checks were offline. Smallest next step: independent review of the dirty
+coverage snapshot. Live retry remains outside this work item.
 
 ---
 

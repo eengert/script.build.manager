@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A bounded held-retry adapter dispatch",
-  "reason": "Added a strictly allowlisted retry mode that validates the reviewed typed held transaction snapshot and invokes retry_held_quiescence exactly once with the retained artifact source and shared BM-020 store. The configuration callback forwards scoped transaction_access into RestartCoordinator; result fields are allowlisted and sanitized. Adapter v0.0.7. Focused adapter/frozen-install/transaction/restart-coordinator suites 135/135 and full offline suite 1,875/1,875 passed; compileall, seven tracked JSON parses, generated ZIP integrity/source checks, and diff check passed. No live retry or host action. Independent review is next.",
-  "last_commit": "fb083fc",
+  "task": "BM-023A generated-entrypoint dispatch coverage",
+  "reason": "Added executable offline coverage that builds and runs the generated adapter entrypoint for install, recover, and retry, proving branch isolation. The actual packaged retry validator accepts the fixture and invokes retry_held_quiescence once; a stub coordinator invokes the generated callback and verifies manager, shared BM-020 store, request, and transaction_access forwarding. Dispatcher test 1/1; focused suites 136/136; full offline suite 1,876/1,876. First full run had one transient child readiness timeout; isolated test and full rerun passed. Compileall, seven tracked JSON parses, and diff check passed. No product code change or live retry. Independent review is next.",
+  "last_commit": "bb5460e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-25"
