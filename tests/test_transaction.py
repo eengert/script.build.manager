@@ -23,6 +23,7 @@ from resources.lib.transaction import (
     RestartTransaction,
     TransactionCorrupt,
     TransactionLockBusy,
+    TransactionLockUnavailable,
     TransactionPhase,
     TransactionStateConflict,
     TransactionStore,
@@ -175,6 +176,23 @@ class TestTransactionStore(StoreTestCase):
             pass
         with self.store.locked():
             pass
+
+    def test_locked_access_is_scoped_and_ordinary_calls_remain_excluded(self):
+        peer_store = TransactionStore(self.tmp.name)
+        transaction = _transaction()
+        with self.store.locked_access() as access:
+            self.assertTrue(access.matches(peer_store))
+            self.assertIsNone(access.inspect())
+            with self.assertRaises(TransactionLockBusy):
+                peer_store.inspect()
+            self.assertEqual(access.create(transaction), transaction)
+            self.assertEqual(access.inspect(), transaction)
+            with self.assertRaises(TransactionLockBusy):
+                peer_store.create(replace(transaction, transaction_id=str(uuid.uuid4())))
+
+        self.assertEqual(peer_store.inspect(), transaction)
+        with self.assertRaises(TransactionLockUnavailable):
+            access.inspect()
 
     def test_lock_is_released_when_owner_process_exits(self):
         ready = Path(self.tmp.name) / "lock-ready"

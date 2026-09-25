@@ -13,6 +13,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -377,6 +378,21 @@ class TransactionStore:
             return self._read_unlocked()
 
     @contextmanager
+    def locked_access(self) -> Iterator["TransactionStoreAccess"]:
+        """Hold the profile lock and yield narrow access for nested BM-020 work.
+
+        Ordinary store methods still acquire the nonblocking OS lock. The
+        yielded capability is the only supported way for a coordinated caller
+        to inspect or create a transaction while this lock remains held.
+        """
+        with self.locked() as lock:
+            access = TransactionStoreAccess(self, lock)
+            try:
+                yield access
+            finally:
+                access._invalidate()
+
+    @contextmanager
     def locked_inspection(self) -> Iterator[Optional[RestartTransaction]]:
         """Yield a transaction snapshot while retaining the profile lock.
 
@@ -390,12 +406,17 @@ class TransactionStore:
         if not isinstance(transaction, RestartTransaction):
             raise TransactionPersistenceError("transaction has an invalid type")
         with self.locked():
-            if os.path.exists(self.transaction_path):
-                raise TransactionPersistenceError(
-                    "an active transaction already exists"
-                )
-            self._write_unlocked(transaction, previous_bytes=None)
-            return transaction
+            return self._create_unlocked(transaction)
+
+    def _create_unlocked(self, transaction: RestartTransaction) -> RestartTransaction:
+        if not isinstance(transaction, RestartTransaction):
+            raise TransactionPersistenceError("transaction has an invalid type")
+        if os.path.exists(self.transaction_path):
+            raise TransactionPersistenceError(
+                "an active transaction already exists"
+            )
+        self._write_unlocked(transaction, previous_bytes=None)
+        return transaction
 
     def update_phase(self, phase: TransactionPhase) -> RestartTransaction:
         if not isinstance(phase, TransactionPhase):
@@ -588,6 +609,46 @@ class TransactionStore:
                     pass
 
 
+class TransactionStoreAccess:
+    """Short-lived inspect/create access backed by a held profile-local lock."""
+
+    def __init__(self, store: TransactionStore, lock: TransactionLock):
+        self._store = store
+        self._lock = lock
+        self._owner_thread_id = threading.get_ident()
+        self._active = True
+
+    def _assert_active(self) -> None:
+        if (
+            not self._active
+            or threading.get_ident() != self._owner_thread_id
+            or self._lock._handle is None
+        ):
+            raise TransactionLockUnavailable(
+                "coordinated transaction access is outside its lock scope"
+            )
+
+    def matches(self, store: TransactionStore) -> bool:
+        """Return whether this capability protects the store's lock file."""
+        self._assert_active()
+        if not isinstance(store, TransactionStore):
+            return False
+        return os.path.realpath(self._store.lock_path) == os.path.realpath(
+            store.lock_path
+        )
+
+    def inspect(self) -> Optional[RestartTransaction]:
+        self._assert_active()
+        return self._store._read_unlocked()
+
+    def create(self, transaction: RestartTransaction) -> RestartTransaction:
+        self._assert_active()
+        return self._store._create_unlocked(transaction)
+
+    def _invalidate(self) -> None:
+        self._active = False
+
+
 @dataclass(frozen=True)
 class TransactionFailure:
     code: str
@@ -611,6 +672,7 @@ def prepare_restart_transaction(
     current_session_id: str,
     *,
     store: Optional[TransactionStore] = None,
+    transaction_access: Optional[TransactionStoreAccess] = None,
 ) -> PrepareTransactionResult:
     """Prepare durable state only after a successful restart-requiring run."""
     try:
@@ -650,7 +712,19 @@ def prepare_restart_transaction(
                 if reconcile_result.private_overlay else False
             ),
         )
-        (store or TransactionStore()).create(transaction)
+        target_store = store or TransactionStore()
+        if transaction_access is None:
+            target_store.create(transaction)
+        else:
+            if not isinstance(transaction_access, TransactionStoreAccess):
+                raise TransactionLockUnavailable(
+                    "coordinated transaction access is invalid"
+                )
+            if not transaction_access.matches(target_store):
+                raise TransactionLockUnavailable(
+                    "coordinated transaction access protects a different profile"
+                )
+            transaction_access.create(transaction)
         return PrepareTransactionResult(created=True, transaction=transaction)
     except (TransactionError, TypeError, ValueError) as exc:
         code = getattr(exc, "code", "INVALID_RESTART_TRANSACTION")

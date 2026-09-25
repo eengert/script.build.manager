@@ -1791,6 +1791,7 @@ class FrozenInstallCoordinator:
         configuration_manifest_path: str = "",
         install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
         interactive: bool = True,
+        transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
         try:
             desired_profile = self._configuration_profile(
@@ -2283,7 +2284,7 @@ class FrozenInstallCoordinator:
             )
             if self.configuration_runner is not None:
                 request_path = configuration_manifest_path or manifest_path
-                result = self.configuration_runner(ReconcileRequest(
+                request = ReconcileRequest(
                     request_path,
                     device_profile_id,
                     install_resolutions=tuple(sorted(
@@ -2291,7 +2292,13 @@ class FrozenInstallCoordinator:
                     )),
                     source_software_fingerprint=manifest.fingerprint(),
                     frozen_transaction_id=(transaction.transaction_id if hold_ids else ""),
-                ))
+                )
+                if transaction_access is None:
+                    result = self.configuration_runner(request)
+                else:
+                    result = self.configuration_runner(
+                        request, transaction_access=transaction_access
+                    )
                 transaction, awaiting = self._handle_configuration_result(transaction, result)
                 if awaiting is not None:
                     return replace(awaiting, recoverability=plan.summary, resolution_manifest=resolution_manifest)
@@ -2546,7 +2553,7 @@ class FrozenInstallCoordinator:
                     code="BM020_TRANSACTION_PROFILE_MISMATCH",
                     message="BM-020 and frozen transactions do not share a profile store",
                 )
-            if not callable(getattr(restart_store, "locked_inspection", None)):
+            if not callable(getattr(restart_store, "locked_access", None)):
                 return FrozenInstallResult(
                     "needs_attention",
                     transaction=current,
@@ -2716,7 +2723,8 @@ class FrozenInstallCoordinator:
                     code="BM020_TRANSACTION_PRESENT",
                     message="a BM-020 restart transaction conflicts with held retry",
                 )
-            with restart_store.locked_inspection() as restart_transaction:
+            with restart_store.locked_access() as transaction_access:
+                restart_transaction = transaction_access.inspect()
                 if restart_transaction is not None:
                     return FrozenInstallResult(
                         "needs_attention",
@@ -2757,7 +2765,10 @@ class FrozenInstallCoordinator:
                 # sees AWAITING_RESTART. The BM-020 lock remains held until it
                 # returns or records a safe failure.
                 try:
-                    return self.resume_after_restart(current_session_id=session)
+                    return self.resume_after_restart(
+                        current_session_id=session,
+                        transaction_access=transaction_access,
+                    )
                 except Exception:
                     return self._attention(
                         rearmed,
@@ -2784,6 +2795,7 @@ class FrozenInstallCoordinator:
         *,
         current_session_id: Optional[str] = None,
         bm020_result: object = None,
+        transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
         transaction = self._safe_inspect()
         if transaction is None:
@@ -2857,6 +2869,7 @@ class FrozenInstallCoordinator:
                     configuration_manifest_path=transaction.configuration_manifest_path,
                     install_policies=transaction.policies,
                     interactive=False,
+                    transaction_access=transaction_access,
                 )
             if transaction.lifecycle_stage is FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART:
                 if not self._private_resource_results_verified(bm020_result):

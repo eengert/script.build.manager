@@ -20,7 +20,11 @@ from resources.lib.build_manager import (
     ReconcilePhase,
     ReconcileResult,
 )
-from resources.lib.restart import RestartRequirement
+from resources.lib.restart import RestartReport, RestartRequirement
+from resources.lib.restart_coordinator import (
+    RestartCapabilityResolver,
+    RestartCoordinator,
+)
 from resources.lib.transaction import (
     RestartTransaction,
     TransactionLockBusy,
@@ -1336,7 +1340,7 @@ class FrozenInstallTest(unittest.TestCase):
         original_read_bytes = source_store.read_bytes
         original_rearm = self.store.rearm_held_quiescence
         original_restart_inspect = restart_store.inspect
-        original_locked_inspection = restart_store.locked_inspection
+        original_locked_access = restart_store.locked_access
         original_transition = self.store.transition_expected
         original_clear = self.store.clear_expected
         original_registry_query = coordinator.registry_backend.get_addon_details
@@ -1358,11 +1362,11 @@ class FrozenInstallTest(unittest.TestCase):
             return original_restart_inspect()
 
         @contextmanager
-        def locked_inspection():
+        def locked_access():
             events.append("bm020_lock_acquired")
             try:
-                with original_locked_inspection() as snapshot:
-                    yield snapshot
+                with original_locked_access() as access:
+                    yield access
             finally:
                 events.append("bm020_lock_released")
 
@@ -1389,7 +1393,29 @@ class FrozenInstallTest(unittest.TestCase):
             events.append("registry_check")
             return original_registry_query(addon_id)
 
-        def configure(request):
+        class FixtureBuildManager:
+            def reconcile(_self, request):
+                events.append("configuration_reconcile")
+                fixture_result = original_configuration_runner(request)
+                fixture_reconcile = fixture_result.reconcile_result
+                return ReconcileResult(
+                    success=True,
+                    request=request,
+                    desired_fingerprint="sha256:" + "d" * 64,
+                    restart_report=RestartReport(RestartRequirement.NONE, 0, 0),
+                    action_results=fixture_reconcile.action_results,
+                    private_overlay=fixture_reconcile.private_overlay,
+                )
+
+        restart_coordinator = RestartCoordinator(
+            FixtureBuildManager(),
+            capability_resolver=RestartCapabilityResolver(platform_id="macos"),
+            session_id_provider=lambda: SESSION_B,
+            store=restart_store,
+        )
+        self.assertIs(restart_coordinator._store, restart_store)
+
+        def configure(request, *, transaction_access):
             events.append("configuration_private_apply")
             self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
             self.assertEqual(
@@ -1397,9 +1423,11 @@ class FrozenInstallTest(unittest.TestCase):
                 frozenset({"plugin.video.redlight"}),
             )
             self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
-            return original_configuration_runner(request)
+            return restart_coordinator.reconcile(
+                request, transaction_access=transaction_access
+            )
 
-        def resume(*, current_session_id):
+        def resume(*, current_session_id, transaction_access=None):
             events.append("resume")
             try:
                 restart_store.create(self._bm020_transaction())
@@ -1407,13 +1435,16 @@ class FrozenInstallTest(unittest.TestCase):
                 events.append("bm020_create_blocked")
             else:
                 self.fail("BM-020 transaction creation was not serialized with retry")
-            return original_resume(current_session_id=current_session_id)
+            return original_resume(
+                current_session_id=current_session_id,
+                transaction_access=transaction_access,
+            )
 
         self.policy.set_policy = set_policy
         source_store.read_bytes = read_bytes
         self.store.rearm_held_quiescence = rearm
         restart_store.inspect = inspect_bm020
-        restart_store.locked_inspection = locked_inspection
+        restart_store.locked_access = locked_access
         self.store.transition_expected = transition
         self.store.clear_expected = clear_expected
         coordinator.registry_backend.get_addon_details = check_registry
@@ -1437,6 +1468,7 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertLess(events.index("resume"), events.index("bm020_create_blocked"))
         self.assertLess(events.index("bm020_create_blocked"), events.index("registry_check"))
         self.assertLess(events.index("registry_check"), events.index("configuration_private_apply"))
+        self.assertLess(events.index("configuration_private_apply"), events.index("configuration_reconcile"))
         self.assertLess(events.index("configuration_private_apply"), events.index(FrozenLifecycleStage.PRIVATE_VERIFIED.value))
         self.assertLess(events.index(FrozenLifecycleStage.PRIVATE_VERIFIED.value), events.index(FrozenLifecycleStage.ACTIVATION_RELEASED.value))
         self.assertLess(events.index(FrozenLifecycleStage.ACTIVATION_RELEASED.value), events.index(("policy", AddonUpdatePolicy.AUTOMATIC)))
@@ -1625,7 +1657,7 @@ class FrozenInstallTest(unittest.TestCase):
         )
         restart_store = self._restart_store()
         bm020_transaction = self._bm020_transaction()
-        original_locked_inspection = restart_store.locked_inspection
+        original_locked_access = restart_store.locked_access
         original_rearm = self.store.rearm_held_quiescence
 
         @contextmanager
@@ -1633,10 +1665,10 @@ class FrozenInstallTest(unittest.TestCase):
             # This runs after the old final inspect returned no transaction and
             # before the new atomic inspection acquires the shared BM-020 lock.
             restart_store.create(bm020_transaction)
-            with original_locked_inspection() as snapshot:
-                yield snapshot
+            with original_locked_access() as access:
+                yield access
 
-        restart_store.locked_inspection = introduce_transaction_before_locked_snapshot
+        restart_store.locked_access = introduce_transaction_before_locked_snapshot
         with patch.object(
             FrozenInstallCoordinator, "_configuration_profile", return_value=profile
         ), patch.object(self.store, "rearm_held_quiescence", wraps=original_rearm) as rearm, patch.object(

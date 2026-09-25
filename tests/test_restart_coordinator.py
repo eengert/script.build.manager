@@ -13,7 +13,11 @@ from resources.lib.restart_coordinator import (
     RestartOutcome,
 )
 from resources.lib.startup import StartupClassification, classify_startup_transaction
-from resources.lib.transaction import TransactionPhase, TransactionStore
+from resources.lib.transaction import (
+    TransactionLockBusy,
+    TransactionPhase,
+    TransactionStore,
+)
 
 
 FINGERPRINT = "sha256:" + "c" * 64
@@ -111,6 +115,37 @@ class CoordinatorTestCase(unittest.TestCase):
         self.assertEqual(result.transaction.restart_attempt_count, 0)
         self.assertEqual(self.store.inspect(), result.transaction)
         self.restart_adapter.assert_not_called()
+
+    def test_scoped_access_serializes_restart_required_handoff(self):
+        peer_store = TransactionStore(self.tmp.name)
+        with self.store.locked_access() as access:
+            ordinary = self._coordinator().reconcile(_request())
+            self.assertEqual(ordinary.outcome, RestartOutcome.FAILED)
+            self.assertEqual(ordinary.failure.code, "TRANSACTION_LOCK_BUSY")
+            self.assertEqual(self.manager.calls, [])
+
+            result = self._coordinator().reconcile(
+                _request(), transaction_access=access
+            )
+            self.assertEqual(result.outcome, RestartOutcome.MANUAL_RESTART_REQUIRED)
+            self.assertEqual(result.transaction.phase, TransactionPhase.AWAITING_RESTART)
+            self.assertEqual(access.inspect(), result.transaction)
+            with self.assertRaises(TransactionLockBusy):
+                peer_store.create(result.transaction)
+
+        self.assertEqual(self.store.inspect(), result.transaction)
+        self.assertEqual(len(self.manager.calls), 1)
+
+    def test_scoped_access_for_another_profile_fails_before_reconcile(self):
+        other_store = TransactionStore(str(Path(self.tmp.name) / "other"))
+        with other_store.locked_access() as access:
+            result = self._coordinator().reconcile(
+                _request(), transaction_access=access
+            )
+        self.assertEqual(result.outcome, RestartOutcome.FAILED)
+        self.assertEqual(result.failure.code, "TRANSACTION_LOCK_UNAVAILABLE")
+        self.assertEqual(self.manager.calls, [])
+        self.assertIsNone(self.store.inspect())
 
     def test_repeated_same_session_call_reuses_transaction(self):
         coordinator = self._coordinator()
