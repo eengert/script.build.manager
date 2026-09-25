@@ -376,6 +376,16 @@ class TransactionStore:
         with self.locked():
             return self._read_unlocked()
 
+    @contextmanager
+    def locked_inspection(self) -> Iterator[Optional[RestartTransaction]]:
+        """Yield a transaction snapshot while retaining the profile lock.
+
+        Callers can use the snapshot to serialize a follow-on operation with
+        every BM-020 transaction writer, which uses this same lock.
+        """
+        with self.locked():
+            yield self._read_unlocked()
+
     def create(self, transaction: RestartTransaction) -> RestartTransaction:
         if not isinstance(transaction, RestartTransaction):
             raise TransactionPersistenceError("transaction has an invalid type")

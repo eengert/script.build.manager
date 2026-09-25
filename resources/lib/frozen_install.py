@@ -2533,6 +2533,35 @@ class FrozenInstallCoordinator:
             )
 
         try:
+            if restart_store is None:
+                from resources.lib.transaction import TransactionStore
+                restart_store = TransactionStore()
+            if (
+                os.path.realpath(restart_store.directory)
+                != os.path.realpath(str(self.store.root))
+            ):
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_PROFILE_MISMATCH",
+                    message="BM-020 and frozen transactions do not share a profile store",
+                )
+            if not callable(getattr(restart_store, "locked_inspection", None)):
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_SERIALIZATION_UNAVAILABLE",
+                    message="BM-020 transactions cannot be serialized with held retry",
+                )
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="BM020_TRANSACTION_PROFILE_UNAVAILABLE",
+                message="the shared BM-020 and frozen transaction store is unavailable",
+            )
+
+        try:
             AddonUpdateGuard(self.policy_backend).reassert_required()
         except Exception:
             return FrozenInstallResult(
@@ -2632,9 +2661,6 @@ class FrozenInstallCoordinator:
                 )
             expected_owner_version = owner_node.version
 
-            if restart_store is None:
-                from resources.lib.transaction import TransactionStore
-                restart_store = TransactionStore()
             if restart_store.inspect() is not None:
                 return FrozenInstallResult(
                     "needs_attention",
@@ -2679,6 +2705,10 @@ class FrozenInstallCoordinator:
                 message="held transaction or disabled owner changed before retry",
             )
         try:
+            # Keep the BM-020 store lock from the decisive absence check
+            # through the continuation. Every BM-020 writer acquires this same
+            # profile-local OS lock, so a restart transaction cannot appear
+            # after this check and race the held retry.
             if restart_store.inspect() is not None:
                 return FrozenInstallResult(
                     "needs_attention",
@@ -2686,34 +2716,67 @@ class FrozenInstallCoordinator:
                     code="BM020_TRANSACTION_PRESENT",
                     message="a BM-020 restart transaction conflicts with held retry",
                 )
-        except Exception:
-            return FrozenInstallResult(
-                "needs_attention",
-                transaction=current,
-                code="BM020_TRANSACTION_INSPECTION_FAILED",
-                message="BM-020 restart state could not be verified before held retry",
-            )
+            with restart_store.locked_inspection() as restart_transaction:
+                if restart_transaction is not None:
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=current,
+                        code="BM020_TRANSACTION_PRESENT",
+                        message="a BM-020 restart transaction conflicts with held retry",
+                    )
 
-        try:
-            rearmed = self.store.rearm_held_quiescence(current)
-        except Exception:
+                try:
+                    latest = self.store.inspect()
+                except Exception:
+                    latest = None
+                if (
+                    latest != current
+                    or not _is_held_quiescence_retry_snapshot(latest)
+                    or not owner_is_healthy_and_disabled()
+                ):
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=latest or current,
+                        code="FROZEN_HELD_RETRY_STATE_CHANGED",
+                        message="held transaction or disabled owner changed before retry",
+                    )
+
+                try:
+                    rearmed = self.store.rearm_held_quiescence(current)
+                except Exception:
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=self._safe_inspect() or current,
+                        code="FROZEN_HELD_RETRY_CAS_FAILED",
+                        message="held frozen transaction changed before retry could be armed",
+                    )
+
+                # The normal continuation owns software/configuration work and
+                # all final private verification, activation release, updater
+                # restore, and clear ordering. If interrupted here, startup
+                # sees AWAITING_RESTART. The BM-020 lock remains held until it
+                # returns or records a safe failure.
+                try:
+                    return self.resume_after_restart(current_session_id=session)
+                except Exception:
+                    return self._attention(
+                        rearmed,
+                        "FROZEN_HELD_RETRY_CONTINUATION_FAILED",
+                        "held frozen retry continuation failed and requires attention",
+                    )
+        except Exception as exc:
+            busy = getattr(exc, "code", "") == "TRANSACTION_LOCK_BUSY"
             return FrozenInstallResult(
                 "needs_attention",
                 transaction=self._safe_inspect() or current,
-                code="FROZEN_HELD_RETRY_CAS_FAILED",
-                message="held frozen transaction changed before retry could be armed",
-            )
-
-        # The normal continuation owns software/configuration work and all
-        # final private verification, activation release, updater restore, and
-        # clear ordering. If interrupted here, startup sees AWAITING_RESTART.
-        try:
-            return self.resume_after_restart(current_session_id=session)
-        except Exception:
-            return self._attention(
-                rearmed,
-                "FROZEN_HELD_RETRY_CONTINUATION_FAILED",
-                "held frozen retry continuation failed and requires attention",
+                code=(
+                    "BM020_TRANSACTION_LOCK_BUSY"
+                    if busy else "BM020_TRANSACTION_INSPECTION_FAILED"
+                ),
+                message=(
+                    "BM-020 restart state is being changed and held retry was not continued"
+                    if busy else "BM-020 restart state could not be serialized with held retry"
+                ),
             )
 
     def resume_after_restart(
