@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A held-retry P2 race correction",
-  "reason": "Added enforceable serialization using same-profile validation and TransactionStore.locked_inspection across the final BM-020 absence check, full-snapshot frozen CAS, and real retry continuation. Focused frozen lifecycle 36/36, transaction store 36/36, full offline suite 1,864/1,864; compileall, tracked JSON parsing, and diff check passed. No live retry or host action. Changes are uncommitted; independent review is next.",
-  "last_commit": "5a1706b",
+  "task": "BM-023A held-retry RestartCoordinator lock coordination",
+  "reason": "Added scoped thread-bound TransactionStoreAccess for explicit RestartCoordinator inspect/create under retry's existing profile-local lock. Ordinary TransactionStore calls remain non-reentrant and excluded. The held-retry regression uses the production RestartCoordinator against the same store; restart-required creation, profile mismatch, lock exclusion, and late-appearing transaction paths are covered. Focused suites 88/88 and full offline suite 1,867/1,867 passed; compileall, JSON parsing, and diff check passed. No live retry or host action. Independent review is next.",
+  "last_commit": "4538f09",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-25"

@@ -1,43 +1,44 @@
 # Current Task
 
-## BM-023A held-retry P2 race correction - 2026-09-25
+## BM-023A held-retry RestartCoordinator lock coordination - 2026-09-25
 
 **Status:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
-`TransactionStore.locked_inspection()` holds the existing profile-local
-BM-020 OS lock while `retry_held_quiescence()` verifies the final empty
-snapshot, performs the complete-snapshot frozen CAS, and runs the real
-`resume_after_restart()` continuation. A BM-020 writer that commits before the
-lock is acquired is observed and blocks continuation; one that races after the
-locked check cannot create its transaction until retry releases the lock.
-Retry also verifies both transaction stores resolve to the same profile
-directory and rejects stores without the locked inspection API. Lock-busy and
-present-transaction paths preserve the frozen hold and do not restore updater
-policy.
+`TransactionStore.locked_access()` holds the profile-local exclusive BM-020
+lock and yields a thread-bound `TransactionStoreAccess` for inspect/create.
+The capability expires when the context exits and only works for the same
+lock file. Ordinary `inspect`, `create`, update, transition, and clear calls
+still acquire the nonblocking lock and remain excluded during the retry.
+`retry_held_quiescence()` retains the access from its decisive empty snapshot
+through full-snapshot frozen CAS and the complete resume/configuration
+continuation. It passes the access explicitly to production
+`RestartCoordinator.reconcile()`, which uses it for pending-state inspection,
+restart-required transaction creation, and read-back.
 
-Added a real happy-path held retry covering registry readiness, private
-configuration verification, activation release, updater restoration, and
-transaction clearance, plus regressions for a BM-020 transaction entering the
-former race window and a concurrent create attempt during continuation.
-Full-snapshot CAS, exact artifact/identity checks, post-restart session
-boundary, Red Light 2.6.8 disabled precondition, and generic abandon rejection
-remain covered.
+The production-path regression runs a held retry through a real
+`RestartCoordinator` bound to the same profile-local store and would fail on
+the prior reentrant inspect. Additional tests cover a restart-required handoff
+created under the held lock, exclusion of ordinary callers, mismatched profile
+rejection, and a transaction appearing immediately before the locked
+snapshot. Full-snapshot CAS, updater quarantine, unreleased Red Light hold,
+exact owner state, manifest/plan/configuration/overlay identity, the
+post-restart session boundary, and generic abandon rejection remain covered.
 
-Focused frozen lifecycle tests passed **36/36**; transaction store tests passed
-**36/36**; the full offline suite passed **1,864/1,864**. Compileall, tracked
-JSON parsing for changed `.agent/AGENT_STATUS.json`, and `git diff --check`
-passed. No Kodi/Test.app, profile, device, network, LAN, private value,
-adapter, or host action was accessed. No live retry was run. Changes remain
-uncommitted on `agent/supervised-codex`; protected matrix is unchanged.
+Focused frozen-install, restart-coordinator, and transaction suites passed
+**88/88**; the full offline suite passed **1,867/1,867**. Compileall, tracked
+JSON parsing, and `git diff --check` passed. No live retry, Test.app, normal
+profile, device, network, LAN, private value, or host action was accessed.
+Changes remain uncommitted on `agent/supervised-codex` at baseline `4538f09`;
+protected matrix is unchanged.
 
 - BM-017F: COMPLETE.
 - macOS BM-023A: OFFLINE_RETRY_IMPLEMENTED; LIVE_RETRY_NOT_RUN.
 - tvOS: NOT VALIDATED.
 
-Smallest next step: independent review of the synchronization and lifecycle
-regressions. Action wiring and any live retry require separate review and
-authorization.
+Smallest next step: independent review of the synchronization contract and
+production-path regressions. Action wiring and any live retry require separate
+review and authorization.
 
 ---
 
