@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A held-retry RestartCoordinator lock coordination",
-  "reason": "Added scoped thread-bound TransactionStoreAccess for explicit RestartCoordinator inspect/create under retry's existing profile-local lock. Ordinary TransactionStore calls remain non-reentrant and excluded. The held-retry regression uses the production RestartCoordinator against the same store; restart-required creation, profile mismatch, lock exclusion, and late-appearing transaction paths are covered. Focused suites 88/88 and full offline suite 1,867/1,867 passed; compileall, JSON parsing, and diff check passed. No live retry or host action. Independent review is next.",
-  "last_commit": "4538f09",
+  "task": "BM-023A lock capability and adapter callback hardening",
+  "reason": "Bound TransactionStoreAccess issuance and use to the held store lock file identity and internal issuance path; updated the BM-023A adapter callback and package version to 0.0.6. Pinned frozen-install test ZIP fixture timestamps after proving the prior fixture changed digest across a two-second boundary. Focused tests 129/129, adapter-only 40/40, final full offline suite 1,869/1,869, compileall, fixture package integrity, JSON parsing, and diff check passed. No live retry or host action. Independent review is next.",
+  "last_commit": "b8c12ce",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-25"

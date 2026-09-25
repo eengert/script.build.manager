@@ -1,79 +1,77 @@
-# Current Handoff - BM-023A RestartCoordinator lock coordination (2026-09-25)
+# Current Handoff - BM-023A lock capability and adapter callback hardening (2026-09-25)
 
 **Result:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
 ## What changed
 
-- `TransactionStore.locked_access()` acquires the existing profile-local
-  exclusive BM-020 lock and yields a thread-bound `TransactionStoreAccess`
-  limited to inspect/create. The capability expires at context exit and
-  validates that the coordinator uses the same lock file.
+- `TransactionStore.locked_access()` is the internal issuance path for
+  `TransactionStoreAccess`; direct construction without its private issuer is
+  rejected. `TransactionLock` records the opened file device/inode identity.
+  Issuance and each capability operation compare that descriptor identity with
+  the current file at the bound store canonical lock path. `_assert_active()`
+  and `matches()` fail closed if the lock is inactive, replaced, or belongs to
+  another profile.
 - Ordinary `TransactionStore.inspect/create/update/transition/clear` methods
-  still acquire the nonblocking OS lock. No general reentrant or process-wide
-  lock was added; an ordinary same-profile caller remains `TRANSACTION_LOCK_BUSY`
-  while the protected continuation runs.
-- Before updater reassertion or artifact staging, retry verifies the BM-020
-  transaction directory resolves to the same profile-local directory as the
-  frozen store and requires the scoped access API.
-- `retry_held_quiescence()` keeps that lock across its decisive empty-transaction
-  recheck, the full-snapshot frozen CAS, and the real resume/configuration
-  continuation. It passes the capability explicitly through `resume_after_restart`
-  and `install` to `RestartCoordinator.reconcile()`. The coordinator uses it
-  for BM-020 pending-state inspection and read-back, and the preparation helper
-  uses it for restart-required transaction creation.
-- A BM-020 writer that commits before retry acquires the lock is observed and
-  stops retry before rearm. A writer racing after acquisition remains blocked
-  until retry releases the lock. The production restart coordinator can safely
-  inspect or create only through the explicit capability.
-- If the BM-020 transaction appears after the prior final inspect but before
-  the locked recheck, retry returns `BM020_TRANSACTION_PRESENT` before rearm or
-  continuation. The held frozen snapshot and Red Light activation hold remain
-  unchanged, and updater policy is not restored.
-- The held-retry regression runs a real `RestartCoordinator` bound to the same
-  profile-local transaction store through registry readiness, configuration,
-  activation release, updater restoration, and frozen-transaction clearance.
-  This would fail on the prior reentrant inspection path. Separate tests prove
-  restart-required handoff creation succeeds under the capability, ordinary
-  inspect/create calls remain lock-busy, mismatched stores fail closed, and a
-  BM-020 transaction entering the final race window stops retry before CAS.
-- Full-snapshot CAS, artifact and manifest/plan/configuration/overlay identity,
-  post-restart session requirement, exact healthy disabled Red Light 2.6.8
-  precondition, updater quarantine, and generic abandon rejection remain in
-  force.
+  retain their existing nonblocking OS lock behavior. The capability remains
+  thread-bound and limited to inspect/create; no general reentrant or
+  process-wide lock was added.
+- The held-retry continuation and its BM-020 race exclusion are unchanged. Its
+  full-snapshot frozen CAS, updater quarantine, unreleased Red Light hold until
+  verified configuration succeeds, exact owner state/version,
+  manifest/plan/configuration/private-overlay identity, post-restart session
+  boundary, and generic abandon rejection remain covered.
+- The temporary BM-023A adapter now defines
+  `run_configuration(request, *, transaction_access=None)` and explicitly
+  forwards `transaction_access` to `RestartCoordinator.reconcile()`. Its
+  package version is 0.0.6 so the corrected callback is emitted as an upgrade.
+  A focused regression executes the callback with a sentinel capability and
+  proves the coordinator receives it; it fails against the previous one-arg
+  lambda.
+- Pinned timestamps in the frozen-install ZIP test fixture. Validation exposed
+  that the previous current-time ZIP timestamps changed artifact hashes when
+  resume crossed a two-second boundary. The same fixture now hashes identically
+  across a 2.1-second interval.
 
 ## Validation
 
-- Focused `tests.test_frozen_install`, `tests.test_restart_coordinator`, and
-  `tests.test_transaction`: **88/88 passed**.
-- Full offline suite: **1,867/1,867 passed**.
+- Focused transaction, restart-coordinator, frozen-install, and adapter suites:
+  **129/129 passed**. Adapter-only suite after the 0.0.6 package bump:
+  **40/40 passed**.
+- Final full offline suite: **1,869/1,869 passed**.
 - `python3 -m compileall -q resources tools tests`: passed.
-- Tracked JSON parsing for changed `.agent/AGENT_STATUS.json`: passed.
-- `git diff --check`: passed.
+- Fixture adapter ZIP CRC integrity and generated entrypoint compilation:
+  passed.
+- Tracked JSON parsing and `git diff --check`: passed after tracking updates.
+- An earlier full-suite attempt hit a child-process readiness timeout; its
+  isolated regression passed, and the final full-suite run passed. A separate
+  frozen-install resume failure was traced to nondeterministic fixture ZIP
+  timestamps and is covered by the pinned-timestamp correction above.
 
 ## Boundaries and next step
 
-No live Kodi/Test.app, normal profile, device, network, LAN, private value,
-adapter, or host action was accessed or changed. The full unit suite used its
-disposable and simulated fixtures. No live retry was run. Changes are
-uncommitted on `agent/supervised-codex` at baseline `4538f09`; protected matrix
-was not pushed or integrated.
+No Kodi/Test.app, normal profile, real device, network, LAN, private value, or
+host action was accessed or changed. No live retry was run. The full suite and
+adapter package check used offline fixtures. Changes are uncommitted on
+`agent/supervised-codex` at baseline `b8c12ce`; protected matrix was not pushed
+or integrated.
 
-Changed code: `resources/lib/transaction.py`,
-`resources/lib/restart_coordinator.py`, and `resources/lib/frozen_install.py`.
-Changed regressions: `tests/test_transaction.py`,
-`tests/test_restart_coordinator.py`, and `tests/test_frozen_install.py`.
-Tracking was updated in `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`,
-`.agent/USAGE_HISTORY.md`, and this handoff.
+Changed code/package files: `resources/lib/transaction.py`,
+`tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter/addon.xml.in`, and
+`tools/bm023a_adapter_support.py`. Changed tests:
+`tests/test_transaction.py`, `tests/test_frozen_install.py`, and
+`tests/test_bm023a_adapter.py`. Tracking is in `.agent/CURRENT_TASK.md`,
+`.agent/AGENT_STATUS.json`, `.agent/USAGE_HISTORY.md`, and this handoff.
 
-Smallest next step: independent review of the exact lock capability and
-production-path tests. Action wiring and any live retry require their separate
-review and authorization.
+Smallest next step: independent review of lock-file binding, wrong-lock
+coverage, adapter callback forwarding, and the final offline evidence. No live
+retry is included in this work item.
 
-Supervisor usage snapshots: start 5h 5% used / weekly 82% used; end 5h 7%
-used / weekly 82% used; delta 5h +2 pp / weekly 0 pp. The final snapshot shows
-18% weekly remaining, above the 5% stop threshold. Observed model
-`gpt-6-luna`, effort `max`.
+Usage: start snapshot 5h 0% used / weekly 83% used. The final state exposed
+`source=test` without a usable observation timestamp, so end and delta are
+recorded as unavailable. The last reliable app-server snapshot before final
+validation showed 17% weekly remaining, above the 5% stop threshold. Observed
+model `gpt-6-luna`, effort `max`.
 
 ---
 

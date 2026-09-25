@@ -1,44 +1,40 @@
 # Current Task
 
-## BM-023A held-retry RestartCoordinator lock coordination - 2026-09-25
+## BM-023A lock capability and adapter callback hardening - 2026-09-25
 
 **Status:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
-`TransactionStore.locked_access()` holds the profile-local exclusive BM-020
-lock and yields a thread-bound `TransactionStoreAccess` for inspect/create.
-The capability expires when the context exits and only works for the same
-lock file. Ordinary `inspect`, `create`, update, transition, and clear calls
-still acquire the nonblocking lock and remain excluded during the retry.
-`retry_held_quiescence()` retains the access from its decisive empty snapshot
-through full-snapshot frozen CAS and the complete resume/configuration
-continuation. It passes the access explicitly to production
-`RestartCoordinator.reconcile()`, which uses it for pending-state inspection,
-restart-required transaction creation, and read-back.
+`TransactionStoreAccess` is issued only through `TransactionStore.locked_access()`.
+The lock records the opened file device/inode identity. Issuance and every
+capability operation verify that the held descriptor still matches the
+canonical lock file for the bound store. Wrong-profile and wrong-lock access
+fails closed; direct construction without the internal issuer is rejected.
+Ordinary BM-020 calls retain nonblocking exclusion.
 
-The production-path regression runs a held retry through a real
-`RestartCoordinator` bound to the same profile-local store and would fail on
-the prior reentrant inspect. Additional tests cover a restart-required handoff
-created under the held lock, exclusion of ordinary callers, mismatched profile
-rejection, and a transaction appearing immediately before the locked
-snapshot. Full-snapshot CAS, updater quarantine, unreleased Red Light hold,
-exact owner state, manifest/plan/configuration/overlay identity, the
-post-restart session boundary, and generic abandon rejection remain covered.
+The temporary adapter callback accepts `transaction_access` and forwards it
+explicitly to `RestartCoordinator.reconcile()`. The generated adapter package
+is version 0.0.6. Its callback regression proves the exact capability object
+reaches the coordinator. Frozen-install test ZIP fixture timestamps are pinned
+to keep resume artifacts deterministic across the ZIP timestamp boundary.
 
-Focused frozen-install, restart-coordinator, and transaction suites passed
-**88/88**; the full offline suite passed **1,867/1,867**. Compileall, tracked
-JSON parsing, and `git diff --check` passed. No live retry, Test.app, normal
-profile, device, network, LAN, private value, or host action was accessed.
-Changes remain uncommitted on `agent/supervised-codex` at baseline `4538f09`;
-protected matrix is unchanged.
+The held-retry invariants remain covered: full-snapshot frozen CAS, updater
+quarantine, unreleased Red Light hold until verified configuration succeeds,
+exact owner state/version, manifest/plan/configuration/private-overlay identity,
+post-restart session boundary, generic abandon rejection, and BM-020 race
+exclusion.
 
-- BM-017F: COMPLETE.
-- macOS BM-023A: OFFLINE_RETRY_IMPLEMENTED; LIVE_RETRY_NOT_RUN.
-- tvOS: NOT VALIDATED.
+Focused transaction, restart-coordinator, frozen-install, and adapter tests
+passed **129/129**; adapter-only tests after the version bump passed **40/40**;
+the final full offline suite passed **1,869/1,869**. Compileall, fixture ZIP
+CRC/generated-source compilation, JSON parsing, and `git diff --check` passed.
 
-Smallest next step: independent review of the synchronization contract and
-production-path regressions. Action wiring and any live retry require separate
-review and authorization.
+No Kodi/Test.app, profile, device, network, LAN, private value, or host action
+was accessed. No live retry was run. Code and tests are uncommitted on
+`agent/supervised-codex` at baseline `b8c12ce`; protected matrix was not changed.
+
+Smallest next step: independent review of the exact capability binding, adapter
+callback regression, and offline evidence.
 
 ---
 
