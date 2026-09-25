@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
-  "status": "blocked",
-  "task": "BM-023A durable restart-artifact correction",
-  "reason": "Adapter 0.0.5 offline correction is complete at ee31e3e: exact retained artifacts are staged into the profile-local durable store before install. Adapter 39/39, related artifact/frozen 86/86, full suite 1855/1855, compileall, 7 JSON parses, and diff check passed. Live Test.app remains needs_attention after FROZEN_MANIFEST_INVALID with Red Light hold unreleased; requires supervisor-reviewed held-transaction recovery before another live retry.",
-  "last_commit": "ee31e3e",
+  "status": "complete",
+  "task": "BM-023A held-transaction retry offline implementation",
+  "reason": "Production FrozenInstallStore/FrozenInstallCoordinator retry and focused tests are complete offline. The full suite passed 1,862/1,862, focused frozen lifecycle tests passed 34/34, compileall passed, and git diff --check passed. Changes remain uncommitted; the live held transaction and all host actions were untouched. Supervisor review is required before action wiring or live retry.",
+  "last_commit": "87517fe",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-24"

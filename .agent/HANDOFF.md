@@ -1,4 +1,61 @@
-# Current Handoff - BM-023A durable restart-artifact correction (2026-09-24)
+# Current Handoff - BM-023A held-transaction retry implementation (2026-09-24)
+
+**Result:** OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+- `FrozenInstallStore.rearm_held_quiescence` only accepts the reviewed held
+  failure predicate and compares the complete immutable transaction snapshot
+  under the store lock. It preserves the transaction, manifest, plan,
+  configuration, overlay, original session, restart count, updater guard, and
+  unreleased activation hold; it clears only the old safe failure diagnostic.
+- `FrozenInstallCoordinator.retry_held_quiescence` requires the caller's
+  reviewed transaction snapshot and accepts only `needs_attention`,
+  `FROZEN_MANIFEST_INVALID`, `quiescence_awaiting_restart`, restart count 1,
+  the sole `plugin.video.redlight` hold, unreleased hold, required updater
+  guard, and original `AUTOMATIC` policy. It requires a post-restart session
+  matching the live session provider.
+- The coordinator reasserts and reads back `NEVER_CHECK`, stages each declared
+  exact artifact idempotently through `ArtifactStore`, revalidates manifest,
+  plan, Red Light activation graph, private overlay identity, exact healthy
+  disabled Red Light version, and absence of a BM-020 restart transaction. It
+  re-reads the transaction and owner state before the locked full-snapshot CAS,
+  then calls the existing resume continuation once.
+- Generic `abandon()` remains unchanged and still rejects unreleased holds.
+  The normal resume/finalization path remains responsible for configuration,
+  private verification, final validation, activation release, desired enabled
+  states, updater restoration, and transaction clearance.
+
+## Validation
+
+- Focused frozen lifecycle tests: **34/34 passed**.
+- Full offline suite: **1,862/1,862 passed**.
+- `python3 -m compileall -q resources tools tests`: passed.
+- `git diff --check`: passed.
+- Added coverage for accepted re-arm and artifact staging, all supported-state
+  predicate near misses, session matching, generic abandon rejection, BM-020
+  conflicts, exact owner version and disabled state, manifest/plan/overlay and
+  artifact mismatch failures, guard/readback ordering, and full-snapshot CAS
+  conflicts.
+
+## Boundaries and next step
+
+No Kodi or Test.app was launched or accessed. No profile, device, network,
+restart, adapter install/invocation, or host action was used. The live held
+transaction was not inspected or changed. The new coordinator entry point is
+not wired into an adapter or supervisor action; a separately named, explicitly
+authorized one-shot action and its preflight/postcondition review remain a
+separate step. The BM repository still has no known host-action catalog entry.
+
+The implementation and tests are uncommitted workspace changes on
+`agent/supervised-codex`; protected matrix is unchanged. Codex usage values are
+recorded as unavailable per `AGENTS.md`; the supervisor state showed model
+`gpt-6-luna` and effort `max`. Smallest next step: supervisor review of this
+production API, then separately authorize any action wiring or live retry.
+
+---
+
+# Prior Handoff - BM-023A durable restart-artifact correction (2026-09-24)
 
 **Result:** offline adapter correction complete and validated. The live Test.app
 transaction remains intentionally untouched in needs_attention after the
