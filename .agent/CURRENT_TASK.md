@@ -1,47 +1,40 @@
 # Current Task
 
-## BM-023A offline CONFIGURE diagnostics and Red Light hold correction — 2026-09-24
+## BM-023A installed runtime verification — 2026-09-24
 
-**Status:** OFFLINE_IMPLEMENTATION_COMPLETE; BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+**Status:** INSTALLED_RUNTIME_VERIFIED; AWAITING_SEPARATE_SUPERVISOR_AUTHORIZATION.
 
-The CONFIGURE failure path now records a safe configuration_scope and unwraps
-typed public/private apply results into allowlisted owner, resource, cause, and
-initialization/import-stage fields. The intentionally empty planner CONFIGURE
-add-on ID remains empty. Raw messages, exception text, paths, operation keys,
-and private values are not copied into durable diagnostics.
+Eric confirmed manual installation of
+`dist/script.build.manager-0.1.0-d8ab24b.zip` into the authorized Kodi Build
+Manager Test.app. Read-only byte comparisons at
+`/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data/addons/script.build.manager`
+confirmed these installed files match worker
+`d8ab24ba3678302505c157501adbb216ba3935a6`:
 
-A validated, present PrivateOverlayMetadata now carries its ID, fingerprint,
-and independent required flag into the failed frozen transaction. An optional
-imported overlay can therefore remain identified with required=false; absent
-or unvalidated metadata is not presented as imported.
+- `resources/lib/build_manager.py`
+- `resources/lib/frozen_install.py`
+- `resources/builds/examples/eric-main.example.json`
 
-The authoritative Red Light declaration in
-resources/builds/examples/eric-main.example.json now sets
-configure_before_activation=true. The existing generalized lifecycle
-establishes the owner hold, crosses the quiescence restart, runs configuration
-while held, verifies the private resource, and releases only on success.
-Failure coverage confirms the hold remains unreleased and the owner disabled.
+The installed Red Light declaration has
+`configure_before_activation=true`; installed runtime contains
+`PUBLIC_CONFIGURATION_OPERATION_FAILED`. Product version remains 0.1.0 and
+matrix remains at `66b0fd8a123ef778b23ba42703937b07eefc4e6f`.
 
-Validation: focused related suites passed 686 tests; full
-python3 -m unittest discover tests passed 1,851 tests. Compileall passed for
-resources, tools, and tests; all 7 tracked JSON/schema files parsed;
-git diff --check passed.
-
-Implementation commit: 6ce2947 on agent/codex. The live transaction remains
-untouched; protected matrix remains at 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
-
-No Kodi launch, recovery, BM-023A retry, updater/skin/profile mutation, real
-device access, or private overlay value inspection occurred. The historical
-CONFIGURE sub-action remains unknown until the separately authorized recovery
-and single diagnostic retry.
+No adapter recovery, BM-023A retry, tests, or Kodi launch were performed by
+Codex. No GUI automation, normal-profile or real-device access, or private
+overlay value inspection occurred. No product source/version or matrix changes
+were made.
 
 - BM-017F: COMPLETE.
-- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+- macOS BM-023A: installed runtime verified; still awaiting authorization for
+  the previously described recovery and single retry.
 - tvOS: NOT VALIDATED.
 
-Smallest next step: wait for supervisor direction before recovering the
-existing needs_attention transaction or attempting the single diagnostic
-retry.
+Smallest next step: wait for separate supervisor authorization before invoking
+adapter 0.0.4 recovery or the BM-023A install retry. Usage start was not
+captured; end snapshot was 5h 6% used / weekly 80% used. Runtime label GPT-6;
+user-reported Luna-6/Max was not independently observable, and no
+model/effort switch was made.
 
 ---
 

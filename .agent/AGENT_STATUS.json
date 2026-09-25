@@ -1,9 +1,9 @@
 {
   "active_agent": "codex",
   "status": "blocked",
-  "task": "BM-023A offline CONFIGURE diagnostics and Red Light hold correction",
-  "reason": "Offline implementation and regression validation are complete: safe public/private CONFIGURE diagnostics, validated present overlay identity persistence with required kept distinct, and Red Light configure_before_activation correction. Focused suites passed 686 tests; full suite passed 1851; compileall, 7 tracked JSON/schema parses, and diff check passed. No Kodi launch, recovery, retry, profile/device access, updater/skin mutation, or private value inspection. Historical CONFIGURE sub-action remains unknown; awaiting supervisor direction for recovery and the single diagnostic retry.",
-  "last_commit": "6ce2947",
+  "task": "BM-023A installed runtime verification",
+  "reason": "Eric confirmed manual installation of the worker-matched 0.1.0 ZIP. Read-only comparisons in the authorized Kodi Build Manager Test.app portable add-on directory prove resources/lib/build_manager.py, resources/lib/frozen_install.py, and resources/builds/examples/eric-main.example.json match worker d8ab24ba3678302505c157501adbb216ba3935a6 byte-for-byte. Red Light configure_before_activation=true and nested CONFIGURE diagnostic are present. Awaiting separate supervisor authorization for adapter recovery and the single retry. No recovery, adapter invocation, retry, tests, Kodi launch, normal-profile/device access, or private value inspection.",
+  "last_commit": "d8ab24ba3678302505c157501adbb216ba3935a6",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "eric",
   "updated_at": "2026-09-24"

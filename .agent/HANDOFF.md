@@ -1,59 +1,52 @@
-# Current Handoff — BM-023A offline CONFIGURE correction (2026-09-24)
+# Current Handoff — BM-023A installed runtime verified (2026-09-24)
 
-Result: offline implementation and regression validation complete. The live
-transaction remains untouched and macOS BM-023A is
-BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+Result: Eric confirmed manual installation of the worker-matched package in
+Kodi Build Manager Test.app. The installed portable add-on files match worker
+`d8ab24ba3678302505c157501adbb216ba3935a6` byte-for-byte. Matrix remains
+`66b0fd8a123ef778b23ba42703937b07eefc4e6f`.
 
-### What changed
+### Package and installed runtime
 
-- resources/lib/build_manager.py: tags public and private CONFIGURE
-  exceptions with a validated scope; existing safe resource/import fields stay
-  available.
-- resources/lib/frozen_install.py: unwraps only typed configuration results
-  and persists safe nested fields. When already validated overlay metadata is
-  present, the failed transaction retains its ID, fingerprint, and required
-  flag.
-- resources/builds/examples/eric-main.example.json: declares Red Light's
-  required structured resource with configure_before_activation=true.
-- Added regressions for public/private failure scope, empty CONFIGURE add-on
-  identity, typed stage/cause retention, redaction, overlay identity with
-  required=false, Red Light holds across restart and failed configuration,
-  and unchanged unrelated resolution behavior.
-- Updated .agent task tracking; prior history remains below.
-
-### Validation
-
-- Focused related suites: 686 tests passed.
-- Full offline suite: 1,851 tests passed.
-- Compileall passed for resources, tools, and tests.
-- All 7 tracked JSON/schema files parsed.
-- git diff --check passed.
+- ZIP: `dist/script.build.manager-0.1.0-d8ab24b.zip`
+- ZIP SHA-256:
+  `42bad927c231d40df324ac56147a20c998e5abcbdee2b6d93cfcae66456d64e4`
+- ZIP size: 215,137 bytes; product version remains 0.1.0.
+- Verified under
+  `/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data/addons/script.build.manager`.
+- `resources/lib/build_manager.py` matches worker SHA-256
+  `68c58cada6644a4eaea3485aff897ba0ef52cd9ae55c65d3560c477b85b9c749`.
+- `resources/lib/frozen_install.py` matches worker SHA-256
+  `1073f3528bcdd1bfa96002f1ad45c890d42e2673a91015b665960af228c4621e`.
+- `resources/builds/examples/eric-main.example.json` matches worker SHA-256
+  `924ab96558111c1a9050592da5296d07dfbfc35520c380a554beea73fed308c4`.
+- Installed Red Light declaration has `configure_before_activation=true`;
+  installed runtime contains `PUBLIC_CONFIGURATION_OPERATION_FAILED`.
 
 ### Not done
 
-No Kodi was launched. No recovery, retry, updater/skin/profile mutation,
-real-device access, or private overlay value inspection occurred. The historical
-CONFIGURE sub-action is still unknown; online recovery and the single retry
-remain separate supervisor-gated work.
+No recovery, adapter invocation, BM-023A retry, or tests were performed. Codex
+did not launch Kodi or automate GUI installation. Verification read only the
+three authorized installed files and the Red Light declaration in the
+authorized portable add-on path. No normal Kodi profile, real device, or
+private overlay values were accessed. No product source/version or matrix
+changes were made.
 
 ### Smallest next step
 
-Await supervisor direction before recovering the preserved needs_attention
-transaction or starting the single diagnostic retry.
+Wait for separate supervisor authorization before invoking adapter 0.0.4
+recovery or attempting the single BM-023A install retry.
 
 ### Status
 
 - BM-017F: COMPLETE.
-- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+- macOS BM-023A: installed runtime verified; awaiting supervisor authorization
+  for the still-pending recovery and single retry.
 - tvOS: NOT VALIDATED.
-- Worker branch: agent/codex; protected matrix was not changed.
-- Implementation commit: 6ce2947; task tracking is kept in separate metadata
-  commits on the same worker branch.
-- Matrix SHA: 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
-- Usage snapshot: start 5h 0% used / weekly 79% used; end 5h 3% used /
-  weekly 80% used; observed delta 5h +3 pp / weekly +1 pp. Runtime label GPT-6;
-  user-requested Luna-6/Max was not independently observable, and no
-  model/effort switch was made.
+- Worker branch/SHA: `agent/codex` /
+  `d8ab24ba3678302505c157501adbb216ba3935a6`.
+- Usage end snapshot: 5h 6% used / weekly 80% used; task start was not captured.
+  Runtime label GPT-6; user-reported Luna-6/Max was not independently
+  observable, and no model/effort switch was made.
 
 ---
 
