@@ -1352,6 +1352,7 @@ class FrozenInstallTest(unittest.TestCase):
         original_configuration_runner = coordinator.configuration_runner
         original_resume = coordinator.resume_after_restart
         rearmed_snapshots = []
+        issued_transaction_access = []
 
         def set_policy(policy):
             policy = AddonUpdatePolicy(policy)
@@ -1371,6 +1372,7 @@ class FrozenInstallTest(unittest.TestCase):
             events.append("bm020_lock_acquired")
             try:
                 with original_locked_access() as access:
+                    issued_transaction_access.append(access)
                     yield access
             finally:
                 events.append("bm020_lock_released")
@@ -1422,6 +1424,9 @@ class FrozenInstallTest(unittest.TestCase):
 
         def configure(request, *, transaction_access):
             events.append("configuration_private_apply")
+            self.assertEqual(len(issued_transaction_access), 1)
+            self.assertIs(transaction_access, issued_transaction_access[0])
+            self.assertTrue(transaction_access.matches(restart_store))
             self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
             self.assertEqual(
                 active_activation_hold_ids(self.store),

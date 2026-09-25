@@ -7,9 +7,11 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.6"
+ADAPTER_VERSION = "0.0.7"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
+HELD_RETRY_OWNER_ID = "plugin.video.redlight"
+HELD_RETRY_FAILURE_CODE = "FROZEN_MANIFEST_INVALID"
 
 ADAPTER_STAGES = frozenset({
     "LOCATE_BUILD_MANAGER",
@@ -24,6 +26,8 @@ ADAPTER_STAGES = frozenset({
     "INVOKE_INSTALL",
     "CHECK_RECOVERY_PRECONDITIONS",
     "INVOKE_RECOVERY",
+    "CHECK_RETRY_PRECONDITIONS",
+    "INVOKE_RETRY",
     "SERIALIZE_RESULT",
 })
 ADAPTER_CALLABLES = frozenset({
@@ -39,7 +43,11 @@ ADAPTER_CALLABLES = frozenset({
     "BuildManager",
     "FrozenInstallCoordinator",
     "FrozenInstallCoordinator.install",
+    "FrozenInstallCoordinator.retry_held_quiescence",
+    "FrozenInstallStore",
     "FrozenInstallStore.inspect",
+    "TransactionStore",
+    "TransactionStore.inspect",
     "FrozenInstallCoordinator.abandon",
     "UpdatePolicyBackend.get_policy",
     "KodiRuntimeFrozenArtifactBackend.get_addon_details",
@@ -62,6 +70,8 @@ FAILURE_CATEGORIES = frozenset({
     "mode_missing",
     "mode_invalid",
     "artifact_stage_failed",
+    "retry_snapshot_invalid",
+    "retry_identity_mismatch",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -95,12 +105,14 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover"):
+        if token in ("install", "recover", "retry"):
             return token
         if token == "?mode=install":
             return "install"
         if token == "?mode=recover":
             return "recover"
+        if token == "?mode=retry":
+            return "retry"
     raise _bootstrap_error(
         "LOCATE_BUILD_MANAGER", "result_serializer", "mode_invalid"
     )
@@ -108,7 +120,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
-    safe_mode = mode if mode in ("install", "recover") else "unselected"
+    safe_mode = mode if mode in ("install", "recover", "retry") else "unselected"
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
     return identified
@@ -267,6 +279,171 @@ def recover_frozen_install(
         "af3_installed": af3_installed,
         "frozen_addons_retained": addons_retained,
     }
+
+
+def _safe_held_retry_result(result: Any) -> Dict[str, Any]:
+    """Summarize only fixed labels and booleans from a held retry result."""
+    allowed_outcomes = {"complete", "failed", "needs_attention", "awaiting_restart"}
+    raw_outcome = getattr(result, "outcome", None)
+    outcome = getattr(raw_outcome, "value", raw_outcome)
+    if not isinstance(outcome, str) or outcome not in allowed_outcomes:
+        outcome = "unknown"
+
+    transaction = getattr(result, "transaction", None)
+    transaction_summary = None
+    if transaction is not None:
+        allowed_phases = {
+            "preparing", "installing_software", "configuring",
+            "awaiting_restart", "resuming", "validating", "needs_attention",
+            "complete",
+        }
+        allowed_lifecycle = {
+            "none", "installing_software", "quiescence_awaiting_restart",
+            "configuring", "configuration_awaiting_restart", "private_verified",
+            "activation_released", "final_activation_awaiting_restart",
+        }
+        raw_phase = getattr(transaction, "phase", None)
+        phase = getattr(raw_phase, "value", raw_phase)
+        if not isinstance(phase, str) or phase not in allowed_phases:
+            phase = "unknown"
+        raw_lifecycle = getattr(transaction, "lifecycle_stage", None)
+        lifecycle = getattr(raw_lifecycle, "value", raw_lifecycle)
+        if not isinstance(lifecycle, str) or lifecycle not in allowed_lifecycle:
+            lifecycle = "unknown"
+        hold_ids = getattr(transaction, "activation_hold_ids", ())
+        try:
+            is_held_owner = tuple(hold_ids) == (HELD_RETRY_OWNER_ID,)
+        except TypeError:
+            is_held_owner = False
+        if is_held_owner:
+            safe_hold_ids = [HELD_RETRY_OWNER_ID]
+        else:
+            safe_hold_ids = []
+        restart_count = getattr(transaction, "lifecycle_restart_count", None)
+        if (
+            not isinstance(restart_count, int)
+            or isinstance(restart_count, bool)
+            or not 0 <= restart_count <= 3
+        ):
+            restart_count = None
+        hold_released = getattr(transaction, "activation_hold_released", None)
+        guard_required = getattr(transaction, "updater_guard_required", None)
+        transaction_summary = {
+            "phase": phase,
+            "lifecycle_stage": lifecycle,
+            "lifecycle_restart_count": restart_count,
+            "activation_hold_ids": safe_hold_ids,
+            "activation_hold_released": (
+                hold_released if isinstance(hold_released, bool) else None
+            ),
+            "updater_guard_required": (
+                guard_required if isinstance(guard_required, bool) else None
+            ),
+        }
+
+    return {
+        "ok": outcome == "complete",
+        "adapter_mode": "retry",
+        "retry_invoked": True,
+        "outcome": outcome,
+        "transaction": transaction_summary,
+    }
+
+
+def retry_held_frozen_install(
+    coordinator: Any,
+    store: Any,
+    artifact_source_store: Any,
+    restart_store: Any,
+    *,
+    manifest: Any,
+    manifest_path: str,
+    configuration_manifest_path: str,
+    device_profile_id: str,
+    expected_overlay_id: str,
+    transaction_type: type,
+    needs_attention_phase: Any,
+    quiescence_awaiting_restart_stage: Any,
+    automatic_update_policy: Any,
+) -> Dict[str, Any]:
+    """Validate the reviewed held snapshot, then call the production retry once."""
+    from uuid import UUID
+
+    try:
+        if not store.root.is_dir():
+            raise _bootstrap_error(
+                "CHECK_RETRY_PRECONDITIONS", "pathlib.Path", "path_missing_or_unreadable"
+            )
+        transaction = store.inspect()
+    except AdapterBootstrapError:
+        raise
+    except Exception:
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "operation_failed"
+        ) from None
+    if transaction is None:
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "transaction_missing"
+        )
+    if not isinstance(transaction, transaction_type):
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "retry_snapshot_invalid"
+        )
+    try:
+        UUID(transaction.transaction_id)
+    except (AttributeError, TypeError, ValueError):
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "transaction_identity_invalid"
+        ) from None
+
+    if not (
+        transaction.phase is needs_attention_phase
+        and transaction.status_code == HELD_RETRY_FAILURE_CODE
+        and transaction.lifecycle_stage is quiescence_awaiting_restart_stage
+        and transaction.lifecycle_restart_count == 1
+        and transaction.activation_hold_ids == (HELD_RETRY_OWNER_ID,)
+        and transaction.activation_hold_released is False
+        and transaction.updater_guard_required is True
+        and transaction.original_update_policy is automatic_update_policy
+        and bool(transaction.manifest_fingerprint)
+        and bool(transaction.install_plan_fingerprint)
+        and bool(transaction.resolution_fingerprint)
+        and bool(transaction.private_overlay_fingerprint)
+    ):
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "retry_snapshot_invalid"
+        )
+
+    if not (
+        transaction.manifest_path == manifest_path
+        and transaction.build_id == manifest.build_id
+        and transaction.manifest_fingerprint == manifest.fingerprint()
+        and transaction.configuration_manifest_path == configuration_manifest_path
+        and transaction.device_profile_id == device_profile_id
+        and transaction.private_overlay_id == expected_overlay_id
+    ):
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "retry_identity_mismatch"
+        )
+
+    if not Path(configuration_manifest_path).is_file():
+        raise _bootstrap_error(
+            "CHECK_RETRY_PRECONDITIONS", "pathlib.Path", "path_missing_or_unreadable"
+        )
+
+    try:
+        result = coordinator.retry_held_quiescence(
+            expected_transaction=transaction,
+            artifact_source_store=artifact_source_store,
+            restart_store=restart_store,
+        )
+    except Exception:
+        raise _bootstrap_error(
+            "INVOKE_RETRY",
+            "FrozenInstallCoordinator.retry_held_quiescence",
+            "operation_failed",
+        ) from None
+    return _safe_held_retry_result(result)
 
 
 def verify_build_manager_source(

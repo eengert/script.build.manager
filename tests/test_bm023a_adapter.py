@@ -24,6 +24,7 @@ from tools.bm023a_adapter_support import (
     identify_adapter_result,
     parse_adapter_mode,
     recover_frozen_install,
+    retry_held_frozen_install,
     safe_failure_payload,
     stage_manifest_artifacts,
     verify_build_manager_source,
@@ -169,7 +170,12 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "FrozenInstallCoordinator"
-            and any(keyword.arg == "configuration_runner" for keyword in node.keywords)
+            and any(
+                keyword.arg == "configuration_runner"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "run_configuration"
+                for keyword in node.keywords
+            )
         )
         callback_reference = next(
             keyword.value for keyword in install_call.keywords
@@ -179,7 +185,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         callback_definition = next(
             node for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef)
-            and node.name == callback_reference.id
+            and node.name == "run_configuration"
         )
         calls = []
         expected_result = object()
@@ -217,6 +223,42 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         self.assertIs(calls[0][0], expected_manager)
         self.assertIs(calls[0][1], request)
         self.assertIs(calls[0][2], transaction_access)
+
+    def test_held_retry_callback_binds_shared_store_and_forwards_capability(self):
+        template = Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
+        tree = ast.parse(template.read_text(encoding="utf-8"))
+        callback = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "run_held_retry_configuration"
+        )
+        calls = []
+        manager = object()
+        restart_store = object()
+        expected = object()
+
+        class RecordingRestartCoordinator:
+            def __init__(self, actual_manager, *, store):
+                self.manager = actual_manager
+                self.store = store
+
+            def reconcile(self, request, *, transaction_access=None):
+                calls.append((self.manager, self.store, request, transaction_access))
+                return expected
+
+        namespace = {
+            "manager": manager,
+            "restart_store": restart_store,
+            "restart_module": SimpleNamespace(
+                RestartCoordinator=RecordingRestartCoordinator
+            ),
+        }
+        exec(compile(ast.Module(body=[callback], type_ignores=[]), str(template), "exec"), namespace)
+        request = object()
+        access = object()
+        result = namespace[callback.name](request, transaction_access=access)
+        self.assertIs(result, expected)
+        self.assertEqual(calls, [(manager, restart_store, request, access)])
 
     def test_source_failure_has_safe_stage_callable_and_category(self):
         fake_private_value = "DO_NOT_SERIALIZE_PRIVATE_VALUE"
@@ -284,7 +326,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.6")
+            self.assertEqual(ADAPTER_VERSION, "0.0.7")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -302,7 +344,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.6"', addon_xml)
+            self.assertIn('version="0.0.7"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -569,6 +611,13 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
         self.assertEqual(parse_adapter_mode(["recover"]), "recover")
         self.assertEqual(parse_adapter_mode(["?mode=recover"]), "recover")
 
+    def test_retry_mode_requires_one_explicit_allowlisted_token(self):
+        self.assertEqual(parse_adapter_mode(["retry"]), "retry")
+        self.assertEqual(parse_adapter_mode(["?mode=retry"]), "retry")
+        for args in ([], ["retry;install"], ["?mode=retry&mode=install"], ["retry", "extra"]):
+            with self.subTest(args=args), self.assertRaises(AdapterBootstrapError):
+                parse_adapter_mode(list(args))
+
     def test_install_requires_an_explicit_allowlisted_mode(self):
         self.assertEqual(parse_adapter_mode(["install"]), "install")
         self.assertEqual(parse_adapter_mode(["?mode=install"]), "install")
@@ -597,6 +646,10 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
         self.assertEqual(
             identify_adapter_result({"ok": True}, "recover"),
             {"ok": True, "adapter_mode": "recover"},
+        )
+        self.assertEqual(
+            identify_adapter_result({"ok": True}, "retry"),
+            {"ok": True, "adapter_mode": "retry"},
         )
         failure = identify_adapter_result({"ok": False, "failure_category": "mode_missing"}, "unselected")
         self.assertEqual(failure["adapter_mode"], "unselected")
@@ -638,11 +691,17 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
     def test_recovery_and_install_calls_are_in_disjoint_dispatch_branches(self):
         source = (Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in").read_text()
         dispatch = source.split('if mode == "recover":', 1)[1]
-        recovery_branch, install_branch = dispatch.split("        else:", 1)
+        recovery_branch, after_recovery = dispatch.split('        elif mode == "retry":', 1)
+        retry_branch, install_branch = after_recovery.split("        else:", 1)
         self.assertIn("recover_frozen_install(", recovery_branch)
         self.assertNotIn("coordinator.install(", recovery_branch)
+        self.assertIn("retry_held_frozen_install(", retry_branch)
+        self.assertIn("source_store", retry_branch)
+        self.assertIn("restart_store", retry_branch)
+        self.assertNotIn("coordinator.install(", retry_branch)
         self.assertIn("coordinator.install(", install_branch)
         self.assertNotIn("recover_frozen_install(", install_branch)
+        self.assertNotIn("retry_held_frozen_install(", install_branch)
 
     def test_no_transaction_is_rejected_without_abandon(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -728,11 +787,199 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
         root = Path(__file__).parents[1]
         source = (root / "tools/bm023a_adapter/default.py.in").read_text()
         self.assertIn('if mode == "recover":', source)
+        self.assertIn('elif mode == "retry":', source)
         self.assertIn("parse_adapter_mode(sys.argv[1:])", source)
         self.assertIn('coordinator.install(', source)
         self.assertNotIn("eval(", source)
         self.assertNotIn("exec(", source)
         self.assertNotIn("sys.argv[2:]", source)
+
+
+class TestBm023aHeldRetryAdapter(unittest.TestCase):
+    class Policy(IntEnum):
+        AUTOMATIC = 0
+        NOTIFY_ONLY = 1
+
+    class Phase:
+        NEEDS_ATTENTION = object()
+        AWAITING_RESTART = object()
+
+    class Lifecycle:
+        QUIESCENCE_AWAITING_RESTART = object()
+        NONE = object()
+
+    def fixture(self, root: Path):
+        root.mkdir(parents=True, exist_ok=True)
+        frozen_root = root / "frozen"
+        frozen_root.mkdir()
+        manifest_path = root / "reviewed-manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        configuration_path = root / "reviewed-configuration.json"
+        configuration_path.write_text("{}", encoding="utf-8")
+        manifest = SimpleNamespace(
+            build_id="bm023a-reviewed-build",
+            fingerprint=lambda: "a" * 64,
+        )
+        transaction = SimpleNamespace(
+            transaction_id="3f920c0f-dc69-4684-914b-1bb370a17ba0",
+            build_id=manifest.build_id,
+            manifest_path=str(manifest_path),
+            device_profile_id="reviewed-profile",
+            manifest_fingerprint=manifest.fingerprint(),
+            phase=self.Phase.NEEDS_ATTENTION,
+            status_code="FROZEN_MANIFEST_INVALID",
+            lifecycle_stage=self.Lifecycle.QUIESCENCE_AWAITING_RESTART,
+            lifecycle_restart_count=1,
+            activation_hold_ids=("plugin.video.redlight",),
+            activation_hold_released=False,
+            updater_guard_required=True,
+            original_update_policy=self.Policy.AUTOMATIC,
+            install_plan_fingerprint="b" * 64,
+            resolution_fingerprint="c" * 64,
+            configuration_manifest_path=str(configuration_path),
+            private_overlay_id="reviewed-overlay",
+            private_overlay_fingerprint="sha256:" + "d" * 64,
+            private_overlay_required=True,
+            status_message="PRIVATE_FAILURE_DETAIL_DO_NOT_EMIT",
+        )
+        store = SimpleNamespace(root=frozen_root, current=transaction)
+        store.inspect = lambda: store.current
+        source_store = object()
+        restart_store = object()
+        result_transaction = SimpleNamespace(
+            phase="needs_attention",
+            lifecycle_stage="quiescence_awaiting_restart",
+            lifecycle_restart_count=1,
+            activation_hold_ids=("plugin.video.redlight",),
+            activation_hold_released=False,
+            updater_guard_required=True,
+            status_message="PRIVATE_RESULT_DETAIL_DO_NOT_EMIT",
+            manifest_path="/private/result/path",
+        )
+        result = SimpleNamespace(
+            outcome="needs_attention",
+            code="PRIVATE_RESULT_CODE_DO_NOT_EMIT",
+            message="PRIVATE_RESULT_MESSAGE_DO_NOT_EMIT",
+            transaction=result_transaction,
+        )
+        calls = []
+
+        class Coordinator:
+            def retry_held_quiescence(_self, **kwargs):
+                calls.append(kwargs)
+                return result
+
+        args = {
+            "coordinator": Coordinator(),
+            "store": store,
+            "artifact_source_store": source_store,
+            "restart_store": restart_store,
+            "manifest": manifest,
+            "manifest_path": str(manifest_path),
+            "configuration_manifest_path": str(configuration_path),
+            "device_profile_id": "reviewed-profile",
+            "expected_overlay_id": "reviewed-overlay",
+            "transaction_type": type(transaction),
+            "needs_attention_phase": self.Phase.NEEDS_ATTENTION,
+            "quiescence_awaiting_restart_stage": self.Lifecycle.QUIESCENCE_AWAITING_RESTART,
+            "automatic_update_policy": self.Policy.AUTOMATIC,
+        }
+        return args, transaction, source_store, restart_store, calls
+
+    def run_retry(self, args):
+        call_args = dict(args)
+        coordinator = call_args.pop("coordinator")
+        store = call_args.pop("store")
+        source_store = call_args.pop("artifact_source_store")
+        restart_store = call_args.pop("restart_store")
+        return retry_held_frozen_install(
+            coordinator, store, source_store, restart_store, **call_args
+        )
+
+    def test_retry_dispatches_once_with_reviewed_snapshot_and_shared_stores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args, transaction, source_store, restart_store, calls = self.fixture(Path(tmp))
+            payload = self.run_retry(args)
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0]["expected_transaction"], transaction)
+        self.assertIs(calls[0]["artifact_source_store"], source_store)
+        self.assertIs(calls[0]["restart_store"], restart_store)
+        self.assertNotIn("current_session_id", calls[0])
+        self.assertEqual(payload["adapter_mode"], "retry")
+        self.assertTrue(payload["retry_invoked"])
+
+    def test_retry_result_shape_contains_only_sanitized_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args, _transaction, _source_store, _restart_store, _calls = self.fixture(Path(tmp))
+            payload = self.run_retry(args)
+        self.assertEqual(set(payload), {
+            "ok", "adapter_mode", "retry_invoked", "outcome", "transaction"
+        })
+        self.assertEqual(payload["outcome"], "needs_attention")
+        self.assertEqual(set(payload["transaction"]), {
+            "phase", "lifecycle_stage", "lifecycle_restart_count",
+            "activation_hold_ids", "activation_hold_released",
+            "updater_guard_required",
+        })
+        serialized = json.dumps(payload)
+        for private_text in (
+            "PRIVATE_FAILURE_DETAIL_DO_NOT_EMIT",
+            "PRIVATE_RESULT_DETAIL_DO_NOT_EMIT",
+            "PRIVATE_RESULT_CODE_DO_NOT_EMIT",
+            "PRIVATE_RESULT_MESSAGE_DO_NOT_EMIT",
+            "/private/result/path",
+        ):
+            self.assertNotIn(private_text, serialized)
+
+    def test_retry_fail_closed_preconditions_never_call_coordinator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args, _transaction, _source_store, _restart_store, calls = self.fixture(Path(tmp))
+            mutations = (
+                ("phase", self.Phase.AWAITING_RESTART),
+                ("status_code", "OTHER_FAILURE"),
+                ("lifecycle_stage", self.Lifecycle.NONE),
+                ("lifecycle_restart_count", 2),
+                ("activation_hold_ids", ("plugin.video.other",)),
+                ("activation_hold_released", True),
+                ("updater_guard_required", False),
+                ("original_update_policy", self.Policy.NOTIFY_ONLY),
+                ("install_plan_fingerprint", ""),
+                ("resolution_fingerprint", ""),
+                ("manifest_path", "/other/reviewed-manifest.json"),
+                ("build_id", "other-build"),
+                ("manifest_fingerprint", "e" * 64),
+                ("configuration_manifest_path", "/other/configuration.json"),
+                ("device_profile_id", "other-profile"),
+                ("private_overlay_id", "other-overlay"),
+                ("private_overlay_fingerprint", ""),
+            )
+            original = args["store"].current
+            for field, value in mutations:
+                with self.subTest(field=field):
+                    args["store"].current = SimpleNamespace(**vars(original))
+                    setattr(args["store"].current, field, value)
+                    with self.assertRaises(AdapterBootstrapError):
+                        self.run_retry(args)
+                    self.assertEqual(calls, [])
+            args["store"].current = None
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_retry(args)
+            self.assertEqual(raised.exception.failure_category, "transaction_missing")
+            self.assertEqual(calls, [])
+
+    def test_retry_rejects_invalid_snapshot_type_and_transaction_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args, transaction, _source_store, _restart_store, calls = self.fixture(Path(tmp))
+            args["store"].current = object()
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_retry(args)
+            self.assertEqual(raised.exception.failure_category, "retry_snapshot_invalid")
+            args["store"].current = SimpleNamespace(**vars(transaction))
+            args["store"].current.transaction_id = "not-a-uuid"
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_retry(args)
+            self.assertEqual(raised.exception.failure_category, "transaction_identity_invalid")
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
