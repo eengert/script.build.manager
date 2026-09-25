@@ -348,6 +348,332 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             compile(default, "generated-default.py", "exec")
 
 
+class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
+    def test_generated_entrypoint_dispatches_only_selected_mode_and_runs_retry_callback(self):
+        import importlib.util
+        import runpy
+        from unittest.mock import patch
+
+        def execute(mode):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                profile_root = (
+                    root / "Kodi Build Manager Test.app" / "Contents" / "Resources"
+                    / "Kodi" / "portable_data" / "userdata"
+                )
+                addons_root = profile_root.parent / "addons"
+                addon_root = addons_root / "script.build.manager"
+                lib_root = addon_root / "resources" / "lib"
+                lib_root.mkdir(parents=True)
+                lib_init = lib_root / "__init__.py"
+                lib_init.write_text("# fixture package\n", encoding="utf-8")
+                profile_root.mkdir(parents=True)
+                addons_root.mkdir(parents=True, exist_ok=True)
+
+                manifest_path = root / "reviewed-manifest.json"
+                manifest_path.write_text("{}", encoding="utf-8")
+                configuration_path = root / "reviewed-configuration.json"
+                configuration_path.write_text("{}", encoding="utf-8")
+                overlay_path = root / "reviewed-overlay.json"
+                overlay_path.write_text("{}", encoding="utf-8")
+                artifact_root = root / "retained-artifacts"
+                (artifact_root / "artifacts").mkdir(parents=True)
+                durable_root = root / "profile-frozen"
+                (durable_root / "frozen-artifacts" / "artifacts").mkdir(parents=True)
+
+                values = {
+                    "MANIFEST_PATH": str(manifest_path),
+                    "ARTIFACT_ROOT": str(artifact_root),
+                    "CONFIGURATION_PATH": str(configuration_path),
+                    "OVERLAY_SOURCE": str(overlay_path),
+                    "DEVICE_PROFILE_ID": "reviewed-profile",
+                    "EXPECTED_OVERLAY_ID": "reviewed-overlay",
+                }
+                archive = build_adapter(root / "generated", values)
+                generated_root = archive.parent / "script.build.manager.bm023a_driver"
+                entrypoint = generated_root / "default.py"
+
+                class Policy(IntEnum):
+                    AUTOMATIC = 0
+
+                class Phase:
+                    NEEDS_ATTENTION = object()
+
+                class Lifecycle:
+                    QUIESCENCE_AWAITING_RESTART = object()
+
+                manifest = SimpleNamespace(
+                    build_id="reviewed-build",
+                    addons=(),
+                    fingerprint=lambda: "a" * 64,
+                )
+                transaction = SimpleNamespace(
+                    transaction_id="3f920c0f-dc69-4684-914b-1bb370a17ba0",
+                    build_id=manifest.build_id,
+                    manifest_path=str(manifest_path),
+                    device_profile_id=values["DEVICE_PROFILE_ID"],
+                    manifest_fingerprint=manifest.fingerprint(),
+                    phase=Phase.NEEDS_ATTENTION,
+                    status_code="FROZEN_MANIFEST_INVALID",
+                    lifecycle_stage=Lifecycle.QUIESCENCE_AWAITING_RESTART,
+                    lifecycle_restart_count=1,
+                    activation_hold_ids=("plugin.video.redlight",),
+                    activation_hold_released=False,
+                    updater_guard_required=True,
+                    original_update_policy=Policy.AUTOMATIC,
+                    install_plan_fingerprint="b" * 64,
+                    resolution_fingerprint="c" * 64,
+                    configuration_manifest_path=str(configuration_path),
+                    private_overlay_id=values["EXPECTED_OVERLAY_ID"],
+                    private_overlay_fingerprint="sha256:" + "d" * 64,
+                    private_overlay_required=True,
+                )
+                dispatch = {"recover": [], "retry": [], "install": []}
+                coordinator_calls = []
+                restart_store_instances = []
+                restart_coordinator_instances = []
+                reconcile_calls = []
+                callback_invocations = []
+                manager = object()
+
+                class FakeArtifactStore:
+                    def __init__(self, store_root):
+                        self.root = Path(store_root)
+
+                class FakeFrozenStore:
+                    def __init__(self, root=None):
+                        self.root = Path(root) if root is not None else durable_root
+                        self.current = transaction if mode == "retry" else None
+
+                    def inspect(self):
+                        return self.current
+
+                class FakeInstaller:
+                    install_order = []
+
+                    def get_addon_details(self, addon_id):
+                        return None
+
+                class FakeCoordinator:
+                    def __init__(self, **kwargs):
+                        self.kwargs = kwargs
+                        self.installer = kwargs["installer"]
+                        self.configuration_runner = kwargs.get("configuration_runner")
+                        coordinator_calls.append(self)
+
+                    def install(self, *args, **kwargs):
+                        dispatch["install"].append((args, kwargs))
+                        return SimpleNamespace(outcome="complete", code="ok")
+
+                    def retry_held_quiescence(self, **kwargs):
+                        dispatch["retry"].append(kwargs)
+                        request = object()
+                        transaction_access = object()
+                        callback_result = self.configuration_runner(
+                            request, transaction_access=transaction_access
+                        )
+                        callback_invocations.append(
+                            (request, transaction_access, callback_result)
+                        )
+                        return SimpleNamespace(
+                            outcome="complete",
+                            transaction=SimpleNamespace(
+                                phase="complete",
+                                lifecycle_stage="activation_released",
+                                lifecycle_restart_count=1,
+                                activation_hold_ids=("plugin.video.redlight",),
+                                activation_hold_released=True,
+                                updater_guard_required=False,
+                            ),
+                        )
+
+                class FakeTransactionStore:
+                    def __init__(self):
+                        self.transaction_path = root / "restart-transaction.json"
+                        restart_store_instances.append(self)
+
+                class FakeRestartCoordinator:
+                    def __init__(self, actual_manager, *, store=None):
+                        self.manager = actual_manager
+                        self.store = store
+                        restart_coordinator_instances.append(self)
+
+                    def reconcile(self, request, *, transaction_access=None):
+                        reconcile_calls.append(
+                            (self.manager, self.store, request, transaction_access)
+                        )
+                        return "reconciled"
+
+                class FakeUpdatePolicyBackend:
+                    def __init__(self, rpc):
+                        self.rpc = rpc
+
+                class FakePrivateOverlayStore:
+                    def import_file(self, path):
+                        return SimpleNamespace(overlay_id=values["EXPECTED_OVERLAY_ID"])
+
+                frozen_install_module = ModuleType("resources.lib.frozen_install")
+                frozen_install_module.default_frozen_install_root = lambda: durable_root
+                frozen_install_module.FrozenInstallStore = FakeFrozenStore
+                frozen_install_module.FrozenInstallCoordinator = FakeCoordinator
+                frozen_install_module.FrozenInstallTransaction = type(transaction)
+                frozen_install_module.FrozenInstallPhase = Phase
+                frozen_install_module.FrozenLifecycleStage = Lifecycle
+                frozen_install_module.KodiRuntimeFrozenArtifactBackend = FakeInstaller
+
+                artifacts_module = ModuleType("resources.lib.artifacts")
+                artifacts_module.ArtifactStore = FakeArtifactStore
+                restart_module = ModuleType("resources.lib.restart_coordinator")
+                restart_module.TransactionStore = FakeTransactionStore
+                restart_module.RestartCoordinator = FakeRestartCoordinator
+                update_guard_module = ModuleType("resources.lib.update_guard")
+                update_guard_module.KodiJsonRpcUpdatePolicyBackend = FakeUpdatePolicyBackend
+                update_guard_module.AddonUpdatePolicy = Policy
+                build_manager_module = ModuleType("resources.lib.build_manager")
+                build_manager_module.BuildManager = lambda: manager
+                frozen_module = ModuleType("resources.lib.frozen")
+                frozen_module.FrozenBuildManifest = SimpleNamespace(
+                    from_json=lambda _text: manifest
+                )
+                private_overlay_module = ModuleType("resources.lib.private_overlay")
+                private_overlay_module.PrivateOverlayStore = FakePrivateOverlayStore
+
+                resources_module = ModuleType("resources")
+                resources_module.__path__ = [str(addon_root / "resources")]
+                resources_lib_module = ModuleType("resources.lib")
+                resources_lib_module.__file__ = str(lib_init)
+                resources_lib_module.__path__ = [str(lib_root)]
+
+                xbmc_module = ModuleType("xbmc")
+                xbmc_module.executeJSONRPC = lambda _request: json.dumps(
+                    {"result": {"value": int(Policy.AUTOMATIC)}}
+                )
+                xbmcvfs_module = ModuleType("xbmcvfs")
+                translated_paths = {
+                    "special://profile/": profile_root,
+                    "special://home/addons": addons_root,
+                    "special://home/addons/script.build.manager": addon_root,
+                }
+                xbmcvfs_module.translatePath = lambda path: str(translated_paths[path])
+
+                adapter_config_module = ModuleType("adapter_config")
+                for key, value in values.items():
+                    setattr(adapter_config_module, key, value)
+
+                support_spec = importlib.util.spec_from_file_location(
+                    "adapter_support", generated_root / "adapter_support.py"
+                )
+                support_module = importlib.util.module_from_spec(support_spec)
+                support_spec.loader.exec_module(support_module)
+                actual_retry_helper = support_module.retry_held_frozen_install
+
+                def tracked_recovery(*args, **kwargs):
+                    dispatch["recover"].append((args, kwargs))
+                    return {"ok": True}
+
+                def tracked_retry(*args, **kwargs):
+                    dispatch["retry"].append("adapter helper")
+                    return actual_retry_helper(*args, **kwargs)
+
+                support_module.recover_frozen_install = tracked_recovery
+                support_module.retry_held_frozen_install = tracked_retry
+
+                stub_modules = {
+                    "xbmc": xbmc_module,
+                    "xbmcvfs": xbmcvfs_module,
+                    "adapter_config": adapter_config_module,
+                    "adapter_support": support_module,
+                    "resources": resources_module,
+                    "resources.lib": resources_lib_module,
+                    "resources.lib.artifacts": artifacts_module,
+                    "resources.lib.frozen_install": frozen_install_module,
+                    "resources.lib.restart_coordinator": restart_module,
+                    "resources.lib.update_guard": update_guard_module,
+                    "resources.lib.build_manager": build_manager_module,
+                    "resources.lib.frozen": frozen_module,
+                    "resources.lib.private_overlay": private_overlay_module,
+                }
+                saved_path = list(sys.path)
+                saved_argv = sys.argv
+                try:
+                    sys.path.insert(0, str(generated_root))
+                    sys.argv = [str(entrypoint), mode]
+                    with patch.dict(sys.modules, stub_modules):
+                        runpy.run_path(str(entrypoint), run_name="__main__")
+                finally:
+                    sys.path[:] = saved_path
+                    sys.argv = saved_argv
+
+                result_path = (
+                    profile_root / "addon_data" / "script.build.manager"
+                    / "bm023a_live_result.json"
+                )
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                return (
+                    payload,
+                    dispatch,
+                    coordinator_calls,
+                    restart_store_instances,
+                    restart_coordinator_instances,
+                    reconcile_calls,
+                    callback_invocations,
+                    transaction,
+                    manager,
+                )
+
+        for mode in ("install", "recover", "retry"):
+            with self.subTest(mode=mode):
+                (
+                    payload,
+                    dispatch,
+                    coordinator_calls,
+                    restart_store_instances,
+                    restart_coordinator_instances,
+                    reconcile_calls,
+                    callback_invocations,
+                    transaction,
+                    manager,
+                ) = execute(mode)
+                self.assertEqual(payload["adapter_mode"], mode)
+                self.assertTrue(payload["ok"])
+                if mode == "install":
+                    self.assertEqual(len(dispatch["install"]), 1)
+                    self.assertEqual(dispatch["recover"], [])
+                    self.assertEqual(dispatch["retry"], [])
+                    self.assertEqual(len(coordinator_calls), 1)
+                elif mode == "recover":
+                    self.assertEqual(len(dispatch["recover"]), 1)
+                    self.assertEqual(dispatch["install"], [])
+                    self.assertEqual(dispatch["retry"], [])
+                    self.assertEqual(len(coordinator_calls), 1)
+                else:
+                    self.assertEqual(dispatch["install"], [])
+                    self.assertEqual(
+                        [call for call in dispatch["retry"] if call == "adapter helper"],
+                        ["adapter helper"],
+                    )
+                    retry_calls = [
+                        call for call in dispatch["retry"] if isinstance(call, dict)
+                    ]
+                    self.assertEqual(len(retry_calls), 1)
+                    self.assertEqual(dispatch["recover"], [])
+                    self.assertIs(retry_calls[0]["expected_transaction"], transaction)
+                    self.assertEqual(len(coordinator_calls), 1)
+                    self.assertEqual(len(restart_store_instances), 1)
+                    self.assertEqual(len(restart_coordinator_instances), 1)
+                    self.assertIs(restart_coordinator_instances[0].manager, manager)
+                    self.assertIs(
+                        restart_coordinator_instances[0].store,
+                        retry_calls[0]["restart_store"],
+                    )
+                    self.assertEqual(len(reconcile_calls), 1)
+                    self.assertEqual(len(callback_invocations), 1)
+                    request, transaction_access, callback_result = callback_invocations[0]
+                    self.assertIs(reconcile_calls[0][2], request)
+                    self.assertIs(reconcile_calls[0][3], transaction_access)
+                    self.assertEqual(callback_result, "reconciled")
+
+
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
     @staticmethod
     def addon_zip(addon_id="plugin.example", version="1.2.3"):
