@@ -1,77 +1,71 @@
-# Current Handoff - BM-023A lock capability and adapter callback hardening (2026-09-25)
+# Current Handoff - BM-023A bounded held-retry adapter dispatch (2026-09-25)
 
 **Result:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
-## What changed
+## Adapter mode contract
 
-- `TransactionStore.locked_access()` is the internal issuance path for
-  `TransactionStoreAccess`; direct construction without its private issuer is
-  rejected. `TransactionLock` records the opened file device/inode identity.
-  Issuance and each capability operation compare that descriptor identity with
-  the current file at the bound store canonical lock path. `_assert_active()`
-  and `matches()` fail closed if the lock is inactive, replaced, or belongs to
-  another profile.
-- Ordinary `TransactionStore.inspect/create/update/transition/clear` methods
-  retain their existing nonblocking OS lock behavior. The capability remains
-  thread-bound and limited to inspect/create; no general reentrant or
-  process-wide lock was added.
-- The held-retry continuation and its BM-020 race exclusion are unchanged. Its
-  full-snapshot frozen CAS, updater quarantine, unreleased Red Light hold until
-  verified configuration succeeds, exact owner state/version,
-  manifest/plan/configuration/private-overlay identity, post-restart session
-  boundary, and generic abandon rejection remain covered.
-- The temporary BM-023A adapter now defines
-  `run_configuration(request, *, transaction_access=None)` and explicitly
-  forwards `transaction_access` to `RestartCoordinator.reconcile()`. Its
-  package version is 0.0.6 so the corrected callback is emitted as an upgrade.
-  A focused regression executes the callback with a sentinel capability and
-  proves the coordinator receives it; it fails against the previous one-arg
-  lambda.
-- Pinned timestamps in the frozen-install ZIP test fixture. Validation exposed
-  that the previous current-time ZIP timestamps changed artifact hashes when
-  resume crossed a two-second boundary. The same fixture now hashes identically
-  across a 2.1-second interval.
+The generated adapter accepts exactly one argument from the allowlist:
+`install`, `recover`, or `retry`, or the matching `?mode=<token>` form. Empty,
+extra, or unknown arguments fail before dispatch. The new mode is `retry`.
+
+`retry` parses the reviewed configured frozen manifest, then loads the durable
+`FrozenInstallTransaction` snapshot. It validates the snapshot type and UUID,
+`NEEDS_ATTENTION` plus `FROZEN_MANIFEST_INVALID`,
+`QUIESCENCE_AWAITING_RESTART`, restart count 1, exactly the unreleased
+`plugin.video.redlight` activation hold, required updater guard, original
+`AUTOMATIC` updater policy, nonempty plan/resolution/overlay identity fields,
+and exact manifest path/build/fingerprint, configuration path/profile, and
+expected overlay ID. Missing or mismatched evidence fails closed before retry.
+
+After validation, the support helper calls
+`FrozenInstallCoordinator.retry_held_quiescence` exactly once with the loaded
+snapshot, retained `ARTIFACT_ROOT` source store, and profile-local shared BM-020
+`TransactionStore`. The coordinator's artifact target remains the durable
+profile-local frozen-artifacts store. The retry callback constructs
+`RestartCoordinator` with that same BM-020 store and forwards the scoped
+`transaction_access` capability. The production continuation still enforces
+full-snapshot frozen CAS, updater quarantine, exact Red Light state/version,
+configuration and private-overlay identity, post-restart session boundary,
+the unreleased activation hold until verified configuration succeeds, and
+BM-020 race exclusion. Generic abandon still rejects the held state.
+
+Retry output is limited to `ok`, `adapter_mode`, `retry_invoked`, an allowlisted
+outcome, and a sanitized transaction lifecycle summary. It omits exception or
+status text, paths, fingerprints, and private values. The temporary adapter is
+version 0.0.7 so Kodi can recognize it as an upgrade from 0.0.6.
 
 ## Validation
 
-- Focused transaction, restart-coordinator, frozen-install, and adapter suites:
-  **129/129 passed**. Adapter-only suite after the 0.0.6 package bump:
-  **40/40 passed**.
-- Final full offline suite: **1,869/1,869 passed**.
+- Focused adapter, frozen-install, transaction, and restart-coordinator suites:
+  **135/135 passed**.
+- Full offline suite: **1,875/1,875 passed**.
 - `python3 -m compileall -q resources tools tests`: passed.
-- Fixture adapter ZIP CRC integrity and generated entrypoint compilation:
-  passed.
-- Tracked JSON parsing and `git diff --check`: passed after tracking updates.
-- An earlier full-suite attempt hit a child-process readiness timeout; its
-  isolated regression passed, and the final full-suite run passed. A separate
-  frozen-install resume failure was traced to nondeterministic fixture ZIP
-  timestamps and is covered by the pinned-timestamp correction above.
+- All **7** tracked JSON files parsed.
+- Generated adapter v0.0.7 ZIP CRC, exact four-member set, embedded version,
+  retry support inclusion, and generated entrypoint compilation: passed.
+- `git diff --check`: passed after tracking updates.
 
-## Boundaries and next step
+## Changed files and boundaries
 
-No Kodi/Test.app, normal profile, real device, network, LAN, private value, or
-host action was accessed or changed. No live retry was run. The full suite and
-adapter package check used offline fixtures. Changes are uncommitted on
-`agent/supervised-codex` at baseline `b8c12ce`; protected matrix was not pushed
-or integrated.
+Changed code/package files: `tools/bm023a_adapter_support.py`,
+`tools/bm023a_adapter/default.py.in`, and
+`tools/bm023a_adapter/addon.xml.in`. Changed tests:
+`tests/test_bm023a_adapter.py` and `tests/test_frozen_install.py`.
+Tracking is in `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`,
+`.agent/USAGE_HISTORY.md`, and this handoff. The changes are uncommitted on
+`agent/supervised-codex`, with `fb083fc` as the current commit. No push or
+matrix integration occurred.
 
-Changed code/package files: `resources/lib/transaction.py`,
-`tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter/addon.xml.in`, and
-`tools/bm023a_adapter_support.py`. Changed tests:
-`tests/test_transaction.py`, `tests/test_frozen_install.py`, and
-`tests/test_bm023a_adapter.py`. Tracking is in `.agent/CURRENT_TASK.md`,
-`.agent/AGENT_STATUS.json`, `.agent/USAGE_HISTORY.md`, and this handoff.
+No Kodi/Test.app, Kodi profile, real device, network, LAN, private value, or
+host action was accessed. No live retry was run. All validation used offline
+fixtures. Supervisor app-server snapshots reported 16% weekly remaining at
+task start and 16% before handoff; the reset was not observed.
 
-Smallest next step: independent review of lock-file binding, wrong-lock
-coverage, adapter callback forwarding, and the final offline evidence. No live
-retry is included in this work item.
-
-Usage: start snapshot 5h 0% used / weekly 83% used. The final state exposed
-`source=test` without a usable observation timestamp, so end and delta are
-recorded as unavailable. The last reliable app-server snapshot before final
-validation showed 17% weekly remaining, above the 5% stop threshold. Observed
-model `gpt-6-luna`, effort `max`.
+Smallest next step: independent review of mode gating, snapshot preconditions,
+exactly-once dispatch, result sanitization, package update semantics, and
+capability forwarding through the actual retry continuation. This work item
+does not authorize a live retry.
 
 ---
 

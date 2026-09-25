@@ -1,40 +1,45 @@
 # Current Task
 
-## BM-023A lock capability and adapter callback hardening - 2026-09-25
+## BM-023A bounded held-retry adapter dispatch - 2026-09-25
 
 **Status:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
 
-`TransactionStoreAccess` is issued only through `TransactionStore.locked_access()`.
-The lock records the opened file device/inode identity. Issuance and every
-capability operation verify that the held descriptor still matches the
-canonical lock file for the bound store. Wrong-profile and wrong-lock access
-fails closed; direct construction without the internal issuer is rejected.
-Ordinary BM-020 calls retain nonblocking exclusion.
+The temporary adapter accepts exactly one mode token: `install`, `recover`, or
+`retry`; the equivalent `?mode=<token>` form is also accepted. Retry loads the
+persisted typed frozen transaction and checks its UUID, held failure code,
+needs-attention/quiescence-restart state, restart count 1, sole unreleased Red
+Light hold, updater guard, original AUTOMATIC policy, and manifest, profile,
+configuration path, and overlay identity against the reviewed adapter inputs.
+Any mismatch fails before the production retry method is called.
 
-The temporary adapter callback accepts `transaction_access` and forwards it
-explicitly to `RestartCoordinator.reconcile()`. The generated adapter package
-is version 0.0.6. Its callback regression proves the exact capability object
-reaches the coordinator. Frozen-install test ZIP fixture timestamps are pinned
-to keep resume artifacts deterministic across the ZIP timestamp boundary.
+On a matching snapshot, the adapter passes that exact object to
+`retry_held_quiescence` exactly once, along with the retained artifact source and
+shared BM-020 `TransactionStore`. The coordinator retains its full-snapshot
+CAS, updater quarantine, exact owner-state/version checks, post-restart session
+boundary, configuration/private-overlay revalidation, unreleased hold through
+verified configuration, and BM-020 race exclusion. Its configuration callback
+uses the shared store and forwards the scoped `transaction_access` into
+`RestartCoordinator.reconcile`. Generic abandon remains disallowed. Results
+contain only allowlisted outcome/lifecycle labels, bounded counters, and safe
+booleans; no messages, paths, fingerprints, or private values.
 
-The held-retry invariants remain covered: full-snapshot frozen CAS, updater
-quarantine, unreleased Red Light hold until verified configuration succeeds,
-exact owner state/version, manifest/plan/configuration/private-overlay identity,
-post-restart session boundary, generic abandon rejection, and BM-020 race
-exclusion.
+Temporary adapter version is 0.0.7 so Kodi recognizes the new mode as an update
+to 0.0.6. Changed files: `tools/bm023a_adapter_support.py`,
+`tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter/addon.xml.in`,
+`tests/test_bm023a_adapter.py`, and `tests/test_frozen_install.py`.
 
-Focused transaction, restart-coordinator, frozen-install, and adapter tests
-passed **129/129**; adapter-only tests after the version bump passed **40/40**;
-the final full offline suite passed **1,869/1,869**. Compileall, fixture ZIP
-CRC/generated-source compilation, JSON parsing, and `git diff --check` passed.
+Focused adapter/frozen-install/transaction/restart-coordinator suites passed
+**135/135**; the full offline suite passed **1,875/1,875**. `compileall`, all 7
+tracked JSON parses, generated ZIP CRC/member/version/source checks, and
+`git diff --check` passed. No Kodi/Test.app, profile, real device, network,
+LAN, private value, or host action was accessed. No live retry was run.
+Changes are uncommitted on `agent/supervised-codex` at baseline `fb083fc`; no
+push or matrix integration occurred.
 
-No Kodi/Test.app, profile, device, network, LAN, private value, or host action
-was accessed. No live retry was run. Code and tests are uncommitted on
-`agent/supervised-codex` at baseline `b8c12ce`; protected matrix was not changed.
-
-Smallest next step: independent review of the exact capability binding, adapter
-callback regression, and offline evidence.
+Smallest next step: independent review of the adapter mode gate, snapshot
+identity checks, single dispatch, sanitized result, and callback capability
+path. Live retry remains separate and unauthorized by this work item.
 
 ---
 
