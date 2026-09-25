@@ -161,6 +161,63 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             interactive=True,
         )
 
+    def test_frozen_retry_callback_forwards_transaction_access(self):
+        template = Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
+        tree = ast.parse(template.read_text(encoding="utf-8"))
+        install_call = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "FrozenInstallCoordinator"
+            and any(keyword.arg == "configuration_runner" for keyword in node.keywords)
+        )
+        callback_reference = next(
+            keyword.value for keyword in install_call.keywords
+            if keyword.arg == "configuration_runner"
+        )
+        self.assertIsInstance(callback_reference, ast.Name)
+        callback_definition = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == callback_reference.id
+        )
+        calls = []
+        expected_result = object()
+        expected_manager = object()
+
+        class RecordingRestartCoordinator:
+            def __init__(self, manager):
+                self.manager = manager
+
+            def reconcile(self, request, *, transaction_access=None):
+                calls.append((self.manager, request, transaction_access))
+                return expected_result
+
+        namespace = {
+            "manager": expected_manager,
+            "restart_module": SimpleNamespace(
+                RestartCoordinator=RecordingRestartCoordinator
+            ),
+        }
+        callback_module = ast.Module(
+            body=[callback_definition], type_ignores=[]
+        )
+        exec(
+            compile(callback_module, str(template), "exec"),
+            namespace,
+        )
+
+        request = object()
+        transaction_access = object()
+        result = namespace[callback_reference.id](
+            request, transaction_access=transaction_access
+        )
+        self.assertIs(result, expected_result)
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], expected_manager)
+        self.assertIs(calls[0][1], request)
+        self.assertIs(calls[0][2], transaction_access)
+
     def test_source_failure_has_safe_stage_callable_and_category(self):
         fake_private_value = "DO_NOT_SERIALIZE_PRIVATE_VALUE"
         error = AdapterBootstrapError(
@@ -227,7 +284,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.5")
+            self.assertEqual(ADAPTER_VERSION, "0.0.6")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -245,7 +302,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.5"', addon_xml)
+            self.assertIn('version="0.0.6"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 

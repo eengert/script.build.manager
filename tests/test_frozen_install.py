@@ -85,8 +85,13 @@ def _zip(addon_id, version, *, requires=(), repository=False):
         '</addon>\n'
     ).encode()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(f"{addon_id}/addon.xml", xml)
-        archive.writestr(f"{addon_id}/default.py", b"# BM-022 fixture\n")
+        for name, data in (
+            (f"{addon_id}/addon.xml", xml),
+            (f"{addon_id}/default.py", b"# BM-022 fixture\n"),
+        ):
+            entry = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, data)
     return buf.getvalue()
 
 

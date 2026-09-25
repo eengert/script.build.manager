@@ -27,6 +27,7 @@ from resources.lib.transaction import (
     TransactionPhase,
     TransactionStateConflict,
     TransactionStore,
+    TransactionStoreAccess,
     TransactionUnsupportedSchema,
     prepare_restart_transaction,
 )
@@ -193,6 +194,37 @@ class TestTransactionStore(StoreTestCase):
         self.assertEqual(peer_store.inspect(), transaction)
         with self.assertRaises(TransactionLockUnavailable):
             access.inspect()
+
+    def test_other_profile_lock_cannot_authorize_target_store_access(self):
+        other_profile = TransactionStore(str(Path(self.tmp.name) / "other-profile"))
+        target_transaction = _transaction()
+
+        with self.store.locked_access() as access:
+            target_lock = access._lock
+            with other_profile.locked() as other_lock:
+                with self.assertRaises(TransactionLockUnavailable):
+                    TransactionStoreAccess(self.store, other_lock)
+
+                # Simulate a misbound capability after issuance. Runtime checks
+                # must still reject every operation before touching the target.
+                access._lock = other_lock
+                try:
+                    with self.assertRaises(TransactionLockUnavailable):
+                        access.matches(self.store)
+                    with self.assertRaises(TransactionLockUnavailable):
+                        access.inspect()
+                    with self.assertRaises(TransactionLockUnavailable):
+                        access.create(replace(
+                            target_transaction, transaction_id=str(uuid.uuid4())
+                        ))
+                finally:
+                    access._lock = target_lock
+
+            self.assertIsNone(access.inspect())
+            self.assertEqual(access.create(target_transaction), target_transaction)
+
+        self.assertEqual(self.store.inspect(), target_transaction)
+        self.assertIsNone(other_profile.inspect())
 
     def test_lock_is_released_when_owner_process_exits(self):
         ready = Path(self.tmp.name) / "lock-ready"

@@ -205,6 +205,11 @@ def main():
                     prompt, frozen_install_module.ResolutionChoice
                 )
 
+            def run_configuration(request, *, transaction_access=None):
+                return restart_module.RestartCoordinator(manager).reconcile(
+                    request, transaction_access=transaction_access
+                )
+
             STAGE = "BUILD_COORDINATOR"
             FAILING_CALLABLE = "FrozenInstallCoordinator"
             coordinator = frozen_install_module.FrozenInstallCoordinator(
@@ -212,7 +217,7 @@ def main():
                 artifact_store=durable_store,
                 policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
                 installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
-                configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
+                configuration_runner=run_configuration,
                 resolution_decider=resolve_missing_artifact,
             )
             STAGE = "INVOKE_INSTALL"
