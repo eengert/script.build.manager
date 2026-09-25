@@ -28,6 +28,8 @@ from resources.lib.frozen import (
 from resources.lib.frozen_install import (
     FrozenInstallCoordinator,
     FrozenInstallPhase,
+    FrozenInstallResult,
+    FrozenInstallStateConflict,
     FrozenInstallStore,
     FrozenInstallTransaction,
     FrozenInstallValidationError,
@@ -202,6 +204,98 @@ class FrozenInstallTest(unittest.TestCase):
             session_id_provider=lambda: SESSION_A,
             **kwargs,
         )
+
+    def _held_redlight_retry_case(self):
+        from resources.lib.redlight_resource import redlight_declaration
+
+        owner_id = "plugin.video.redlight"
+        owner_zip = _zip(owner_id, "2.6.8")
+        owner_meta = self.artifacts.import_zip(
+            owner_zip,
+            expected_addon_id=owner_id,
+            expected_version="2.6.8",
+            source="test",
+        )
+        source_store = ArtifactStore(self.root / "retained-artifacts")
+        source_store.import_zip(
+            owner_zip,
+            expected_addon_id=owner_id,
+            expected_version="2.6.8",
+            source="retained",
+        )
+        manifest = FrozenBuildManifest(
+            schema_version=1,
+            build_id="bm022-held-retry-fixture",
+            name="Held retry fixture",
+            created_at="2026-09-24T00:00:00Z",
+            kodi_version="21.3",
+            platform="macos",
+            capture_status=CaptureStatus.COMPLETE,
+            addons=(AddonCaptureNode(
+                owner_id,
+                "2.6.8",
+                "xbmc.python.pluginsource",
+                True,
+                ProvenanceStatus.VERIFIED_REPOSITORY,
+                artifact=owner_meta,
+            ),),
+        )
+        profile = SimpleNamespace(
+            frozen_install_policies=(),
+            private_overlay=SimpleNamespace(overlay_id="held-retry-overlay"),
+            build=SimpleNamespace(id=manifest.build_id),
+            config=SimpleNamespace(
+                private_settings=(),
+                structured_private_resources=(redlight_declaration(),),
+            ),
+        )
+        overlay_identity = (
+            "held-retry-overlay",
+            "sha256:" + "8" * 64,
+            False,
+        )
+        self.policy = FakePolicy(AddonUpdatePolicy.AUTOMATIC)
+        self.backend.installed[owner_id] = FrozenInstalledAddon(
+            owner_id, "2.6.8", True
+        )
+        coordinator = FrozenInstallCoordinator(
+            store=self.store,
+            artifact_store=self.artifacts,
+            policy_backend=self.policy,
+            installer=self.backend,
+            manifest_loader=lambda _path: manifest,
+            session_id_provider=lambda: SESSION_A,
+            configuration_runner=lambda _request: SimpleNamespace(outcome="complete"),
+            registry_backend=InMemoryRegistryBackend(self.backend),
+            private_overlay_metadata_provider=lambda _profile, _fingerprint: overlay_identity,
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ):
+            initial = coordinator.install(
+                manifest,
+                manifest_path="/fixture-held-frozen.json",
+                configuration_manifest_path="/fixture-held-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+        self.assertEqual(initial.outcome, "awaiting_restart", (initial.code, initial.message))
+        awaiting = self.store.inspect()
+        self.assertEqual(
+            awaiting.lifecycle_stage,
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+        )
+        held = self.store.transition_expected(
+            transaction_id=awaiting.transaction_id,
+            expected_phase=FrozenInstallPhase.AWAITING_RESTART,
+            new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            status_code="FROZEN_MANIFEST_INVALID",
+            status_message="outcome=failed; stage=frozen_manifest_validation",
+        )
+        coordinator.session_id_provider = lambda: SESSION_B
+        for path in self.artifacts.artifacts_dir.iterdir():
+            path.unlink()
+        return manifest, profile, source_store, coordinator, held
 
     def test_manifest_round_trip_and_topological_order(self):
         manifest = self._manifest()
@@ -1183,6 +1277,308 @@ class FrozenInstallTest(unittest.TestCase):
         )
         self.assertTrue(released.activation_hold_released)
         self.assertEqual(active_activation_hold_ids(self.store), frozenset())
+
+    def test_held_retry_stages_exact_artifact_and_rearms_same_snapshot_once(self):
+        manifest, profile, source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        continuation = FrozenInstallResult("awaiting_restart", transaction=held)
+        events = []
+        original_set_policy = self.policy.set_policy
+        original_get_policy = self.policy.get_policy
+        original_read_bytes = source_store.read_bytes
+        original_rearm = self.store.rearm_held_quiescence
+
+        def set_policy(policy):
+            events.append("policy_set")
+            return original_set_policy(policy)
+
+        def get_policy():
+            events.append("policy_read")
+            return original_get_policy()
+
+        def read_bytes(sha256):
+            events.append("artifact_stage")
+            return original_read_bytes(sha256)
+
+        def inspect_bm020():
+            events.append("bm020_inspect")
+            return None
+
+        def rearm(expected):
+            events.append("cas")
+            return original_rearm(expected)
+
+        def continue_once(*, current_session_id):
+            events.append("resume")
+            return continuation
+
+        self.policy.set_policy = set_policy
+        self.policy.get_policy = get_policy
+        source_store.read_bytes = read_bytes
+        self.store.rearm_held_quiescence = rearm
+        restart_store = SimpleNamespace(inspect=inspect_bm020)
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(coordinator, "resume_after_restart", side_effect=continue_once) as resume:
+            result = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=restart_store,
+            )
+
+        self.assertIs(result, continuation)
+        resume.assert_called_once_with(current_session_id=SESSION_B)
+        self.assertLess(events.index("policy_set"), events.index("policy_read"))
+        self.assertLess(events.index("policy_read"), events.index("artifact_stage"))
+        self.assertLess(events.index("artifact_stage"), events.index("bm020_inspect"))
+        self.assertLess(events.index("bm020_inspect"), events.index("cas"))
+        self.assertLess(events.index("cas"), events.index("resume"))
+        node = manifest.addons[0]
+        self.assertEqual(
+            self.artifacts.read_bytes(node.artifact.sha256),
+            source_store.read_bytes(node.artifact.sha256),
+        )
+        rearmed = self.store.inspect()
+        self.assertEqual(rearmed.phase, FrozenInstallPhase.AWAITING_RESTART)
+        self.assertEqual(rearmed.status_code, "")
+        self.assertEqual(rearmed.status_message, "")
+        for field in (
+            "transaction_id",
+            "build_id",
+            "manifest_path",
+            "device_profile_id",
+            "manifest_fingerprint",
+            "originating_kodi_session_id",
+            "original_update_policy",
+            "updater_guard_required",
+            "install_plan_fingerprint",
+            "configuration_manifest_path",
+            "private_overlay_id",
+            "private_overlay_fingerprint",
+            "private_overlay_required",
+            "lifecycle_stage",
+            "activation_hold_ids",
+            "activation_hold_released",
+            "lifecycle_restart_count",
+        ):
+            self.assertEqual(getattr(rearmed, field), getattr(held, field), field)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+        self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
+        self.assertEqual(
+            self.policy.calls,
+            [AddonUpdatePolicy.NEVER_CHECK, AddonUpdatePolicy.NEVER_CHECK],
+        )
+
+    def test_held_retry_rejects_predicate_near_misses_without_mutation(self):
+        _manifest, _profile, source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        near_misses = (
+            replace(held, phase=FrozenInstallPhase.AWAITING_RESTART),
+            replace(held, status_code="OTHER_FAILURE"),
+            replace(held, lifecycle_stage=FrozenLifecycleStage.NONE),
+            replace(held, lifecycle_restart_count=2),
+            replace(held, activation_hold_ids=("plugin.video.other",)),
+            replace(held, activation_hold_released=True),
+            replace(held, updater_guard_required=False),
+            replace(held, original_update_policy=AddonUpdatePolicy.NOTIFY_ONLY),
+            replace(held, configuration_manifest_path=""),
+            replace(held, private_overlay_fingerprint=""),
+        )
+        for candidate in near_misses:
+            with self.subTest(candidate=candidate.to_dict()):
+                self.store.clear()
+                self.store.create(candidate)
+                policy_calls = tuple(self.policy.calls)
+                with patch.object(
+                    coordinator, "resume_after_restart"
+                ) as resume:
+                    result = coordinator.retry_held_quiescence(
+                        expected_transaction=candidate,
+                        current_session_id=SESSION_B,
+                        artifact_source_store=source_store,
+                        restart_store=SimpleNamespace(inspect=lambda: None),
+                    )
+                self.assertEqual(result.code, "FROZEN_HELD_RETRY_NOT_ELIGIBLE")
+                self.assertEqual(self.store.inspect(), candidate)
+                self.assertEqual(tuple(self.policy.calls), policy_calls)
+                resume.assert_not_called()
+
+    def test_held_retry_rejects_same_session_and_preserves_generic_abandon_rejection(self):
+        _manifest, _profile, source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        policy_calls = tuple(self.policy.calls)
+        mismatched_session = coordinator.retry_held_quiescence(
+            expected_transaction=held,
+            current_session_id=SESSION_A,
+            artifact_source_store=source_store,
+            restart_store=SimpleNamespace(inspect=lambda: None),
+        )
+        self.assertEqual(
+            mismatched_session.code, "FROZEN_HELD_RETRY_SESSION_MISMATCH"
+        )
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(tuple(self.policy.calls), policy_calls)
+
+        coordinator.session_id_provider = lambda: SESSION_A
+        same_session = coordinator.retry_held_quiescence(
+            expected_transaction=held,
+            current_session_id=SESSION_A,
+            artifact_source_store=source_store,
+            restart_store=SimpleNamespace(inspect=lambda: None),
+        )
+        self.assertEqual(same_session.code, "FROZEN_SAME_SESSION")
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(tuple(self.policy.calls), policy_calls)
+
+        abandoned = coordinator.abandon()
+        self.assertEqual(abandoned.outcome, "needs_attention")
+        self.assertEqual(abandoned.code, "HELD_LIFECYCLE_CANNOT_BE_ABANDONED")
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(tuple(self.policy.calls), policy_calls)
+
+    def test_held_retry_rejects_bm020_transaction_and_wrong_owner_version(self):
+        _manifest, profile, source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ):
+            conflict = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=SimpleNamespace(inspect=lambda: object()),
+            )
+        self.assertEqual(conflict.code, "BM020_TRANSACTION_PRESENT")
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+
+        self.backend.installed["plugin.video.redlight"] = FrozenInstalledAddon(
+            "plugin.video.redlight", "2.6.7", False
+        )
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ):
+            wrong_owner = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=SimpleNamespace(inspect=lambda: None),
+            )
+        self.assertEqual(wrong_owner.code, "FROZEN_HELD_RETRY_STATE_CHANGED")
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+
+    def test_held_retry_store_cas_rejects_same_phase_snapshot_drift(self):
+        _manifest, _profile, _source_store, _coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        drifted = self.store.transition_expected(
+            transaction_id=held.transaction_id,
+            expected_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            status_code=held.status_code,
+            status_message="different safe diagnostic",
+        )
+        with self.assertRaises(FrozenInstallStateConflict):
+            self.store.rearm_held_quiescence(held)
+        self.assertEqual(self.store.inspect(), drifted)
+        self.assertEqual(drifted.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+
+    def test_held_retry_missing_exact_artifact_fails_closed(self):
+        _manifest, profile, _source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        empty_source = ArtifactStore(self.root / "missing-retained-artifacts")
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(coordinator, "resume_after_restart") as resume:
+            result = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=empty_source,
+                restart_store=SimpleNamespace(inspect=lambda: None),
+            )
+        self.assertEqual(result.code, "FROZEN_HELD_RETRY_VALIDATION_FAILED")
+        self.assertEqual(self.store.inspect(), held)
+        self.assertEqual(
+            active_activation_hold_ids(self.store),
+            frozenset({"plugin.video.redlight"}),
+        )
+        resume.assert_not_called()
+
+    def test_held_retry_rejects_manifest_plan_and_overlay_identity_mismatch(self):
+        manifest, profile, source_store, coordinator, held = (
+            self._held_redlight_retry_case()
+        )
+        coordinator.manifest_loader = lambda _path: replace(
+            manifest, name="changed manifest identity"
+        )
+        with patch.object(
+            coordinator, "resume_after_restart"
+        ) as resume:
+            changed_manifest = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=SimpleNamespace(inspect=lambda: None),
+            )
+        self.assertEqual(
+            changed_manifest.code, "FROZEN_HELD_RETRY_VALIDATION_FAILED"
+        )
+        self.assertEqual(self.store.inspect(), held)
+        resume.assert_not_called()
+
+        coordinator.manifest_loader = lambda _path: manifest
+        changed_plan = replace(held, install_plan_fingerprint="f" * 64)
+        self.store.clear()
+        self.store.create(changed_plan)
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(coordinator, "resume_after_restart") as resume:
+            plan_mismatch = coordinator.retry_held_quiescence(
+                expected_transaction=changed_plan,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=SimpleNamespace(inspect=lambda: None),
+            )
+        self.assertEqual(plan_mismatch.code, "FROZEN_HELD_RETRY_VALIDATION_FAILED")
+        self.assertEqual(self.store.inspect(), changed_plan)
+        resume.assert_not_called()
+
+        self.store.clear()
+        self.store.create(held)
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(
+            coordinator,
+            "_private_overlay_metadata",
+            return_value=("changed-overlay", "sha256:" + "9" * 64, False),
+        ), patch.object(coordinator, "resume_after_restart") as resume:
+            overlay_mismatch = coordinator.retry_held_quiescence(
+                expected_transaction=held,
+                current_session_id=SESSION_B,
+                artifact_source_store=source_store,
+                restart_store=SimpleNamespace(inspect=lambda: None),
+            )
+        self.assertEqual(
+            overlay_mismatch.code, "FROZEN_HELD_RETRY_VALIDATION_FAILED"
+        )
+        self.assertEqual(self.store.inspect(), held)
+        resume.assert_not_called()
 
     def test_reassert_failure_transitions_attention(self):
         transaction = FrozenInstallTransaction(
