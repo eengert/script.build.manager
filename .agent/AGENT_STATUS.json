@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A held-transaction retry offline implementation",
-  "reason": "Production FrozenInstallStore/FrozenInstallCoordinator retry and focused tests are complete offline. The full suite passed 1,862/1,862, focused frozen lifecycle tests passed 34/34, compileall passed, and git diff --check passed. Changes remain uncommitted; the live held transaction and all host actions were untouched. Supervisor review is required before action wiring or live retry.",
-  "last_commit": "87517fe",
+  "task": "BM-023A held-retry P2 race correction",
+  "reason": "Added enforceable serialization using same-profile validation and TransactionStore.locked_inspection across the final BM-020 absence check, full-snapshot frozen CAS, and real retry continuation. Focused frozen lifecycle 36/36, transaction store 36/36, full offline suite 1,864/1,864; compileall, tracked JSON parsing, and diff check passed. No live retry or host action. Changes are uncommitted; independent review is next.",
+  "last_commit": "5a1706b",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
-  "updated_at": "2026-09-24"
+  "updated_at": "2026-09-25"
 }

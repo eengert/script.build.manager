@@ -1,3 +1,61 @@
+# Current Handoff - BM-023A held-retry P2 race correction (2026-09-25)
+
+**Result:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
+LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+- `TransactionStore.locked_inspection()` acquires the existing profile-local
+  BM-020 OS lock, yields the validated transaction snapshot, and retains the
+  lock until the caller exits the context.
+- Before updater reassertion or artifact staging, retry verifies the BM-020
+  transaction directory resolves to the same profile-local directory as the
+  frozen store and requires the locked inspection API.
+- `retry_held_quiescence()` keeps that lock across its decisive empty-transaction
+  recheck, the existing full-snapshot frozen CAS, and the real
+  `resume_after_restart()` continuation. BM-020 transaction writers use the
+  same lock, so a writer either commits first and is observed by the recheck,
+  or is rejected as lock-busy until retry finishes.
+- If the BM-020 transaction appears after the prior final inspect but before
+  the locked recheck, retry returns `BM020_TRANSACTION_PRESENT` before rearm or
+  continuation. The held frozen snapshot and Red Light activation hold remain
+  unchanged, and updater policy is not restored.
+- The happy-path regression exercises the real continuation through registry
+  readiness, private configuration verification, activation release, original
+  updater-policy restoration, and frozen-transaction clearance. It also proves
+  a same-profile BM-020 create attempt during continuation receives
+  `TransactionLockBusy`.
+- Full-snapshot CAS, artifact and manifest/plan/configuration/overlay identity,
+  post-restart session requirement, exact healthy disabled Red Light 2.6.8
+  precondition, updater quarantine, and generic abandon rejection remain in
+  force.
+
+## Validation
+
+- `tests/test_frozen_install.py`: **36/36 passed**.
+- `tests/test_transaction.py`: **36/36 passed**.
+- Full offline suite: **1,864/1,864 passed**.
+- `python3 -m compileall -q resources tools tests`: passed.
+- Tracked JSON parsing for changed `.agent/AGENT_STATUS.json`: passed.
+- `git diff --check`: passed.
+
+## Boundaries and next step
+
+No Kodi/Test.app, normal profile, device, network, LAN, private value, adapter,
+or host action was accessed or changed. No live retry was run. The change is
+uncommitted on `agent/supervised-codex` at HEAD `5a1706b`; protected matrix was
+not pushed or integrated.
+
+Smallest next step: independent review of the synchronization and lifecycle
+regressions. Action wiring and any live retry require their separate review
+and authorization.
+
+Codex usage snapshot: start 5h 2% used / weekly 82% used; end 5h 4% used /
+weekly 82% used; observed delta 5h +2 pp / weekly 0 pp. Observed model
+`gpt-6-luna`, effort `max`.
+
+---
+
 # Current Handoff - BM-023A held-transaction retry implementation (2026-09-24)
 
 **Result:** OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RETRY_NOT_RUN.

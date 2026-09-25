@@ -1,32 +1,43 @@
 # Current Task
 
-## BM-023A held-transaction retry offline implementation - 2026-09-24
+## BM-023A held-retry P2 race correction - 2026-09-25
 
-**Status:** OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RETRY_NOT_RUN.
+**Status:** OFFLINE_IMPLEMENTATION_COMPLETE; INDEPENDENT_REVIEW_READY;
+LIVE_RETRY_NOT_RUN.
 
-Added `FrozenInstallStore.rearm_held_quiescence`, a locked full-snapshot CAS
-limited to the reviewed needs_attention / `FROZEN_MANIFEST_INVALID` /
-`quiescence_awaiting_restart` state, restart count 1, sole Red Light hold,
-unreleased activation, required updater guard, and original `AUTOMATIC` policy.
-`FrozenInstallCoordinator.retry_held_quiescence` reasserts and reads back
-`NEVER_CHECK`, stages exact artifacts through `ArtifactStore`, validates
-manifest/plan/configuration/overlay/Red Light/BM-020 predicates, re-reads the
-transaction and held add-on, then re-arms the same transaction and invokes the
-existing resume continuation once. Generic abandon still rejects unreleased
-holds.
+`TransactionStore.locked_inspection()` holds the existing profile-local
+BM-020 OS lock while `retry_held_quiescence()` verifies the final empty
+snapshot, performs the complete-snapshot frozen CAS, and runs the real
+`resume_after_restart()` continuation. A BM-020 writer that commits before the
+lock is acquired is observed and blocks continuation; one that races after the
+locked check cannot create its transaction until retry releases the lock.
+Retry also verifies both transaction stores resolve to the same profile
+directory and rejects stores without the locked inspection API. Lock-busy and
+present-transaction paths preserve the frozen hold and do not restore updater
+policy.
 
-Focused frozen lifecycle tests passed **34/34**; the full offline suite passed
-**1,862/1,862**. Compileall and `git diff --check` passed. The live held
-transaction, Kodi/Test.app, profiles, devices, network, adapter, and host
-actions were not accessed. Changes are uncommitted workspace edits; matrix is
-unchanged.
+Added a real happy-path held retry covering registry readiness, private
+configuration verification, activation release, updater restoration, and
+transaction clearance, plus regressions for a BM-020 transaction entering the
+former race window and a concurrent create attempt during continuation.
+Full-snapshot CAS, exact artifact/identity checks, post-restart session
+boundary, Red Light 2.6.8 disabled precondition, and generic abandon rejection
+remain covered.
+
+Focused frozen lifecycle tests passed **36/36**; transaction store tests passed
+**36/36**; the full offline suite passed **1,864/1,864**. Compileall, tracked
+JSON parsing for changed `.agent/AGENT_STATUS.json`, and `git diff --check`
+passed. No Kodi/Test.app, profile, device, network, LAN, private value,
+adapter, or host action was accessed. No live retry was run. Changes remain
+uncommitted on `agent/supervised-codex`; protected matrix is unchanged.
 
 - BM-017F: COMPLETE.
 - macOS BM-023A: OFFLINE_RETRY_IMPLEMENTED; LIVE_RETRY_NOT_RUN.
 - tvOS: NOT VALIDATED.
 
-Smallest next step: supervisor review of the new production entry point, then
-separately authorize any explicit one-shot action wiring and live retry.
+Smallest next step: independent review of the synchronization and lifecycle
+regressions. Action wiring and any live retry require separate review and
+authorization.
 
 ---
 
