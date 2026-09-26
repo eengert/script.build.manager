@@ -1,4 +1,45 @@
-# Current Handoff - BM-023A missing durable retry artifact directory (2026-09-25)
+# Current Handoff - BM-023A Test.app 0.0.8 staging and held retry (2026-09-25)
+
+**Result:** `ADAPTER_STAGED_0.0.8`; `RETRY_STOPPED_AT_CHECK_RETRY_PRECONDITIONS`.
+
+## Authorized preflight
+
+- `test-app-kodi` responded to `JSONRPC.Ping`; Kodi reported version 21.3,
+  stable build.
+- Build Manager 0.1.0 was enabled and not broken. The temporary driver was
+  present, enabled, and not broken; its public add-on detail reported 0.0.4.
+- Red Light was exactly 2.6.8, disabled, and not broken. Arctic Fuse 3 was
+  3.3.1, enabled, and not broken.
+- `general.addonupdates` was 2 (`NEVER_CHECK`); `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- The stage action later reported `version_before=0.0.7`, which differs from
+  the preflight driver's public 0.0.4 detail. The mismatch was not resolved;
+  no public driver read was made after the retry stopped.
+
+## Authorized actions and result
+
+- Requested `bm023a-stage-adapter` exactly once. Final sanitized wrapper
+  result: `ok=true`, `cancelled=false`, `timed_out=false`, `return_code=0`.
+  Adapter result: `already_current=false`, `version_before=0.0.7`,
+  `version_after=0.0.8`, `files_verified=4`.
+- After stage success, requested `bm023a-retry` exactly once. The wrapper
+  completed with `ok=true`, `cancelled=false`, `timed_out=false`,
+  `return_code=0`; the adapter result was `ok=false`,
+  `adapter_mode=retry`, `adapter_stage=CHECK_RETRY_PRECONDITIONS`,
+  `error_type=Exception`, `failing_callable=pathlib.Path`, and
+  `failure_category=path_missing_or_unreadable`. No outcome was returned.
+- Per the directive, made no additional Test.app call after the retry result.
+  No postflight, second retry, install/recover action, restart, or quit was
+  performed. No tests or product-source changes were made; only task tracking
+  metadata was updated.
+
+**Smallest next step:** supervisor review of the sanitized retry precondition
+failure and the temporary driver's public-version/stage-version mismatch,
+then decide whether to authorize another Test.app action.
+
+---
+
+# Prior Handoff - BM-023A missing durable retry artifact directory (2026-09-25)
 
 **Result:** OFFLINE_PRECONDITION_CORRECTION_COMPLETE; LIVE_RETRY_NOT_RUN.
 

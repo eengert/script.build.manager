@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A missing durable retry artifact directory precondition",
-  "reason": "Corrected the generated retry precondition to require the durable profile root and retained source artifacts directory while allowing ArtifactStore to initialize a missing profile-local frozen-artifacts/artifacts directory. Added a generated-entrypoint regression for the legacy 0.0.4 state, retained fail-closed checks, and bumped the temporary adapter to 0.0.8. Regression 1/1; focused suites 136/136; full offline suite 1,876/1,876; git diff --check passed. No package staging, Test.app, Kodi profile, device, host action, or live retry/recovery.",
-  "last_commit": "bb5460e",
+  "task": "BM-023A live Test.app staging and held retry",
+  "reason": "Authorized Test.app public preflight passed. Staged the temporary adapter once from 0.0.7 to 0.0.8 with 4 files verified. The single retry wrapper completed, but the adapter stopped at CHECK_RETRY_PRECONDITIONS with Exception from pathlib.Path and failure_category path_missing_or_unreadable. No postflight or further Test.app action was made; no tests or product-source changes occurred. The public driver detail was 0.0.4 before staging while the stage action reported 0.0.7 before-version; supervisor review is the next step.",
+  "last_commit": "69dc7fd",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",
   "updated_at": "2026-09-25"
