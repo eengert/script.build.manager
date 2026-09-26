@@ -1,3 +1,34 @@
+# Current Handoff - BM-023A configuration restore gate (2026-09-25)
+
+**Result:** `RESTORE_RESULT_DID_NOT_MEET_EXACT_REVISION_GATE`; `RETRY_NOT_REQUESTED`.
+
+## Authorized preflight
+
+- `test-app-kodi` returned `pong` from `JSONRPC.Ping`.
+- Red Light was version `2.6.8`, disabled, and not broken.
+- `general.addonupdates` was `2`; `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- All required public preflight checks passed.
+
+## Restore result and stop condition
+
+- Requested `bm023a-restore-config` exactly once through the authorized
+  supervisor action. Final sanitized wrapper result: `ok=true`,
+  `cancelled=false`, `timed_out=false`, `return_code=0`.
+- The action result reported `ok=true`, `restored=true`, SHA-256
+  `924ab96558111c1a9050592da5296d07dfbfc35520c380a554beea73fed308c4`,
+  and `size=4995`. It reported `source_revision=d8ab24ba`; the directive
+  requires the exact value `d8ab24b`, so the restore gate was not accepted.
+- Per the strict gate, `bm023a-retry` was not requested. No postflight,
+  additional Test.app call, restart, or quit was performed. No product source
+  was modified and no tests were run. Only this handoff was updated.
+
+**Smallest next step:** supervisor review of the returned revision identifier
+and a fresh directive if that identifier is accepted. Do not continue the
+retry under this work item.
+
+---
+
 # Current Handoff - BM-023A Test.app 0.0.8 staging and held retry (2026-09-25)
 
 **Result:** `ADAPTER_STAGED_0.0.8`; `RETRY_STOPPED_AT_CHECK_RETRY_PRECONDITIONS`.
