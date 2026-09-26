@@ -185,9 +185,7 @@ def main():
                 )
             FAILING_CALLABLE = "default_frozen_install_root"
             durable_root = frozen_install_module.default_frozen_install_root()
-            if not durable_root.is_dir() or not (
-                durable_root / "frozen-artifacts" / "artifacts"
-            ).is_dir():
+            if not durable_root.is_dir():
                 raise AdapterBootstrapError(
                     STAGE, "pathlib.Path", "path_missing_or_unreadable"
                 )

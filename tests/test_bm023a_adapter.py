@@ -326,7 +326,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.7")
+            self.assertEqual(ADAPTER_VERSION, "0.0.8")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -344,17 +344,23 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.7"', addon_xml)
+            self.assertIn('version="0.0.8"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
 class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
-    def test_generated_entrypoint_dispatches_only_selected_mode_and_runs_retry_callback(self):
+    def test_generated_entrypoint_dispatches_modes_and_initializes_legacy_retry_store(self):
         import importlib.util
         import runpy
         from unittest.mock import patch
 
-        def execute(mode):
+        def execute(
+            mode,
+            *,
+            create_retained_source=True,
+            create_durable_root=True,
+            precreate_durable_artifacts=True,
+        ):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 profile_root = (
@@ -377,9 +383,16 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 overlay_path = root / "reviewed-overlay.json"
                 overlay_path.write_text("{}", encoding="utf-8")
                 artifact_root = root / "retained-artifacts"
-                (artifact_root / "artifacts").mkdir(parents=True)
+                if create_retained_source:
+                    (artifact_root / "artifacts").mkdir(parents=True)
                 durable_root = root / "profile-frozen"
-                (durable_root / "frozen-artifacts" / "artifacts").mkdir(parents=True)
+                durable_artifacts_dir = (
+                    durable_root / "frozen-artifacts" / "artifacts"
+                )
+                if create_durable_root:
+                    durable_root.mkdir(parents=True)
+                    if precreate_durable_artifacts:
+                        durable_artifacts_dir.mkdir(parents=True)
 
                 values = {
                     "MANIFEST_PATH": str(manifest_path),
@@ -435,10 +448,6 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 reconcile_calls = []
                 callback_invocations = []
                 manager = object()
-
-                class FakeArtifactStore:
-                    def __init__(self, store_root):
-                        self.root = Path(store_root)
 
                 class FakeFrozenStore:
                     def __init__(self, root=None):
@@ -522,7 +531,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 frozen_install_module.KodiRuntimeFrozenArtifactBackend = FakeInstaller
 
                 artifacts_module = ModuleType("resources.lib.artifacts")
-                artifacts_module.ArtifactStore = FakeArtifactStore
+                artifacts_module.ArtifactStore = ArtifactStore
                 restart_module = ModuleType("resources.lib.restart_coordinator")
                 restart_module.TransactionStore = FakeTransactionStore
                 restart_module.RestartCoordinator = FakeRestartCoordinator
@@ -619,6 +628,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     callback_invocations,
                     transaction,
                     manager,
+                    durable_artifacts_dir.is_dir(),
                 )
 
         for mode in ("install", "recover", "retry"):
@@ -633,7 +643,11 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     callback_invocations,
                     transaction,
                     manager,
-                ) = execute(mode)
+                    durable_artifacts_initialized,
+                ) = execute(
+                    mode,
+                    precreate_durable_artifacts=(mode != "retry"),
+                )
                 self.assertEqual(payload["adapter_mode"], mode)
                 self.assertTrue(payload["ok"])
                 if mode == "install":
@@ -647,6 +661,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     self.assertEqual(dispatch["retry"], [])
                     self.assertEqual(len(coordinator_calls), 1)
                 else:
+                    self.assertTrue(durable_artifacts_initialized)
                     self.assertEqual(dispatch["install"], [])
                     self.assertEqual(
                         [call for call in dispatch["retry"] if call == "adapter helper"],
@@ -672,6 +687,29 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     self.assertIs(reconcile_calls[0][2], request)
                     self.assertIs(reconcile_calls[0][3], transaction_access)
                     self.assertEqual(callback_result, "reconciled")
+
+        with self.subTest(missing="durable root"):
+            payload = execute(
+                "retry",
+                create_durable_root=False,
+                precreate_durable_artifacts=False,
+            )
+            payload = payload[0]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["adapter_stage"], "CHECK_RETRY_PRECONDITIONS")
+            self.assertEqual(payload["failure_category"], "path_missing_or_unreadable")
+
+        with self.subTest(missing="retained source store"):
+            result = execute(
+                "retry",
+                create_retained_source=False,
+                precreate_durable_artifacts=False,
+            )
+            payload, durable_artifacts_initialized = result[0], result[-1]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["adapter_stage"], "CHECK_RETRY_PRECONDITIONS")
+            self.assertEqual(payload["failure_category"], "path_missing_or_unreadable")
+            self.assertFalse(durable_artifacts_initialized)
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
