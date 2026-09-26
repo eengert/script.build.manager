@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A live Test.app staging and held retry",
-  "reason": "Authorized Test.app public preflight passed. Staged the temporary adapter once from 0.0.7 to 0.0.8 with 4 files verified. The single retry wrapper completed, but the adapter stopped at CHECK_RETRY_PRECONDITIONS with Exception from pathlib.Path and failure_category path_missing_or_unreadable. No postflight or further Test.app action was made; no tests or product-source changes occurred. The public driver detail was 0.0.4 before staging while the stage action reported 0.0.7 before-version; supervisor review is the next step.",
-  "last_commit": "69dc7fd",
-  "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
+  "task": "BM-023A authorized Test.app retry",
+  "reason": "Authorized public preflight passed: Red Light 2.6.8 was disabled and not broken, updater policy was 2, and skin.arctic.fuse.3 was active. One bm023a-retry wrapper completed, but its adapter result was ok=false at INVOKE_RETRY with Exception from FrozenInstallCoordinator.retry_held_quiescence and failure_category operation_failed. No postflight or further Kodi action was made; no tests or product-source changes occurred. Supervisor review is the next step.",
+  "last_commit": "fb86f4f2bc9338af9335e5a5fa274de268e9bb36",
+  "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "updated_at": "2026-09-25"
+  "updated_at": "2026-09-26"
 }

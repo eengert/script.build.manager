@@ -1,3 +1,41 @@
+# Current Handoff - BM-023A authorized Test.app retry (2026-09-26)
+
+**Result:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
+
+## Public preflight
+
+- `test-app-kodi` returned `pong` from `JSONRPC.Ping`.
+- Red Light `plugin.video.redlight` was version `2.6.8`, disabled, and not
+  broken.
+- `general.addonupdates` was `2`; `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- All required retry preflight checks passed. The supervisor directive
+  accepted the prior restore revision gate; restore-config was not repeated.
+
+## Authorized retry and stop condition
+
+- Requested `bm023a-retry` exactly once. The final sanitized wrapper result
+  was `ok=true`, `cancelled=false`, `timed_out=false`, `return_code=0`.
+- The adapter result was `ok=false`, `adapter_mode=retry`,
+  `adapter_stage=INVOKE_RETRY`, `error_type=Exception`,
+  `failing_callable=FrozenInstallCoordinator.retry_held_quiescence`, and
+  `failure_category=operation_failed`.
+- The action did not return `complete`. Per the directive, no postflight,
+  second retry, install/recover action, or further Kodi call was made. No
+  product source was changed and no tests were run.
+- Tracking metadata updated: `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`,
+  `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`. No Git commit was
+  created; the worktree was clean before these metadata updates.
+- Codex usage snapshot at task start: `gpt-6-luna`, `max`, five-hour
+  remaining `98%`, seven-day remaining `100%`. The final snapshot was
+  unavailable in supervisor state at handoff.
+
+**Smallest next step:** supervisor review of the sanitized
+`INVOKE_RETRY`/`operation_failed` result and a separate directive if another
+Test.app action is warranted. This work item authorizes no further action.
+
+---
+
 # Current Handoff - BM-023A configuration restore gate (2026-09-25)
 
 **Result:** `RESTORE_RESULT_DID_NOT_MEET_EXACT_REVISION_GATE`; `RETRY_NOT_REQUESTED`.

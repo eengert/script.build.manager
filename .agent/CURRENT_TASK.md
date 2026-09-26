@@ -1,23 +1,23 @@
 # Current Task
 
-## BM-023A live Test.app staging and retry - 2026-09-25
+## BM-023A authorized Test.app retry - 2026-09-26
 
-**Status:** `ADAPTER_STAGED_0.0.8`; `RETRY_STOPPED_AT_CHECK_RETRY_PRECONDITIONS`.
+**Status:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
 
-Authorized public preflight passed: Test.app responded as Kodi 21.3; Build
-Manager and the temporary driver were present and healthy; Red Light 2.6.8 was
-disabled and healthy; updater policy was 2; Arctic Fuse 3.3.1 was enabled and
-active. The temporary driver's public detail was 0.0.4 while the stage action
-reported version_before 0.0.7.
+Public preflight passed: Test.app responded to `JSONRPC.Ping`; Red Light
+`plugin.video.redlight` was 2.6.8, disabled, and not broken; updater policy was
+2; and Arctic Fuse 3 was active. The prior restore revision gate was accepted
+by the supervisor directive, so restore-config was not repeated.
 
-Staged once through the authorized action: version 0.0.7 to 0.0.8,
-4 files verified. One retry invocation completed at
-`CHECK_RETRY_PRECONDITIONS` with `path_missing_or_unreadable` from
-`pathlib.Path`; no adapter outcome was returned. No postflight or further
-Test.app action was performed. No product source changes or tests.
+Requested `bm023a-retry` once. The wrapper completed with `ok=true`,
+`cancelled=false`, `timed_out=false`, and `return_code=0`; the adapter returned
+`ok=false` at `INVOKE_RETRY` with `Exception` from
+`FrozenInstallCoordinator.retry_held_quiescence` and
+`failure_category=operation_failed`. No postflight or further Kodi action was
+performed. No product source changes or tests.
 
-Smallest next step: supervisor review of the sanitized failure and version
-mismatch before deciding on another Test.app action.
+Smallest next step: supervisor review of the sanitized retry result and a
+separate directive if another Test.app action is warranted.
 
 ---
 
