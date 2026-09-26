@@ -1,35 +1,30 @@
 # Current Task
 
-## BM-023A generated-entrypoint dispatch coverage - 2026-09-25
+## BM-023A missing durable retry artifact directory - 2026-09-25
 
-**Status:** OFFLINE_COVERAGE_COMPLETE; INDEPENDENT_REVIEW_READY;
+**Status:** OFFLINE_PRECONDITION_CORRECTION_COMPLETE;
 LIVE_RETRY_NOT_RUN.
 
-Added one executable offline test in `tests/test_bm023a_adapter.py`. It builds
-the adapter package and executes the generated entrypoint with temporary paths
-and stubbed Kodi/production modules. Runtime assertions prove `install` calls
-only `coordinator.install`, `recover` calls only the recovery helper, and
-`retry` calls the packaged retry helper and `retry_held_quiescence` exactly
-once. The real packaged retry validator checks the fixture snapshot. A stub
-coordinator invokes the wired configuration callback; it reaches
-`RestartCoordinator.reconcile` with the same manager, shared BM-020 store,
-request, and scoped `transaction_access`. No source slicing or product code
-change was needed.
+The retry entrypoint retains fail-closed checks for the profile-local durable
+root and retained source artifact directory. It no longer rejects the legacy
+0.0.4 state solely because `frozen-artifacts/artifacts` is absent; the
+production `ArtifactStore` constructor initializes that directory. The
+generated-entrypoint regression verifies successful initialization and
+fail-closed behavior when either required root is absent. The temporary
+adapter version is bumped from 0.0.7 to 0.0.8 for any later authorized stage;
+no package was staged here.
 
-Dispatcher test: **1/1 passed**. Focused adapter/frozen-install/transaction/
-restart-coordinator suites: **136/136 passed**. Full offline suite:
-**1,876/1,876 passed**. The first full run had a transient readiness timeout
-in the unrelated transaction child-process test; it passed alone and in the
-successful full rerun. Compileall, all 7 tracked JSON parses, and
-`git diff --check` passed.
+Generated-entrypoint regression: **1/1 passed**. Focused adapter,
+frozen-install, transaction, and restart-coordinator suites: **136/136 passed**.
+Full offline suite: **1,876/1,876 passed**. `git diff --check` passed.
 
-Only `tests/test_bm023a_adapter.py` has product-tree changes. Work is
-uncommitted on `agent/supervised-codex` at `bb5460e`. No Kodi/Test.app, profile,
-device, network, LAN, private value, host action, adapter installation, or live
+Changes are uncommitted on `agent/supervised-codex`. No Test.app, Kodi profile,
+device, network, private value, host action, adapter installation, or live
 retry/recovery was accessed or run. No push or matrix integration occurred.
 
-Smallest next step: independent review of the resulting dirty coverage
-snapshot. This work item does not authorize a live retry.
+Smallest next step: supervisor review, then a separately authorized 0.0.8
+stage before any live retry. This work item does not authorize either host
+action.
 
 ---
 

@@ -1,8 +1,8 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A generated-entrypoint dispatch coverage",
-  "reason": "Added executable offline coverage that builds and runs the generated adapter entrypoint for install, recover, and retry, proving branch isolation. The actual packaged retry validator accepts the fixture and invokes retry_held_quiescence once; a stub coordinator invokes the generated callback and verifies manager, shared BM-020 store, request, and transaction_access forwarding. Dispatcher test 1/1; focused suites 136/136; full offline suite 1,876/1,876. First full run had one transient child readiness timeout; isolated test and full rerun passed. Compileall, seven tracked JSON parses, and diff check passed. No product code change or live retry. Independent review is next.",
+  "task": "BM-023A missing durable retry artifact directory precondition",
+  "reason": "Corrected the generated retry precondition to require the durable profile root and retained source artifacts directory while allowing ArtifactStore to initialize a missing profile-local frozen-artifacts/artifacts directory. Added a generated-entrypoint regression for the legacy 0.0.4 state, retained fail-closed checks, and bumped the temporary adapter to 0.0.8. Regression 1/1; focused suites 136/136; full offline suite 1,876/1,876; git diff --check passed. No package staging, Test.app, Kodi profile, device, host action, or live retry/recovery.",
   "last_commit": "bb5460e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": "supervisor",

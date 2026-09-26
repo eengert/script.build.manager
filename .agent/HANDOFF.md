@@ -1,4 +1,108 @@
-# Current Handoff - BM-023A generated-entrypoint dispatch coverage (2026-09-25)
+# Current Handoff - BM-023A missing durable retry artifact directory (2026-09-25)
+
+**Result:** OFFLINE_PRECONDITION_CORRECTION_COMPLETE; LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+- The generated retry entrypoint still requires the durable profile root and
+  retained source `artifacts` directory to exist. It no longer requires the
+  profile-local `frozen-artifacts/artifacts` directory to pre-exist;
+  `ArtifactStore` initializes that child directory.
+- The temporary adapter version is now **0.0.8**, so a later authorized stage
+  can carry this correction over the already staged 0.0.7 package. No adapter
+  package was staged in this work item.
+- The generated-entrypoint regression builds and runs the package in the
+  legacy state: durable root present, durable artifacts directory absent. It
+  uses the production `ArtifactStore` constructor and verifies initialization.
+  Missing durable root and missing retained source store cases still fail
+  closed at `CHECK_RETRY_PRECONDITIONS`.
+
+## Validation
+
+- Generated-entrypoint regression: **1/1 passed**.
+- Focused adapter, frozen-install, transaction, and restart-coordinator suites:
+  **136/136 passed**.
+- Full offline suite: **1,876/1,876 passed**.
+- `git diff --check`: passed.
+- The first generated-entrypoint run exposed a test assertion made after its
+  temporary directory had been removed. The assertion now records directory
+  initialization before fixture cleanup; the rerun and all suites passed.
+
+No Test.app, Kodi profile, device, network, or host action was accessed or
+used. No live retry/recovery was attempted. The work remains uncommitted on
+`agent/supervised-codex`; no push or matrix integration occurred. Smallest
+next step: supervisor review, followed by a separately authorized 0.0.8 stage
+before any live retry.
+
+---
+
+# Prior Handoff - BM-023A live staging and held retry (2026-09-25)
+
+**Result:** ADAPTER_STAGED_0.0.7; HELD_RETRY_FAILED_PRECONDITIONS.
+
+## Authorized actions
+
+- Re-read supervisor state under the current lease before each action;
+  `handoff_requested` was false.
+- Requested `bm023a-stage-adapter` exactly once through supervisor
+  validation-action IPC. Final sanitized response: `ok=true`,
+  `cancelled=false`, `timed_out=false`, `return_code=0`; adapter result
+  `already_current=false`, `version_before=0.0.4`, `version_after=0.0.7`,
+  `files_verified=4`.
+- After the required staging evidence succeeded, requested `bm023a-retry`
+  exactly once. The action wrapper returned `ok=true`, `cancelled=false`,
+  `timed_out=false`, `return_code=0`; its adapter result returned `ok=false`,
+  `adapter_mode=retry`, `adapter_stage=CHECK_RETRY_PRECONDITIONS`,
+  `error_type=Exception`, `failing_callable=pathlib.Path`, and
+  `failure_category=path_missing_or_unreadable`. No completion, restart, or
+  held-state recovery evidence was returned.
+- No further host action was requested. `bm023a-install` and
+  `bm023a-recover` were not requested; Test.app was not restarted or quit.
+  No tests or product-code changes were made; this handoff is the only
+  repository file changed for this work item.
+- Smallest next step: supervisor review of the held-retry precondition result
+  and a fresh directive before any further host action. No user input was
+  requested by this bounded work item.
+
+---
+
+## Prior Handoff - BM-023A live staging gate (2026-09-25)
+
+**Result:** STAGING_BLOCKED_BY_VALIDATION_WORKSPACE_COMMIT_MISMATCH;
+RETRY_NOT_REQUESTED.
+
+## Authorized action
+
+- Re-read supervisor state under the current lease; `handoff_requested` was
+  false.
+- Requested `bm023a-stage-adapter` exactly once through supervisor
+  validation-action IPC after the App Management permission grant.
+- Final sanitized response: `ok=false`, `error_type=ValidationActionError`,
+  error `trusted validation workspace HEAD does not match configured commit`.
+  The required success evidence (`ok=true`, `version_after=0.0.7`,
+  `files_verified=4`) was not returned.
+- Per the directive, did not request `bm023a-retry` or any other host action.
+  No tests or product-code changes were made; this handoff is the only
+  repository file changed for this work item.
+- Smallest next step: supervisor review of the validation-workspace commit
+  mismatch and a fresh directive before any further host action. No user input
+  was requested by this bounded work item.
+
+---
+
+## Prior Handoff - BM-023A live staging attempt before App Management grant
+
+**Result:** STAGING_FAILED; RETRY_NOT_REQUESTED.
+
+The earlier one-shot staging request returned `ok=false`,
+`error_type=AdapterUpgradeError`, error `temporary adapter upgrade failed`,
+`cancelled=false`, `timed_out=false`, and `return_code=1`. It did not provide
+the required success evidence (`ok=true`, `version_after=0.0.7`,
+`files_verified=4`). The retry was not requested under that earlier directive.
+
+---
+
+# Prior Handoff - BM-023A generated-entrypoint dispatch coverage (2026-09-25)
 
 **Result:** OFFLINE_COVERAGE_COMPLETE; INDEPENDENT_REVIEW_READY;
 LIVE_RETRY_NOT_RUN.
