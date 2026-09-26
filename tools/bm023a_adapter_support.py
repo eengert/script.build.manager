@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import sys
 from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.9"
+ADAPTER_VERSION = "0.0.10"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 HELD_RETRY_OWNER_ID = "plugin.video.redlight"
@@ -73,6 +75,7 @@ FAILURE_CATEGORIES = frozenset({
     "retry_snapshot_invalid",
     "retry_identity_mismatch",
     "retry_api_unavailable",
+    "module_cache_preloaded",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -520,7 +523,133 @@ def verify_build_manager_source(
         raise _bootstrap_error(
             "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
         )
+    package_locations = getattr(resources_lib, "__path__", None)
+    try:
+        concrete_locations = [Path(location).resolve(strict=True) for location in package_locations]
+    except (TypeError, OSError):
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
+        ) from None
+    if concrete_locations != [expected_package]:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
+        )
     return concrete_file
+
+
+def reject_cached_production_modules(module_names: Any, module_cache: Any = None) -> None:
+    """Fail closed when a production child module predates this invocation.
+
+    Kodi can keep imported modules in ``sys.modules`` after their source files
+    change on disk.  The package path check alone cannot establish which code
+    object a cached child module contains, so production modules needed by the
+    adapter must be imported fresh for this invocation.
+    """
+    cache = sys.modules if module_cache is None else module_cache
+    if any(name in cache for name in module_names):
+        raise _bootstrap_error(
+            "IMPORT_PRODUCTION_MODULES",
+            "importlib.import_module",
+            "module_cache_preloaded",
+        )
+
+
+def verify_frozen_install_source(addon_root: Any, expected_sha256: str) -> None:
+    """Require the installed coordinator source used to build this adapter."""
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "invalid_input"
+        )
+    try:
+        expected_addon = Path(addon_root).resolve(strict=True)
+        expected_package = (expected_addon / "resources" / "lib").resolve(strict=True)
+        source_file = (expected_package / "frozen_install.py").resolve(strict=True)
+        source_file.relative_to(expected_package)
+        digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+    except ValueError:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
+        ) from None
+    except TypeError:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "path_argument_is_none"
+        ) from None
+    except OSError:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_missing"
+        ) from None
+    if digest != expected_sha256:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
+        )
+
+
+def verify_production_module_sources(addon_root: Any, modules: Dict[str, ModuleType]) -> None:
+    """Bind imported production modules to exact files under this add-on."""
+    try:
+        expected_addon = Path(addon_root).resolve(strict=True)
+        expected_package = (expected_addon / "resources" / "lib").resolve(strict=True)
+    except TypeError:
+        raise _bootstrap_error(
+            "IMPORT_PRODUCTION_MODULES", "pathlib.Path", "path_argument_is_none"
+        ) from None
+    except OSError:
+        raise _bootstrap_error(
+            "IMPORT_PRODUCTION_MODULES", "pathlib.Path", "module_source_missing"
+        ) from None
+
+    for module_name, module in modules.items():
+        if not module_name.startswith("resources.lib."):
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "importlib.import_module",
+                "module_source_mismatch",
+            )
+        relative_name = module_name[len("resources.lib."):]
+        expected_file = expected_package.joinpath(*relative_name.split(".")).with_suffix(".py")
+        module_file = getattr(module, "__file__", None)
+        module_spec = getattr(module, "__spec__", None)
+        module_origin = getattr(module_spec, "origin", None)
+        if not isinstance(module_file, (str, bytes)) or not module_file:
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "pathlib.Path",
+                "module_source_missing",
+            )
+        if not isinstance(module_origin, (str, bytes)) or not module_origin:
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "pathlib.Path",
+                "module_source_missing",
+            )
+        try:
+            expected = expected_file.resolve(strict=True)
+            concrete_file = Path(module_file).resolve(strict=True)
+            concrete_origin = Path(module_origin).resolve(strict=True)
+        except (TypeError, OSError):
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "pathlib.Path",
+                "module_source_missing",
+            ) from None
+        try:
+            expected.relative_to(expected_package)
+        except ValueError:
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "importlib.import_module",
+                "module_source_mismatch",
+            ) from None
+        if not expected.is_file() or concrete_file != expected or concrete_origin != expected:
+            raise _bootstrap_error(
+                "IMPORT_PRODUCTION_MODULES",
+                "importlib.import_module",
+                "module_source_mismatch",
+            )
 
 
 def safe_failure_payload(

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import shutil
 import sys
 import zipfile
@@ -68,9 +69,15 @@ def build_adapter(output_dir: Path, values: Dict[str, str]) -> Path:
         package_root / "adapter_support.py",
     )
     shutil.copyfile(TEMPLATE_ROOT / "addon.xml.in", package_root / "addon.xml")
-    (package_root / "adapter_config.py").write_text(
-        render_config(values), encoding="utf-8"
+    frozen_install_source = PROJECT / "resources" / "lib" / "frozen_install.py"
+    expected_frozen_install_sha256 = hashlib.sha256(
+        frozen_install_source.read_bytes()
+    ).hexdigest()
+    generated_config = (
+        render_config(values)
+        + f"EXPECTED_FROZEN_INSTALL_SHA256 = {expected_frozen_install_sha256!r}\n"
     )
+    (package_root / "adapter_config.py").write_text(generated_config, encoding="utf-8")
 
     archive_path = output_dir / f"{DRIVER_ADDON_ID}.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:

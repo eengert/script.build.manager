@@ -23,11 +23,14 @@ from tools.bm023a_adapter_support import (
     choose_missing_artifact_resolution,
     identify_adapter_result,
     parse_adapter_mode,
+    reject_cached_production_modules,
     recover_frozen_install,
     retry_held_frozen_install,
     safe_failure_payload,
     stage_manifest_artifacts,
     verify_build_manager_source,
+    verify_frozen_install_source,
+    verify_production_module_sources,
 )
 from tools.build_bm023a_adapter import build_adapter, read_existing_adapter_config
 
@@ -42,6 +45,7 @@ class TestBm023aAdapterSourceVerification(unittest.TestCase):
         package_file.write_text("# fixture package\n", encoding="utf-8")
         module = ModuleType("resources.lib")
         module.__file__ = str(package_file)
+        module.__path__ = [str(package)]
         return addons_root, addon_root, package_file, module
 
     def test_namespace_parent_has_no_file_but_concrete_lib_is_accepted(self):
@@ -137,6 +141,69 @@ class TestBm023aAdapterSourceVerification(unittest.TestCase):
         old_resources.__file__ = None
         with self.assertRaises(TypeError):
             Path(old_resources.__file__)
+
+    def test_preloaded_production_child_module_fails_with_fixed_cache_diagnostic(self):
+        cached = {"resources.lib.frozen_install": ModuleType("resources.lib.frozen_install")}
+        with self.assertRaises(AdapterBootstrapError) as raised:
+            reject_cached_production_modules(
+                ("resources.lib.frozen_install",), cached
+            )
+        payload = safe_failure_payload(
+            "IMPORT_PRODUCTION_MODULES", "importlib.import_module", raised.exception
+        )
+        self.assertEqual(payload["adapter_stage"], "IMPORT_PRODUCTION_MODULES")
+        self.assertEqual(payload["failing_callable"], "importlib.import_module")
+        self.assertEqual(payload["failure_category"], "module_cache_preloaded")
+        self.assertEqual(
+            set(payload),
+            {"ok", "error_type", "adapter_stage", "failing_callable", "failure_category"},
+        )
+
+    def test_production_child_module_must_bind_to_exact_installed_file(self):
+        import importlib.machinery
+
+        with tempfile.TemporaryDirectory() as tmp:
+            addons, addon, _, _ = self.make_install(Path(tmp))
+            package = addon / "resources" / "lib"
+            expected_file = package / "frozen_install.py"
+            expected_file.write_text("# installed source\n", encoding="utf-8")
+            module = ModuleType("resources.lib.frozen_install")
+            module.__file__ = str(expected_file)
+            module.__spec__ = importlib.machinery.ModuleSpec(
+                module.__name__, loader=None, origin=str(expected_file)
+            )
+            verify_production_module_sources(
+                addon, {module.__name__: module}
+            )
+
+            outside = Path(tmp) / "other-addon" / "frozen_install.py"
+            outside.parent.mkdir()
+            outside.write_text("# mismatched source\n", encoding="utf-8")
+            module.__file__ = str(outside)
+            module.__spec__ = importlib.machinery.ModuleSpec(
+                module.__name__, loader=None, origin=str(outside)
+            )
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                verify_production_module_sources(
+                    addon, {module.__name__: module}
+                )
+            self.assertEqual(raised.exception.failure_category, "module_source_mismatch")
+
+    def test_frozen_install_source_must_match_adapter_build_fingerprint(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            addons, addon, _, _ = self.make_install(Path(tmp))
+            source_file = addon / "resources" / "lib" / "frozen_install.py"
+            source_file.write_text("# reviewed source\n", encoding="utf-8")
+            expected = hashlib.sha256(source_file.read_bytes()).hexdigest()
+            verify_frozen_install_source(addon, expected)
+
+            source_file.write_text("# other on-disk source\n", encoding="utf-8")
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                verify_frozen_install_source(addon, expected)
+            self.assertEqual(raised.exception.stage, "VERIFY_BUILD_MANAGER_SOURCE")
+            self.assertEqual(raised.exception.failure_category, "module_source_mismatch")
 
     def test_corrected_concrete_package_verification_passes_same_namespace_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -326,7 +393,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.9")
+            self.assertEqual(ADAPTER_VERSION, "0.0.10")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -339,17 +406,39 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 default = archive.read(
                     "script.build.manager.bm023a_driver/default.py"
                 ).decode("utf-8")
+                adapter_config = archive.read(
+                    "script.build.manager.bm023a_driver/adapter_config.py"
+                ).decode("utf-8")
                 addon_xml = archive.read(
                     "script.build.manager.bm023a_driver/addon.xml"
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.9"', addon_xml)
+            self.assertIn("EXPECTED_FROZEN_INSTALL_SHA256 = ", adapter_config)
+            config_tree = ast.parse(adapter_config)
+            expected_digest = next(
+                ast.literal_eval(node.value)
+                for node in config_tree.body
+                if isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "EXPECTED_FROZEN_INSTALL_SHA256"
+            )
+            frozen_install_source = (
+                Path(__file__).parents[1] / "resources/lib/frozen_install.py"
+            )
+            self.assertEqual(
+                expected_digest,
+                hashlib.sha256(frozen_install_source.read_bytes()).hexdigest(),
+            )
+            self.assertIn('version="0.0.10"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
 class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
     def test_generated_entrypoint_dispatches_modes_and_initializes_legacy_retry_store(self):
+        import importlib
+        import importlib.machinery
         import importlib.util
         import runpy
         from unittest.mock import patch
@@ -361,6 +450,8 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             create_durable_root=True,
             precreate_durable_artifacts=True,
             retry_api_available=True,
+            preload_frozen_install=False,
+            frozen_install_source_matches=True,
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -374,6 +465,29 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 lib_root.mkdir(parents=True)
                 lib_init = lib_root / "__init__.py"
                 lib_init.write_text("# fixture package\n", encoding="utf-8")
+                production_source_paths = {}
+                reviewed_frozen_install_source = (
+                    Path(__file__).parents[1] / "resources/lib/frozen_install.py"
+                )
+                for module_name in (
+                    "resources.lib.artifacts",
+                    "resources.lib.frozen_install",
+                    "resources.lib.restart_coordinator",
+                    "resources.lib.update_guard",
+                    "resources.lib.build_manager",
+                    "resources.lib.frozen",
+                    "resources.lib.private_overlay",
+                ):
+                    module_source = lib_root / f"{module_name.rsplit('.', 1)[1]}.py"
+                    if module_name == "resources.lib.frozen_install":
+                        module_source.write_bytes(
+                            reviewed_frozen_install_source.read_bytes()
+                            if frozen_install_source_matches
+                            else b"# on-disk source without the reviewed API\n"
+                        )
+                    else:
+                        module_source.write_text("# fixture production source\n", encoding="utf-8")
+                    production_source_paths[module_name] = module_source
                 profile_root.mkdir(parents=True)
                 addons_root.mkdir(parents=True, exist_ok=True)
 
@@ -525,7 +639,17 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     def import_file(self, path):
                         return SimpleNamespace(overlay_id=values["EXPECTED_OVERLAY_ID"])
 
-                frozen_install_module = ModuleType("resources.lib.frozen_install")
+                def bind_production_source(module):
+                    source_path = production_source_paths[module.__name__]
+                    module.__file__ = str(source_path)
+                    module.__spec__ = importlib.machinery.ModuleSpec(
+                        module.__name__, loader=None, origin=str(source_path)
+                    )
+                    return module
+
+                frozen_install_module = bind_production_source(
+                    ModuleType("resources.lib.frozen_install")
+                )
                 frozen_install_module.default_frozen_install_root = lambda: durable_root
                 frozen_install_module.FrozenInstallStore = FakeFrozenStore
                 frozen_install_module.FrozenInstallCoordinator = FakeCoordinator
@@ -534,25 +658,35 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 frozen_install_module.FrozenLifecycleStage = Lifecycle
                 frozen_install_module.KodiRuntimeFrozenArtifactBackend = FakeInstaller
 
-                artifacts_module = ModuleType("resources.lib.artifacts")
+                artifacts_module = bind_production_source(
+                    ModuleType("resources.lib.artifacts")
+                )
                 artifacts_module.ArtifactStore = ArtifactStore
-                restart_module = ModuleType("resources.lib.restart_coordinator")
+                restart_module = bind_production_source(
+                    ModuleType("resources.lib.restart_coordinator")
+                )
                 restart_module.TransactionStore = FakeTransactionStore
                 restart_module.RestartCoordinator = FakeRestartCoordinator
-                update_guard_module = ModuleType("resources.lib.update_guard")
+                update_guard_module = bind_production_source(
+                    ModuleType("resources.lib.update_guard")
+                )
                 update_guard_module.KodiJsonRpcUpdatePolicyBackend = FakeUpdatePolicyBackend
                 update_guard_module.AddonUpdatePolicy = Policy
-                build_manager_module = ModuleType("resources.lib.build_manager")
+                build_manager_module = bind_production_source(
+                    ModuleType("resources.lib.build_manager")
+                )
                 build_manager_module.BuildManager = lambda: manager
-                frozen_module = ModuleType("resources.lib.frozen")
+                frozen_module = bind_production_source(
+                    ModuleType("resources.lib.frozen")
+                )
                 frozen_module.FrozenBuildManifest = SimpleNamespace(
                     from_json=lambda _text: manifest
                 )
-                private_overlay_module = ModuleType("resources.lib.private_overlay")
+                private_overlay_module = bind_production_source(
+                    ModuleType("resources.lib.private_overlay")
+                )
                 private_overlay_module.PrivateOverlayStore = FakePrivateOverlayStore
 
-                resources_module = ModuleType("resources")
-                resources_module.__path__ = [str(addon_root / "resources")]
                 resources_lib_module = ModuleType("resources.lib")
                 resources_lib_module.__file__ = str(lib_init)
                 resources_lib_module.__path__ = [str(lib_root)]
@@ -572,6 +706,9 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 adapter_config_module = ModuleType("adapter_config")
                 for key, value in values.items():
                     setattr(adapter_config_module, key, value)
+                adapter_config_module.EXPECTED_FROZEN_INSTALL_SHA256 = hashlib.sha256(
+                    reviewed_frozen_install_source.read_bytes()
+                ).hexdigest()
 
                 support_spec = importlib.util.spec_from_file_location(
                     "adapter_support", generated_root / "adapter_support.py"
@@ -596,7 +733,8 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     "xbmcvfs": xbmcvfs_module,
                     "adapter_config": adapter_config_module,
                     "adapter_support": support_module,
-                    "resources": resources_module,
+                }
+                production_modules = {
                     "resources.lib": resources_lib_module,
                     "resources.lib.artifacts": artifacts_module,
                     "resources.lib.frozen_install": frozen_install_module,
@@ -606,16 +744,41 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     "resources.lib.frozen": frozen_module,
                     "resources.lib.private_overlay": private_overlay_module,
                 }
+                cached_module_names = (
+                    "resources",
+                    *production_modules.keys(),
+                )
+                saved_modules = {
+                    name: sys.modules.pop(name)
+                    for name in cached_module_names
+                    if name in sys.modules
+                }
+                if preload_frozen_install:
+                    sys.modules["resources.lib.frozen_install"] = frozen_install_module
+
+                original_import_module = importlib.import_module
+
+                def import_production_module(name, package=None):
+                    if name in production_modules:
+                        return production_modules[name]
+                    return original_import_module(name, package)
+
                 saved_path = list(sys.path)
                 saved_argv = sys.argv
                 try:
                     sys.path.insert(0, str(generated_root))
                     sys.argv = [str(entrypoint), mode]
                     with patch.dict(sys.modules, stub_modules):
-                        runpy.run_path(str(entrypoint), run_name="__main__")
+                        with patch.object(
+                            importlib, "import_module", import_production_module
+                        ):
+                            runpy.run_path(str(entrypoint), run_name="__main__")
                 finally:
                     sys.path[:] = saved_path
                     sys.argv = saved_argv
+                    for name in cached_module_names:
+                        sys.modules.pop(name, None)
+                    sys.modules.update(saved_modules)
 
                 result_path = (
                     profile_root / "addon_data" / "script.build.manager"
@@ -730,6 +893,30 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             self.assertEqual(len(coordinator_calls), 1)
             self.assertEqual(dispatch["install"], [])
             self.assertEqual(dispatch["recover"], [])
+
+        with self.subTest(stale="preloaded frozen_install module"):
+            result = execute("retry", preload_frozen_install=True)
+            payload, dispatch, coordinator_calls = result[:3]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["adapter_mode"], "retry")
+            self.assertEqual(payload["adapter_stage"], "IMPORT_PRODUCTION_MODULES")
+            self.assertEqual(
+                payload["failing_callable"], "importlib.import_module"
+            )
+            self.assertEqual(payload["failure_category"], "module_cache_preloaded")
+            self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
+            self.assertEqual(coordinator_calls, [])
+
+        with self.subTest(mismatch="frozen_install source fingerprint"):
+            result = execute("retry", frozen_install_source_matches=False)
+            payload, dispatch, coordinator_calls = result[:3]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["adapter_mode"], "retry")
+            self.assertEqual(payload["adapter_stage"], "VERIFY_BUILD_MANAGER_SOURCE")
+            self.assertEqual(payload["failing_callable"], "pathlib.Path")
+            self.assertEqual(payload["failure_category"], "module_source_mismatch")
+            self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
+            self.assertEqual(coordinator_calls, [])
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
