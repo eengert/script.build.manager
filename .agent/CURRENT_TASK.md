@@ -1,6 +1,26 @@
 # Current Task
 
-## BM-023A authorized Test.app retry - 2026-09-26
+## BM-023A retry API callable guard - 2026-09-26
+
+**Status:** `OFFLINE_RETRY_API_DIAGNOSTIC_COMPLETE`; no live retry or staging.
+
+The adapter now checks that `FrozenInstallCoordinator.retry_held_quiescence`
+is callable before dispatch and fails closed with the fixed
+`retry_api_unavailable` diagnostic when that API is missing or non-callable.
+The adapter version is 0.0.9. Added direct adapter and generated-entrypoint
+missing-method coverage; successful-dispatch coverage remains in both paths.
+
+BM-023A adapter tests passed **48/48** and the full offline suite passed
+**1,877/1,877**. `git diff --check` passed. No Test.app, Kodi, profile, device,
+network, adapter staging, or live retry was accessed or used. Changes are
+uncommitted on `agent/supervised-codex`; no commit or matrix integration.
+
+Smallest next step: supervisor review. Any adapter staging or host action needs
+a separate directive.
+
+---
+
+## Prior task: BM-023A authorized Test.app retry - 2026-09-26
 
 **Status:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
 

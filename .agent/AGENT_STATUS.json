@@ -1,8 +1,8 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A authorized Test.app retry",
-  "reason": "Authorized public preflight passed: Red Light 2.6.8 was disabled and not broken, updater policy was 2, and skin.arctic.fuse.3 was active. One bm023a-retry wrapper completed, but its adapter result was ok=false at INVOKE_RETRY with Exception from FrozenInstallCoordinator.retry_held_quiescence and failure_category operation_failed. No postflight or further Kodi action was made; no tests or product-source changes occurred. Supervisor review is the next step.",
+  "task": "BM-023A retry API callable guard",
+  "reason": "Offline correction complete: the generated adapter checks retry_held_quiescence is callable and reports fixed retry_api_unavailable when absent. Adapter regressions cover missing and successful dispatch paths; adapter tests 48/48, full offline suite 1877/1877, git diff --check passed. No Test.app, Kodi, staging, or live retry. No commit or matrix integration; supervisor review is next.",
   "last_commit": "fb86f4f2bc9338af9335e5a5fa274de268e9bb36",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",

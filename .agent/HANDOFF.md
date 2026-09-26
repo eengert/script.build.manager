@@ -1,4 +1,34 @@
-# Current Handoff - BM-023A authorized Test.app retry (2026-09-26)
+# Current Handoff - BM-023A retry API callable guard (2026-09-26)
+
+**Result:** `OFFLINE_RETRY_API_DIAGNOSTIC_COMPLETE`; no live retry or staging.
+
+## What changed
+
+- The generated BM-023A adapter checks that
+  `FrozenInstallCoordinator.retry_held_quiescence` is callable before
+  dispatch. A missing or non-callable API fails closed with the fixed
+  `INVOKE_RETRY` / `retry_api_unavailable` diagnostic and the allowlisted
+  callable name. The temporary adapter version is now 0.0.9.
+- Added direct adapter and generated-entrypoint regressions for the missing
+  method. Existing adapter and generated-entrypoint tests exercise successful
+  dispatch through the callable API and assert it is invoked once.
+
+## Validation and boundaries
+
+- BM-023A adapter tests: **48/48 passed**.
+- Full offline suite: **1,877/1,877 passed**; `git diff --check` passed.
+- No Test.app, Kodi, profile, device, network, adapter staging, or live retry
+  was accessed or used. No commit, push, or matrix integration was made.
+- Changes are uncommitted on `agent/supervised-codex`; product changes are
+  limited to `tools/bm023a_adapter_support.py`,
+  `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`.
+
+**Smallest next step:** supervisor review of the 0.0.9 offline correction.
+Any package staging or host action requires a separate directive.
+
+---
+
+# Prior Handoff - BM-023A authorized Test.app retry (2026-09-26)
 
 **Result:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
 
