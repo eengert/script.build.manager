@@ -7,7 +7,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.8"
+ADAPTER_VERSION = "0.0.9"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 HELD_RETRY_OWNER_ID = "plugin.video.redlight"
@@ -72,6 +72,7 @@ FAILURE_CATEGORIES = frozenset({
     "artifact_stage_failed",
     "retry_snapshot_invalid",
     "retry_identity_mismatch",
+    "retry_api_unavailable",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -431,8 +432,16 @@ def retry_held_frozen_install(
             "CHECK_RETRY_PRECONDITIONS", "pathlib.Path", "path_missing_or_unreadable"
         )
 
+    retry_callable = getattr(coordinator, "retry_held_quiescence", None)
+    if not callable(retry_callable):
+        raise _bootstrap_error(
+            "INVOKE_RETRY",
+            "FrozenInstallCoordinator.retry_held_quiescence",
+            "retry_api_unavailable",
+        )
+
     try:
-        result = coordinator.retry_held_quiescence(
+        result = retry_callable(
             expected_transaction=transaction,
             artifact_source_store=artifact_source_store,
             restart_store=restart_store,

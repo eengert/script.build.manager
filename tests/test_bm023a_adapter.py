@@ -326,7 +326,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.8")
+            self.assertEqual(ADAPTER_VERSION, "0.0.9")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -344,7 +344,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 ).decode("utf-8")
             self.assertIn('import_module("resources.lib")', default)
             self.assertNotIn("resources.__file__", default)
-            self.assertIn('version="0.0.8"', addon_xml)
+            self.assertIn('version="0.0.9"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -360,6 +360,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             create_retained_source=True,
             create_durable_root=True,
             precreate_durable_artifacts=True,
+            retry_api_available=True,
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -495,6 +496,9 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                                 updater_guard_required=False,
                             ),
                         )
+
+                if not retry_api_available:
+                    del FakeCoordinator.retry_held_quiescence
 
                 class FakeTransactionStore:
                     def __init__(self):
@@ -710,6 +714,22 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             self.assertEqual(payload["adapter_stage"], "CHECK_RETRY_PRECONDITIONS")
             self.assertEqual(payload["failure_category"], "path_missing_or_unreadable")
             self.assertFalse(durable_artifacts_initialized)
+
+        with self.subTest(missing="retry coordinator API"):
+            result = execute("retry", retry_api_available=False)
+            payload, dispatch, coordinator_calls = result[:3]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["adapter_mode"], "retry")
+            self.assertEqual(payload["adapter_stage"], "INVOKE_RETRY")
+            self.assertEqual(
+                payload["failing_callable"],
+                "FrozenInstallCoordinator.retry_held_quiescence",
+            )
+            self.assertEqual(payload["failure_category"], "retry_api_unavailable")
+            self.assertEqual(dispatch["retry"], ["adapter helper"])
+            self.assertEqual(len(coordinator_calls), 1)
+            self.assertEqual(dispatch["install"], [])
+            self.assertEqual(dispatch["recover"], [])
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
@@ -1271,6 +1291,28 @@ class TestBm023aHeldRetryAdapter(unittest.TestCase):
         self.assertNotIn("current_session_id", calls[0])
         self.assertEqual(payload["adapter_mode"], "retry")
         self.assertTrue(payload["retry_invoked"])
+
+    def test_retry_missing_coordinator_api_fails_closed_with_fixed_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args, _transaction, _source_store, _restart_store, calls = self.fixture(Path(tmp))
+            args["coordinator"] = SimpleNamespace()
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_retry(args)
+        error = raised.exception
+        self.assertEqual(error.stage, "INVOKE_RETRY")
+        self.assertEqual(
+            error.failing_callable,
+            "FrozenInstallCoordinator.retry_held_quiescence",
+        )
+        self.assertEqual(error.failure_category, "retry_api_unavailable")
+        payload = safe_failure_payload("CHECK_RETRY_PRECONDITIONS", "result_serializer", error)
+        self.assertEqual(payload["adapter_stage"], "INVOKE_RETRY")
+        self.assertEqual(
+            payload["failing_callable"],
+            "FrozenInstallCoordinator.retry_held_quiescence",
+        )
+        self.assertEqual(payload["failure_category"], "retry_api_unavailable")
+        self.assertEqual(calls, [])
 
     def test_retry_result_shape_contains_only_sanitized_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
