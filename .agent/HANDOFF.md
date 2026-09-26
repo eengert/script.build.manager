@@ -1,30 +1,55 @@
-# Current Handoff - BM-023A retry API callable guard (2026-09-26)
+# Current Handoff - BM-023A production module binding guard (2026-09-26)
 
-**Result:** `OFFLINE_RETRY_API_DIAGNOSTIC_COMPLETE`; no live retry or staging.
+**Result:** `OFFLINE_MODULE_SOURCE_BINDING_CORRECTION_COMPLETE`;
+`LIVE_RETRY_NOT_RUN`.
+
+## Diagnosis
+
+- The 0.0.9 driver verified the installed `resources.lib` package file, then
+  imported `resources.lib.frozen_install` and checked only whether the retry
+  method was callable. `importlib.import_module` returns a cached child from
+  `sys.modules` without rereading the current source. A prior module object
+  retaining the retry method could therefore pass the callable guard while
+  the on-disk file lacks it; an exception from that call is sanitized as
+  `INVOKE_RETRY` / `operation_failed`.
+- This explains the reported result, but the failed invocation's module-cache
+  state was not retained, so the exact cached object's prior source cannot be
+  confirmed. The trusted staging action builds and replaces only the
+  temporary driver package; it does not update the installed Build Manager
+  production source.
 
 ## What changed
 
-- The generated BM-023A adapter checks that
-  `FrozenInstallCoordinator.retry_held_quiescence` is callable before
-  dispatch. A missing or non-callable API fails closed with the fixed
-  `INVOKE_RETRY` / `retry_api_unavailable` diagnostic and the allowlisted
-  callable name. The temporary adapter version is now 0.0.9.
-- Added direct adapter and generated-entrypoint regressions for the missing
-  method. Existing adapter and generated-entrypoint tests exercise successful
-  dispatch through the callable API and assert it is invoked once.
+- Adapter version is now **0.0.10**. The builder pins the SHA-256 of the
+  reviewed `resources/lib/frozen_install.py` into the generated driver config.
+- Before importing production children, the driver rejects any required
+  child module already in `sys.modules`. It also verifies the root package
+  search path, the frozen-install source fingerprint, and each imported
+  child module's resolved file and loader origin beneath the installed add-on.
+  Mismatch and cache failures use fixed allowlisted diagnostics without
+  exception text.
+- The generated-entrypoint harness now simulates fresh imports and covers a
+  preloaded coordinator carrying the old callable plus an on-disk source
+  fingerprint mismatch. Production lifecycle code is unchanged.
 
 ## Validation and boundaries
 
-- BM-023A adapter tests: **48/48 passed**.
-- Full offline suite: **1,877/1,877 passed**; `git diff --check` passed.
-- No Test.app, Kodi, profile, device, network, adapter staging, or live retry
+- BM-023A adapter tests: **51/51 passed**.
+- Full offline suite: **1,880/1,880 passed**; compileall and
+  `git diff --check` passed.
+- No Test.app, Kodi, profile, device, network, staging action, or live retry
   was accessed or used. No commit, push, or matrix integration was made.
-- Changes are uncommitted on `agent/supervised-codex`; product changes are
-  limited to `tools/bm023a_adapter_support.py`,
-  `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`.
+- Changes are uncommitted on `agent/supervised-codex` in
+  `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/default.py.in`,
+  `tools/bm023a_adapter/addon.xml.in`, `tools/build_bm023a_adapter.py`, and
+  `tests/test_bm023a_adapter.py`. No change was made to
+  `resources/lib/frozen_install.py`.
 
-**Smallest next step:** supervisor review of the 0.0.9 offline correction.
-Any package staging or host action requires a separate directive.
+**Smallest next step:** supervisor review, then update the trusted staging
+action's reviewed source/version pin to 0.0.10. Stage only under a separate
+directive. Before retry, the installed Build Manager source must match the
+fingerprint in the staged driver; otherwise it will fail closed at source
+verification.
 
 ---
 

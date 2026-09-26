@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
   "status": "complete",
-  "task": "BM-023A retry API callable guard",
-  "reason": "Offline correction complete: the generated adapter checks retry_held_quiescence is callable and reports fixed retry_api_unavailable when absent. Adapter regressions cover missing and successful dispatch paths; adapter tests 48/48, full offline suite 1877/1877, git diff --check passed. No Test.app, Kodi, staging, or live retry. No commit or matrix integration; supervisor review is next.",
-  "last_commit": "fb86f4f2bc9338af9335e5a5fa274de268e9bb36",
+  "task": "BM-023A production module source binding",
+  "reason": "Offline correction complete: adapter 0.0.10 pins the reviewed frozen_install.py SHA-256, rejects preloaded production child modules, and verifies imported module origins. Adapter tests 51/51, full offline suite 1880/1880, compileall and git diff --check passed. No Test.app, Kodi, staging, or live retry. Changes remain uncommitted; supervisor review and staging-action pin update are next.",
+  "last_commit": "192e36e7852138aea62d395d030c3c08f66d730e",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
   "updated_at": "2026-09-26"

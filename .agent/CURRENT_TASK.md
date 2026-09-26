@@ -1,22 +1,32 @@
 # Current Task
 
-## BM-023A retry API callable guard - 2026-09-26
+## BM-023A production module source binding - 2026-09-26
 
-**Status:** `OFFLINE_RETRY_API_DIAGNOSTIC_COMPLETE`; no live retry or staging.
+**Status:** `OFFLINE_MODULE_SOURCE_BINDING_CORRECTION_COMPLETE`;
+`LIVE_RETRY_NOT_RUN`.
 
-The adapter now checks that `FrozenInstallCoordinator.retry_held_quiescence`
-is callable before dispatch and fails closed with the fixed
-`retry_api_unavailable` diagnostic when that API is missing or non-callable.
-The adapter version is 0.0.9. Added direct adapter and generated-entrypoint
-missing-method coverage; successful-dispatch coverage remains in both paths.
+The 0.0.9 driver checked only the root `resources.lib` package path before
+importing child modules. A cached `resources.lib.frozen_install` in
+`sys.modules` could retain a callable retry method after the source on disk
+changed; exceptions from that stale method were reported as
+`INVOKE_RETRY` / `operation_failed`. This is a mechanically sufficient
+explanation, although the failed invocation's module cache was not retained
+to prove the exact cached object's origin.
 
-BM-023A adapter tests passed **48/48** and the full offline suite passed
-**1,877/1,877**. `git diff --check` passed. No Test.app, Kodi, profile, device,
-network, adapter staging, or live retry was accessed or used. Changes are
+Adapter 0.0.10 pins the reviewed `frozen_install.py` SHA-256, fails closed on
+preloaded production child modules, and verifies each imported child module's
+file and loader origin. The generated-entrypoint tests cover stale cache and
+source mismatch diagnostics without exception text. No lifecycle code changed.
+
+BM-023A adapter tests passed **51/51**; full offline suite passed
+**1,880/1,880**; compileall and `git diff --check` passed. No Test.app, Kodi,
+profile, device, network, staging, or live retry was used. Changes remain
 uncommitted on `agent/supervised-codex`; no commit or matrix integration.
 
-Smallest next step: supervisor review. Any adapter staging or host action needs
-a separate directive.
+Smallest next step: supervisor review and an update to the trusted staging
+action's source/version pin for 0.0.10 before any separately directed staging.
+The installed Build Manager source must match the driver's fingerprint before
+another retry is considered.
 
 ---
 
