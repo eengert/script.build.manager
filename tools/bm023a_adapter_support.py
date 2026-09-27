@@ -60,6 +60,7 @@ FAILURE_CATEGORIES = frozenset({
     "path_missing_or_unreadable",
     "addon_root_mismatch",
     "module_source_missing",
+    "module_source_unreadable",
     "module_source_mismatch",
     "module_import_failed",
     "invalid_input",
@@ -86,7 +87,15 @@ SAFE_ERROR_TYPES = frozenset({
 class AdapterBootstrapError(Exception):
     """A failure containing only allowlisted bootstrap diagnostic labels."""
 
-    def __init__(self, stage: str, failing_callable: str, category: str):
+    def __init__(
+        self,
+        stage: str,
+        failing_callable: str,
+        category: str,
+        *,
+        expected_sha256: str | None = None,
+        observed_sha256: str | None = None,
+    ):
         self.stage = stage if stage in ADAPTER_STAGES else "LOCATE_BUILD_MANAGER"
         self.failing_callable = (
             failing_callable if failing_callable in ADAPTER_CALLABLES else "result_serializer"
@@ -94,11 +103,34 @@ class AdapterBootstrapError(Exception):
         self.failure_category = (
             category if category in FAILURE_CATEGORIES else "operation_failed"
         )
+        self.expected_sha256 = expected_sha256
+        self.observed_sha256 = observed_sha256
         super().__init__(self.failure_category)
 
 
-def _bootstrap_error(stage: str, callable_name: str, category: str) -> AdapterBootstrapError:
-    return AdapterBootstrapError(stage, callable_name, category)
+def _bootstrap_error(
+    stage: str,
+    callable_name: str,
+    category: str,
+    *,
+    expected_sha256: str | None = None,
+    observed_sha256: str | None = None,
+) -> AdapterBootstrapError:
+    return AdapterBootstrapError(
+        stage,
+        callable_name,
+        category,
+        expected_sha256=expected_sha256,
+        observed_sha256=observed_sha256,
+    )
+
+
+def _is_sha256_digest(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def parse_adapter_mode(arguments: list[str]) -> str:
@@ -556,11 +588,7 @@ def reject_cached_production_modules(module_names: Any, module_cache: Any = None
 
 def verify_frozen_install_source(addon_root: Any, expected_sha256: str) -> None:
     """Require the installed coordinator source used to build this adapter."""
-    if (
-        not isinstance(expected_sha256, str)
-        or len(expected_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in expected_sha256)
-    ):
+    if not _is_sha256_digest(expected_sha256):
         raise _bootstrap_error(
             "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "invalid_input"
         )
@@ -569,7 +597,10 @@ def verify_frozen_install_source(addon_root: Any, expected_sha256: str) -> None:
         expected_package = (expected_addon / "resources" / "lib").resolve(strict=True)
         source_file = (expected_package / "frozen_install.py").resolve(strict=True)
         source_file.relative_to(expected_package)
-        digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+    except (FileNotFoundError, NotADirectoryError):
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_missing"
+        ) from None
     except ValueError:
         raise _bootstrap_error(
             "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
@@ -580,11 +611,25 @@ def verify_frozen_install_source(addon_root: Any, expected_sha256: str) -> None:
         ) from None
     except OSError:
         raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_unreadable"
+        ) from None
+    try:
+        digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+    except (FileNotFoundError, NotADirectoryError):
+        raise _bootstrap_error(
             "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_missing"
+        ) from None
+    except OSError:
+        raise _bootstrap_error(
+            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_unreadable"
         ) from None
     if digest != expected_sha256:
         raise _bootstrap_error(
-            "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", "module_source_mismatch"
+            "VERIFY_BUILD_MANAGER_SOURCE",
+            "pathlib.Path",
+            "module_source_mismatch",
+            expected_sha256=expected_sha256,
+            observed_sha256=digest,
         )
 
 
@@ -683,10 +728,25 @@ def safe_failure_payload(
     error_name = type(error).__name__
     if error_name not in SAFE_ERROR_TYPES:
         error_name = "Exception"
-    return {
+    payload = {
         "ok": False,
         "error_type": error_name,
         "adapter_stage": safe_stage,
         "failing_callable": safe_callable,
         "failure_category": safe_category,
     }
+    if (
+        isinstance(error, AdapterBootstrapError)
+        and safe_stage == "VERIFY_BUILD_MANAGER_SOURCE"
+        and safe_category == "module_source_mismatch"
+    ):
+        expected_sha256 = error.expected_sha256
+        observed_sha256 = error.observed_sha256
+        if (
+            _is_sha256_digest(expected_sha256)
+            and _is_sha256_digest(observed_sha256)
+            and expected_sha256 != observed_sha256
+        ):
+            payload["expected_sha256"] = expected_sha256
+            payload["observed_sha256"] = observed_sha256
+    return payload

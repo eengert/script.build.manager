@@ -190,7 +190,7 @@ class TestBm023aAdapterSourceVerification(unittest.TestCase):
             self.assertEqual(raised.exception.failure_category, "module_source_mismatch")
 
     def test_frozen_install_source_must_match_adapter_build_fingerprint(self):
-        import hashlib
+        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmp:
             addons, addon, _, _ = self.make_install(Path(tmp))
@@ -204,6 +204,62 @@ class TestBm023aAdapterSourceVerification(unittest.TestCase):
                 verify_frozen_install_source(addon, expected)
             self.assertEqual(raised.exception.stage, "VERIFY_BUILD_MANAGER_SOURCE")
             self.assertEqual(raised.exception.failure_category, "module_source_mismatch")
+            observed = hashlib.sha256(source_file.read_bytes()).hexdigest()
+            self.assertNotEqual(expected, observed)
+            self.assertEqual(raised.exception.expected_sha256, expected)
+            self.assertEqual(raised.exception.observed_sha256, observed)
+
+            secret_path = str(addon / "private" / "overlay.json")
+            raised.exception.args = ("PRIVATE_RESULT_VALUE", secret_path)
+            payload = safe_failure_payload(
+                "LOCATE_BUILD_MANAGER", "xbmcvfs.translatePath", raised.exception
+            )
+            self.assertEqual(
+                set(payload),
+                {
+                    "ok",
+                    "error_type",
+                    "adapter_stage",
+                    "failing_callable",
+                    "failure_category",
+                    "expected_sha256",
+                    "observed_sha256",
+                },
+            )
+            self.assertEqual(payload["expected_sha256"], expected)
+            self.assertEqual(payload["observed_sha256"], observed)
+            serialized = json.dumps(payload)
+            self.assertNotIn("PRIVATE_RESULT_VALUE", serialized)
+            self.assertNotIn(secret_path, serialized)
+
+            source_file.write_text("# reviewed source\n", encoding="utf-8")
+            source_file.unlink()
+            with self.assertRaises(AdapterBootstrapError) as missing:
+                verify_frozen_install_source(addon, expected)
+            self.assertEqual(missing.exception.failure_category, "module_source_missing")
+            missing_payload = safe_failure_payload(
+                "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", missing.exception
+            )
+            self.assertEqual(
+                set(missing_payload),
+                {"ok", "error_type", "adapter_stage", "failing_callable", "failure_category"},
+            )
+
+            source_file.write_text("# reviewed source\n", encoding="utf-8")
+            with patch.object(Path, "read_bytes", side_effect=PermissionError("private path")):
+                with self.assertRaises(AdapterBootstrapError) as unreadable:
+                    verify_frozen_install_source(addon, expected)
+            self.assertEqual(
+                unreadable.exception.failure_category, "module_source_unreadable"
+            )
+            unreadable_payload = safe_failure_payload(
+                "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path", unreadable.exception
+            )
+            self.assertEqual(
+                set(unreadable_payload),
+                {"ok", "error_type", "adapter_stage", "failing_callable", "failure_category"},
+            )
+            self.assertNotIn("private path", json.dumps(unreadable_payload))
 
     def test_corrected_concrete_package_verification_passes_same_namespace_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -915,6 +971,34 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             self.assertEqual(payload["adapter_stage"], "VERIFY_BUILD_MANAGER_SOURCE")
             self.assertEqual(payload["failing_callable"], "pathlib.Path")
             self.assertEqual(payload["failure_category"], "module_source_mismatch")
+            self.assertEqual(
+                payload["expected_sha256"],
+                hashlib.sha256(
+                    (
+                        Path(__file__).parents[1]
+                        / "resources/lib/frozen_install.py"
+                    ).read_bytes()
+                ).hexdigest(),
+            )
+            self.assertEqual(
+                payload["observed_sha256"],
+                hashlib.sha256(
+                    b"# on-disk source without the reviewed API\n"
+                ).hexdigest(),
+            )
+            self.assertEqual(
+                set(payload),
+                {
+                    "ok",
+                    "error_type",
+                    "adapter_mode",
+                    "adapter_stage",
+                    "failing_callable",
+                    "failure_category",
+                    "expected_sha256",
+                    "observed_sha256",
+                },
+            )
             self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
             self.assertEqual(coordinator_calls, [])
 
