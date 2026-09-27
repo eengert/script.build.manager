@@ -1,4 +1,64 @@
-# Current Handoff - BM-023A production module binding guard (2026-09-26)
+# Needs User Input
+
+The requested staging action and its offline tests are in
+`/Users/eengert/Documents/Kodi/tools/ai-supervisor`, outside this task's
+writable root (`script.build.manager-supervised-codex`). The current action is
+pinned to the 0.0.9 worktree and commit; no 0.0.10 reviewed worktree exists.
+This worker cannot edit that repository or provision the required reviewed
+worktree from its current access scope.
+
+The 0.0.10 source can be identified exactly: commit
+`b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree
+`bbd68a0fdd4322af498661c3e59de79335f4f4aa`, builder SHA-256
+`26c396dc2632549d1a40e58b313e8c814ad90666935a2f0e0453c403e190384f2`, and
+adapter support SHA-256
+`736c4faece50656539f2db80d2f0aa45520ba015640750cb358de5df09626bdd`. The
+staging action still needs a dedicated clean 0.0.10 snapshot workspace and
+its matching HEAD/version checks, plus offline action coverage.
+
+**Input needed:** provide a work item/workspace that grants write access to
+`tools/ai-supervisor` and authorizes provisioning the dedicated 0.0.10 source
+snapshot, or move the action and tests into this writable repository.
+
+# Current Handoff - BM-023A staging action 0.0.10 source pin (2026-09-26)
+
+**Result:** `BLOCKED_OUTSIDE_WRITABLE_WORKSPACE`; staging action unchanged.
+
+## Findings
+
+- The product tree was clean at inspection on HEAD
+  `e7043c59cfc1c432b1d8c75394e12f386faa90af`; only `.agent` tracking files
+  changed for this handoff.
+- The trusted staging implementation and coverage are
+  `tools/ai-supervisor/ai_supervisor/bm023a_adapter_upgrade.py` and
+  `tools/ai-supervisor/tests/test_bm023a_adapter_upgrade.py`.
+- The action currently pins worktree
+  `script.build.manager-bm023a-reviewed-0.0.9`, HEAD
+  `4791438dececcc84b3fe3aae5c3861e4d55c02da`, and version 0.0.9. Git confirms
+  that no dedicated 0.0.10 worktree exists.
+- The reviewed adapter source is exactly pin-able at commit
+  `b0a56f67f0f6092836f2237b21fbdd55b13124bc` and tree
+  `bbd68a0fdd4322af498661c3e59de79335f4f4aa`. Its builder and adapter-support
+  file hashes are recorded above.
+
+## Not done
+
+No staging-action implementation or tests were changed or run because their
+repository is outside the writable workspace. No host validation, staging,
+Kodi/Test.app access, device access, or network access occurred. The
+Build Manager product checkout remains unchanged; only `.agent` handoff and
+tracking files were updated.
+
+**Smallest next step:** grant the action repository as a writable workspace
+and provision a dedicated clean worktree at the exact reviewed 0.0.10 commit;
+then update the preserved workspace identity, clean-tree and HEAD checks,
+version gate, and offline tests.
+
+**Human input:** see “Needs User Input” above.
+
+---
+
+# Prior Handoff - BM-023A production module binding guard (2026-09-26)
 
 **Result:** `OFFLINE_MODULE_SOURCE_BINDING_CORRECTION_COMPLETE`;
 `LIVE_RETRY_NOT_RUN`.

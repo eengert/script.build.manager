@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "status": "complete",
-  "task": "BM-023A production module source binding",
-  "reason": "Offline correction complete: adapter 0.0.10 pins the reviewed frozen_install.py SHA-256, rejects preloaded production child modules, and verifies imported module origins. Adapter tests 51/51, full offline suite 1880/1880, compileall and git diff --check passed. No Test.app, Kodi, staging, or live retry. Changes remain uncommitted; supervisor review and staging-action pin update are next.",
-  "last_commit": "192e36e7852138aea62d395d030c3c08f66d730e",
+  "status": "blocked",
+  "task": "BM-023A dedicated staging action source pin",
+  "reason": "The staging action and tests are in tools/ai-supervisor, outside this task's writable root. Candidate adapter source is exactly pin-able at commit b0a56f67f0f6092836f2237b21fbdd55b13124bc, but no dedicated clean 0.0.10 worktree exists. No action/test changes, staging, or host validation occurred. Needs an authorized writable workspace and snapshot provisioning direction.",
+  "last_commit": "e7043c59cfc1c432b1d8c75394e12f386faa90af",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
-  "next_agent": "supervisor",
+  "next_agent": "user",
   "updated_at": "2026-09-26"
 }
