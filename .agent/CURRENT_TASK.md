@@ -1,6 +1,25 @@
 # Current Task
 
-## BM-023A dedicated staging action source pin - 2026-09-26
+## BM-023A source mismatch observability - 2026-09-27
+
+**Status:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`.
+
+The adapter reports expected and observed SHA-256 values for a readable
+installed-source fingerprint mismatch, with strict digest validation at the
+safe result serializer. Missing and unreadable source have distinct fixed
+failure categories. Exception text, paths, source contents, transaction data,
+configuration, and private values remain outside the result.
+
+Focused adapter tests passed **51/51**; the full offline suite passed
+**1,880/1,880**; `git diff --check` passed. No Test.app, Kodi profile,
+device, network, staging, or recovery action was used.
+
+Smallest next step: independent read-only review of the exact diff. Any
+staging or Test.app action requires its own directive.
+
+---
+
+## Prior task: BM-023A dedicated staging action source pin - 2026-09-26
 
 **Status:** `NEEDS_USER_INPUT`; staging action unchanged.
 

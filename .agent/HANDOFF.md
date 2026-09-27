@@ -1,4 +1,44 @@
-# Needs User Input
+# Current Handoff - BM-023A source mismatch observability (2026-09-27)
+
+**Result:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`;
+`RECOVERY_NOT_INVOKED`.
+
+## What changed
+
+- `tools/bm023a_adapter_support.py` now carries the expected and observed
+  SHA-256 values on a source fingerprint mismatch. The safe failure serializer
+  includes those two values only for `VERIFY_BUILD_MANAGER_SOURCE` /
+  `module_source_mismatch`, and only when both are distinct lowercase
+  64-character digests.
+- Missing and unreadable source now produce separate fixed categories,
+  `module_source_missing` and `module_source_unreadable`. Neither category
+  includes digest metadata.
+- `tests/test_bm023a_adapter.py` covers matching, mismatching, missing, and
+  unreadable source, as well as the generated JSON result shape and the
+  no-recovery fail-closed path.
+
+## Validation and boundaries
+
+- Focused BM-023A adapter tests: **51/51 passed**.
+- Full offline suite: **1,880/1,880 passed**.
+- `git diff --check`: passed.
+- No Test.app, Kodi profile, device, network, staging, or recovery action was
+  accessed or invoked. Validation was offline unit testing.
+- Product changes are limited to `tools/bm023a_adapter_support.py` and
+  `tests/test_bm023a_adapter.py`. No commit was created.
+- The supervisor state provided a task-start usage snapshot
+  (`gpt-6-luna`, `max`; five-hour 96% and seven-day 94% remaining). No
+  end snapshot was available; the usage row records this without estimating.
+
+**Smallest next step:** independent read-only review of this exact offline
+diff. Any staging or Test.app action requires its own directive.
+
+**Human input:** none is required for this completed directive. The historical
+staging-action input blocker is retained below for context.
+
+---
+
+## Historical Needs User Input - prior staging action pin
 
 The requested staging action and its offline tests are in
 `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, outside this task's
@@ -20,7 +60,7 @@ its matching HEAD/version checks, plus offline action coverage.
 `tools/ai-supervisor` and authorizes provisioning the dedicated 0.0.10 source
 snapshot, or move the action and tests into this writable repository.
 
-# Current Handoff - BM-023A staging action 0.0.10 source pin (2026-09-26)
+# Prior Handoff - BM-023A staging action 0.0.10 source pin (2026-09-26)
 
 **Result:** `BLOCKED_OUTSIDE_WRITABLE_WORKSPACE`; staging action unchanged.
 

@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "status": "blocked",
-  "task": "BM-023A dedicated staging action source pin",
-  "reason": "The staging action and tests are in tools/ai-supervisor, outside this task's writable root. Candidate adapter source is exactly pin-able at commit b0a56f67f0f6092836f2237b21fbdd55b13124bc, but no dedicated clean 0.0.10 worktree exists. No action/test changes, staging, or host validation occurred. Needs an authorized writable workspace and snapshot provisioning direction.",
-  "last_commit": "e7043c59cfc1c432b1d8c75394e12f386faa90af",
+  "status": "complete",
+  "task": "BM-023A source mismatch observability",
+  "reason": "Implemented allowlisted expected/observed SHA-256 reporting for readable source fingerprint mismatches, distinct missing/unreadable categories, and regression coverage. Focused tests 51/51, full offline suite 1880/1880, and git diff --check passed. No Test.app or recovery action was used.",
+  "last_commit": "873e82530933e25dcae3ab9e83665dc35d127281",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
-  "next_agent": "user",
-  "updated_at": "2026-09-26"
+  "next_agent": "claude",
+  "updated_at": "2026-09-27"
 }
