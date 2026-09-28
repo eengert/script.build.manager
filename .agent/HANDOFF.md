@@ -1,3 +1,74 @@
+# Current Handoff - stage-source preflight regression tests for the untrailered-.agent tolerance (2026-09-28; lease 6aa0c474-7e24-4267-8c79-f52ae42028ea)
+
+**Result:** `OFFLINE_REGRESSION_TESTS_ADDED_UNCOMMITTED`. Work ID `cf9d111f-9ccb-4d85-875b-c84537b7d074`. Agent: claude. Usage readings unavailable.
+
+- Changed only `tests/test_check_bm023a_stage_source.py` (uncommitted, for the armed review checkpoint). `tools/check_bm023a_stage_source.py` is unchanged; acceptance semantics are not narrowed or weakened.
+- Added 2 tests: `test_untrailered_commit_tolerance_rejects_non_agent_only_changes` (untrailered commits that mix `.agent` and product paths, product-only, `.agentx/` lookalike, and nested `docs/.agent/` are all rejected as `untrailered_product_commit`, with `main` exit 1) and `test_untrailered_empty_commit_is_rejected` (an untrailered commit with no paths is rejected).
+- Checks: focused module 18/18 OK; full `python3 -m unittest discover -s tests -t .` **1898/1898 OK**; `git diff --check` clean.
+- No commit, push, network, Test.app, or action-worktree change.
+- Next step (supervisor): let the armed checkpoint trailer this diff as a substantive/tracking pair, then rerun `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10`. Note that `76b0c3c` itself remains an untrailered committed product commit and this pair does not retro-review it; the earlier review-required note below still applies. No user input required.
+
+---
+
+# Review Required - 76b0c3c review PASSED, but the armed checkpoint cannot produce a substantive/tracking pair (2026-09-28; lease 193a69d6-255f-4a50-946b-a72c831d058c)
+
+**Result:** `REVIEW_REQUIRED_CHECKPOINT_MECHANISM_CANNOT_PAIR_COMMITTED_SOURCE`. Work ID `80ef275a-d2bb-4303-ad5e-170e29ff7995`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. No commit was created and the preflight was NOT narrowed.
+
+## Step 1 - independent read-only review of 76b0c3c..897a9fc: PASS
+- `tools/check_bm023a_stage_source.py` fails closed on: untrailered product commits (`untrailered_product_commit`), partial trailers (`checkpoint_metadata_incomplete`), merges/roots (`lineage_ambiguous`), missing pair (`tracking_pair_missing`/`head_not_tracking`), mismatched pair trailers, committed drift after the source (`product_changes_after_source`), uncommitted non-`.agent` changes including untracked (`uncommitted_product_changes`), version mismatch, and missing version. The `.agent`-only tolerance requires every changed path to be `.agent` or `.agent/**`; a commit with no paths or any other path is rejected, and a tolerated untrailered commit resets the tracking-child slot so it can never serve as the tracking half of a pair.
+- Only `tools/check_bm023a_stage_source.py`, `tests/test_check_bm023a_stage_source.py` and `.agent/HANDOFF.md` differ across 1c8e89b..897a9fc.
+- Focused module 16/16 OK; full suite `python3 -m unittest discover -s tests -t .` **1896/1896 OK**; `git diff --check` clean.
+
+## Step 2 - blocked (contradiction)
+- `ai_supervisor/review_checkpoint.py` `apply_review_checkpoint` creates a substantive commit only `if captured_substantive:`, i.e. from paths that are dirty in the worktree when the review launches. Here the only dirty path is `.agent/HANDOFF.md` (pre-launch). `76b0c3c` and `897a9fc` are already committed, so the mechanism would create just ONE trailered `tracking` commit and no substantive partner. The mechanism cannot retro-review already-committed commits.
+- Simulated in a scratch clone (removed): `897a9fc` + one trailered tracking commit of the handoff, then the preflight: still `ok:false`, `untrailered_product_commit` (76b0c3c is untrailered product source, nearest substantive `72e327e`). So the directive's expected end state (`ok:true`, `0.0.10`) cannot be reached by letting the armed checkpoint run.
+- Also, the checkpoint snapshot fingerprint includes the `.agent/HANDOFF.md` diff; this note edits it, so the armed checkpoint would fail with "reviewed worktree changed after the independent review began" if the review had been allowed to complete. Yielding `review-required` (not `complete`) avoids committing anything.
+
+## Step 3 - preflight output (not ok; no checkpoint occurred)
+`PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10` at HEAD `897a9fc903a44693d4a2ca555032b75335948bde` -> exit 1, `ok:false`, `category: untrailered_product_commit`; `nearest_substantive` = `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `adapter_version 0.0.10`, `product_changes_to_head` = the two preflight files.
+
+## Not done
+No commit, push, network, Test.app, or action-worktree change. Only change: this note (uncommitted).
+
+## Smallest next step (supervisor, no user input)
+Make `76b0c3c` a reviewed substantive commit in a way the mechanism supports: e.g. `git reset --mixed 1c8e89b` (keeps files, drops the two local unpushed commits) so `tools/check_bm023a_stage_source.py` and `tests/test_check_bm023a_stage_source.py` are dirty product paths, then run the armed read-only review (this review's PASS applies to that exact content) so the framework makes the trailered substantive + tracking pair; or extend the mechanism to trailer already-committed reviewed ranges. Either needs supervisor authority; I did not rewrite history. Then rerun the preflight and expect `ok:true` / `0.0.10`.
+
+---
+
+# Review Required - re-verified: 76b0c3c needs an independent reviewed checkpoint; preflight NOT narrowed (2026-09-28; lease 57f6bedf-4fa6-44f9-b7de-467a05021462)
+
+**Result:** `REVIEW_REQUIRED_PREFLIGHT_HARNESS_IS_STAGED_SOURCE`. Work ID `dd2855a5-2e40-4c3d-855d-a3107ff5b03a`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. This is the same directive as `4668b7ad` below, and the result is the same: branch (b).
+
+- I re-checked the evidence read-only at product HEAD `897a9fc903a44693d4a2ca555032b75335948bde` and action HEAD `ab058180039c6fc7c110603be366c32bf11168bd`. In the action, `_extract_reviewed_source` runs `git archive --format=tar <reviewed_commit>`, which extracts the whole tracked tree. `git ls-tree 72e327e` lists `tools/check_bm023a_stage_source.py` (blob `34d8750…`) and `tests/test_check_bm023a_stage_source.py` (blob `78f3d63…`). Both files are therefore staged product source. They are not adapter build inputs.
+- `76b0c3c` and `897a9fc` both have no `AI-Supervisor-*` trailers; each carries only `Co-Authored-By`. The action's lineage walk calls `_checkpoint_metadata` on every commit, so the live action would also fail closed at this HEAD.
+- Live preflight (`--expected-version 0.0.10`, exit 1): `ok:false`, `untrailered_product_commit`. `nearest_substantive` is `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, version `0.0.10`, with `product_changes_to_head` = the two preflight files.
+- No code or test changes were made, no tests ran, and nothing was committed. The action worktree was not modified. No push, network, Test.app, or host action occurred.
+- **Next step (supervisor):** checkpoint `76b0c3c` as an independent reviewed substantive/tracking pair. Make HEAD end on a trailered tracking commit that includes these `.agent` handoff edits. Then rerun the preflight and expect `ok:true` / `0.0.10`. No user input is required.
+
+---
+
+# Review Required - 76b0c3c needs an independent reviewed checkpoint; preflight NOT narrowed (2026-09-28; lease f64ebde7-420a-4e13-a59c-81d19f09c25a)
+
+**Result:** `REVIEW_REQUIRED_PREFLIGHT_HARNESS_IS_STAGED_SOURCE`. Work ID `4668b7ad-3732-4182-9e9c-e4f52a7df146`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. Branch (b) of the directive applies: the evidence does not prove that the two preflight paths are outside the staged source, so the guard was not weakened.
+
+## Evidence (read-only; product HEAD `897a9fc903a44693d4a2ca555032b75335948bde`, action HEAD `ab05818`)
+
+- **The staged source is the whole reviewed tree.** `ai_supervisor/bm023a_adapter_upgrade.py` (`_extract_reviewed_source`) runs `git archive --format=tar <reviewed_commit>` and extracts every tracked path. It then imports `tools.build_bm023a_adapter` and `tools.bm023a_adapter_support` from that extracted tree. Both `tools/check_bm023a_stage_source.py` (blob `34d8750…`) and `tests/test_check_bm023a_stage_source.py` (blob `78f3d63…`) are tracked in the reviewed tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` of `72e327e`. They are therefore part of the staged product source, even though they are not adapter build inputs.
+- **Narrow build inputs, for reference only.** `build_adapter` reads `tools/build_bm023a_adapter.py`, `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/{default.py.in,addon.xml.in}`, and `resources/lib/frozen_install.py`. Nothing in the builder imports or references the preflight; the only reference is from its own test.
+- **The live action selector fails closed at this HEAD anyway.** Running `_latest_reviewed_source_commit(_PRODUCT_ROOT)` read-only from the action worktree gives `reviewed source checkpoint metadata is incomplete`. Both `897a9fc` (`.agent/HANDOFF.md` only) and `76b0c3c` (the two preflight files) have 0 `AI-Supervisor-*` trailers. If the preflight tolerated these commits, it would report `ok:true` while the action it predicts fails, defeating the preflight's purpose.
+- **Self-certification.** `76b0c3c` rewrote the preflight's own acceptance logic. Exempting the preflight's own files from review would let an unreviewed commit certify itself.
+- Live preflight output (`--expected-version 0.0.10`, exit 1): `ok:false`, `category: untrailered_product_commit`, head `897a9fc…`. `nearest_substantive`: commit `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91e…`, `adapter_version 0.0.10`, `product_changes_to_head` = `[tests/test_check_bm023a_stage_source.py, tools/check_bm023a_stage_source.py]`.
+
+## Not done
+
+No code, test, or preflight changes were made and no commit was created; the only change is this handoff note, left uncommitted. No tests ran because no code changed. The action worktree was not modified (read and import only; `PYTHONDONTWRITEBYTECODE=1`). No push, Test.app, network, or host action occurred.
+
+## Smallest next step (supervisor)
+
+`76b0c3c` needs its own independent reviewed checkpoint: a substantive/tracking trailer pair through the reviewed-checkpoint mechanism, with HEAD ending on a trailered tracking commit. `897a9fc` and this note are untrailered `.agent` commits, which the live action `ab05818` also rejects. Fold them into the tracking half, or make sure no untrailered commit sits above the pair. After that, the preflight and the action should both report a new stage source whose adapter inputs are identical to `72e327e`, with version `0.0.10`. If staging must be pinned to exactly `72e327e`, that requires an explicit action-side authorization (see option 2 in the older note below). No user input is required.
+
+---
+
 # Current Handoff - BM-023A stage-source preflight tolerates untrailered .agent-only commits (2026-09-28; lease 200fce84-070d-4a29-a97d-7fc91e49638b)
 
 **Result:** `STAGE_SOURCE_PREFLIGHT_FIX_COMMITTED_PENDING_REVIEW_CHECKPOINT`. Work ID `13b10f3d-f8c6-4f37-a646-e49f9d2889a8`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable.
