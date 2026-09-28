@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
+import stat
 import sys
+import tempfile
 from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.10"
+ADAPTER_VERSION = "0.0.11"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
+BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
 HELD_RETRY_OWNER_ID = "plugin.video.redlight"
 HELD_RETRY_FAILURE_CODE = "FROZEN_MANIFEST_INVALID"
 
@@ -77,6 +81,10 @@ FAILURE_CATEGORIES = frozenset({
     "retry_identity_mismatch",
     "retry_api_unavailable",
     "module_cache_preloaded",
+    "bundled_source_mismatch",
+    "source_target_invalid",
+    "source_replace_failed",
+    "source_reverify_failed",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
@@ -631,6 +639,128 @@ def verify_frozen_install_source(addon_root: Any, expected_sha256: str) -> None:
             expected_sha256=expected_sha256,
             observed_sha256=digest,
         )
+
+
+def _sha256_of_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_file_durably(path: Path, data: bytes) -> None:
+    with open(path, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _replace_file_atomically(target: Path, data: bytes) -> None:
+    mode = stat.S_IMODE(target.stat().st_mode)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".frozen_install.", suffix=".tmp", dir=str(target.parent)
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, target)
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def repair_frozen_install_source(
+    addon_root: Any,
+    expected_sha256: str,
+    backup_dir: Any,
+    bundled_path: Any = None,
+) -> Dict[str, Any]:
+    """Replace only the installed frozen_install.py with the pinned bundled copy.
+
+    Does nothing when the installed file already matches the pin.  Otherwise the
+    bundled copy must match the pin, the target must be exactly the regular file
+    ``<addon_root>/resources/lib/frozen_install.py`` with no symlink or
+    traversal, and the original is backed up under ``backup_dir`` before an
+    atomic single-file replacement that is re-verified.  Returns sanitized
+    hashes only.
+    """
+    stage, callable_name = "VERIFY_BUILD_MANAGER_SOURCE", "pathlib.Path"
+    if not _is_sha256_digest(expected_sha256):
+        raise _bootstrap_error(stage, callable_name, "invalid_input")
+    try:
+        supplied_addon = Path(addon_root)
+        resolved_addon = supplied_addon.resolve(strict=True)
+    except TypeError:
+        raise _bootstrap_error(stage, callable_name, "path_argument_is_none") from None
+    except OSError:
+        raise _bootstrap_error(stage, callable_name, "path_missing_or_unreadable") from None
+    target = resolved_addon / "resources" / "lib" / "frozen_install.py"
+    try:
+        before = _sha256_of_file(target)
+    except (FileNotFoundError, NotADirectoryError):
+        raise _bootstrap_error(stage, callable_name, "module_source_missing") from None
+    except OSError:
+        raise _bootstrap_error(stage, callable_name, "module_source_unreadable") from None
+    if before == expected_sha256:
+        return {"sha256_before": before, "sha256_after": before, "replaced": False}
+
+    if bundled_path is None:
+        bundled_path = Path(__file__).resolve().parent / BUNDLED_FROZEN_INSTALL_NAME
+    try:
+        bundled = Path(bundled_path)
+        if bundled.is_symlink() or not bundled.is_file():
+            raise OSError
+        bundled_bytes = bundled.read_bytes()
+    except (TypeError, OSError):
+        raise _bootstrap_error(stage, callable_name, "bundled_source_mismatch") from None
+    if hashlib.sha256(bundled_bytes).hexdigest() != expected_sha256:
+        raise _bootstrap_error(stage, callable_name, "bundled_source_mismatch")
+
+    try:
+        target_valid = (
+            supplied_addon.is_absolute()
+            and ".." not in supplied_addon.parts
+            and supplied_addon == resolved_addon
+            and resolved_addon.name == ADDON_ID
+            and not target.is_symlink()
+            and target.is_file()
+            and target.resolve(strict=True) == target
+        )
+    except OSError:
+        target_valid = False
+    if not target_valid:
+        raise _bootstrap_error(stage, callable_name, "source_target_invalid")
+
+    try:
+        original_bytes = target.read_bytes()
+        if hashlib.sha256(original_bytes).hexdigest() != before:
+            raise OSError
+        backup_root = Path(backup_dir)
+        if backup_root.is_symlink():
+            raise OSError
+        backup_root.mkdir(parents=True, exist_ok=True)
+        _write_file_durably(backup_root / f"frozen_install.{before[:16]}.py.bak", original_bytes)
+    except (TypeError, OSError):
+        raise _bootstrap_error(stage, callable_name, "source_replace_failed") from None
+
+    try:
+        _replace_file_atomically(target, bundled_bytes)
+    except OSError:
+        raise _bootstrap_error(stage, callable_name, "source_replace_failed") from None
+
+    try:
+        after = _sha256_of_file(target)
+    except OSError:
+        after = None
+    if after != expected_sha256:
+        try:
+            _replace_file_atomically(target, original_bytes)
+        except OSError:
+            pass
+        raise _bootstrap_error(stage, callable_name, "source_reverify_failed")
+    return {"sha256_before": before, "sha256_after": after, "replaced": True}
 
 
 def verify_production_module_sources(addon_root: Any, modules: Dict[str, ModuleType]) -> None:

@@ -16,7 +16,11 @@ PROJECT = Path(__file__).resolve().parents[1]
 if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
-from tools.bm023a_adapter_support import ADAPTER_VERSION, DRIVER_ADDON_ID
+from tools.bm023a_adapter_support import (
+    ADAPTER_VERSION,
+    BUNDLED_FROZEN_INSTALL_NAME,
+    DRIVER_ADDON_ID,
+)
 
 
 TEMPLATE_ROOT = PROJECT / "tools" / "bm023a_adapter"
@@ -70,9 +74,9 @@ def build_adapter(output_dir: Path, values: Dict[str, str]) -> Path:
     )
     shutil.copyfile(TEMPLATE_ROOT / "addon.xml.in", package_root / "addon.xml")
     frozen_install_source = PROJECT / "resources" / "lib" / "frozen_install.py"
-    expected_frozen_install_sha256 = hashlib.sha256(
-        frozen_install_source.read_bytes()
-    ).hexdigest()
+    frozen_install_bytes = frozen_install_source.read_bytes()
+    expected_frozen_install_sha256 = hashlib.sha256(frozen_install_bytes).hexdigest()
+    (package_root / BUNDLED_FROZEN_INSTALL_NAME).write_bytes(frozen_install_bytes)
     generated_config = (
         render_config(values)
         + f"EXPECTED_FROZEN_INSTALL_SHA256 = {expected_frozen_install_sha256!r}\n"
@@ -81,7 +85,13 @@ def build_adapter(output_dir: Path, values: Dict[str, str]) -> Path:
 
     archive_path = output_dir / f"{DRIVER_ADDON_ID}.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name in ("addon.xml", "default.py", "adapter_config.py", "adapter_support.py"):
+        for name in (
+            "addon.xml",
+            "default.py",
+            "adapter_config.py",
+            "adapter_support.py",
+            BUNDLED_FROZEN_INSTALL_NAME,
+        ):
             archive.write(package_root / name, f"{DRIVER_ADDON_ID}/{name}")
     return archive_path
 

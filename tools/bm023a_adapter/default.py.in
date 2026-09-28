@@ -19,6 +19,7 @@ from adapter_config import (
     OVERLAY_SOURCE,
 )
 from adapter_support import (
+    DRIVER_ADDON_ID,
     AdapterBootstrapError,
     choose_missing_artifact_resolution,
     identify_adapter_result,
@@ -27,6 +28,7 @@ from adapter_support import (
     retry_held_frozen_install,
     safe_failure_payload,
     reject_cached_production_modules,
+    repair_frozen_install_source,
     stage_manifest_artifacts,
     verify_build_manager_source,
     verify_frozen_install_source,
@@ -35,6 +37,7 @@ from adapter_support import (
 
 
 RESULT_PATH = None
+FROZEN_INSTALL_SOURCE_RECORD = None
 STAGE = "LOCATE_BUILD_MANAGER"
 FAILING_CALLABLE = "xbmcvfs.translatePath"
 
@@ -94,7 +97,7 @@ def _write_result(payload):
 
 
 def main():
-    global STAGE, FAILING_CALLABLE, RESULT_PATH
+    global STAGE, FAILING_CALLABLE, RESULT_PATH, FROZEN_INSTALL_SOURCE_RECORD
     payload = {"ok": False, "error_type": "not_started"}
     mode = "unselected"
     try:
@@ -152,6 +155,11 @@ def main():
         STAGE = "VERIFY_BUILD_MANAGER_SOURCE"
         FAILING_CALLABLE = "pathlib.Path"
         verify_build_manager_source(addons_root, addon_root, resources_lib)
+        FROZEN_INSTALL_SOURCE_RECORD = repair_frozen_install_source(
+            addon_root,
+            EXPECTED_FROZEN_INSTALL_SHA256,
+            profile_root / "addon_data" / DRIVER_ADDON_ID / "frozen_install_backups",
+        )
         verify_frozen_install_source(
             addon_root, EXPECTED_FROZEN_INSTALL_SHA256
         )
@@ -379,6 +387,8 @@ def main():
     except Exception as exc:
         payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
     payload = identify_adapter_result(payload, mode)
+    if FROZEN_INSTALL_SOURCE_RECORD is not None:
+        payload["frozen_install_source"] = dict(FROZEN_INSTALL_SOURCE_RECORD)
     _write_result(payload)
 
 

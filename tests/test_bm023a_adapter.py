@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -29,6 +30,7 @@ from tools.bm023a_adapter_support import (
     safe_failure_payload,
     stage_manifest_artifacts,
     verify_build_manager_source,
+    repair_frozen_install_source,
     verify_frozen_install_source,
     verify_production_module_sources,
 )
@@ -449,7 +451,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.10")
+            self.assertEqual(ADAPTER_VERSION, "0.0.11")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -458,7 +460,11 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                     "script.build.manager.bm023a_driver/default.py",
                     "script.build.manager.bm023a_driver/adapter_config.py",
                     "script.build.manager.bm023a_driver/adapter_support.py",
+                    "script.build.manager.bm023a_driver/bundled_frozen_install.py",
                 })
+                bundled_bytes = archive.read(
+                    "script.build.manager.bm023a_driver/bundled_frozen_install.py"
+                )
                 default = archive.read(
                     "script.build.manager.bm023a_driver/default.py"
                 ).decode("utf-8")
@@ -487,8 +493,191 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
                 expected_digest,
                 hashlib.sha256(frozen_install_source.read_bytes()).hexdigest(),
             )
-            self.assertIn('version="0.0.10"', addon_xml)
+            self.assertEqual(
+                hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
+            )
+            self.assertIn('version="0.0.11"', addon_xml)
             compile(default, "generated-default.py", "exec")
+
+
+class TestBm023aFrozenInstallRepair(unittest.TestCase):
+    PINNED = b"# pinned reviewed frozen_install source\n"
+    STALE = b"# stale installed frozen_install source\n"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.addon = self.root / "addons" / "script.build.manager"
+        self.lib = self.addon / "resources" / "lib"
+        self.lib.mkdir(parents=True)
+        self.target = self.lib / "frozen_install.py"
+        self.sibling = self.lib / "transaction.py"
+        self.sibling.write_bytes(b"# sibling\n")
+        self.bundled = self.root / "bundle" / "bundled_frozen_install.py"
+        self.bundled.parent.mkdir()
+        self.bundled.write_bytes(self.PINNED)
+        self.backups = self.root / "backups"
+        self.pin = hashlib.sha256(self.PINNED).hexdigest()
+
+    def repair(self, addon=None, pin=None):
+        return repair_frozen_install_source(
+            self.addon if addon is None else addon,
+            self.pin if pin is None else pin,
+            self.backups,
+            self.bundled,
+        )
+
+    def assert_failure(self, category):
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            self.repair()
+        self.assertEqual(caught.exception.failure_category, category)
+        self.assertEqual(caught.exception.stage, "VERIFY_BUILD_MANAGER_SOURCE")
+        return caught.exception
+
+    def test_mismatch_is_backed_up_replaced_and_reverified(self):
+        self.target.write_bytes(self.STALE)
+        record = self.repair()
+        self.assertEqual(self.target.read_bytes(), self.PINNED)
+        self.assertEqual(record, {
+            "sha256_before": hashlib.sha256(self.STALE).hexdigest(),
+            "sha256_after": self.pin,
+            "replaced": True,
+        })
+        backups = list(self.backups.iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), self.STALE)
+        self.assertEqual(sorted(p.name for p in self.lib.iterdir()),
+                         ["frozen_install.py", "transaction.py"])
+        self.assertEqual(self.sibling.read_bytes(), b"# sibling\n")
+        verify_frozen_install_source(self.addon, self.pin)
+
+    def test_match_is_untouched_and_needs_no_bundle_or_backup(self):
+        self.target.write_bytes(self.PINNED)
+        self.bundled.unlink()
+        before = self.target.stat()
+        record = self.repair()
+        self.assertEqual(record, {
+            "sha256_before": self.pin, "sha256_after": self.pin, "replaced": False,
+        })
+        self.assertEqual(self.target.read_bytes(), self.PINNED)
+        self.assertEqual(self.target.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertFalse(self.backups.exists())
+
+    def test_bundled_hash_mismatch_fails_closed_without_changes(self):
+        self.target.write_bytes(self.STALE)
+        self.bundled.write_bytes(b"# tampered bundle\n")
+        self.assert_failure("bundled_source_mismatch")
+        self.assertEqual(self.target.read_bytes(), self.STALE)
+        self.assertFalse(self.backups.exists())
+
+    def test_missing_bundle_fails_closed(self):
+        self.target.write_bytes(self.STALE)
+        self.bundled.unlink()
+        self.assert_failure("bundled_source_mismatch")
+        self.assertEqual(self.target.read_bytes(), self.STALE)
+
+    def test_symlinked_target_fails_closed_and_outside_file_is_untouched(self):
+        outside = self.root / "outside.py"
+        outside.write_bytes(self.STALE)
+        self.target.symlink_to(outside)
+        self.assert_failure("source_target_invalid")
+        self.assertEqual(outside.read_bytes(), self.STALE)
+        self.assertTrue(self.target.is_symlink())
+        self.assertFalse(self.backups.exists())
+
+    def test_symlinked_package_directory_fails_closed(self):
+        real_lib = self.root / "real-lib"
+        self.lib.rename(real_lib)
+        self.lib.symlink_to(real_lib, target_is_directory=True)
+        (real_lib / "frozen_install.py").write_bytes(self.STALE)
+        self.assert_failure("source_target_invalid")
+        self.assertEqual((real_lib / "frozen_install.py").read_bytes(), self.STALE)
+
+    def test_traversal_and_symlinked_addon_root_fail_closed(self):
+        self.target.write_bytes(self.STALE)
+        traversal = self.root / "addons" / "other" / ".." / "script.build.manager"
+        (self.root / "addons" / "other").mkdir()
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            self.repair(addon=traversal)
+        self.assertEqual(caught.exception.failure_category, "source_target_invalid")
+        link = self.root / "addons" / "link"
+        link.symlink_to(self.addon, target_is_directory=True)
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            self.repair(addon=link)
+        self.assertEqual(caught.exception.failure_category, "source_target_invalid")
+        self.assertEqual(self.target.read_bytes(), self.STALE)
+
+    def test_wrong_addon_directory_name_fails_closed(self):
+        other = self.root / "addons" / "script.other"
+        (other / "resources" / "lib").mkdir(parents=True)
+        (other / "resources" / "lib" / "frozen_install.py").write_bytes(self.STALE)
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            self.repair(addon=other)
+        self.assertEqual(caught.exception.failure_category, "source_target_invalid")
+        self.assertEqual(
+            (other / "resources" / "lib" / "frozen_install.py").read_bytes(), self.STALE
+        )
+
+    def test_replacement_failure_preserves_original(self):
+        from unittest.mock import patch
+
+        self.target.write_bytes(self.STALE)
+        real_replace = os.replace
+
+        def fail_for_target(source, destination, *args, **kwargs):
+            if Path(destination) == self.target:
+                raise OSError("simulated replace failure")
+            return real_replace(source, destination, *args, **kwargs)
+
+        with patch("tools.bm023a_adapter_support.os.replace", fail_for_target):
+            error = self.assert_failure("source_replace_failed")
+        self.assertNotIn("simulated", str(error))
+        self.assertEqual(self.target.read_bytes(), self.STALE)
+        self.assertEqual(sorted(p.name for p in self.lib.iterdir()),
+                         ["frozen_install.py", "transaction.py"])
+
+    def test_reverify_failure_restores_original(self):
+        from unittest.mock import patch
+
+        self.target.write_bytes(self.STALE)
+        real_replace = os.replace
+        calls = []
+
+        def corrupting_replace(source, destination, *args, **kwargs):
+            calls.append(Path(destination))
+            if len(calls) == 1:
+                Path(source).write_bytes(b"# corrupted in flight\n")
+            return real_replace(source, destination, *args, **kwargs)
+
+        with patch("tools.bm023a_adapter_support.os.replace", corrupting_replace):
+            self.assert_failure("source_reverify_failed")
+        self.assertEqual(self.target.read_bytes(), self.STALE)
+
+    def test_only_sanitized_hashes_are_recorded_and_no_other_files_are_touched(self):
+        private = self.addon / "settings.xml"
+        private.write_bytes(b"secret")
+        self.target.write_bytes(self.STALE)
+        record = self.repair()
+        self.assertEqual(set(record), {"sha256_before", "sha256_after", "replaced"})
+        self.assertEqual(private.read_bytes(), b"secret")
+        self.assertEqual(
+            sorted(p.name for p in self.addon.iterdir()), ["resources", "settings.xml"]
+        )
+
+    def test_invalid_pin_and_none_root_are_sanitized(self):
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            self.repair(pin="not-a-digest")
+        self.assertEqual(caught.exception.failure_category, "invalid_input")
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            repair_frozen_install_source(None, self.pin, self.backups, self.bundled)
+        self.assertEqual(caught.exception.failure_category, "path_argument_is_none")
+
+    def test_verify_frozen_install_source_still_rejects_mismatch(self):
+        self.target.write_bytes(self.STALE)
+        with self.assertRaises(AdapterBootstrapError) as caught:
+            verify_frozen_install_source(self.addon, self.pin)
+        self.assertEqual(caught.exception.failure_category, "module_source_mismatch")
 
 
 class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
@@ -963,44 +1152,32 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
             self.assertEqual(coordinator_calls, [])
 
-        with self.subTest(mismatch="frozen_install source fingerprint"):
+        with self.subTest(mismatch="frozen_install source is repaired from bundle"):
             result = execute("retry", frozen_install_source_matches=False)
-            payload, dispatch, coordinator_calls = result[:3]
-            self.assertFalse(payload["ok"])
+            payload = result[0]
+            reviewed_digest = hashlib.sha256(
+                (
+                    Path(__file__).parents[1] / "resources/lib/frozen_install.py"
+                ).read_bytes()
+            ).hexdigest()
+            self.assertTrue(payload["ok"])
             self.assertEqual(payload["adapter_mode"], "retry")
-            self.assertEqual(payload["adapter_stage"], "VERIFY_BUILD_MANAGER_SOURCE")
-            self.assertEqual(payload["failing_callable"], "pathlib.Path")
-            self.assertEqual(payload["failure_category"], "module_source_mismatch")
             self.assertEqual(
-                payload["expected_sha256"],
-                hashlib.sha256(
-                    (
-                        Path(__file__).parents[1]
-                        / "resources/lib/frozen_install.py"
-                    ).read_bytes()
-                ).hexdigest(),
-            )
-            self.assertEqual(
-                payload["observed_sha256"],
-                hashlib.sha256(
-                    b"# on-disk source without the reviewed API\n"
-                ).hexdigest(),
-            )
-            self.assertEqual(
-                set(payload),
+                payload["frozen_install_source"],
                 {
-                    "ok",
-                    "error_type",
-                    "adapter_mode",
-                    "adapter_stage",
-                    "failing_callable",
-                    "failure_category",
-                    "expected_sha256",
-                    "observed_sha256",
+                    "sha256_before": hashlib.sha256(
+                        b"# on-disk source without the reviewed API\n"
+                    ).hexdigest(),
+                    "sha256_after": reviewed_digest,
+                    "replaced": True,
                 },
             )
-            self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
-            self.assertEqual(coordinator_calls, [])
+
+        with self.subTest(match="frozen_install source is left untouched"):
+            payload = execute("retry")[0]
+            record = payload["frozen_install_source"]
+            self.assertFalse(record["replaced"])
+            self.assertEqual(record["sha256_before"], record["sha256_after"])
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
