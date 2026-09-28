@@ -148,6 +148,44 @@ class TestCheckBm023aStageSource(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["category"], "tracking_pair_missing")
 
+    def test_untrailered_commit_tolerance_rejects_non_agent_only_changes(self):
+        cases = {
+            "mixed_agent_and_product": {
+                ".agent/HANDOFF.md": "mixed\n",
+                "resources/lib/extra.py": "x = 1\n",
+            },
+            "product_only": {"resources/lib/extra.py": "x = 1\n"},
+            "agent_lookalike_sibling": {".agentx/notes.md": "n\n"},
+            "nested_agent_directory": {"docs/.agent/notes.md": "n\n"},
+        }
+        for name, files in cases.items():
+            with self.subTest(name=name):
+                source = self.substantive()
+                self.tracking(note=name + "\n")
+                for rel, text in files.items():
+                    self.write(rel, text)
+                self.commit("feat: no trailers")
+                self.tracking(note=name + " later\n", review="rc-2", source="w2", snapshot="s2")
+                report = check(self.root)
+                self.assertFalse(report["ok"], report)
+                self.assertEqual(report["category"], "untrailered_product_commit")
+                self.assertNotIn("stage_source", report)
+                self.assertEqual(report["nearest_substantive"]["commit"], source)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(["--root", str(self.root)]), 1)
+                self.git("reset", "-q", "--hard", "HEAD~4")
+                self.git("clean", "-q", "-f", "-d")
+
+    def test_untrailered_empty_commit_is_rejected(self):
+        source = self.substantive()
+        self.tracking()
+        self.commit("chore: empty, no trailers")
+        self.assertEqual(self.git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"), "")
+        report = check(self.root)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["category"], "untrailered_product_commit")
+        self.assertEqual(report["nearest_substantive"]["commit"], source)
+
     def test_uncommitted_product_changes_fail(self):
         for rel in ("resources/lib/new.py", "tools/bm023a_adapter_support.py"):
             with self.subTest(rel=rel):
