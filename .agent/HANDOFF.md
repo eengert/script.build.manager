@@ -1,3 +1,45 @@
+# Current Handoff - BM-023A 0.0.11 adapter bundles pinned frozen_install.py and repairs a mismatched install (2026-09-28; lease 430725af-e77e-47c3-992c-0964fd57f678)
+
+**Result:** `OFFLINE_ADAPTER_REPAIR_ADDED_UNCOMMITTED`. Work ID `eff03242-8487-4e56-88f7-7ed00cda9295`. Agent: claude. Usage readings unavailable.
+
+- `ADAPTER_VERSION` is now **0.0.11** (`tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`). Changes are uncommitted for the armed review checkpoint; no `resources/**` change.
+- `tools/build_bm023a_adapter.py` now writes and zips `bundled_frozen_install.py`, a byte copy of `resources/lib/frozen_install.py`. Its SHA-256 is the existing `EXPECTED_FROZEN_INSTALL_SHA256` pin.
+- New `repair_frozen_install_source(addon_root, pin, backup_dir, bundled_path=None)` in `tools/bm023a_adapter_support.py`, called from `default.py.in` after `verify_build_manager_source` and before `verify_frozen_install_source` and any `resources.lib.frozen_install` import:
+  - Hash matches the pin: untouched, with no bundle read and no backup.
+  - Hash differs: the bundled bytes must hash to the pin (`bundled_source_mismatch`). The addon root must be absolute, free of `..`, unchanged by resolution and named `script.build.manager`. The target must be a regular non-symlink file that resolves to exactly `<addon>/resources/lib/frozen_install.py` (`source_target_invalid`). The original is backed up to `<profile>/addon_data/script.build.manager.bm023a_driver/frozen_install_backups/frozen_install.<hash16>.py.bak` (never the Build Manager `addon_data`). Then a same-directory temp file is fsynced and `os.replace`d over that one file, and the hash is re-verified. Failures use `source_replace_failed` (original untouched) or `source_reverify_failed` (original restored best-effort). Error text is never included.
+  - The result gains `frozen_install_source: {sha256_before, sha256_after, replaced}`. It carries hashes only and is present whenever the repair step ran, including later failures.
+- `verify_frozen_install_source` is unchanged and still runs after the repair, so the mismatch/missing/unreadable behavior is otherwise identical. It is exercised by a regression test.
+- Four new failure categories were added to the allowlist. No transaction, lock, hold, settings or private file is read or written, and no Kodi.app or normal profile path is involved.
+- Tests (`tests/test_bm023a_adapter.py`): new `TestBm023aFrozenInstallRepair` (12 tests covering mismatch->replaced with backup, match->untouched, bundled hash mismatch and missing bundle->fail closed, symlinked file/directory/root, traversal, wrong add-on name, replace failure->original preserved, reverify failure->restored, only sanitized hash keys, invalid pin, and `verify_frozen_install_source` unchanged). The builder test now expects the bundle and 0.0.11. The generated-entrypoint mismatch subtest now expects repair success with recorded hashes (previously fail closed), plus a match subtest that expects no replacement.
+- Checks: focused `tests.test_bm023a_adapter` 64/64 OK; full `python3 -m unittest discover -s tests -t .` **1911/1911 OK**; `git diff --check` clean.
+- Not done: no stage, install, retry, recover, commit, push, network, Test.app or action-worktree change. The staged Test.app adapter is still 0.0.10 until a separate directive stages the new reviewed source.
+- Next step (supervisor): review and checkpoint this diff as a substantive/tracking pair, run `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11`, then stage under a separate directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A 0.0.10 adapter stage action (2026-09-28; lease 90f0bd81-4f4b-4ccb-9d45-33c2152cf7dc)
+
+**Result:** `STAGE_ADAPTER_VERIFIED_ALREADY_CURRENT`. Work ID `1292f688-574b-48ce-b350-e6897e4234a4`. Agent: claude. Usage readings unavailable.
+
+- Preflight (`--expected-version 0.0.10`) at HEAD `b332847`: exit 0, `ok:true`, stage source `d4bf04e7`, adapter_version 0.0.10, no product changes to HEAD.
+- `bm023a-stage-adapter` action: `ok:true`, `already_current:true`, `files_verified:4`, `reviewed_source d4bf04e7fe97`, `version_before` = `version_after` = 0.0.10.
+- Read-only `test-app-kodi`: Ping-equivalent `Application.GetProperties` OK (Kodi 21.3); `Addons.GetAddonDetails script.build.manager.bm023a_driver` = version 0.0.10, enabled.
+- Process check: `/Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi -p` is running (portable mode).
+- No install/retry/recover, no Kodi.app or normal profile access, no push, no commits. Next step: separate directive for any further Test.app action. No user input required.
+
+---
+
+# Current Handoff - stage-source preflight PASSED at reviewed checkpoint (2026-09-28; lease bdc97fb8-a0d2-4581-919d-9027b3cf37ac)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_OK`. Work ID `00ce97af-b91b-4adf-a68a-f25f2d980822`. Agent: claude. Usage readings unavailable.
+
+- HEAD `b3328476e8c8cfd291cb29f11020576300d47c9a` is a trailered tracking commit (review checkpoint `74086c8d-...`) paired with substantive `d4bf04e`. Worktree was clean; no commits created by this worker before this note.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10` -> exit 0, `ok:true`, stage_source commit `d4bf04e7fe97925770b2699ec7147ce9aceaaf65`, tree `14144c9caf3b344078806983a9a28feec5c921dc`, `adapter_version 0.0.10`, `product_changes_to_head []`. Preflight was not narrowed.
+- Note: the stage source is now `d4bf04e`, not the older pin `72e327e`. Adapter inputs are unchanged, so the version remains 0.0.10.
+- No push, network, Test.app, or action-worktree change. Next step: a separate directive for staging. No user input required.
+
+---
+
 # Current Handoff - stage-source preflight regression tests for the untrailered-.agent tolerance (2026-09-28; lease 6aa0c474-7e24-4267-8c79-f52ae42028ea)
 
 **Result:** `OFFLINE_REGRESSION_TESTS_ADDED_UNCOMMITTED`. Work ID `cf9d111f-9ccb-4d85-875b-c84537b7d074`. Agent: claude. Usage readings unavailable.
