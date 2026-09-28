@@ -1,4 +1,162 @@
-# Current Handoff - BM-023A source mismatch observability (2026-09-27)
+# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease d90e46c9-98c8-4ac4-9c83-6d68d1994326)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- The reviewed source checkpoint is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`; its reviewed metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. The checkpoint declares adapter version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. Existing changes are confined to `.agent` tracking files; this lease made no product implementation changes.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Current tests still cover dynamically selected reviewed checkpoints and deriving version from source; the requested exact source pin, dedicated snapshot clean-tree requirement, and fixed `0.0.10` enforcement remain absent.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The action checkout and snapshot are outside this lease's writable root, which is limited to the supervised product checkout and temporary roots. This is an internal writable-scope review blocker; checkpoint and workspace identities are unambiguous.
+- No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed. Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical trusted action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, enforce version `0.0.10`, add fail-closed offline regression coverage, and rerun the action tests. Do not stage an adapter or interact with Test.app in this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease a866c424-46f1-479f-9deb-9d341938f287)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- Reviewed source checkpoint identity remains exact: `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`; metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. Its adapter template is version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; this lease changed only `.agent` tracking files.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Relevant commit `09f5a1a95d84cef125b1138e6ac67504a3e22146` changed selection to the current reviewed tracking/substantive pair and removed the product clean-tree gate. Current code still does not pin the exact source HEAD, require the dedicated snapshot to be clean, or enforce version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`.
+- Focused action tests were rerun: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. Both external worktrees stayed clean. No action or snapshot files changed; no adapter was staged and Test.app, host validation, and network were not accessed.
+- The action checkout and snapshot are outside this lease's writable root, limited to this supervised product checkout and temporary roots. This is an internal writable-scope review blocker; the checkpoint and workspace identities are unambiguous.
+- Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical trusted action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, enforce version `0.0.10`, add fail-closed offline regression coverage, and rerun the action tests. Do not stage an adapter or interact with Test.app in this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease ed537aa2-f108-464f-8378-52842a8a0b42)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- Reviewed source commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` has tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`, and reviewed-checkpoint metadata for review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. Its adapter template declares `0.0.10`.
+- Product checkout remains `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; only the existing `.agent` tracking files are modified. No product implementation files changed.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Commit `09f5a1a` removed the fixed source HEAD and clean-tree checks and made source selection dynamic; the current action derives the version rather than pinning `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Both required targets are outside this lease's writable root, which is limited to this supervised product checkout and temporary roots. Their identities are unambiguous, so this is an internal write-scope review blocker.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The trusted action remained clean on `main` and the dedicated snapshot remained clean at stale `b0a56f6`. No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed.
+- Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, and enforce version `0.0.10` with fail-closed offline regressions. Do not stage an adapter or interact with Test.app under this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 1c00cd61-c3ba-4e84-bdf1-532d65953650)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- The reviewed source commit is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`. Its reviewed-checkpoint metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c`, source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`, and product adapter version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; its only changes are the existing `.agent` handoff metadata files.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d` (tree `85931ec309f57f7c5ddcd1ea2a7c37279a872ee3`), aligned with `origin/main`. Commit `09f5a1a` changed staging to select the current review checkpoint dynamically and removed the dirty-product-tree gate. The action derives version from source; it does not pin this reviewed HEAD, require a clean dedicated snapshot, or enforce version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`), not the reviewed source.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The action checkout remained clean after the run. No action or snapshot files changed; no adapter was staged, and Test.app, host validation, and network were not accessed.
+- Both requested write targets are outside this worker's writable root, which is limited to the supervised product checkout and temporary roots. The source and canonical action workspace identities are clear; this is an internal writable-scope review blocker, not a user decision. Observed Codex model/effort: `gpt-6-luna` / `xhigh`; usage readings for this lease are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant writable scope to the canonical action checkout and dedicated snapshot. Then pin the exact reviewed source HEAD and fixed `0.0.10` version, enforce a clean dedicated snapshot and fail-closed regression coverage, and rerun the focused offline action tests. Do not stage an adapter or interact with Test.app under this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease 18761afb-d8aa-487a-85e7-568dfdcdaee3)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; adapter implementation and snapshot update were not started.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`; supervisor lease: `18761afb-d8aa-487a-85e7-568dfdcdaee3`.
+
+## Verified identities and validation
+
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; the exact reviewed source commit is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`. The checkpoint driver declares version `0.0.10`.
+- The documented trusted action checkout is `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `ca4515f` and aligned with `origin/main`. The single commit since the previous handoff HEAD `a581472` changes portability files only; the BM-023A action and test files are unchanged. Focused offline action tests `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at `ca4515f`. Existing coverage still selects reviewed checkpoints dynamically and derives the version from source; it does not pin this exact source HEAD, require the dedicated product snapshot to be clean, or fix version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` remains clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`), not `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`.
+- The trusted action checkout and dedicated snapshot are outside this worker's writable root, which is the supervised product checkout; both were confirmed non-writable. The action remained clean after testing. No action or snapshot files changed. No adapter was staged; Test.app, host validation, network, Kodi profile, and device actions were not used. Supervisor state identified the active Codex model/effort as `gpt-6-luna` / `xhigh`; usage readings are recorded as unavailable per `AGENTS.md`.
+
+## Blocker and next step
+
+This is an internal writable-scope review gate; no user decision is needed. The checkpoint and canonical action checkout identities are established, and the focused offline baseline is current and passing, but the requested action and snapshot changes cannot be written from this worker's permitted scope.
+
+**Smallest next step:** grant writable scope to the trusted action checkout and dedicated snapshot, then pin source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, enforce exact HEAD, clean-snapshot, and fixed `0.0.10` checks fail-closed with regression coverage, and rerun the focused offline action tests. Do not stage an adapter or interact with Test.app under this work item.
+
+**Human input:** none; this requires internal scope review.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease e04bcc32-d02d-4369-80e5-3c7f93e53708)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; `IMPLEMENTATION_NOT_STARTED`.
+Prior lease: `e04bcc32-d02d-4369-80e5-3c7f93e53708`.
+
+## Verified identities and validation
+
+- Product checkout: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-supervised-codex`, branch `agent/supervised-codex`, HEAD `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. The exact reviewed source is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`), parent `873e82530933e25dcae3ab9e83665dc35d127281`; its driver `addon.xml.in` declares version `0.0.10`.
+- Handoff-designated trusted action checkout: `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `039a8d4b141c069230843990e117d06142a40878` (71 commits ahead of `origin/main`). A separate action branch worktree exists at `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, branch `action/bm023a-trusted`, HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`; it remains unselected and untouched.
+- Dedicated snapshot: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10`, clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Action offline tests: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** against action commit `039a8d4`; the action checkout remained clean after the test. Its current implementation still selects a reviewed checkpoint dynamically and derives the version from source; coverage for exact source HEAD, a clean dedicated snapshot, and a fixed `0.0.10` version is not present.
+- The trusted action and snapshot are outside this work item's writable roots. No implementation or test file was changed. This lease changed only `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`; no commit was created. No adapter was staged, and no Test.app, host validation, network, device, or profile action occurred. Usage readings for this lease are unavailable per `AGENTS.md`; observed model/effort in supervisor state: `gpt-6-luna` / `xhigh`.
+
+## Blocker and next step
+
+The checkpoint and action workspace identities are established and unambiguous. The internal blocker is write scope: this worker can write only the supervised product checkout and permitted temporary roots, while the trusted action and dedicated snapshot are elsewhere. The baseline tests passed, but the requested action pin, snapshot update, and regression coverage remain unimplemented.
+
+**Smallest next step:** provide writable scope for the trusted action checkout and dedicated snapshot, then pin the action to reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` with fail-closed exact-HEAD, clean-worktree, and fixed-`0.0.10` checks and regression coverage. Rerun the action's offline tests. Do not stage an adapter or use Test.app under this work item.
+
+**Human input:** none; writable-scope review is the remaining internal gate.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease 5686e37f-a619-4d85-9ffc-b52ad2d6b365)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; `IMPLEMENTATION_NOT_STARTED`.
+Lease: `5686e37f-a619-4d85-9ffc-b52ad2d6b365`.
+
+## Verified identities and validation
+
+- Product checkout: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-supervised-codex`, branch `agent/supervised-codex`, HEAD `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. The exact reviewed source is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`), parent `873e82530933e25dcae3ab9e83665dc35d127281`; it is the parent of the tracking HEAD.
+- Handoff-designated trusted action checkout: `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `039a8d4b141c069230843990e117d06142a40878` (71 commits ahead of `origin/main`). A separate action branch worktree exists at `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, branch `action/bm023a-trusted`, HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`; it was not selected because the current handoff identifies the canonical `tools/ai-supervisor` checkout as the trusted target, and it was left untouched. The designated checkout selects reviewed checkpoints dynamically and lacks the requested exact source HEAD, clean-worktree, and fixed `0.0.10` gates; its tests permit product-tree drift and derive version from source.
+- Dedicated snapshot: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10`, clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Action offline tests: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** in this lease against designated action commit `039a8d4`. The action checkout remained clean after the test. These current tests do not cover exact-source-HEAD, clean-worktree, or fixed-`0.0.10` gates; the implementation still selects a reviewed checkpoint dynamically and derives its version from source.
+- The trusted action checkout and dedicated snapshot are outside this work item's writable roots. No implementation or test file was changed. This lease updated only `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`; prior tracking changes were preserved and no commit was created. No adapter was staged, and no Test.app, host validation, network, device, or profile action occurred. Codex model/effort in supervisor state: `gpt-6-luna` / `xhigh`. App-server usage snapshots were 5h 93% / 7d 90% remaining at 15:46:46 and unchanged at 15:49:00; delta 0 percentage points in both windows.
+
+## Blocker and next step
+
+The checkpoint and handoff-designated action workspace identities are established. The internal blocker is write scope: this worker can write only the supervised product checkout and permitted temporary roots, while the trusted action and snapshot are elsewhere. Per the directive, this is review-required rather than a user-input gate. The action tests establish the current baseline only; the requested pin and regression coverage remain unimplemented. Only the action's focused offline tests were run; no full repository suite was run because no implementation change was possible and the directive limited validation to the action tests.
+
+**Smallest next step:** provide writable scope for the trusted action checkout and dedicated snapshot, then pin the action to reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` with fail-closed exact-HEAD, clean-worktree, and fixed `0.0.10` checks and regression coverage. Rerun the action's offline tests. Do not stage an adapter or use Test.app under this work item.
+
+**Human input:** none; writable-scope review is the remaining internal gate.
+
+# Prior Handoff - BM-023A source mismatch observability (2026-09-27)
 
 **Result:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`;
 `RECOVERY_NOT_INVOKED`.
@@ -38,14 +196,13 @@ staging-action input blocker is retained below for context.
 
 ---
 
-## Historical Needs User Input - prior staging action pin
+## Historical Needs User Input - prior staging action pin (2026-09-26 state)
 
-The requested staging action and its offline tests are in
+At that prior inspection, the requested staging action and its offline tests were in
 `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, outside this task's
-writable root (`script.build.manager-supervised-codex`). The current action is
-pinned to the 0.0.9 worktree and commit; no 0.0.10 reviewed worktree exists.
-This worker cannot edit that repository or provision the required reviewed
-worktree from its current access scope.
+writable root (`script.build.manager-supervised-codex`). The action then pinned
+the 0.0.9 worktree and commit, and no 0.0.10 reviewed worktree existed. The
+current action/snapshot findings are recorded at the top of this handoff.
 
 The 0.0.10 source can be identified exactly: commit
 `b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree
@@ -56,7 +213,7 @@ adapter support SHA-256
 staging action still needs a dedicated clean 0.0.10 snapshot workspace and
 its matching HEAD/version checks, plus offline action coverage.
 
-**Input needed:** provide a work item/workspace that grants write access to
+**Prior next step:** provide a work item/workspace that grants write access to
 `tools/ai-supervisor` and authorizes provisioning the dedicated 0.0.10 source
 snapshot, or move the action and tests into this writable repository.
 

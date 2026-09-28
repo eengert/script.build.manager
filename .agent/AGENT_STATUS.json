@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "status": "complete",
-  "task": "BM-023A source mismatch observability",
-  "reason": "Implemented allowlisted expected/observed SHA-256 reporting for readable source fingerprint mismatches, distinct missing/unreadable categories, and regression coverage. Focused tests 51/51, full offline suite 1880/1880, and git diff --check passed. No Test.app or recovery action was used.",
-  "last_commit": "873e82530933e25dcae3ab9e83665dc35d127281",
+  "last_commit": "8685fd1eb0433088ea08f9f5c4e35ded0a1c7658",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
-  "next_agent": "claude",
+  "next_agent": "supervisor",
+  "reason": "Lease d90e46c9-98c8-4ac4-9c83-6d68d1994326: reviewed source fae686b9 at version 0.0.10, trusted action main 107ca986, and stale clean snapshot b0a56f6 are identified. Focused offline action tests passed 6/6. Action checkout and snapshot are outside this lease writable scope; no target changes, staging, or Test.app access.",
+  "status": "review-required",
+  "task": "BM-023A dedicated 0.0.10 staging snapshot pin",
   "updated_at": "2026-09-27"
 }

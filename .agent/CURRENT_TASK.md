@@ -1,6 +1,16 @@
 # Current Task
 
-## BM-023A source mismatch observability - 2026-09-27
+## BM-023A dedicated 0.0.10 staging snapshot pin - 2026-09-27
+
+**Status:** `REVIEW_REQUIRED_WRITE_SCOPE` (work ID `7f7985ce-0e9f-4dc4-9e4e-25e156064382`; lease `d90e46c9-98c8-4ac4-9c83-6d68d1994326`).
+
+Reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`) declares adapter version `0.0.10`. The canonical trusted action checkout is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`; the dedicated snapshot is clean but stale at `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Focused offline action tests passed **6/6** at the identified action HEAD. Both requested edit targets are outside this lease's writable root, so the exact-source, clean-snapshot, and fixed-version pins were not implemented. No adapter staging or Test.app access occurred.
+
+Smallest next step: grant writable scope to the trusted action checkout and dedicated snapshot, then add fail-closed pins and offline regressions and rerun the action tests. No user decision is needed.
+
+---
+
+## Prior task: BM-023A source mismatch observability - 2026-09-27
 
 **Status:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`.
 
@@ -23,10 +33,11 @@ staging or Test.app action requires its own directive.
 
 **Status:** `NEEDS_USER_INPUT`; staging action unchanged.
 
-The staging implementation and its offline tests are in the separate
+At that prior inspection, the staging implementation and offline tests were in the separate
 `/Users/eengert/Documents/Kodi/tools/ai-supervisor` repository, outside this
-work item's writable root. The current action pins the 0.0.9 source worktree
-and commit. No dedicated reviewed 0.0.10 worktree exists.
+work item's writable root. The action then pinned the 0.0.9 source worktree
+and commit, and no dedicated reviewed 0.0.10 worktree existed. See the current
+task above for the latest checkpoint and snapshot identity.
 
 The 0.0.10 adapter source is exactly identified by commit
 `b0a56f67f0f6092836f2237b21fbdd55b13124bc` and tree
