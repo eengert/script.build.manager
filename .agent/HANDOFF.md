@@ -1,24 +1,24 @@
-# Current Handoff - ai-supervisor secondary writable-root authorization (2026-09-28; lease ed5540c9-3f3a-45e4-b831-b28cce006ec7)
+# Current Handoff - ai-supervisor secondary writable-root control-plane maintenance (2026-09-28; lease 9208502b-4cfb-4b8b-b2b5-b749cec0c993)
 
-**Result:** `REVIEW_REQUIRED_FRAMEWORK_WRITE_SCOPE`.
-Work ID: `f1bd22e9-5f5b-49cc-b519-8552389f511a`. Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
+**Result:** `CONTROL_PLANE_CHANGE_READY_FOR_REVIEW` (work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`). Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
 
-## Verified
+## Done
 
-- Before this handoff update, the product worker checkout was clean on `agent/supervised-codex` at `9e2a057`; the current uncommitted delta is limited to the four `.agent` tracking files.
-- The active supervisor work item is offline `workspace-write`, but `work.writable_roots` is null and `work.actions` is empty. `handoff_requested=false`.
-- The framework checkout canonicalizes to `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, is clean on `main` at `6e369bf` (ahead 9 of `origin/main`), and is not writable in this worker.
-- The dedicated action workspace canonicalizes to `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, is clean on `action/bm023a-trusted` at `68d05ae`, and is not writable in this worker.
-- The BM-023A reviewed snapshot remains clean and detached at `b0a56f6`; it was inspected read-only and not changed. No action was repointed to framework main.
-- No framework/action implementation or tests were changed or run. No network, host validation, Test.app, or device action occurred.
+- Established an isolated, offline clone of the framework at `/private/tmp/ai-supervisor-codex-1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`, based on clean `main` `6e369bf`. Work is on `codex/secondary-writable-roots`, commit `dd8b0ed`; the clone has no remote and is clean.
+- Added an empty-by-default trusted `secondary_writable_roots` config allowlist and a separate per-work `writable_roots` selection exposed through `dispatch` and `queue-add` as repeated `--writable-root` options. Unselected roots and autonomy-planner requests are not passed through.
+- Added canonical path and Git-root checks; rejects untrusted, broad, protected, detached/protected-branch, dirty-new-work, symlinked, and symlink-escaping roots. Codex receives only selected roots through `--add-dir`; such launches start fresh because the installed `codex exec resume` help does not accept `--add-dir`. Claude receives the same selected roots through sandbox `allowWrite`. Read-only work rejects root selections, and Codex `extra_args` cannot inject `--add-dir`.
+- Read-only resolver validation of `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` passed at its canonical path on clean branch `action/bm023a-trusted`, with no symlink escape found. The reviewed snapshot was explicitly protected during that check and remains untouched.
+- Focused offline tests passed **64/64** across the new regression tests, workflow, and policy controls. `dispatch --help`, `queue-add --help`, and `git diff --check` passed.
 
-## Not done
+## Not done and limits
 
-The framework and exact secondary action root are outside the lease's writable scope, so the requested canonicalization, protected-path/symlink-escape checks, sandbox propagation, and offline regression tests could not safely start. This is an internal scope/tooling blocker; no user input is required.
+- Full suite run: **643 tests; 597 passed, 2 failed, 44 errors**. Most errors came from loopback test servers whose `bind()` was denied by the sandbox; a synthetic subprocess recovery test timed out, and the two failures were process-identity/soak recovery checks. Focused tests pass after the final launch adjustment. No listener or network request succeeded.
+- The active supervisor config and work state were not changed: `work.writable_roots` is null and the default allowlist remains empty. The framework change is not deployed, and no worker was given the secondary root in this task.
+- The original framework checkout, dedicated action checkout, and reviewed snapshot were not modified. No Test.app, Kodi, LAN, network, or host validation action occurred.
 
 ## Smallest next step
 
-Internal review should provide a worker write route to the framework checkout and a trusted source for explicitly approved secondary roots. Then implement and test the narrow path using `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, while preserving the reviewed BM-023A snapshot as read-only. Do not repoint actions to framework main.
+Supervisor review the isolated branch/commit `dd8b0ed` and integrate it through the authorized framework route. After deployment, configure only the exact action checkout in trusted `secondary_writable_roots` and dispatch the BM-023A action update with `--writable-root /Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`. Keep `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.9` read-only and do not repoint validation actions to framework main. No user input is required.
 
 ---
 

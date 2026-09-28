@@ -1,12 +1,14 @@
 # Current Task
 
-## ai-supervisor secondary writable-root authorization - 2026-09-28
+## ai-supervisor secondary writable-root control-plane maintenance - 2026-09-28
 
-**Status:** `REVIEW_REQUIRED_FRAMEWORK_WRITE_SCOPE` (work ID `f1bd22e9-5f5b-49cc-b519-8552389f511a`; lease `ed5540c9-3f3a-45e4-b831-b28cce006ec7`).
+**Status:** `IMPLEMENTED_IN_ISOLATED_BRANCH`; supervisor review/integration pending. Work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`; lease `9208502b-4cfb-4b8b-b2b5-b749cec0c993`.
 
-The framework checkout is clean at `6e369bf` on `main`, and the requested action workspace is clean at `68d05ae` on `action/bm023a-trusted`; both canonicalize to their expected paths but are outside this worker's writable scope. Supervisor state has no `work.writable_roots` grant and no approved actions. The reviewed BM-023A snapshot remains clean, detached, and read-only. No implementation or tests were changed or run.
+Framework branch `/private/tmp/ai-supervisor-codex-1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`, `codex/secondary-writable-roots`, commit `dd8b0ed`, is clean and has no remote. Trusted-config allowlisting, per-work `--writable-root` selection, canonical/protected/symlink checks, Codex/Claude sandbox propagation, and offline regressions are implemented. The exact BM-023A action checkout passed read-only resolver validation. Focused tests passed 64/64. Full suite result was 597 pass, 2 fail, 44 errors from sandbox-limited loopback/process tests.
 
-Smallest next step: internal review must provision a write route to the framework and a trusted explicit source for approved secondary roots. Then implement canonicalization, protected-path and symlink-escape rejection, sandbox propagation, and offline regression tests, targeting only `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` as the secondary root. Keep the reviewed snapshot read-only and do not repoint actions to framework main. No user input is required.
+The running supervisor config/state remains unchanged and grants no root. The original framework/action checkouts and reviewed snapshot remain untouched. No host, Test.app, Kodi, LAN, or network action occurred.
+
+Smallest next step: review and integrate commit `dd8b0ed`; then configure only `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` in trusted config and explicitly select it for the bounded BM-023A action work item. Keep the reviewed snapshot read-only. No user input is required.
 
 ---
 
