@@ -1,19 +1,24 @@
-# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease b7b769e9-b4e5-47ff-a737-2448db395cdd)
+# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 2adabd6b-9169-4295-aa2b-c87ea48ead1c)
 
 **Result:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE`.
-Work ID: `00fc92cb-119b-47d9-a44e-94ce009d614c`.
+Work ID: `44100602-496e-46ba-9561-e13143fe20d7`.
 
 ## Verified state
 
-- Product checkout is `agent/supervised-codex` at `327d91b2958ad528b1de9b408f254a91bdf33432`; reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` is present with expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, and its adapter declaration is `0.0.10`.
-- The named action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current implementation still selects a review checkpoint dynamically and derives the adapter version; it does not consume the dedicated snapshot or enforce the requested exact source, clean snapshot, and fixed `0.0.10` guards.
-- The dedicated snapshot is clean and detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`). The full reviewed commit object is present there and resolves to the expected tree, so identities and trees do not contradict the checkpoint.
-- Focused offline action tests on the named action worktree passed **6/6** as baseline. The two requested external paths both report non-writable in this lease, and no dedicated write connector is available. No action or snapshot files changed.
-- No adapter was staged; Test.app, host validation, and network were not accessed. Codex usage readings are unavailable; the runtime exposed only the `GPT-6` family label and no effort setting.
+- Product checkout is `agent/supervised-codex` at `895069324bdf6de32baebfe96a32277e3e9c8871`. Reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` is a commit object in the dedicated snapshot and resolves to expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`; its reviewed metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. The adapter template and support declare `0.0.10`.
+- The named action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current implementation selects a review checkpoint dynamically and derives the adapter version; it does not consume the dedicated snapshot or enforce the requested exact source, clean snapshot, and fixed `0.0.10` guards.
+- The dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`). The reviewed commit's identity and tree match the directive; no mismatch was found.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`. The existing tests do not cover the requested exact-source, clean-snapshot, or fixed-version guards.
+- Despite the directive naming both external targets as this lease's writable scope, `test -w` reports both paths non-writable in the actual worker sandbox. No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed.
+- Observed Codex model/effort: `gpt-6-luna` / `max`. Remaining-usage readings are recorded as unavailable per `AGENTS.md`.
 
 ## Smallest next step
 
-Supervisor review to restore the narrow write route for the named action worktree and dedicated snapshot. Then advance the clean snapshot to `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, implement the exact-source / clean-snapshot / `0.0.10` guards with offline regressions, and rerun the focused action tests. No user decision is needed.
+Internal review to restore the worker's write route for the named action worktree and dedicated snapshot. Then advance the clean snapshot to `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, implement exact-source / clean-snapshot / fixed-`0.0.10` guards with offline regressions, and rerun the focused action tests. No user decision is needed.
+
+## Human input
+
+None. This is an internal writable-scope/tooling blocker.
 
 ---
 

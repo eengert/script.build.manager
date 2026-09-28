@@ -2,11 +2,11 @@
 
 ## BM-023A dedicated 0.0.10 staging snapshot pin - 2026-09-27
 
-**Status:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE` (work ID `00fc92cb-119b-47d9-a44e-94ce009d614c`; lease `b7b769e9-b4e5-47ff-a737-2448db395cdd`).
+**Status:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE` (work ID `44100602-496e-46ba-9561-e13143fe20d7`; lease `2adabd6b-9169-4295-aa2b-c87ea48ead1c`).
 
-Reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`) declares adapter version `0.0.10`; the full commit object and expected tree are present in the dedicated snapshot repository. The named action worktree is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`, and its current implementation lacks the exact source, clean snapshot, and fixed-version guards. The dedicated snapshot is clean but detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Both named external targets are non-writable in this lease, so no implementation or snapshot advancement occurred. The focused action tests passed **6/6** on the current baseline. No adapter staging or Test.app access occurred.
+The reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` resolves to expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`; the version declarations are `0.0.10`. The named action worktree is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`, and its current implementation lacks the exact source, clean snapshot, and fixed-version guards. The dedicated snapshot is clean but detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Although the directive names both external targets in the workspace-write lease, `test -w` reports both non-writable in this worker sandbox. Focused offline action tests passed **6/6**. No target implementation or snapshot advancement occurred; no adapter staging or Test.app access occurred.
 
-Smallest next step: supervisor review to restore the narrow write route for the two named targets, then implement and validate the requested guards. No user decision is needed.
+Smallest next step: internal review to restore the worker write route for both named targets, then implement and validate the requested guards. No user decision is needed.
 
 ---
 
