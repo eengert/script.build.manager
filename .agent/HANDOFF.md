@@ -1,3 +1,9 @@
+# Review Required - tracking checkpoint 8cde87c9 not performed (2026-09-28; lease d102c43b-c40d-4bc8-b3bd-c8756cd00401)
+
+- Directive expected HEAD `0d40d3c` with pending `.agent/**` edits. Observed: branch `agent/supervised-codex`, HEAD `619a5912c8c8fd6bd44eb1e4f80c1823592cfeb3` (`docs: record reviewed checkpoint b111553a-669`, touches only `.agent/**`), worktree clean before this note.
+- The expected tracking changes appear to be already committed in `619a591`. Per the directive's HEAD-mismatch rule, no commit was created. This handoff note is the only change, and it is uncommitted.
+- Next step: the supervisor should confirm that `619a591` is the intended checkpoint and then reissue the directive.
+
 # Current Handoff - ai-supervisor secondary writable-root control-plane maintenance (2026-09-28; lease 9208502b-4cfb-4b8b-b2b5-b749cec0c993)
 
 **Result:** `CONTROL_PLANE_CHANGE_READY_FOR_REVIEW` (work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`). Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
