@@ -1,3 +1,56 @@
+# Current Handoff - BM-023A stage-source preflight tolerates untrailered .agent-only commits (2026-09-28; lease 200fce84-070d-4a29-a97d-7fc91e49638b)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_FIX_COMMITTED_PENDING_REVIEW_CHECKPOINT`. Work ID `13b10f3d-f8c6-4f37-a646-e49f9d2889a8`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable.
+
+## Evidence (verified before changes)
+
+- First-parent `72e327e..1c8e89b` has 6 commits and no merges, and every commit has one parent. `1c8e89b` has no `AI-Supervisor-*` trailers and changes only `.agent/HANDOFF.md`. `619a591`, `0d40d3c`, `9e2a057`, `4a8d8c7`, and `7b37576` are trailered `tracking` commits that change only `.agent/{AGENT_STATUS.json,CURRENT_TASK.md,HANDOFF.md,USAGE_HISTORY.md}`. `7b37576` pair-matches substantive `72e327e` (review `89da59a2-…`, source `50118de2-…`, snapshot `b3325efe…`). No untrailered commit touches non-`.agent` paths.
+- The uncommitted change was the prior worker's review-required note at the top of `.agent/HANDOFF.md` (24 added lines, `.agent` only). It is kept below.
+
+## Done
+
+- Commit `76b0c3c6f6af82ef308f74c5dbde254be71990b3` on `agent/supervised-codex` (local only, not pushed):
+  - `tools/check_bm023a_stage_source.py`: replaced the HEAD/HEAD^ pair check with the live action's (`ab05818`) bounded (64) first-parent lineage walk. The walk passes trailered tracking commits and, in addition, **untrailered commits whose changes are all under `.agent/**`**. An untrailered commit never serves as the tracking half of a pair. The nearest substantive commit must have a matching immediate tracking child. The report now includes the staged `tree`, and `--expected-version` was added.
+  - New fail-closed categories: `uncommitted_product_changes` (dirty non-`.agent`), `untrailered_product_commit`, `checkpoint_metadata_incomplete` (partial trailers), `checkpoint_part_invalid`, `lineage_ambiguous` (merge or root), `tracking_pair_missing`, `substantive_unavailable`, and `adapter_version_mismatch`. `pair_metadata_mismatch`, `head_not_tracking`, `product_changes_after_source`, and `adapter_version_unavailable` are kept. The categories `head_metadata_incomplete`, `parent_*`, and `parent_not_substantive` are gone.
+  - `tests/test_check_bm023a_stage_source.py` now has 16 tests (previously 9). Tolerated cases: stacked tracking plus untrailered `.agent` commits, including dirty `.agent`. Rejected cases: untrailered product commit, an untrailered commit as the only child of a substantive commit, uncommitted product or adapter file, version mismatch, partial trailers, merge in lineage, and tracking-commit product drift.
+- Checks: focused 16/16 OK; full `python3 -m unittest discover -s tests -t .` **1896/1896 OK**; `git diff --check` clean.
+- Preflight on a temporary clone detached at the reviewed HEAD `1c8e89b` (script from `76b0c3c`, `--expected-version 0.0.10`): `ok: true`, stage_source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `adapter_version 0.0.10`, `product_changes_to_head []`, exit 0.
+- Preflight on the live worktree at HEAD `76b0c3c`: `ok: false`, `untrailered_product_commit`. `nearest_substantive` is `72e327e`/`0.0.10`, and product changes to HEAD are exactly this fix's two files. **This is the intended fail-closed behavior:** the fix is itself an unreviewed substantive commit.
+
+## Not done
+
+The action worktree was not touched. No push, Test.app, network, or host action occurred. The live action `ab05818` still rejects untrailered `.agent` commits; this change affects only the product preflight.
+
+## Smallest next step (supervisor)
+
+Review `76b0c3c` and checkpoint it through the reviewed-checkpoint mechanism as a substantive/tracking pair. The live preflight should then report `ok:true` with a new stage source. That source contains no adapter changes, so the version stays `0.0.10`, but it will not be `72e327e`. If staging must stay pinned to exactly `72e327e`, decide how that interacts with this reviewed tooling commit before the adapter update. No user input is required.
+
+---
+
+# Review Required - BM-023A 0.0.10 stage-adapter update not started: source preflight fails (2026-09-28; lease 8e94fc10-5624-4531-9d42-5f77c93df450)
+
+**Result:** `REVIEW_REQUIRED_STAGE_SOURCE_PREFLIGHT`. Work ID `3fb0e2c7-f147-4691-9537-f0b201cc9297`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable.
+
+## Verified live state (read-only)
+
+- The action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted`. Its HEAD is **`ab058180039c6fc7c110603be366c32bf11168bd`**, matching live config; the stale `68d05ae` is superseded. The worktree is writable in this lease.
+- The product worktree is clean on `agent/supervised-codex`, HEAD `1c8e89bbce893e916508ceb5c8dc88b9e4f95a6e` (`docs: checkpoint worker tracking before BM-023A 0.0.10 stage-adapter work`). It changes only `.agent/HANDOFF.md` and has **no `AI-Supervisor-*` trailers**.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py` → `ok: false`, `category: head_metadata_incomplete`. The diagnostic-only `nearest_substantive` field reports `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` (tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `ADAPTER_VERSION = "0.0.10"`, no product changes to HEAD).
+- The first-parent chain is: `1c8e89b` (no trailers) → `619a591`, `0d40d3c`, `9e2a057`, `4a8d8c7`, `7b37576` (tracking checkpoints, `.agent/**` only) → `72e327e` (substantive; review `89da59a2-…`, source `50118de2-…`, pair-matched by `7b37576`).
+- The identity evidence is consistent, with no contradiction. The directive's precondition fails, however: the preflight must report `ok:true`/`0.0.10`. The live action at `ab05818` would also fail closed on this HEAD, because `_latest_reviewed_source_commit` calls `_checkpoint_metadata` on every lineage commit, and `1c8e89b` lacks trailers.
+
+## Not done
+
+No action code or tests were changed. No action tests ran. No commits were made in the action or product worktree. No host action, Test.app, network, or snapshot access (0.0.9 or 0.0.10) occurred. The only change is this handoff note, left uncommitted.
+
+## Smallest next step (supervisor)
+
+Choose one of these. Neither needs user input.
+1. Checkpoint the product worktree through the reviewed-checkpoint mechanism, so that HEAD is a trailer-bearing tracking commit. Then rerun the preflight (expect `ok:true`, `0.0.10`) and reissue this directive.
+2. Explicitly authorize pinning `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` / tree `8a15b91e…` in the action, with the lineage from HEAD to the pin restricted to `.agent/**`-only commits whether or not they carry trailers. Update the preflight to match.
+
+---
+
 # Review Required - tracking checkpoint 8cde87c9 not performed (2026-09-28; lease d102c43b-c40d-4bc8-b3bd-c8756cd00401)
 
 - Directive expected HEAD `0d40d3c` with pending `.agent/**` edits. Observed: branch `agent/supervised-codex`, HEAD `619a5912c8c8fd6bd44eb1e4f80c1823592cfeb3` (`docs: record reviewed checkpoint b111553a-669`, touches only `.agent/**`), worktree clean before this note.
