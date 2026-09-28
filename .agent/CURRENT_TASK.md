@@ -2,13 +2,13 @@
 
 ## BM-023A fixed staging action update - 2026-09-28
 
-**Status:** `REVIEW_REQUIRED_EXTERNAL_ACTION_WRITE_SCOPE` (work ID `91778039-97d7-4bb2-8fbe-2750172d3246`; lease `08c1ce16-32b8-445a-bcb5-c3e1f82c64c9`).
+**Status:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE` (work ID `5ba09aea-b318-4a27-bd49-9267648dd2d2`; lease `c2301cf6-fb94-42b0-8179-bb7bfe38de98`).
 
-The product checkout is clean at `7b375766888fe981272713b711affd9aed6bed88`. The read-only source preflight passes and selects `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, with no non-`.agent` drift. The fixed stage action remains in the separate `ai-supervisor-bm023a-actions` checkout at `68d05aead64dba1eeb8782946becd0be8fb29d21`; its current implementation stages only the temporary adapter. The action checkout, reviewed snapshot, and framework checkout are outside this lease's writable roots.
+The product checkout is clean at `4a8d8c78ee0179bbf5fa77bcf7f2d5ef3e1873d2`. Read-only source preflight fails with `parent_not_substantive` because HEAD is tracking-over-tracking; its diagnostic identifies reviewed source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, no product drift, and matching tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` in the read-only snapshot. The fixed action remains clean at `68d05aead64dba1eeb8782946becd0be8fb29d21`; it does not stage the reviewed add-on alongside the adapter.
 
-No action code or tests were changed, and no Test.app or recovery action ran. The read-only preflight is the only check performed in this lease.
+The action checkout is not writable in this lease; supervisor state has no writable-root grant and `work.actions` is empty. The reviewed snapshot remains read-only. No action code/tests changed, no action tests/full suite ran, and no Test.app or recovery action occurred. This directive explicitly authorizes no host validation action.
 
-Smallest next step: internal review to provide a writable route to the fixed action checkout and reviewed-source snapshot. Then update and test the exact source staging behavior, independently review/pin that action change, and only afterward perform the authorized Test.app staging and conditional recovery.
+Smallest next step: internal review must provide an exact offline writable root for the fixed action checkout while keeping the reviewed snapshot read-only. Then update/test and independently review/pin the exact action change. Keep Test.app and recovery stopped until a later directive authorizes them after source-identity checks pass.
 
 ---
 

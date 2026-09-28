@@ -1,25 +1,25 @@
-# Current Handoff - BM-023A fixed staging action update (2026-09-28; lease 08c1ce16-32b8-445a-bcb5-c3e1f82c64c9)
+# Current Handoff - BM-023A fixed staging action update (2026-09-28; lease c2301cf6-fb94-42b0-8179-bb7bfe38de98)
 
-**Result:** `REVIEW_REQUIRED_EXTERNAL_ACTION_WRITE_SCOPE`.
-Work ID: `91778039-97d7-4bb2-8fbe-2750172d3246`. Agent: codex (`GPT-6` runtime label; effort unavailable). Usage readings are unavailable per `AGENTS.md`.
+**Result:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE`.
+Work ID: `5ba09aea-b318-4a27-bd49-9267648dd2d2`. Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
 
 ## Verified
 
-- Product worktree is clean on `agent/supervised-codex` at `7b375766888fe981272713b711affd9aed6bed88`.
-- Read-only `python3 tools/check_bm023a_stage_source.py` passed. It identifies `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` as the source checkpoint, declares adapter `0.0.10`, and reports no non-`.agent` product changes through HEAD.
-- The fixed action checkout is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current `run_upgrade` extracts reviewed source to build and replace the temporary adapter; it does not stage the reviewed Build Manager add-on alongside it.
-- The action checkout, dedicated reviewed-source snapshot, and canonical framework checkout all exist but report non-writable under this lease. The configured writable roots cover only this product worktree and temporary roots, so the action implementation and its tests cannot be safely changed or pinned here.
-- The supervisor state still has `handoff_requested=false`; `work.actions` is empty. No Test.app staging, host validation, recovery invocation, network access, or device action occurred.
+- Product worktree is clean on `agent/supervised-codex` at `4a8d8c78ee0179bbf5fa77bcf7f2d5ef3e1873d2`; the latest commit changes only `.agent` tracking files.
+- Read-only `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py` fails closed with `parent_not_substantive`: HEAD `4a8d8c7` is a tracking commit stacked on another tracking commit. Its diagnostic identifies reviewed source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, and no product drift. That source resolves to tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` in both the product checkout and the dedicated snapshot.
+- Fixed action checkout is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its latest change requires a current matching tracking/substantive pair; it does not stage the reviewed Build Manager add-on with the adapter. The reviewed snapshot is clean but HEAD remains stale at `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`); the exact reviewed `72e327e` commit is present in it.
+- The action checkout and canonical framework checkout exist but are not writable in this lease. Supervisor state has no `work.writable_roots`, `work.actions` is empty, and `handoff_requested=false`; the only configured writable root is this product worktree (plus temporary roots). The reviewed-source snapshot remains read-only as directed.
+- The current directive explicitly says no host validation action is authorized for this work item. No Test.app action, Kodi action, network access, or device action occurred.
 
 ## Not done
 
-The fixed action change, regression tests, independent exact-change review/pin, Test.app add-on staging/verification, and `bm023a-recover` were not performed. The required updated-action health and identity gates are therefore not established. No tests or full suite were run for this lease; only the read-only source preflight ran.
+No action implementation or regression tests were changed, and no action tests or full suite were run. Independent review/pinning, Test.app staging/verification, and `bm023a-recover` were not performed. The action write route is absent; the source preflight also currently rejects the stacked tracking pair. No product files outside `.agent` were changed.
 
 ## Smallest next step
 
-Internal review must provide a writable route to the fixed action checkout and reviewed-source snapshot. Then update the action to stage the exact reviewed add-on together with the adapter while preserving fail-closed source identity, add regression tests, and independently review/pin the exact action change. Only after those checks pass should the separately authorized Test.app staging and conditional recovery proceed.
+Internal review should issue a new offline workspace-write lease with an exact writable root for `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, leaving the reviewed-source snapshot read-only. Then make the fixed action stage the exact reviewed add-on together with the adapter, preserve fail-closed identity checks, add regression coverage, and independently review/pin the exact action change. Keep all Test.app activity stopped under this work item's explicit no-host-validation restriction; recovery must remain conditional on a later authorized validation directive and passing source identity checks.
 
-**Human input:** None. This is an internal writable-scope blocker.
+**Human input:** None. This is an internal scope/tooling blocker.
 
 ---
 
