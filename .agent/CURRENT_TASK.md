@@ -1,5 +1,17 @@
 # Current Task
 
+## BM-023A fixed staging action update - 2026-09-28
+
+**Status:** `REVIEW_REQUIRED_EXTERNAL_ACTION_WRITE_SCOPE` (work ID `91778039-97d7-4bb2-8fbe-2750172d3246`; lease `08c1ce16-32b8-445a-bcb5-c3e1f82c64c9`).
+
+The product checkout is clean at `7b375766888fe981272713b711affd9aed6bed88`. The read-only source preflight passes and selects `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, with no non-`.agent` drift. The fixed stage action remains in the separate `ai-supervisor-bm023a-actions` checkout at `68d05aead64dba1eeb8782946becd0be8fb29d21`; its current implementation stages only the temporary adapter. The action checkout, reviewed snapshot, and framework checkout are outside this lease's writable roots.
+
+No action code or tests were changed, and no Test.app or recovery action ran. The read-only preflight is the only check performed in this lease.
+
+Smallest next step: internal review to provide a writable route to the fixed action checkout and reviewed-source snapshot. Then update and test the exact source staging behavior, independently review/pin that action change, and only afterward perform the authorized Test.app staging and conditional recovery.
+
+---
+
 ## BM-023A staging-precondition preflight - 2026-09-28
 
 **Status:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (work ID `50118de2-ef3e-4b81-be18-269326b62e57`; lease `276211ae-e0ca-4d25-baae-5af012153d67`).

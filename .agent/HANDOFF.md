@@ -1,4 +1,29 @@
-# Current Handoff - BM-023A staging-precondition preflight (2026-09-28; lease 276211ae-e0ca-4d25-baae-5af012153d67)
+# Current Handoff - BM-023A fixed staging action update (2026-09-28; lease 08c1ce16-32b8-445a-bcb5-c3e1f82c64c9)
+
+**Result:** `REVIEW_REQUIRED_EXTERNAL_ACTION_WRITE_SCOPE`.
+Work ID: `91778039-97d7-4bb2-8fbe-2750172d3246`. Agent: codex (`GPT-6` runtime label; effort unavailable). Usage readings are unavailable per `AGENTS.md`.
+
+## Verified
+
+- Product worktree is clean on `agent/supervised-codex` at `7b375766888fe981272713b711affd9aed6bed88`.
+- Read-only `python3 tools/check_bm023a_stage_source.py` passed. It identifies `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` as the source checkpoint, declares adapter `0.0.10`, and reports no non-`.agent` product changes through HEAD.
+- The fixed action checkout is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current `run_upgrade` extracts reviewed source to build and replace the temporary adapter; it does not stage the reviewed Build Manager add-on alongside it.
+- The action checkout, dedicated reviewed-source snapshot, and canonical framework checkout all exist but report non-writable under this lease. The configured writable roots cover only this product worktree and temporary roots, so the action implementation and its tests cannot be safely changed or pinned here.
+- The supervisor state still has `handoff_requested=false`; `work.actions` is empty. No Test.app staging, host validation, recovery invocation, network access, or device action occurred.
+
+## Not done
+
+The fixed action change, regression tests, independent exact-change review/pin, Test.app add-on staging/verification, and `bm023a-recover` were not performed. The required updated-action health and identity gates are therefore not established. No tests or full suite were run for this lease; only the read-only source preflight ran.
+
+## Smallest next step
+
+Internal review must provide a writable route to the fixed action checkout and reviewed-source snapshot. Then update the action to stage the exact reviewed add-on together with the adapter while preserving fail-closed source identity, add regression tests, and independently review/pin the exact action change. Only after those checks pass should the separately authorized Test.app staging and conditional recovery proceed.
+
+**Human input:** None. This is an internal writable-scope blocker.
+
+---
+
+# Previous Handoff - BM-023A staging-precondition preflight (2026-09-28; lease 276211ae-e0ca-4d25-baae-5af012153d67)
 
 **Result:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (uncommitted, for the reviewed-checkpoint mechanism).
 Work ID: `50118de2-ef3e-4b81-be18-269326b62e57`. Agent: claude (`claude-opus-5-5`).
