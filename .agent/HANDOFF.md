@@ -1,4 +1,23 @@
-# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 2adabd6b-9169-4295-aa2b-c87ea48ead1c)
+# Current Handoff - ai-supervisor Codex writable-root propagation (2026-09-27; lease 261bc5cf-43a7-4a49-9a4a-b87b134477bb)
+
+**Result:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE`.
+Work ID: `edad8d24-aee6-466f-ada1-f6f8f50594c0`.
+
+## Verified state
+
+- The product workspace is clean on `agent/supervised-codex` at `d4f61f5`. The framework checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `08b7689`, but `os.access(..., W_OK)` is false; it is outside this lease's writable roots.
+- Active supervisor state reports work ID `edad8d24-aee6-466f-ada1-f6f8f50594c0`, mode `workspace-write`, and network `offline`. Neither the active `lease` nor `work` object contains an approved writable-root field. Their key sets were inspected; `lease.ipc_workspace` identifies only the worker workspace.
+- `ai_supervisor/lease.py` constructs lease records with owner/ID/timing/process/output fields, `ipc_workspace`, and `launch_token`; it has no exact extra-root field. `ai_supervisor/launcher.py` launches Codex with the selected sandbox mode and disables sandbox network access; it adds no approved-root `--add-dir` arguments. Repository search found no approved writable-root source. Prompt text is not an authority source.
+- The exact-root source prerequisite is absent. Per directive, implementation and regressions were not started and focused framework tests were not run. No source files changed.
+- No network, LAN, host validation, adapter staging, Test.app, or device action occurred. Observed Codex model/effort: `gpt-6-luna` / `max`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Supervisor review must establish a trusted, explicit root-list field in the work/lease contract and grant this worker's sandbox write access to the framework checkout if it is an approved target. Then implement canonicalization and protected/symlink-escape rejection, pass only those roots to Codex (workspace alone when the list is empty), add offline regressions, and run focused tests. No user decision is required by this blocker.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 2adabd6b-9169-4295-aa2b-c87ea48ead1c)
 
 **Result:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE`.
 Work ID: `44100602-496e-46ba-9561-e13143fe20d7`.

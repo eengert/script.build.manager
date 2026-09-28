@@ -1,12 +1,12 @@
 # Current Task
 
-## BM-023A dedicated 0.0.10 staging snapshot pin - 2026-09-27
+## ai-supervisor Codex writable-root propagation - 2026-09-27
 
-**Status:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE` (work ID `44100602-496e-46ba-9561-e13143fe20d7`; lease `2adabd6b-9169-4295-aa2b-c87ea48ead1c`).
+**Status:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE` (work ID `edad8d24-aee6-466f-ada1-f6f8f50594c0`; lease `261bc5cf-43a7-4a49-9a4a-b87b134477bb`).
 
-The reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` resolves to expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`; the version declarations are `0.0.10`. The named action worktree is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`, and its current implementation lacks the exact source, clean snapshot, and fixed-version guards. The dedicated snapshot is clean but detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Although the directive names both external targets in the workspace-write lease, `test -w` reports both non-writable in this worker sandbox. Focused offline action tests passed **6/6**. No target implementation or snapshot advancement occurred; no adapter staging or Test.app access occurred.
+The active lease/work state contains no explicit approved writable-root list. The framework lease schema records only `ipc_workspace` as a workspace path, and its Codex launcher does not pass approved `--add-dir` roots. The framework checkout is outside this worker's writable sandbox. Per the fail-closed directive, no code or tests were changed or run.
 
-Smallest next step: internal review to restore the worker write route for both named targets, then implement and validate the requested guards. No user decision is needed.
+Smallest next step: supervisor review to establish the trusted exact-root source and an approved write route to the framework checkout. No user decision is required.
 
 ---
 

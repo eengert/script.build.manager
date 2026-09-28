@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "last_commit": "895069324bdf6de32baebfe96a32277e3e9c8871",
+  "last_commit": "d4f61f5747a3c7460975c24823564fc6ebcf0623",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Lease 2adabd6b-9169-4295-aa2b-c87ea48ead1c; work 44100602-496e-46ba-9561-e13143fe20d7: reviewed source fae686b9 resolves to expected tree at version 0.0.10; dedicated snapshot remains clean at stale b0a56f6; named action branch is clean at 68d05ae; focused tests passed 6/6. The actual sandbox reports both requested external targets non-writable; no target changes, staging, or Test.app access.",
+  "reason": "Lease 261bc5cf-43a7-4a49-9a4a-b87b134477bb; work edad8d24-aee6-466f-ada1-f6f8f50594c0: active lease/work has no trusted exact additional writable-root list, and ai-supervisor is outside the worker's writable sandbox. No code or tests changed.",
   "status": "review-required",
-  "task": "BM-023A dedicated 0.0.10 staging snapshot pin",
+  "task": "ai-supervisor Codex writable-root propagation",
   "updated_at": "2026-09-27"
 }
