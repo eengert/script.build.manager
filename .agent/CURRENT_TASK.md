@@ -2,11 +2,11 @@
 
 ## BM-023A dedicated 0.0.10 staging snapshot pin - 2026-09-27
 
-**Status:** `REVIEW_REQUIRED_WRITE_SCOPE` (work ID `7f7985ce-0e9f-4dc4-9e4e-25e156064382`; lease `d90e46c9-98c8-4ac4-9c83-6d68d1994326`).
+**Status:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE` (work ID `00fc92cb-119b-47d9-a44e-94ce009d614c`; lease `b7b769e9-b4e5-47ff-a737-2448db395cdd`).
 
-Reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`) declares adapter version `0.0.10`. The canonical trusted action checkout is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`; the dedicated snapshot is clean but stale at `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Focused offline action tests passed **6/6** at the identified action HEAD. Both requested edit targets are outside this lease's writable root, so the exact-source, clean-snapshot, and fixed-version pins were not implemented. No adapter staging or Test.app access occurred.
+Reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`) declares adapter version `0.0.10`; the full commit object and expected tree are present in the dedicated snapshot repository. The named action worktree is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`, and its current implementation lacks the exact source, clean snapshot, and fixed-version guards. The dedicated snapshot is clean but detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc`. Both named external targets are non-writable in this lease, so no implementation or snapshot advancement occurred. The focused action tests passed **6/6** on the current baseline. No adapter staging or Test.app access occurred.
 
-Smallest next step: grant writable scope to the trusted action checkout and dedicated snapshot, then add fail-closed pins and offline regressions and rerun the action tests. No user decision is needed.
+Smallest next step: supervisor review to restore the narrow write route for the two named targets, then implement and validate the requested guards. No user decision is needed.
 
 ---
 

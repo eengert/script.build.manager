@@ -1,9 +1,9 @@
 {
   "active_agent": "none",
-  "last_commit": "8685fd1eb0433088ea08f9f5c4e35ded0a1c7658",
+  "last_commit": "327d91b2958ad528b1de9b408f254a91bdf33432",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Lease d90e46c9-98c8-4ac4-9c83-6d68d1994326: reviewed source fae686b9 at version 0.0.10, trusted action main 107ca986, and stale clean snapshot b0a56f6 are identified. Focused offline action tests passed 6/6. Action checkout and snapshot are outside this lease writable scope; no target changes, staging, or Test.app access.",
+  "reason": "Lease b7b769e9-b4e5-47ff-a737-2448db395cdd: reviewed source fae686b9 at version 0.0.10 and expected tree is present in the clean stale snapshot b0a56f6. Named action branch action/bm023a-trusted is clean at 68d05ae. Focused offline action tests passed 6/6. Both named external targets are non-writable in this lease; no target changes, staging, or Test.app access.",
   "status": "review-required",
   "task": "BM-023A dedicated 0.0.10 staging snapshot pin",
   "updated_at": "2026-09-27"

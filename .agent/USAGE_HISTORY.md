@@ -32,6 +32,7 @@ See `AGENTS.md` §"Usage Tracking" for the shared rules, `CLAUDE.md`
 
 | Task | Agent | Model | Effort | Type | Difficulty | Start | End | Delta | Result | Notes |
 |------|-------|-------|--------|------|------------|-------|-----|-------|--------|-------|
+| 00fc92cb-BM023A-stage-0.0.10-snapshot-lease-b7b769e9 | codex | GPT-6 (runtime label) | unavailable | trusted action exact-source pin and offline validation | moderate | unavailable | unavailable | unavailable | review-required | Named action and snapshot paths were non-writable; current focused action baseline passed 6/6. No target edits, staging, or Test.app. |
 | WF-001 | claude | Opus 5 (`claude-opus-5`) | xhigh | docs/workflow | easy | unknown | 5h 94% / wk 35% | unknown | clean | Usage-tracking instructions. Start not captured (this task established the convention); first reading, taken mid-task, was 5h 92%. Task prompt specified Sonnet 4.6; session actually ran `claude-opus-5` — observed values recorded. No retries. |
 | WF-001-merge | claude | claude-sonnet-4-6 | max | integration | trivial | 5h 96% / wk 35% | 5h 96% / wk 35% | ~0% / 0% | clean | Matrix integration of WF-001 usage-tracking commit (a983df8). Fast-forward. No implementation changes. 51/51 tests. |
 | BM-003 | claude | claude-sonnet-4-6 | max | parser/validation | moderate | 5h 19% / wk 39% | 5h 31% / wk 41% | +12% / +2% | clean | Manifest loader, validator, typed representation. 127 new tests; 181/181 total passing. Stdlib-only (no jsonschema). One test fix (UNC path check ordering). |

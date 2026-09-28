@@ -1,4 +1,23 @@
-# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease d90e46c9-98c8-4ac4-9c83-6d68d1994326)
+# Current Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease b7b769e9-b4e5-47ff-a737-2448db395cdd)
+
+**Result:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE`.
+Work ID: `00fc92cb-119b-47d9-a44e-94ce009d614c`.
+
+## Verified state
+
+- Product checkout is `agent/supervised-codex` at `327d91b2958ad528b1de9b408f254a91bdf33432`; reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` is present with expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, and its adapter declaration is `0.0.10`.
+- The named action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current implementation still selects a review checkpoint dynamically and derives the adapter version; it does not consume the dedicated snapshot or enforce the requested exact source, clean snapshot, and fixed `0.0.10` guards.
+- The dedicated snapshot is clean and detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`). The full reviewed commit object is present there and resolves to the expected tree, so identities and trees do not contradict the checkpoint.
+- Focused offline action tests on the named action worktree passed **6/6** as baseline. The two requested external paths both report non-writable in this lease, and no dedicated write connector is available. No action or snapshot files changed.
+- No adapter was staged; Test.app, host validation, and network were not accessed. Codex usage readings are unavailable; the runtime exposed only the `GPT-6` family label and no effort setting.
+
+## Smallest next step
+
+Supervisor review to restore the narrow write route for the named action worktree and dedicated snapshot. Then advance the clean snapshot to `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, implement the exact-source / clean-snapshot / `0.0.10` guards with offline regressions, and rerun the focused action tests. No user decision is needed.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease d90e46c9-98c8-4ac4-9c83-6d68d1994326)
 
 **Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
 Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
