@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "last_commit": "d4f61f5747a3c7460975c24823564fc6ebcf0623",
+  "last_commit": "7f05566acc54ee5bd60da0d8738ab446affd001d",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Lease 261bc5cf-43a7-4a49-9a4a-b87b134477bb; work edad8d24-aee6-466f-ada1-f6f8f50594c0: active lease/work has no trusted exact additional writable-root list, and ai-supervisor is outside the worker's writable sandbox. No code or tests changed.",
+  "reason": "Lease 276211ae-e0ca-4d25-baae-5af012153d67; work 50118de2-ef3e-4b81-be18-269326b62e57: added read-only BM-023A stage-source preflight and 9 offline tests; full suite 1889/1889; uncommitted for review checkpoint.",
   "status": "review-required",
-  "task": "ai-supervisor Codex writable-root propagation",
-  "updated_at": "2026-09-27"
+  "task": "BM-023A staging-precondition preflight",
+  "updated_at": "2026-09-28"
 }

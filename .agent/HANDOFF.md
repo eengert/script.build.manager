@@ -1,3 +1,23 @@
+# Current Handoff - BM-023A staging-precondition preflight (2026-09-28; lease 276211ae-e0ca-4d25-baae-5af012153d67)
+
+**Result:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (uncommitted, for the reviewed-checkpoint mechanism).
+Work ID: `50118de2-ef3e-4b81-be18-269326b62e57`. Agent: claude (`claude-opus-5-5`).
+
+## Done
+
+- Added `tools/check_bm023a_stage_source.py`: read-only git preflight replicating the trusted adapter's (`ai_supervisor/bm023a_adapter_upgrade.py` at `68d05ae`) HEAD/HEAD^ checkpoint-pair selection. Prints JSON with the would-be-staged commit, its literal `ADAPTER_VERSION` (parsed via `ast`, not imported), and non-`.agent/` paths changed between it and HEAD. Exits 1 with a sanitized `category` (`head_unavailable`, `head_metadata_incomplete`, `head_not_tracking`, `parent_unavailable`, `parent_metadata_incomplete`, `parent_not_substantive`, `pair_metadata_mismatch`, `adapter_version_unavailable`, `product_changes_after_source`, `git_unavailable`). On pair failure it also reports `nearest_substantive` from a first-parent walk capped at 64 commits (diagnostic only; the trusted adapter never uses it).
+- Added `tests/test_check_bm023a_stage_source.py` (9 tests, temporary git repos): valid pair, tracking-over-tracking, mismatched review/source/snapshot trailers, missing HEAD/parent trailers, HEAD substantive, tracking-commit product drift, missing adapter version, non-repository.
+- Checks: new tests 9/9; adapter tests `tests.test_bm023a_adapter` 51/51; full offline suite **1,889/1,889**; `git diff --check` clean (new untracked files also checked with `--no-index --check`).
+- Live read-only run on this worktree: HEAD `7f05566` (tracking) -> `parent_not_substantive`; nearest substantive `fae686b` declares `0.0.10` with no non-`.agent` product changes to HEAD. This confirms that staging fails today only because tracking commits are stacked, not because of product drift.
+- Not modified: `tools/bm023a_adapter/**`, `tools/build_bm023a_adapter.py`, `tools/bm023a_adapter_support.py`, `resources/**`. No commit, rebase, network, LAN, Test.app, host, or device action.
+- Note: the directive cited HEAD `d4f61f5`; actual HEAD was `7f05566` (another tracking checkpoint for work `10761739`), with a clean tree and no pending `.agent` diffs. Same failure mode, so not contradictory.
+
+## Smallest next step
+
+Supervisor review and checkpoint of this diff. That checkpoint makes a new substantive/tracking pair at HEAD, so staging becomes valid again. Staging that new pair still needs its own directive. Before staging, run `python3 tools/check_bm023a_stage_source.py`: it should print `ok: true` and version `0.0.10`. No user input required.
+
+---
+
 # Current Handoff - ai-supervisor Codex writable-root propagation (2026-09-27; lease 261bc5cf-43a7-4a49-9a4a-b87b134477bb)
 
 **Result:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE`.

@@ -1,5 +1,15 @@
 # Current Task
 
+## BM-023A staging-precondition preflight - 2026-09-28
+
+**Status:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (work ID `50118de2-ef3e-4b81-be18-269326b62e57`; lease `276211ae-e0ca-4d25-baae-5af012153d67`).
+
+Added read-only `tools/check_bm023a_stage_source.py` plus 9 offline tests. It replicates the trusted adapter's HEAD/HEAD^ checkpoint-pair selection and reports the staged commit, adapter version, and non-`.agent` drift. The live run shows current HEAD `7f05566` fails as `parent_not_substantive`, with nearest substantive `fae686b` (0.0.10, no drift). Full suite 1,889/1,889. Changes left uncommitted.
+
+Smallest next step: supervisor review and checkpoint, then a separate staging directive.
+
+---
+
 ## ai-supervisor Codex writable-root propagation - 2026-09-27
 
 **Status:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE` (work ID `edad8d24-aee6-466f-ada1-f6f8f50594c0`; lease `261bc5cf-43a7-4a49-9a4a-b87b134477bb`).
