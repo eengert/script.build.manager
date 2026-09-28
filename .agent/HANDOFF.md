@@ -1,3 +1,26 @@
+# Review Required - BM-023A 0.0.11 staging action failed (2026-09-28; lease f38ed84d-a534-4582-bc35-e40e58b0a0dd)
+
+**Result:** `REVIEW_REQUIRED_STAGE_ACTION_FAILED`. Work ID `29205f7f-4334-467b-8003-c54f77660004`. Agent: codex (`gpt-6-luna`, high). Usage readings recorded as unavailable per `AGENTS.md` Codex usage rules.
+
+- Read the prescribed `AGENTS.md`, handoff, and supervisor state. Worktree is on `agent/supervised-codex`; existing `.agent/HANDOFF.md` edits were preserved. HEAD is the reviewed pair `5220cf1` / `0b6f796`; no product changes to HEAD.
+- Pinned-source preflight passed: `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11` -> exit 0, source `5220cf1782016c7206405d6661a7602a80d6ce1e`, tree `4419f4c7a362f4c1255c898f033f3cb68a0c2570`, version `0.0.11`, `product_changes_to_head: []`.
+- Requested `bm023a-stage-adapter` once through the authorized supervisor validation-action command. The action failed with sanitized `ValidationActionFailed` / `AdapterUpgradeError`: `temporary adapter upgrade failed` (return code 1). Staging is not claimed. No second action was requested.
+- No tests, install, retry, recover, network, push, or Test.app action. No changes besides this handoff update.
+- Smallest next step: supervisor review of the staging action failure and its pinned-source/staging checks; any retry requires a new directive. No user input is required.
+
+---
+
+# Current Handoff - BM-023A 0.0.11 stage-source preflight PASSED at reviewed checkpoint (2026-09-28; lease c8d34987-dd94-4371-8d5a-f88d9b445e27)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_OK_0_0_11`. Work ID `b16c33b4-89c2-44ae-9cbd-94061b2bdea1`. Agent: claude. Usage readings unavailable.
+
+- The 0.0.11 change was already committed by the armed checkpoint as a trailered pair: substantive `5220cf1` and tracking `0b6f796` (review `af02835d-...`, source work `eff03242-...`). The worktree was clean; this worker created no commits before this note.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11` -> exit 0, `ok:true`, stage_source `5220cf1782016c7206405d6661a7602a80d6ce1e`, tree `4419f4c7a362f4c1255c898f033f3cb68a0c2570`, `adapter_version 0.0.11`, `product_changes_to_head []`.
+- `python3 -m unittest tests.test_bm023a_adapter`: 64/64 OK.
+- No stage, install, retry, recover, push, network, or Test.app action. Next step: separate directive to stage 0.0.11. No user input required.
+
+---
+
 # Current Handoff - BM-023A 0.0.11 adapter bundles pinned frozen_install.py and repairs a mismatched install (2026-09-28; lease 430725af-e77e-47c3-992c-0964fd57f678)
 
 **Result:** `OFFLINE_ADAPTER_REPAIR_ADDED_UNCOMMITTED`. Work ID `eff03242-8487-4e56-88f7-7ed00cda9295`. Agent: claude. Usage readings unavailable.
