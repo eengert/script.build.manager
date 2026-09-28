@@ -78,6 +78,7 @@ class TestCheckBm023aStageSource(unittest.TestCase):
         self.assertEqual(report["head"], head)
         self.assertEqual(report["stage_source"], {
             "commit": source,
+            "tree": self.git("rev-parse", source + "^{tree}"),
             "adapter_version": "0.0.10",
             "product_changes_to_head": [],
         })
@@ -85,23 +86,112 @@ class TestCheckBm023aStageSource(unittest.TestCase):
             self.assertEqual(main(["--root", str(self.root)]), 0)
         self.assertTrue(json.loads(out.getvalue())["ok"])
 
-    def test_tracking_over_tracking_fails_and_reports_nearest(self):
+    def untrailered_agent(self, note="plain\n"):
+        self.write(".agent/HANDOFF.md", note)
+        return self.commit("docs: no trailers")
+
+    def test_stacked_tracking_and_untrailered_agent_commits_are_tolerated(self):
+        source = self.substantive()
+        self.tracking()
+        self.tracking(note="second\n", review="rc-2", source="w2", snapshot="s2")
+        self.untrailered_agent()
+        self.tracking(note="third\n", review="rc-3", source="w3", snapshot="s3")
+        head = self.untrailered_agent(note="latest\n")
+        self.write(".agent/HANDOFF.md", "uncommitted\n")
+        report = check(self.root, expected_version="0.0.10")
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["head"], head)
+        self.assertEqual(report["stage_source"], {
+            "commit": source,
+            "tree": self.git("rev-parse", source + "^{tree}"),
+            "adapter_version": "0.0.10",
+            "product_changes_to_head": [],
+        })
+
+    def test_tracking_over_tracking_with_product_change_is_drift(self):
         source = self.substantive(version="0.0.10")
         self.tracking()
         self.write("resources/lib/extra.py", "x = 1\n")
-        self.git("add", "-A")
         self.commit("docs: second", _trailers("tracking", review="rc-2", source="w2", snapshot="s2"))
         report = check(self.root)
         self.assertFalse(report["ok"])
-        self.assertEqual(report["category"], "parent_not_substantive")
-        self.assertNotIn("stage_source", report)
-        self.assertEqual(report["nearest_substantive"], {
-            "commit": source,
-            "adapter_version": "0.0.10",
-            "product_changes_to_head": ["resources/lib/extra.py"],
-        })
+        self.assertEqual(report["category"], "product_changes_after_source")
+        self.assertEqual(report["stage_source"]["commit"], source)
+        self.assertEqual(
+            report["stage_source"]["product_changes_to_head"],
+            ["resources/lib/extra.py"],
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["--root", str(self.root)]), 1)
+
+    def test_untrailered_product_commit_fails_and_reports_nearest(self):
+        source = self.substantive()
+        self.tracking()
+        self.write("resources/lib/extra.py", "x = 1\n")
+        self.write(".agent/HANDOFF.md", "mixed\n")
+        self.commit("feat: no trailers")
+        report = check(self.root)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["category"], "untrailered_product_commit")
+        self.assertNotIn("stage_source", report)
+        self.assertEqual(report["nearest_substantive"]["commit"], source)
+        self.assertEqual(
+            report["nearest_substantive"]["product_changes_to_head"],
+            ["resources/lib/extra.py"],
+        )
+
+    def test_untrailered_agent_commit_is_not_a_tracking_pair(self):
+        self.substantive()
+        self.untrailered_agent()
+        self.tracking(note="later\n")
+        report = check(self.root)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["category"], "tracking_pair_missing")
+
+    def test_uncommitted_product_changes_fail(self):
+        for rel in ("resources/lib/new.py", "tools/bm023a_adapter_support.py"):
+            with self.subTest(rel=rel):
+                self.substantive()
+                self.tracking(note=rel + "\n")
+                self.write(rel, "dirty\n")
+                report = check(self.root)
+                self.assertFalse(report["ok"])
+                self.assertEqual(report["category"], "uncommitted_product_changes")
+                self.git("checkout", "-q", "--", ".")
+                self.git("clean", "-q", "-f", "--", "resources")
+
+    def test_adapter_version_mismatch_fails(self):
+        self.substantive(version="0.0.9")
+        self.tracking()
+        report = check(self.root, expected_version="0.0.10")
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["category"], "adapter_version_mismatch")
+        self.assertEqual(report["stage_source"]["adapter_version"], "0.0.9")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(["--root", str(self.root), "--expected-version", "0.0.10"]), 1,
+            )
+
+    def test_partial_trailers_fail(self):
+        self.substantive()
+        self.tracking()
+        self.write(".agent/HANDOFF.md", "partial\n")
+        self.commit("docs: partial", "AI-Supervisor-Part: tracking\n")
+        report = check(self.root)
+        self.assertEqual(report["category"], "checkpoint_metadata_incomplete")
+
+    def test_merge_in_lineage_fails(self):
+        self.substantive()
+        self.tracking()
+        self.git("checkout", "-q", "-b", "side")
+        self.tracking(note="side\n", review="rc-2", source="w2", snapshot="s2")
+        self.git("checkout", "-q", "-")
+        self.git(
+            "merge", "-q", "--no-ff", "-s", "ours", "side",
+            "-m", "merge\n\n" + _trailers("tracking", review="rc-3", source="w3", snapshot="s3"),
+        )
+        report = check(self.root)
+        self.assertEqual(report["category"], "lineage_ambiguous")
 
     def test_mismatched_trailers_fail(self):
         for key in ("review", "source", "snapshot"):
@@ -112,12 +202,11 @@ class TestCheckBm023aStageSource(unittest.TestCase):
                 self.assertFalse(report["ok"])
                 self.assertEqual(report["category"], "pair_metadata_mismatch")
 
-    def test_missing_head_trailers_fail(self):
+    def test_untrailered_head_over_substantive_has_no_pair(self):
         self.substantive()
-        self.write(".agent/HANDOFF.md", "plain\n")
-        self.commit("docs: no trailers")
+        self.untrailered_agent()
         report = check(self.root)
-        self.assertEqual(report["category"], "head_metadata_incomplete")
+        self.assertEqual(report["category"], "tracking_pair_missing")
         self.assertFalse(report["ok"])
 
     def test_missing_parent_trailers_fail(self):
@@ -125,7 +214,7 @@ class TestCheckBm023aStageSource(unittest.TestCase):
         self.commit("plain product commit")
         self.tracking()
         report = check(self.root)
-        self.assertEqual(report["category"], "parent_metadata_incomplete")
+        self.assertEqual(report["category"], "untrailered_product_commit")
         self.assertNotIn("nearest_substantive", report)
 
     def test_head_substantive_is_not_tracking(self):
