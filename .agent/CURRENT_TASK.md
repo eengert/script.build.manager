@@ -1,6 +1,16 @@
 # Current Task
 
-## BM-023A fixed staging action update - 2026-09-28
+## ai-supervisor secondary writable-root authorization - 2026-09-28
+
+**Status:** `REVIEW_REQUIRED_FRAMEWORK_WRITE_SCOPE` (work ID `f1bd22e9-5f5b-49cc-b519-8552389f511a`; lease `ed5540c9-3f3a-45e4-b831-b28cce006ec7`).
+
+The framework checkout is clean at `6e369bf` on `main`, and the requested action workspace is clean at `68d05ae` on `action/bm023a-trusted`; both canonicalize to their expected paths but are outside this worker's writable scope. Supervisor state has no `work.writable_roots` grant and no approved actions. The reviewed BM-023A snapshot remains clean, detached, and read-only. No implementation or tests were changed or run.
+
+Smallest next step: internal review must provision a write route to the framework and a trusted explicit source for approved secondary roots. Then implement canonicalization, protected-path and symlink-escape rejection, sandbox propagation, and offline regression tests, targeting only `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` as the secondary root. Keep the reviewed snapshot read-only and do not repoint actions to framework main. No user input is required.
+
+---
+
+## Previous task: BM-023A fixed staging action update - 2026-09-28
 
 **Status:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE` (work ID `5ba09aea-b318-4a27-bd49-9267648dd2d2`; lease `c2301cf6-fb94-42b0-8179-bb7bfe38de98`).
 

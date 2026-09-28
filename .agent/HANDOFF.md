@@ -1,4 +1,28 @@
-# Current Handoff - BM-023A fixed staging action update (2026-09-28; lease c2301cf6-fb94-42b0-8179-bb7bfe38de98)
+# Current Handoff - ai-supervisor secondary writable-root authorization (2026-09-28; lease ed5540c9-3f3a-45e4-b831-b28cce006ec7)
+
+**Result:** `REVIEW_REQUIRED_FRAMEWORK_WRITE_SCOPE`.
+Work ID: `f1bd22e9-5f5b-49cc-b519-8552389f511a`. Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
+
+## Verified
+
+- Before this handoff update, the product worker checkout was clean on `agent/supervised-codex` at `9e2a057`; the current uncommitted delta is limited to the four `.agent` tracking files.
+- The active supervisor work item is offline `workspace-write`, but `work.writable_roots` is null and `work.actions` is empty. `handoff_requested=false`.
+- The framework checkout canonicalizes to `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, is clean on `main` at `6e369bf` (ahead 9 of `origin/main`), and is not writable in this worker.
+- The dedicated action workspace canonicalizes to `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, is clean on `action/bm023a-trusted` at `68d05ae`, and is not writable in this worker.
+- The BM-023A reviewed snapshot remains clean and detached at `b0a56f6`; it was inspected read-only and not changed. No action was repointed to framework main.
+- No framework/action implementation or tests were changed or run. No network, host validation, Test.app, or device action occurred.
+
+## Not done
+
+The framework and exact secondary action root are outside the lease's writable scope, so the requested canonicalization, protected-path/symlink-escape checks, sandbox propagation, and offline regression tests could not safely start. This is an internal scope/tooling blocker; no user input is required.
+
+## Smallest next step
+
+Internal review should provide a worker write route to the framework checkout and a trusted source for explicitly approved secondary roots. Then implement and test the narrow path using `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, while preserving the reviewed BM-023A snapshot as read-only. Do not repoint actions to framework main.
+
+---
+
+# Previous Handoff - BM-023A fixed staging action update (2026-09-28; lease c2301cf6-fb94-42b0-8179-bb7bfe38de98)
 
 **Result:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE`.
 Work ID: `5ba09aea-b318-4a27-bd49-9267648dd2d2`. Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.

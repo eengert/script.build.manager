@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "last_commit": "4a8d8c78ee0179bbf5fa77bcf7f2d5ef3e1873d2",
+  "last_commit": "9e2a05727fa866c6426eb67242903b0b4a64441e",
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Lease c2301cf6-fb94-42b0-8179-bb7bfe38de98; work 5ba09aea-b318-4a27-bd49-9267648dd2d2: fixed action checkout is outside the lease writable root; source preflight fails closed on tracking-over-tracking HEAD. No action edits, tests, or host actions.",
+  "reason": "Lease ed5540c9-3f3a-45e4-b831-b28cce006ec7; work f1bd22e9-5f5b-49cc-b519-8552389f511a: framework and dedicated action roots are outside the worker writable scope; supervisor work.writable_roots is null. No implementation, tests, or host actions.",
   "status": "review-required",
-  "task": "BM-023A fixed staging action update",
+  "task": "ai-supervisor secondary writable-root authorization",
   "updated_at": "2026-09-28"
 }
