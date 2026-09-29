@@ -1,3 +1,52 @@
+# Current Handoff - BM-023A adapter 0.0.12 retained-input diagnostics (2026-09-28; lease 9efffb21-5020-43d9-b16c-59b7a1a7ec43)
+
+**Result:** `OFFLINE_ADAPTER_RETAINED_INPUT_DIAGNOSTICS_ADDED_UNCOMMITTED`. Work ID `7e891152-4216-4272-a891-722846df804e`. Agent: claude. Usage readings unavailable.
+
+- Root cause being diagnosed (work `ea97dd40`): `MANIFEST_PATH` under `/private/tmp` was purged by macOS temp cleanup, so `Path(MANIFEST_PATH).read_text` raised `FileNotFoundError` at `LOAD_FROZEN_MANIFEST` and the artifact store was empty.
+- `ADAPTER_VERSION` is now **0.0.12** (`tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`). Changes are uncommitted for the armed review checkpoint. `resources/lib/frozen_install.py` and all transaction, hold and lock semantics are untouched.
+- New in `tools/bm023a_adapter_support.py`: `inspect_retained_inputs(manifest_path, artifact_root)` returns only `manifest_present`, `manifest_readable`, `artifact_store_present`, `artifact_store_readable` (booleans) and `artifact_entry_count` (int, direct entries of `ARTIFACT_ROOT/artifacts`). `require_retained_inputs(record)` raises `AdapterBootstrapError` at stage `LOAD_FROZEN_MANIFEST` / callable `pathlib.Path` with a distinct category, in priority order: `retained_manifest_missing` (absent or not a regular file), `retained_manifest_unreadable` (exists but cannot be opened), `retained_artifacts_missing` (store directory absent or zero entries). The record keeps all facts even when an earlier category wins.
+- Allowlists: `FAILURE_CATEGORIES` gained the 3 categories; `SAFE_ERROR_TYPES` gained `FileNotFoundError` and `PermissionError`; new `RETAINED_INPUTS_KEYS` names the 5 record keys.
+- `default.py.in`: in **retry and install** modes only, both calls run immediately before `Path(MANIFEST_PATH).read_text`. Recover mode is unchanged and not checked. The result gains `retained_inputs: {...}` (the record above) whenever the check ran, on success and failure. No paths or exception text are emitted.
+- Behavior note: an empty artifact store now fails closed at `LOAD_FROZEN_MANIFEST` with `retained_artifacts_missing`. Previously a missing store in retry mode failed later at `CHECK_RETRY_PRECONDITIONS` with `path_missing_or_unreadable`; that subtest's expectation was updated. Test fixtures now place one placeholder entry in the artifact store.
+- Tests (`tests/test_bm023a_adapter.py`): version assertions moved to 0.0.12; new `TestBm023aRetainedInputsDiagnostics` (11 tests: present, missing, directory-as-manifest, unreadable, empty store, absent store, precedence, sanitized record, sanitized failure payload, `FileNotFoundError`/`PermissionError` safe types, allowlist completeness by scanning support and entrypoint sources for stages, callables and categories); the generated-entrypoint test gained subtests for missing manifest, unreadable manifest, empty store and absent store in retry and install modes, an unchanged-success check with the manifest present in both modes, and recover mode not checking. The unreadable-manifest cases skip if permissions are not enforced (root).
+- Checks: `python3 -m unittest tests.test_bm023a_adapter` 75/75 OK; full `python3 -m unittest discover -s tests -t .` **1922/1922 OK**; `git diff --check` clean.
+- Not done: no commit, push, network, named action, Test.app, Kodi.app or normal profile access. The staged Test.app adapter is still 0.0.10/0.0.11 until a separate staging directive.
+
+## Follow-ups outside this task
+- (a) The action worktree's `kodi_action.py` result-key allowlist (around lines 49-56) needs matching keys: `retained_inputs` (and its 5 sub-keys, plus the new failure categories) so the action does not drop the new diagnostics. Not touched here.
+- (b) Retained inputs need repairing at the exact original path from the BM-017F asset copy (fingerprint `8ce7d2daf131` verified) plus artifact repopulation, before retry or install can pass the new check.
+
+Smallest next step (supervisor): checkpoint this diff as a substantive/tracking pair, run `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.12`, then handle follow-ups (a) and (b) under separate directives. No user input required.
+
+---
+
+# Previous Handoff - BM-023A action tolerates untrailered .agent-only commits (2026-09-28; lease 50e6079c-028b-443e-b1a0-348e89bff178)
+
+**Result:** `ACTION_UNTRAILERED_AGENT_TOLERANCE_COMMITTED_LOCAL`. Work ID `d1cd48c5-53b4-49b2-9794-cde2de3e762e`. Agent: claude. Usage readings unavailable.
+
+- Action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` (`action/bm023a-trusted`) was clean at `ef9aa37`. New local-only commit: **`7142246d5c73ec56eb8e4edf069900d72023dfb2`**, touching `ai_supervisor/bm023a_adapter_upgrade.py` and `tests/test_bm023a_adapter_upgrade.py`.
+- Fix: in the bounded first-parent walk of `_latest_reviewed_source_commit`, a commit with NO `AI-Supervisor-*` line is tolerated only if it has exactly one parent and a non-empty path set that is entirely `.agent` or under `.agent/`. It neither sets nor resets `child_tracking_metadata`, and it counts toward the 64-commit bound. Anything with a partial, ambiguous or empty-valued trailer still goes through `_checkpoint_metadata` and fails closed as before. Merges/roots, untrailered commits with any other path, tracking commits with non-`.agent` paths, a missing or mismatched pair, and uncommitted product drift all still fail closed. `_checkpoint_metadata` gained an optional `message` argument and a `_commit_message` helper was extracted; there is no other behavior change.
+- Tests: the old `test_malformed_tracking_metadata_fails_closed` used an untrailered `.agent` commit as its bad case, which is now legitimately tolerated. It was replaced by `test_partial_tracking_metadata_fails_closed` (only `Part:` trailer). 11 new tests cover: a scratch-repo reproduction of `2af330e` atop a trailered pair (selects the substantive commit), stacked untrailered and tracking commits, and rejection of an untrailered product commit, a mixed `.agent`+product commit, an `.agentx` lookalike, nested `docs/.agent`, an empty-path commit, an untrailered commit as the only child of the substantive commit, an untrailered merge, exceeding the bound, and uncommitted product drift. Module: 33/33 OK. Full action suite: 424 tests, 2 failures (`partial_legacy_config`, `must_be_git_worktree`), the same 2 pre-existing unrelated ones. `git diff --check` clean.
+- Read-only check: `_latest_reviewed_source_commit` against this product worktree (HEAD `2af330e`) now returns `5220cf1782016c7206405d6661a7602a80d6ce1e`.
+- Design note for review: the product preflight `tools/check_bm023a_stage_source.py` resets `child_tracking` on an untrailered commit, so it requires the tracking commit to be the immediate child of the substantive one. Per this directive, the action does NOT reset. A layout of substantive <- untrailered `.agent` commit <- tracking commit is therefore accepted by the action but rejected by the (stricter) preflight. The two agree on the real `2af330e` layout. Supervisor may want the action to reset as well.
+- Not done: no named action invoked, no Test.app, network or push. The supervisor pin config still needs review/update to `7142246`. Restaging 0.0.11 is a later, separate step.
+- Smallest next step (supervisor): review `7142246`, update the pin config, then re-issue the 0.0.11 staging directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A stage action allowlist updated for bundled_frozen_install.py (2026-09-28; lease 26ef01d2-c72e-4ae2-9774-f801daf15178)
+
+**Result:** `ACTION_ALLOWLIST_UPDATED_COMMITTED_LOCAL`. Work ID `ee83fb40-f6f0-4e8c-bf8b-264c7fc3d0b0`. Agent: claude. Usage readings unavailable.
+
+- Action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` (branch `action/bm023a-trusted`) was clean at `ab05818`. `git grep` confirmed `bundled_frozen_install.py` was absent from the allowlist before editing.
+- New action commit: **`ef9aa378ac52cbf7b9fec52befe4287e5483499e`** (local only, not pushed). `ai_supervisor/bm023a_adapter_upgrade.py` `_EXPECTED_FILES` now lists the four prior files plus `bundled_frozen_install.py`. `_hashes` still requires an exact file-set match, so missing or extra files fail closed. Identity, clean-tree, checkpoint-pair, downgrade and rollback logic are unchanged.
+- `tests/test_bm023a_adapter_upgrade.py`: the fake builder now emits the bundle, and 9 tests were added (22 total, all pass). They cover the expected file set, installing 5 files, already-current, tampered installed bundle, generated package missing the bundle or another file, an extra file (all fail closed with the install untouched), `_hashes` missing/extra/hash change, and an installed-hash mismatch after swap that rolls back.
+- Checks: focused module 22/22 OK. The full offline action suite ran 413 tests with 2 failures (`test_portability...partial_legacy_config` and `test_workspaces...must_be_git_worktree`). Both fail identically on a clean clone of `ab05818` (404 tests, same 2 failures), so they are pre-existing and unrelated. `git diff --check` clean.
+- Not done: no named action invoked, no supervisor pin config change (the pin still needs updating to `ef9aa37`), no Test.app, network or push. The only product-worktree change is this note.
+- Smallest next step (supervisor): review `ef9aa37`, update the pin configuration, then re-issue the 0.0.11 staging directive. No user input required.
+
+---
+
 # Review Required - BM-023A 0.0.11 staging action failed (2026-09-28; lease f38ed84d-a534-4582-bc35-e40e58b0a0dd)
 
 **Result:** `REVIEW_REQUIRED_STAGE_ACTION_FAILED`. Work ID `29205f7f-4334-467b-8003-c54f77660004`. Agent: codex (`gpt-6-luna`, high). Usage readings recorded as unavailable per `AGENTS.md` Codex usage rules.
