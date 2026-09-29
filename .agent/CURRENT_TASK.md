@@ -1,5 +1,15 @@
 # Current Task
 
+## BM-023A 0.0.13 retry call-path audit - 2026-09-29
+
+**Status:** `COMPLETE_OFFLINE_DIAGNOSTIC_REVIEW_REQUIRED`. Work ID `930ce877-b902-4c0f-92bf-5380acfac610`; lease `ea05f10f-26bc-437b-b1b3-45160154cd47`.
+
+The historical `INVOKE_RETRY` exception remains unexplained by retained source evidence. A stale cached module is a plausible prior cause, but its state was not captured; 0.0.13 now rejects preloaded modules and verifies the installed source binding. Added the static allowlisted `retry_invocation_failed` category at the retry-call exception boundary and versioned the offline adapter candidate to 0.0.14. No exception details are serialized; retry eligibility, transaction, and activation-hold behavior are unchanged.
+
+Focused adapter tests passed **80/80**; full offline suite passed **1927/1927**; `git diff --check` passed. No staging, Test.app, Kodi/profile/device access, network, retry, or commit. Changes are uncommitted for review. Smallest next step: independent diff review; any staging or retry needs a separate directive. Usage readings unavailable per `AGENTS.md`.
+
+---
+
 ## BM-023A retained artifact validation - 2026-09-29
 
 **Status:** `COMPLETE_ARTIFACT_SET_PRESENT_AND_VALIDATED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`; lease `1ee2482c-8fb5-40a0-8a7e-037cf45879a1`.

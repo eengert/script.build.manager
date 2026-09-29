@@ -1,3 +1,15 @@
+# Current Handoff - BM-023A retry exception diagnostics (2026-09-29; lease ea05f10f-26bc-437b-b1b3-45160154cd47)
+
+**Result:** `OFFLINE_RETRY_DIAGNOSTIC_ADDED_TESTED; REVIEW_REQUIRED_BEFORE_STAGING`. Work ID `930ce877-b902-4c0f-92bf-5380acfac610`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- Offline source review found a plausible historical explanation for the earlier `INVOKE_RETRY` failure: a cached production module could retain a retry method from stale source. The failed run retained no module-cache state or traceback, so that explanation cannot be confirmed. Adapter 0.0.13 now guards module cache and installed source identity before import; its retry call arguments match the current method signature. The product retry method converts expected recovery failures into structured results, while an exception escaping the invocation remains source-unexplained.
+- The retry invocation catch now emits the fixed allowlisted category `retry_invocation_failed`. No exception text, path, credential, or private value is added. Adapter source and package template are versioned 0.0.14. The regression test injects a private sentinel exception, confirms it is absent from serialized diagnostics, and verifies exactly one call with the original held transaction and unreleased activation hold unchanged.
+- Checks: focused `tests.test_bm023a_adapter` **80/80**; full offline suite **1927/1927**; `git diff --check` clean. Changes are limited to `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py` plus tracking metadata.
+- Not done: no staging, Test.app, Kodi/profile/device access, retry, network, or commit. Staged Test.app adapter remains 0.0.13; 0.0.14 is only an offline candidate.
+- Smallest next step: independent review of the exact diff, then a separate directive for any staging or retry. No user input is required.
+
+---
+
 # Current Handoff - BM-023A retained artifact set validated (2026-09-29; lease 1ee2482c-8fb5-40a0-8a7e-037cf45879a1)
 
 **Result:** `ARTIFACT_SET_COMPLETE_NO_REACQUISITION_REQUIRED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.

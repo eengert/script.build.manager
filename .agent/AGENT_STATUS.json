@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Retained manifest fingerprint matched and all 30 declared ZIPs passed exact SHA-256/size, add-on ID/version, and stored metadata checks. Full offline suite passed 1926/1926. No download/import or recovery/retry was needed; no Kodi profile, Test.app, or device was accessed.",
+  "reason": "Audited the BM-023A retry exception path and added a static allowlisted retry_invocation_failed category without exception detail. Focused adapter tests passed 80/80 and full offline suite passed 1927/1927. No staging, Test.app, profile/device access, network, or retry action occurred.",
   "status": "complete",
-  "task": "BM-023A retained artifact validation",
+  "task": "BM-023A retry exception diagnostics",
   "updated_at": "2026-09-29"
 }
