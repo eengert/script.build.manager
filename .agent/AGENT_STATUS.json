@@ -1,10 +1,10 @@
 {
   "active_agent": "none",
-  "last_commit": "0d40d3cc03a725fc4aee7721666df43cfd92684a",
+  "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Control-plane change is committed as dd8b0ed on isolated branch codex/secondary-writable-roots under /private/tmp/ai-supervisor-codex-1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d. Focused tests pass 64/64; full suite had sandbox-limited failures/errors. Running supervisor config remains unchanged with no root grant; review/integration is next.",
+  "reason": "BM-023A action retained-input sanitization is complete in the granted action worktree; changes remain uncommitted for supervisor review. Focused module passed 15/15. Full action suite ran 428 tests with 3 failures and 41 sandbox/environment errors. No validation action or Test.app access occurred.",
   "status": "complete",
-  "task": "ai-supervisor secondary writable-root control-plane maintenance",
+  "task": "BM-023A action retained-input result sanitization",
   "updated_at": "2026-09-28"
 }

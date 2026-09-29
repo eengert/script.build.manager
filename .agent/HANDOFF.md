@@ -1,3 +1,33 @@
+# Current Handoff - BM-023A action retained-input result sanitization (2026-09-28; lease 0b2f87ed-5c45-4412-a1c6-e38d853de09a)
+
+**Result:** `ACTION_RETAINED_INPUTS_ALLOWLIST_UPDATED; FULL_SUITE_SANDBOX_LIMITED`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- In `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` on `action/bm023a-trusted` at base `7142246`, changed only `ai_supervisor/kodi_action.py` and `tests/test_kodi_action.py`. Retry/install results now retain `retained_inputs` with its five documented keys; the action allowlists the adapter's static failure categories, including `retained_manifest_missing`, `retained_manifest_unreadable`, and `retained_artifacts_missing`. Unknown nested keys, malformed records, and unknown failure categories are dropped.
+- Checks: focused `python3 -m unittest tests.test_kodi_action` passed **15/15**; `git diff --check` passed. Full offline suite `python3 -m unittest discover -s tests` ran **428 tests: 3 failures, 41 errors**. The 41 errors include loopback HTTP server binds rejected by this offline sandbox (`PermissionError`) and a subprocess timeout; the three failures are in monitor-control recovery, portability's configured Codex binary check, and synthetic soak recovery. No failure was in the changed module. The initial `discover -s tests -t .` attempt stopped before collection because `tests` is not a package; the directory-based run above is the completed full-suite attempt.
+- Not done: no commit, named validation action, staging, Test.app, Kodi/profile/device access, or network operation.
+
+Smallest next step: supervisor review and checkpoint of the two action-worktree files. Any staging remains under a separate directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.12 independent review PASSED; stage-source preflight OK (2026-09-28; lease 47555dc3-833e-4c65-8266-969c112d9a18)
+
+**Result:** `ADAPTER_0_0_12_REVIEW_PASSED_PREFLIGHT_OK`. Work ID `a9306a57-eda3-4dc1-9fea-1127c13348c8`. Agent: claude. Usage readings unavailable.
+
+- State note: the directive called the diff uncommitted, but it was already checkpointed as a trailered pair before this worker started: substantive `b3a4e59` (`AI-Supervisor-Part: substantive`) and tracking `f96eb98` (same review `d7482260-...`, source work `7e891152-...`, snapshot `0aa896b3...`). `git diff 2af330e b3a4e59` is exactly the four named files. The worktree was clean and this worker created no commits before this note. This is not contradictory evidence.
+- Review confirmed (read-only): `resources/lib/frozen_install.py` and all of `resources/**` are untouched (`git diff 2af330e HEAD` lists only the four files plus `.agent/HANDOFF.md`). `inspect_retained_inputs` returns only 4 booleans and 1 int, with OS errors swallowed and no path or exception text. `require_retained_inputs` raises a fixed `AdapterBootstrapError` category. Recover mode has no diff hunk, and both new calls sit only in the retry and install `LOAD_FROZEN_MANIFEST` blocks. Allowlists are complete: `LOAD_FROZEN_MANIFEST` and `pathlib.Path` were already in `ADAPTER_STAGES` and `ADAPTER_CALLABLES`, and the 3 categories, `FileNotFoundError`, `PermissionError` and `RETAINED_INPUTS_KEYS` were added. `retained_inputs` is set before the raise, so it appears on both success and failure. `AdapterBootstrapError` maps to `Exception`, and other errors go through the `SAFE_ERROR_TYPES` filter.
+- Checks: `python3 -m unittest tests.test_bm023a_adapter` 75/75 OK; full `python3 -m unittest discover -s tests -t .` **1922/1922 OK**; `git diff --check 2af330e HEAD` clean.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.12` at HEAD `f96eb98` -> exit 0, `ok:true`, stage_source `b3a4e59451a6a53eb2c257b4e626f2d36e81f567`, tree `52ba92aca017fcc20f80afda64ddd2ef1430dba9`, `adapter_version 0.0.12`, `product_changes_to_head []`.
+- Not done: no named action, Test.app, Kodi.app, normal profile, network, push or staging.
+
+## Follow-ups (separate directives)
+- (a) The action worktree's `kodi_action.py` result-key allowlist needs `retained_inputs` (and its 5 sub-keys) plus the new failure categories `retained_manifest_missing`, `retained_manifest_unreadable` and `retained_artifacts_missing`, so the new diagnostics are not dropped.
+- (b) The retained manifest and artifact store must be repaired at the exact original path from the BM-017F asset copy (fingerprint `8ce7d2daf131`) before any retry or install. Otherwise the new check fails closed with `retained_manifest_missing` or `retained_artifacts_missing`.
+
+Smallest next step (supervisor): handle (a) and (b), then stage 0.0.12 under a separate directive. No user input required.
+
+---
+
 # Current Handoff - BM-023A adapter 0.0.12 retained-input diagnostics (2026-09-28; lease 9efffb21-5020-43d9-b16c-59b7a1a7ec43)
 
 **Result:** `OFFLINE_ADAPTER_RETAINED_INPUT_DIAGNOSTICS_ADDED_UNCOMMITTED`. Work ID `7e891152-4216-4272-a891-722846df804e`. Agent: claude. Usage readings unavailable.

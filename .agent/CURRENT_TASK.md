@@ -1,6 +1,18 @@
 # Current Task
 
-## ai-supervisor secondary writable-root control-plane maintenance - 2026-09-28
+## BM-023A action retained-input result sanitization - 2026-09-28
+
+**Status:** `COMPLETE_WITH_FULL_SUITE_SANDBOX_FAILURES`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`; lease `0b2f87ed-5c45-4412-a1c6-e38d853de09a`.
+
+Updated the pinned action worktree's sanitized result handling for adapter 0.0.12. Only `ai_supervisor/kodi_action.py` and `tests/test_kodi_action.py` changed in `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`; changes remain uncommitted on `action/bm023a-trusted`. Retry/install results preserve the five-key `retained_inputs` record and the three new fixed failure categories. Focused module passed 15/15. The full suite ran 428 tests with 3 failures and 41 errors, primarily sandbox-denied loopback server binds plus unrelated process/environment-dependent cases. `git diff --check` passed.
+
+No named validation action, staging, Test.app, device/profile access, or network operation occurred. No user input is required.
+
+Smallest next step: supervisor review and checkpoint the two action-worktree files; any stage action requires a separate directive.
+
+---
+
+## Previous task: ai-supervisor secondary writable-root control-plane maintenance - 2026-09-28
 
 **Status:** `IMPLEMENTED_IN_ISOLATED_BRANCH`; supervisor review/integration pending. Work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`; lease `9208502b-4cfb-4b8b-b2b5-b749cec0c993`.
 
