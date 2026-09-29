@@ -1,3 +1,14 @@
+# Review Required - BM-023A 0.0.14 checkpoint source mismatch (2026-09-29; lease 907ebfdf-a332-48da-aaa0-acc7f329ce3d)
+
+**Result:** `REVIEW_REQUIRED_CHECKPOINT_NOT_ARMED_FOR_930CE877`. Work ID `d9944558-57b0-4ea2-b87f-e2ca0a11d6e4`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage start snapshot: 5h 87% and 7d 66% remaining from supervisor app-server state; end reading unavailable.
+
+- Independently reviewed the committed 0.0.14 diff at `bdfb916` and confirmed the checkout was clean before this handoff. The only product files in that snapshot are `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`. The retry exception maps to the fixed `retry_invocation_failed` category with exception chaining suppressed; the regression test checks sentinel/path redaction and preserves the held transaction and activation hold. Version markers are 0.0.14.
+- The source handoff records focused tests **80/80**, full offline suite **1927/1927**, and `git diff --check` passing. I did not rerun them. No adapter staging, Test.app, Kodi/profile/device access, network, retry, or product change occurred.
+- Checkpoint handling is internally inconsistent: HEAD's existing `AI-Supervisor-Source-Work` trailer names `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, while this directive names `930ce877-b902-4c0f-92bf-5380acfac610`. The current supervisor state has no `review_checkpoint`, an empty queue, and `armed_checkpoint=null`. I did not fabricate or commit a checkpoint for the mismatched source work.
+- Smallest next step: supervisor should arm/reissue the reviewed-work checkpoint bound to source work `930ce877-b902-4c0f-92bf-5380acfac610` (or correct the source-work attribution). No user input is required.
+
+---
+
 # Current Handoff - BM-023A retry exception diagnostics (2026-09-29; lease ea05f10f-26bc-437b-b1b3-45160154cd47)
 
 **Result:** `OFFLINE_RETRY_DIAGNOSTIC_ADDED_TESTED; REVIEW_REQUIRED_BEFORE_STAGING`. Work ID `930ce877-b902-4c0f-92bf-5380acfac610`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.

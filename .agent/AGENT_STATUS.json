@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Audited the BM-023A retry exception path and added a static allowlisted retry_invocation_failed category without exception detail. Focused adapter tests passed 80/80 and full offline suite passed 1927/1927. No staging, Test.app, profile/device access, network, or retry action occurred.",
-  "status": "complete",
-  "task": "BM-023A retry exception diagnostics",
+  "reason": "The committed BM-023A 0.0.14 snapshot passed independent source review, but no armed checkpoint matches source work 930ce877-b902-4c0f-92bf-5380acfac610; HEAD identifies source work bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce. No product change, staging, Test.app, profile/device access, network, or retry action occurred.",
+  "status": "review_required",
+  "task": "BM-023A adapter 0.0.14 independent review",
   "updated_at": "2026-09-29"
 }
