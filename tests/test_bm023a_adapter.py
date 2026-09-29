@@ -2001,6 +2001,33 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
             self.assertEqual(raised.exception.failure_category, "unsupported_recovery_state")
             self.assertEqual(fixture[-1], [])
 
+    def test_held_redlight_quiescence_needs_attention_is_rejected_without_abandon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            held = fixture[0].current
+            held.activation_hold_ids = ("plugin.video.redlight",)
+            held.activation_hold_released = False
+            held.lifecycle_stage = "quiescence_awaiting_restart"
+            held.lifecycle_restart_count = 1
+            held.updater_guard_required = True
+            held.status_message = "PRIVATE_RESULT_DETAIL_DO_NOT_EMIT"
+            policy_before = fixture[1].current
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            self.assertEqual(raised.exception.failure_category, "unsupported_recovery_state")
+            self.assertEqual(raised.exception.stage, "CHECK_RECOVERY_PRECONDITIONS")
+            self.assertEqual(fixture[-1], [])
+            self.assertIs(fixture[0].current, held)
+            self.assertEqual(fixture[1].current, policy_before)
+            self.assertTrue(fixture[4].exists())
+            payload = safe_failure_payload(
+                "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", raised.exception
+            )
+            serialized = json.dumps(payload)
+            for fragment in ("PRIVATE_RESULT_DETAIL", "redlight", "/reviewed", "reviewed-build"):
+                self.assertNotIn(fragment, serialized)
+            self.assertEqual(payload["failure_category"], "unsupported_recovery_state")
+
     def test_missing_store_directory_is_rejected_without_abandon(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture = self.fixture(Path(tmp) / "store")
