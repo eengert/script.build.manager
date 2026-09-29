@@ -1,3 +1,15 @@
+# Current Handoff - BM-023A stage action pinned to reviewed adapter 0.0.14 (2026-09-29; lease dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe)
+
+**Result:** `PINNED_TO_EXACT_REVIEWED_0_0_14_SOURCE; OFFLINE_TESTED; STAGING_NOT_RUN`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`. Agent: Codex (`GPT-6` runtime label; effort unavailable). Usage readings unavailable per `AGENTS.md`.
+
+- In the authorized `ai-supervisor-bm023a-actions` checkout, the fixed `bm023a-stage-adapter` action now builds only from source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`. It verifies the adjacent tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`, review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`, exact three-file source diff, and adapter version 0.0.14. It archives the full pinned SHA, disables Git replace refs during source reads, and isolates `tools` module imports so a cached module cannot redirect the builder.
+- The source-work trailer on the reviewed Git pair says `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, differing from the prior adapter task ID `930ce877-b902-4c0f-92bf-5380acfac610`. The action binds to the exact source/tracking commit pair and matching review/snapshot trailers in Git; it does not infer source from branch HEAD. This attribution difference is recorded for supervisor review.
+- Checks: focused upgrade tests **39/39**; seven pin-specific cases **7/7**; read-only validation against the supervised checkout resolved the pinned commit and loaded builder version 0.0.14; `git diff --check` passed. Full action suite ran **436** tests with **3 failures and 41 errors**, in unrelated process-recovery/soak/configured-Codex-path checks and loopback tests denied by the offline sandbox. No failure was in the changed action module.
+- Not done: no staging action, Test.app, Kodi/profile/device access, host validation action, network operation, or product-source edit. The action diff remains uncommitted in the authorized secondary root.
+- Smallest next step: supervisor review of the action diff and source-work attribution, then a separate directive before staging. No user input is required.
+
+---
+
 # Review Required - BM-023A 0.0.14 checkpoint source mismatch (2026-09-29; lease 907ebfdf-a332-48da-aaa0-acc7f329ce3d)
 
 **Result:** `REVIEW_REQUIRED_CHECKPOINT_NOT_ARMED_FOR_930CE877`. Work ID `d9944558-57b0-4ea2-b87f-e2ca0a11d6e4`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage start snapshot: 5h 87% and 7d 66% remaining from supervisor app-server state; end reading unavailable.

@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "The committed BM-023A 0.0.14 snapshot passed independent source review, but no armed checkpoint matches source work 930ce877-b902-4c0f-92bf-5380acfac610; HEAD identifies source work bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce. No product change, staging, Test.app, profile/device access, network, or retry action occurred.",
+  "reason": "The fixed BM-023A staging action is pinned and offline-tested against source commit bdfb916976a8b141b8925a328ef8b1af21da1fef and its matching review pair. Focused tests passed 39/39; the full suite had unrelated sandbox/environment failures. The Git source-work trailer differs from prior task 930ce877; this is documented for supervisor review. No staging action, Test.app, profile/device access, network, or host action occurred.",
   "status": "review_required",
-  "task": "BM-023A adapter 0.0.14 independent review",
+  "task": "BM-023A staging action exact 0.0.14 source pin",
   "updated_at": "2026-09-29"
 }

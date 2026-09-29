@@ -1,5 +1,19 @@
 # Current Task
 
+## BM-023A fixed staging action pinned to adapter 0.0.14 - 2026-09-29
+
+**Status:** `OFFLINE_REVISION_READY_FOR_REVIEW`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`; lease `dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe`.
+
+The fixed action in the authorized `ai-supervisor-bm023a-actions` checkout now validates and archives only source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`, paired with tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`. It verifies their matching review checkpoint and snapshot trailers, exact source-path set, and adapter version `0.0.14`; Git replace refs are disabled and builder imports are isolated from preloaded `tools` modules. The result reports the full source SHA.
+
+Focused upgrade tests passed **39/39**, including seven new pin/source-failure cases. Read-only validation on the real supervised checkout resolved the pinned commit and loaded its 0.0.14 builder. Full suite: 436 run, 3 failures and 41 errors from unrelated process recovery/soak, local binary availability, and sandbox-denied loopback tests. `git diff --check` passed. No staging action, Test.app, network, or host action ran. No product files changed in this checkout; action code/tests are uncommitted in the authorized secondary root.
+
+The Git review pair records source work `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, while the prior adapter implementation task was `930ce877-b902-4c0f-92bf-5380acfac610`. The fixed action uses the actual commit-paired review evidence and leaves this attribution difference visible for supervisor review.
+
+Smallest next step: supervisor reviews the exact action diff and attribution, then issues a separate staging directive if appropriate. Usage readings unavailable per `AGENTS.md`.
+
+---
+
 ## BM-023A 0.0.14 independent review - 2026-09-29
 
 **Status:** `REVIEW_REQUIRED_CHECKPOINT_NOT_ARMED_FOR_930CE877`. Work ID `d9944558-57b0-4ea2-b87f-e2ca0a11d6e4`; lease `907ebfdf-a332-48da-aaa0-acc7f329ce3d`.
