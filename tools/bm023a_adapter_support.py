@@ -12,7 +12,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.13"
+ADAPTER_VERSION = "0.0.14"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -81,6 +81,7 @@ FAILURE_CATEGORIES = frozenset({
     "retry_identity_mismatch",
     "recovery_identity_mismatch",
     "retry_api_unavailable",
+    "retry_invocation_failed",
     "module_cache_preloaded",
     "bundled_source_mismatch",
     "source_target_invalid",
@@ -546,7 +547,7 @@ def retry_held_frozen_install(
         raise _bootstrap_error(
             "INVOKE_RETRY",
             "FrozenInstallCoordinator.retry_held_quiescence",
-            "operation_failed",
+            "retry_invocation_failed",
         ) from None
     return _safe_held_retry_result(result)
 

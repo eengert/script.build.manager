@@ -454,7 +454,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.13")
+            self.assertEqual(ADAPTER_VERSION, "0.0.14")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -499,7 +499,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.13"', addon_xml)
+            self.assertIn('version="0.0.14"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -2210,6 +2210,44 @@ class TestBm023aHeldRetryAdapter(unittest.TestCase):
         )
         self.assertEqual(payload["failure_category"], "retry_api_unavailable")
         self.assertEqual(calls, [])
+
+    def test_retry_invocation_exception_has_static_sanitized_category(self):
+        private_value = "PRIVATE_RETRY_EXCEPTION_VALUE_DO_NOT_EMIT"
+        private_path = "/private/retry/exception/path"
+        calls = []
+
+        def fail_retry(**kwargs):
+            calls.append(kwargs)
+            raise RuntimeError(f"{private_value} {private_path}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args, transaction, _source_store, _restart_store, _calls = self.fixture(Path(tmp))
+            args["coordinator"].retry_held_quiescence = fail_retry
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_retry(args)
+
+            payload = safe_failure_payload(
+                "CHECK_RETRY_PRECONDITIONS",
+                "FrozenInstallStore.inspect",
+                raised.exception,
+            )
+            serialized = json.dumps(payload)
+
+            self.assertEqual(payload["adapter_stage"], "INVOKE_RETRY")
+            self.assertEqual(
+                payload["failing_callable"],
+                "FrozenInstallCoordinator.retry_held_quiescence",
+            )
+            self.assertEqual(payload["failure_category"], "retry_invocation_failed")
+            self.assertNotIn(private_value, serialized)
+            self.assertNotIn(private_path, serialized)
+            self.assertNotIn("RuntimeError:", serialized)
+            self.assertNotIn("traceback", serialized.lower())
+            self.assertEqual(len(calls), 1)
+            self.assertIs(calls[0]["expected_transaction"], transaction)
+            self.assertEqual(transaction.activation_hold_ids, ("plugin.video.redlight",))
+            self.assertFalse(transaction.activation_hold_released)
+            self.assertIs(args["store"].current, transaction)
 
     def test_retry_result_shape_contains_only_sanitized_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
