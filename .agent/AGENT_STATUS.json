@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "BM-023A recovery identity binding is implemented in the product worktree; exact dirty snapshot remains uncommitted for independent review. Adapter 78/78, frozen-install 36/36, and full offline suite 1925/1925 passed; compileall, tracked JSON parsing, and diff check passed. No host or network action occurred.",
+  "reason": "Retained manifest fingerprint matched and all 30 declared ZIPs passed exact SHA-256/size, add-on ID/version, and stored metadata checks. Full offline suite passed 1926/1926. No download/import or recovery/retry was needed; no Kodi profile, Test.app, or device was accessed.",
   "status": "complete",
-  "task": "BM-023A recovery transaction identity binding",
-  "updated_at": "2026-09-28"
+  "task": "BM-023A retained artifact validation",
+  "updated_at": "2026-09-29"
 }

@@ -1,5 +1,15 @@
 # Current Task
 
+## BM-023A retained artifact validation - 2026-09-29
+
+**Status:** `COMPLETE_ARTIFACT_SET_PRESENT_AND_VALIDATED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`; lease `1ee2482c-8fb5-40a0-8a7e-037cf45879a1`.
+
+The retained manifest fingerprint matched `8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`. All 30 declared artifacts were already present in the retained store and passed exact SHA-256/size checks, `validate_addon_zip` add-on ID/version validation, and stored metadata identity checks. No download or import was required; the four previously identified exact artifacts were preserved.
+
+Full offline suite passed **1926/1926**. No product code, tests, binaries, Kodi profile, Test.app, or device were changed/accessed. No recovery or retry ran. Smallest next step: separate supervisor direction if the supported held-quiescence retry is still required. Usage readings unavailable per `AGENTS.md`.
+
+---
+
 ## BM-023A recovery identity binding - 2026-09-29
 
 **Status:** `COMPLETE_UNCOMMITTED_REVIEW_REQUIRED`. Work ID `7f3b6bfc-8763-4098-ab3c-2e303b1305da`; lease `8c01966e-7ce0-4657-820a-0f96d5ac7ea1`.

@@ -1,3 +1,63 @@
+# Current Handoff - BM-023A retained artifact set validated (2026-09-29; lease 1ee2482c-8fb5-40a0-8a7e-037cf45879a1)
+
+**Result:** `ARTIFACT_SET_COMPLETE_NO_REACQUISITION_REQUIRED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- The retained manifest parses with fingerprint `8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`. Its retained artifact store contained all 30 declared ZIPs when inspected. All 30 passed exact SHA-256 and size checks, `validate_addon_zip` ID/version validation, and stored metadata identity checks. This includes the four artifacts identified in the earlier scan; none were modified.
+- No download or import was needed. The earlier handoff recorded the store as empty; this run observed the exact artifact set already present. No recovery/retry, Test.app, Kodi profile, or device was accessed.
+- Full offline suite: **1926/1926 passed**. No code or tests changed. No product commit.
+- Smallest next step: supervisor may issue a separate directive for the supported held-quiescence retry, if still needed. No user input required.
+
+---
+
+# Review Required - BM-023A retained-artifact repopulation: no route inside the authorized envelope (2026-09-29; lease 64a5f73e-857a-4885-be47-951355af7e40)
+
+**Result:** `REVIEW_REQUIRED_NO_ARTIFACT_BYTE_SOURCE`. Work ID `11eaf317-8480-4c8a-9218-d28fc1de446e`. Agent: claude. Usage readings unavailable. No code, test or product file was changed; only this note.
+
+## What exists
+- The retained manifest survives at `/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json`. `FrozenBuildManifest.from_json` parses it, and `fingerprint()` starts `8ce7d2daf131`, so it matches the frozen manifest. It declares 37 nodes, 30 of them non-system nodes with an exact artifact (sha256 + size).
+- The retained artifact store at `/private/tmp/bm022v-familyroom.ygB0t5/artifact-store/artifacts` exists but is **empty**. `packages/`, `repository-candidates/` and every `source/<addon>/` directory in that tree are empty too (purged by macOS temp cleanup on 2026-09-27).
+
+## What is missing (exactly)
+- **The bytes of 26 of the 30 declared artifacts.** A read-only scan for any regular file whose size and SHA-256 match a declared artifact covered `~/Documents` (including all of `~/Documents/Kodi` and its worktrees), `~/Downloads`, `~/Desktop` and `/private/tmp`, and excluded Test.app, Kodi.app and the normal profile. It matched only 4 of 30:
+  `repository.eengert` 1.0.0, `script.backup.pro` 0.9.36, `service.af3.topupaction` 1.3.7 and `service.skinsettings.backup` 1.0.16 (from `~/Documents/Kodi/repository.eengert/omega/zips/`, which is not a dedicated retained store).
+  The other 26 (including Red Light 2.6.8, the AF3 skin and their module closure) exist nowhere reachable.
+- No "BM-017F asset copy" exists at any recorded or discoverable path. The `.bm023a-test-runtime/evidence/portable_data.pre_retry/` copy that `docs/BM023A_MACOS_TEST_RUNTIME.md` mentions is not present in any worktree.
+- **A fixed named action mode that can carry a source.** The adapter's `install`, `retry` and `recover` modes only read `ARTIFACT_ROOT`. The generated `adapter_config.py` has exactly six keys (`CONFIG_KEYS`) and no key for a byte-source location. Reading artifacts from anywhere would therefore need a new adapter config key or a new action, and the directive forbids new actions or capabilities.
+
+## Why nothing was implemented
+The only remaining ways to obtain the 26 ZIPs are forbidden here: the network (repository or CDN download), reading Test.app or Kodi.app or the normal profile (`packages`, `portable_data`, installed add-ons), and zipping installed add-on directories. A repopulate step written now would have no input to run on and could not be exercised end to end. I did not build a tool that has to stay unused, and I did not weaken any check.
+
+## Smallest next step (needs supervisor authority, no user input)
+Supply one of these under a separate directive, then re-issue this one:
+1. An authorized, verified byte source for the 26 missing ZIPs, for example a directory of ZIPs or an `ArtifactStore` layout that lives inside a granted root. This can come from a networked run that downloads them from the recorded repository sources and checks each against the manifest's sha256 and size, or from an existing read-only copy that the supervisor can name.
+2. Authority for one fixed way to reach that source from an existing named action. The smallest fit is a new allowlisted `adapter_config.py` key (for example `ARTIFACT_SOURCE_ROOT`) read in `retry`/`install` before `require_retained_inputs`. It would verify sha256 and size against the manifest for all 30 artifacts before the first write, then use `ArtifactStore.import_zip` only, fail closed on any mismatch, and emit counts and booleans only. That needs the builder's `CONFIG_KEYS`, `--reuse-config-from` and the stage action's file-set checks updated, and re-staging, so it is a capability change.
+
+The `install`/`retry` retained-input check (`retained_artifacts_missing`) still fails closed correctly in the meantime. Transaction, hold, lock, `frozen_install.py` and `FrozenInstallCoordinator.abandon`/held-rejection behavior are untouched.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.13 staged and verified (2026-09-29)
+
+**Result:** `STAGE_ADAPTER_0_0_13_VERIFIED`. Work ID `d08b9420-195f-4d73-9fbc-81dc9dc97fd3`. Agent: claude. Usage readings unavailable.
+
+- Preflight `--expected-version 0.0.13` at HEAD `7982471`: `ok:true`, stage source `e2f9327b1137`.
+- `bm023a-stage-adapter` run once: `ok:true`, `already_current:true`, `files_verified:5`, version_before = version_after = 0.0.13.
+- Read-only `test-app-kodi` `Addons.GetAddonDetails`: `script.build.manager.bm023a_driver` version 0.0.13, enabled.
+- No other action, no commits. Next step: separate directive for the supported held-retry route (retained inputs must be repaired first). No user input required.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.13 offline preflight PASSED; stage-source OK (2026-09-29; lease 37d67c36-92ba-4ad2-a0f3-b45b90bb45fd)
+
+**Result:** `ADAPTER_0_0_13_PREFLIGHT_OK`. Work ID `c849bcea-fe50-4ed7-ae20-37f09f855750`. Agent: claude. Usage readings unavailable.
+
+- State: the 0.0.13 snapshot (identity binding `00a9412` + held needs_attention regression test `e2f9327`) was already checkpointed as reviewed commits; worktree clean, no product change made by this worker. `FrozenInstallCoordinator.abandon` untouched.
+- Checks: `tests.test_bm023a_adapter` 79/79; `tests.test_frozen_install` 36/36; full offline suite **1926/1926**; compileall OK; 7 tracked JSON files parse; `git diff --check` clean.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.13` at HEAD `7982471` -> exit 0, `ok:true`, stage_source `e2f9327b11371dc1bc9dc4ce4f23d7ead88f8e0b`, tree `409fb3ea97a8b988ae35e800d6e375fdbab06141`, adapter_version 0.0.13, `product_changes_to_head []`.
+- Not done: no staging, Test.app, Kodi, network, or commit. Smallest next step: separate directive to stage 0.0.13, then the supported held-retry route. No user input required.
+
+---
+
 # Review Required - BM-023A held needs_attention transaction has no supported abandon path (2026-09-29; lease 594c6bf3-1af5-4144-8c02-64edc829180e)
 
 **Result:** `REVIEW_REQUIRED_HELD_TRANSACTION_CANNOT_BE_ABANDONED_SAFELY`. Work ID `1311b839-8d10-4354-ace5-8d38cadf14cc`. Agent: claude. Usage readings unavailable. No product or adapter behavior was changed; adapter stays 0.0.13 with identity binding intact.
