@@ -136,11 +136,10 @@ def main():
             "resources.lib.restart_coordinator",
             "resources.lib.update_guard",
         ]
+        if mode in ("recover", "retry"):
+            production_module_names.append("resources.lib.frozen")
         if mode == "retry":
-            production_module_names.extend((
-                "resources.lib.build_manager",
-                "resources.lib.frozen",
-            ))
+            production_module_names.append("resources.lib.build_manager")
         elif mode == "install":
             production_module_names.extend((
                 "resources.lib.build_manager",
@@ -182,6 +181,19 @@ def main():
         })
 
         if mode == "recover":
+            frozen_module = importlib.import_module("resources.lib.frozen")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.frozen": frozen_module,
+            })
+
+            STAGE = "LOAD_FROZEN_MANIFEST"
+            FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD, require_artifacts=False)
+            manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
+            FAILING_CALLABLE = "FrozenBuildManifest.from_json"
+            manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+
             STAGE = "CHECK_RECOVERY_PRECONDITIONS"
             FAILING_CALLABLE = "pathlib.Path"
             frozen_root = frozen_install_module.default_frozen_install_root()
@@ -207,6 +219,11 @@ def main():
                 policy_backend,
                 installer,
                 Path(restart_module.TransactionStore().transaction_path),
+                manifest=manifest,
+                manifest_path=MANIFEST_PATH,
+                configuration_manifest_path=CONFIGURATION_PATH,
+                device_profile_id=DEVICE_PROFILE_ID,
+                expected_overlay_id=EXPECTED_OVERLAY_ID,
                 needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
                 update_policy_type=update_guard_module.AddonUpdatePolicy,
             )

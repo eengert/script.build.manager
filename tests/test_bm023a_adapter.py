@@ -454,7 +454,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.12")
+            self.assertEqual(ADAPTER_VERSION, "0.0.13")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -499,7 +499,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.12"', addon_xml)
+            self.assertIn('version="0.0.13"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -851,6 +851,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             create_manifest=True,
             manifest_unreadable=False,
             artifact_entries=1,
+            recovery_changes=None,
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -962,7 +963,18 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     private_overlay_fingerprint="sha256:" + "d" * 64,
                     private_overlay_required=True,
                 )
+                real_recovery = mode == "recover" and recovery_changes is not None
+                recovery_transaction = SimpleNamespace(**{
+                    **vars(transaction),
+                    "phase": Phase.NEEDS_ATTENTION,
+                    "activation_hold_ids": (),
+                    "activation_hold_released": True,
+                    "resolution_records": (),
+                    **(recovery_changes or {}),
+                })
                 dispatch = {"recover": [], "retry": [], "install": []}
+                if real_recovery:
+                    dispatch["abandon"] = []
                 coordinator_calls = []
                 restart_store_instances = []
                 restart_coordinator_instances = []
@@ -973,7 +985,12 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 class FakeFrozenStore:
                     def __init__(self, root=None):
                         self.root = Path(root) if root is not None else durable_root
-                        self.current = transaction if mode == "retry" else None
+                        self.current = (
+                            transaction if mode == "retry"
+                            else recovery_transaction
+                            if real_recovery and "__absent__" not in recovery_changes
+                            else None
+                        )
 
                     def inspect(self):
                         return self.current
@@ -994,6 +1011,10 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     def install(self, *args, **kwargs):
                         dispatch["install"].append((args, kwargs))
                         return SimpleNamespace(outcome="complete", code="ok")
+
+                    def abandon(self, *, acknowledge_restore_failure=True):
+                        dispatch["abandon"].append(acknowledge_restore_failure)
+                        return SimpleNamespace(outcome="complete")
 
                     def retry_held_quiescence(self, **kwargs):
                         dispatch["retry"].append(kwargs)
@@ -1040,6 +1061,9 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 class FakeUpdatePolicyBackend:
                     def __init__(self, rpc):
                         self.rpc = rpc
+
+                    def get_policy(self):
+                        return int(Policy.AUTOMATIC)
 
                 class FakePrivateOverlayStore:
                     def import_file(self, path):
@@ -1122,9 +1146,19 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 support_module = importlib.util.module_from_spec(support_spec)
                 support_spec.loader.exec_module(support_module)
                 actual_retry_helper = support_module.retry_held_frozen_install
+                actual_recovery_helper = support_module.recover_frozen_install
 
                 def tracked_recovery(*args, **kwargs):
                     dispatch["recover"].append((args, kwargs))
+                    if real_recovery:
+                        store = args[1]
+                        original_inspect = store.inspect
+
+                        def cleared_after_abandon():
+                            return None if dispatch["abandon"] else original_inspect()
+
+                        store.inspect = cleared_after_abandon
+                        return actual_recovery_helper(*args, **kwargs)
                     return {"ok": True}
 
                 def tracked_retry(*args, **kwargs):
@@ -1413,10 +1447,78 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 )
                 self.assertNotIn("failure_category", payload)
 
-        with self.subTest(mode="recover", retained="not checked"):
-            payload = execute("recover", create_manifest=False)[0]
+        for name, options, category in (
+            ("manifest_missing", {"create_manifest": False}, "retained_manifest_missing"),
+            ("manifest_unreadable", {"manifest_unreadable": True}, "retained_manifest_unreadable"),
+        ):
+            with self.subTest(mode="recover", retained=name):
+                result = execute("recover", recovery_changes={}, **options)
+                payload, dispatch = result[0], result[1]
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["adapter_mode"], "recover")
+                self.assertEqual(payload["adapter_stage"], "LOAD_FROZEN_MANIFEST")
+                self.assertEqual(payload["failure_category"], category)
+                self.assertEqual(dispatch["recover"], [])
+                self.assertEqual(dispatch["abandon"], [])
+
+        with self.subTest(mode="recover", retained="empty artifact store is not required"):
+            payload = execute("recover", recovery_changes={}, artifact_entries=0)[0]
             self.assertTrue(payload["ok"])
-            self.assertNotIn("retained_inputs", payload)
+            self.assertTrue(payload["retained_inputs"]["manifest_readable"])
+
+        with self.subTest(mode="recover", identity="exact intended identity"):
+            result = execute("recover", recovery_changes={})
+            payload, dispatch = result[0], result[1]
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["adapter_mode"], "recover")
+            self.assertEqual(len(dispatch["recover"]), 1)
+            self.assertEqual(dispatch["abandon"], [False])
+            self.assertEqual(result[2][0].kwargs["installer"].install_order, [])
+
+        wrong_identities = {
+            "transaction_id_and_build": {
+                "transaction_id": "9b0f4a86-2f3c-4d2e-8a55-0c5f6d1e7a10",
+                "build_id": "other-build",
+            },
+            "manifest_fingerprint": {"manifest_fingerprint": "e" * 64},
+            "manifest_path": {"manifest_path": "/other/manifest.json"},
+            "configuration_manifest_path": {"configuration_manifest_path": "/other/config.json"},
+            "device_profile_id": {"device_profile_id": "other-profile"},
+            "private_overlay_id": {"private_overlay_id": "other-overlay"},
+        }
+        for name, changes in wrong_identities.items():
+            with self.subTest(mode="recover", identity=name):
+                result = execute("recover", recovery_changes=changes)
+                payload, dispatch = result[0], result[1]
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["adapter_mode"], "recover")
+                self.assertEqual(payload["adapter_stage"], "CHECK_RECOVERY_PRECONDITIONS")
+                self.assertEqual(payload["failing_callable"], "FrozenInstallStore.inspect")
+                self.assertEqual(payload["failure_category"], "recovery_identity_mismatch")
+                self.assertEqual(len(dispatch["recover"]), 1)
+                self.assertEqual(dispatch["abandon"], [])
+                serialized = json.dumps(payload)
+                self.assertNotIn("/", serialized)
+                self.assertNotIn("other-", serialized)
+                self.assertNotIn("9b0f4a86", serialized)
+
+        for name, changes, category in (
+            ("malformed uuid", {"transaction_id": "not-a-uuid"}, "transaction_identity_invalid"),
+            ("wrong phase", {"phase": "complete"}, "recovery_phase_mismatch"),
+        ):
+            with self.subTest(mode="recover", identity=name):
+                result = execute("recover", recovery_changes=changes)
+                payload, dispatch = result[0], result[1]
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["failure_category"], category)
+                self.assertEqual(dispatch["abandon"], [])
+
+        with self.subTest(mode="recover", identity="absent transaction"):
+            result = execute("recover", recovery_changes={"__absent__": True})
+            payload, dispatch = result[0], result[1]
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["failure_category"], "transaction_missing")
+            self.assertEqual(dispatch["abandon"], [])
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):
@@ -1630,6 +1732,15 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
     class Phase:
         NEEDS_ATTENTION = "needs_attention"
 
+    IDENTITY = {
+        "build_id": "reviewed-build",
+        "manifest_path": "/reviewed/manifest.json",
+        "manifest_fingerprint": "a" * 64,
+        "configuration_manifest_path": "/reviewed/configuration.json",
+        "device_profile_id": "reviewed-profile",
+        "private_overlay_id": "reviewed-overlay",
+    }
+
     def fixture(self, root: Path, *, phase="needs_attention", transaction_id=None):
         root.mkdir(parents=True, exist_ok=True)
         transaction = SimpleNamespace(
@@ -1639,6 +1750,12 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
             activation_hold_ids=(),
             activation_hold_released=True,
             resolution_records=(SimpleNamespace(addon_id="plugin.example"),),
+            build_id=self.IDENTITY["build_id"],
+            manifest_path=self.IDENTITY["manifest_path"],
+            manifest_fingerprint=self.IDENTITY["manifest_fingerprint"],
+            configuration_manifest_path=self.IDENTITY["configuration_manifest_path"],
+            device_profile_id=self.IDENTITY["device_profile_id"],
+            private_overlay_id=self.IDENTITY["private_overlay_id"],
         )
         store = SimpleNamespace(root=root, current=transaction)
         store.inspect = lambda: store.current
@@ -1664,6 +1781,14 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
     def run_recovery(self, fixture):
         return recover_frozen_install(
             fixture[3], fixture[0], fixture[1], fixture[2], fixture[4],
+            manifest=SimpleNamespace(
+                build_id=self.IDENTITY["build_id"],
+                fingerprint=lambda: self.IDENTITY["manifest_fingerprint"],
+            ),
+            manifest_path=self.IDENTITY["manifest_path"],
+            configuration_manifest_path=self.IDENTITY["configuration_manifest_path"],
+            device_profile_id=self.IDENTITY["device_profile_id"],
+            expected_overlay_id=self.IDENTITY["private_overlay_id"],
             needs_attention_phase=self.Phase.NEEDS_ATTENTION,
             update_policy_type=self.Policy,
         )
@@ -1798,6 +1923,64 @@ class TestBm023aRecoveryAdapter(unittest.TestCase):
                 self.run_recovery(fixture)
             self.assertEqual(raised.exception.failure_category, "transaction_identity_invalid")
             self.assertEqual(fixture[-1], [])
+
+    def test_wrong_but_valid_transaction_identity_is_rejected_without_abandon(self):
+        other = {
+            "build_id": "other-build",
+            "manifest_path": "/other/manifest.json",
+            "manifest_fingerprint": "b" * 64,
+            "configuration_manifest_path": "/other/configuration.json",
+            "device_profile_id": "other-profile",
+            "private_overlay_id": "other-overlay",
+        }
+        cases = {field: {field: value} for field, value in other.items()}
+        cases["different valid transaction"] = {
+            "transaction_id": "9b0f4a86-2f3c-4d2e-8a55-0c5f6d1e7a10", **other,
+        }
+        for name, changes in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                fixture = self.fixture(Path(tmp) / "store")
+                for field, value in changes.items():
+                    setattr(fixture[0].current, field, value)
+                with self.assertRaises(AdapterBootstrapError) as raised:
+                    self.run_recovery(fixture)
+                self.assertEqual(
+                    raised.exception.failure_category, "recovery_identity_mismatch"
+                )
+                self.assertEqual(raised.exception.stage, "CHECK_RECOVERY_PRECONDITIONS")
+                self.assertEqual(fixture[-1], [])
+                self.assertIsNotNone(fixture[0].current)
+
+    def test_missing_identity_field_is_rejected_without_abandon(self):
+        for field in TestBm023aRecoveryAdapter.IDENTITY:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                fixture = self.fixture(Path(tmp) / "store")
+                delattr(fixture[0].current, field)
+                with self.assertRaises(AdapterBootstrapError) as raised:
+                    self.run_recovery(fixture)
+                self.assertEqual(
+                    raised.exception.failure_category, "recovery_identity_mismatch"
+                )
+                self.assertEqual(fixture[-1], [])
+
+    def test_identity_mismatch_diagnostic_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self.fixture(Path(tmp) / "store")
+            fixture[0].current.manifest_path = "/private/other/manifest.json"
+            fixture[0].current.private_overlay_id = "private-overlay-secret"
+            with self.assertRaises(AdapterBootstrapError) as raised:
+                self.run_recovery(fixture)
+            payload = safe_failure_payload(
+                "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", raised.exception
+            )
+            serialized = json.dumps(payload)
+            for fragment in ("/private", "manifest.json", "private-overlay-secret",
+                             "reviewed-overlay", "reviewed-build", "a" * 16):
+                self.assertNotIn(fragment, serialized)
+            self.assertEqual(payload["failure_category"], "recovery_identity_mismatch")
+            self.assertEqual(set(payload), {
+                "ok", "error_type", "adapter_stage", "failing_callable", "failure_category"
+            })
 
     def test_missing_original_policy_is_rejected_without_abandon(self):
         with tempfile.TemporaryDirectory() as tmp:

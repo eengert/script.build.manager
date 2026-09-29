@@ -12,7 +12,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.12"
+ADAPTER_VERSION = "0.0.13"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -79,6 +79,7 @@ FAILURE_CATEGORIES = frozenset({
     "artifact_stage_failed",
     "retry_snapshot_invalid",
     "retry_identity_mismatch",
+    "recovery_identity_mismatch",
     "retry_api_unavailable",
     "module_cache_preloaded",
     "bundled_source_mismatch",
@@ -226,6 +227,33 @@ def stage_manifest_artifacts(manifest: Any, source_store: Any, durable_store: An
             )
 
 
+def _require_transaction_identity(
+    transaction: Any,
+    manifest: Any,
+    *,
+    stage: str,
+    category: str,
+    manifest_path: str,
+    configuration_manifest_path: str,
+    device_profile_id: str,
+    expected_overlay_id: str,
+) -> None:
+    """Bind a durable transaction to the reviewed manifest and adapter constants."""
+    try:
+        matches = (
+            transaction.manifest_path == manifest_path
+            and transaction.build_id == manifest.build_id
+            and transaction.manifest_fingerprint == manifest.fingerprint()
+            and transaction.configuration_manifest_path == configuration_manifest_path
+            and transaction.device_profile_id == device_profile_id
+            and transaction.private_overlay_id == expected_overlay_id
+        )
+    except Exception:
+        matches = False
+    if not matches:
+        raise _bootstrap_error(stage, "FrozenInstallStore.inspect", category)
+
+
 def recover_frozen_install(
     coordinator: Any,
     store: Any,
@@ -233,11 +261,16 @@ def recover_frozen_install(
     installer: Any,
     restart_transaction_path: Any,
     *,
+    manifest: Any,
+    manifest_path: str,
+    configuration_manifest_path: str,
+    device_profile_id: str,
+    expected_overlay_id: str,
     needs_attention_phase: Any,
     update_policy_type: Any,
     af3_addon_id: str = "skin.arctic.fuse.3",
 ) -> Dict[str, Any]:
-    """Run only the fixed, supported BM-023A abandon operation and summarize safely."""
+    """Abandon only the transaction bound to the reviewed manifest identity, then summarize safely."""
     from uuid import UUID
 
     if not store.root.is_dir():
@@ -259,6 +292,16 @@ def recover_frozen_install(
         raise _bootstrap_error(
             "CHECK_RECOVERY_PRECONDITIONS", "FrozenInstallStore.inspect", "recovery_phase_mismatch"
         )
+    _require_transaction_identity(
+        transaction,
+        manifest,
+        stage="CHECK_RECOVERY_PRECONDITIONS",
+        category="recovery_identity_mismatch",
+        manifest_path=manifest_path,
+        configuration_manifest_path=configuration_manifest_path,
+        device_profile_id=device_profile_id,
+        expected_overlay_id=expected_overlay_id,
+    )
     original_policy = transaction.original_update_policy
     if not isinstance(original_policy, update_policy_type):
         raise _bootstrap_error(
@@ -469,17 +512,16 @@ def retry_held_frozen_install(
             "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "retry_snapshot_invalid"
         )
 
-    if not (
-        transaction.manifest_path == manifest_path
-        and transaction.build_id == manifest.build_id
-        and transaction.manifest_fingerprint == manifest.fingerprint()
-        and transaction.configuration_manifest_path == configuration_manifest_path
-        and transaction.device_profile_id == device_profile_id
-        and transaction.private_overlay_id == expected_overlay_id
-    ):
-        raise _bootstrap_error(
-            "CHECK_RETRY_PRECONDITIONS", "FrozenInstallStore.inspect", "retry_identity_mismatch"
-        )
+    _require_transaction_identity(
+        transaction,
+        manifest,
+        stage="CHECK_RETRY_PRECONDITIONS",
+        category="retry_identity_mismatch",
+        manifest_path=manifest_path,
+        configuration_manifest_path=configuration_manifest_path,
+        device_profile_id=device_profile_id,
+        expected_overlay_id=expected_overlay_id,
+    )
 
     if not Path(configuration_manifest_path).is_file():
         raise _bootstrap_error(
@@ -807,13 +849,17 @@ def inspect_retained_inputs(manifest_path: Any, artifact_root: Any) -> Dict[str,
     }
 
 
-def require_retained_inputs(record: Dict[str, Any]) -> None:
+def require_retained_inputs(
+    record: Dict[str, Any], *, require_artifacts: bool = True
+) -> None:
     """Fail with one distinct sanitized category before the manifest is read."""
     if not record["manifest_present"]:
         category = "retained_manifest_missing"
     elif not record["manifest_readable"]:
         category = "retained_manifest_unreadable"
-    elif not record["artifact_store_present"] or record["artifact_entry_count"] < 1:
+    elif require_artifacts and (
+        not record["artifact_store_present"] or record["artifact_entry_count"] < 1
+    ):
         category = "retained_artifacts_missing"
     else:
         return
