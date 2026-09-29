@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from resources.lib.artifacts import ArtifactStore
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import FrozenInstallCoordinator
+from tools import bm023a_adapter_support
 from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
     AdapterBootstrapError,
@@ -30,7 +31,9 @@ from tools.bm023a_adapter_support import (
     safe_failure_payload,
     stage_manifest_artifacts,
     verify_build_manager_source,
+    inspect_retained_inputs,
     repair_frozen_install_source,
+    require_retained_inputs,
     verify_frozen_install_source,
     verify_production_module_sources,
 )
@@ -451,7 +454,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.11")
+            self.assertEqual(ADAPTER_VERSION, "0.0.12")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -496,7 +499,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.11"', addon_xml)
+            self.assertIn('version="0.0.12"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -680,6 +683,154 @@ class TestBm023aFrozenInstallRepair(unittest.TestCase):
         self.assertEqual(caught.exception.failure_category, "module_source_mismatch")
 
 
+class TestBm023aRetainedInputsDiagnostics(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.manifest = self.root / "manifest.json"
+        self.artifact_root = self.root / "retained"
+
+    def populate(self, *, manifest=True, entries=1):
+        if manifest:
+            self.manifest.write_text("{}", encoding="utf-8")
+        if entries is not None:
+            (self.artifact_root / "artifacts").mkdir(parents=True)
+            for index in range(entries):
+                (self.artifact_root / "artifacts" / f"e{index}").write_bytes(b"x")
+
+    def inspect(self):
+        return inspect_retained_inputs(str(self.manifest), str(self.artifact_root))
+
+    def category(self, record):
+        with self.assertRaises(AdapterBootstrapError) as raised:
+            require_retained_inputs(record)
+        self.assertEqual(raised.exception.stage, "LOAD_FROZEN_MANIFEST")
+        self.assertEqual(raised.exception.failing_callable, "pathlib.Path")
+        return raised.exception.failure_category
+
+    def test_present_manifest_and_artifacts_pass_with_count(self):
+        self.populate(entries=3)
+        record = self.inspect()
+        self.assertEqual(set(record), bm023a_adapter_support.RETAINED_INPUTS_KEYS)
+        self.assertEqual(record["artifact_entry_count"], 3)
+        self.assertIsNone(require_retained_inputs(record))
+
+    def test_missing_manifest_is_distinct(self):
+        self.populate(manifest=False)
+        record = self.inspect()
+        self.assertFalse(record["manifest_present"])
+        self.assertEqual(self.category(record), "retained_manifest_missing")
+
+    def test_manifest_directory_is_treated_as_missing(self):
+        self.populate(manifest=False)
+        self.manifest.mkdir()
+        self.assertEqual(self.category(self.inspect()), "retained_manifest_missing")
+
+    def test_unreadable_manifest_is_distinct(self):
+        self.populate()
+        self.manifest.chmod(0)
+        self.addCleanup(self.manifest.chmod, 0o600)
+        if os.access(self.manifest, os.R_OK):
+            self.skipTest("file permissions are not enforced")
+        record = self.inspect()
+        self.assertTrue(record["manifest_present"])
+        self.assertFalse(record["manifest_readable"])
+        self.assertEqual(self.category(record), "retained_manifest_unreadable")
+
+    def test_empty_artifact_store_is_reported_with_zero_count(self):
+        self.populate(entries=0)
+        record = self.inspect()
+        self.assertTrue(record["artifact_store_present"])
+        self.assertEqual(record["artifact_entry_count"], 0)
+        self.assertEqual(self.category(record), "retained_artifacts_missing")
+
+    def test_absent_artifact_store_is_reported(self):
+        self.populate(entries=None)
+        record = self.inspect()
+        self.assertFalse(record["artifact_store_present"])
+        self.assertEqual(self.category(record), "retained_artifacts_missing")
+
+    def test_manifest_failure_takes_precedence_and_record_keeps_both_facts(self):
+        self.populate(manifest=False, entries=0)
+        record = self.inspect()
+        self.assertEqual(self.category(record), "retained_manifest_missing")
+        self.assertEqual(record["artifact_entry_count"], 0)
+
+    def test_record_contains_only_booleans_and_a_count_and_no_paths(self):
+        self.populate(manifest=False, entries=None)
+        record = self.inspect()
+        for key, value in record.items():
+            self.assertIsInstance(value, (bool, int), key)
+        self.assertNotIn(str(self.root), json.dumps(record))
+        self.assertEqual(
+            inspect_retained_inputs(None, None),
+            {
+                "manifest_present": False, "manifest_readable": False,
+                "artifact_store_present": False, "artifact_store_readable": False,
+                "artifact_entry_count": 0,
+            },
+        )
+
+    def test_failure_payload_for_missing_input_has_no_paths_or_exception_text(self):
+        self.populate(manifest=False)
+        error = None
+        try:
+            require_retained_inputs(self.inspect())
+        except AdapterBootstrapError as raised:
+            error = raised
+        payload = safe_failure_payload("LOAD_FROZEN_MANIFEST", "pathlib.Path", error)
+        self.assertEqual(payload["failure_category"], "retained_manifest_missing")
+        self.assertNotIn(str(self.root), json.dumps(payload))
+
+    def test_file_and_permission_errors_are_safe_error_types(self):
+        for error in (FileNotFoundError("/private/tmp/secret"), PermissionError("/x")):
+            payload = safe_failure_payload("LOAD_FROZEN_MANIFEST", "pathlib.Path", error)
+            self.assertEqual(payload["error_type"], type(error).__name__)
+            self.assertEqual(payload["failure_category"], "path_missing_or_unreadable")
+            self.assertNotIn("/", json.dumps(payload))
+
+    def test_allowlists_cover_every_label_the_adapter_can_emit(self):
+        support = bm023a_adapter_support
+        template = (Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in")
+        sources = {
+            "support": Path(support.__file__).read_text(encoding="utf-8"),
+            "entrypoint": template.read_text(encoding="utf-8"),
+        }
+        import re
+
+        categories = set()
+        stages = set()
+        callables = set()
+        for text in sources.values():
+            for match in re.finditer(
+                r"(?:_bootstrap_error|AdapterBootstrapError)\(\s*"
+                r'("?[A-Za-z_"]+"?),\s*("?[A-Za-z_.\"]+"?),\s*"([a-z_]+)"',
+                text,
+            ):
+                first, second, category = match.groups()
+                categories.add(category)
+                if first.startswith('"'):
+                    stages.add(first.strip('"'))
+                if second.startswith('"'):
+                    callables.add(second.strip('"'))
+            for match in re.finditer(r'\bcategory = "([a-z_]+)"', text):
+                categories.add(match.group(1))
+            for match in re.finditer(r'STAGE = "([A-Z_]+)"', text):
+                stages.add(match.group(1))
+            for match in re.finditer(r'FAILING_CALLABLE = "([A-Za-z_.]+)"', text):
+                callables.add(match.group(1))
+        self.assertTrue({"retained_manifest_missing", "retained_manifest_unreadable",
+                         "retained_artifacts_missing"} <= categories)
+        self.assertLessEqual(categories, support.FAILURE_CATEGORIES)
+        self.assertLessEqual(stages, support.ADAPTER_STAGES)
+        self.assertLessEqual(callables, support.ADAPTER_CALLABLES)
+        self.assertTrue({"FileNotFoundError", "PermissionError"} <= support.SAFE_ERROR_TYPES)
+        self.assertIn("LOAD_FROZEN_MANIFEST", support.ADAPTER_STAGES)
+        for name in ("inspect_retained_inputs", "require_retained_inputs"):
+            self.assertIn(name, sources["entrypoint"])
+
+
 class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
     def test_generated_entrypoint_dispatches_modes_and_initializes_legacy_retry_store(self):
         import importlib
@@ -697,6 +848,9 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             retry_api_available=True,
             preload_frozen_install=False,
             frozen_install_source_matches=True,
+            create_manifest=True,
+            manifest_unreadable=False,
+            artifact_entries=1,
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -737,7 +891,12 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 addons_root.mkdir(parents=True, exist_ok=True)
 
                 manifest_path = root / "reviewed-manifest.json"
-                manifest_path.write_text("{}", encoding="utf-8")
+                if create_manifest:
+                    manifest_path.write_text("{}", encoding="utf-8")
+                    if manifest_unreadable:
+                        manifest_path.chmod(0)
+                        if os.access(manifest_path, os.R_OK):
+                            self.skipTest("file permissions are not enforced")
                 configuration_path = root / "reviewed-configuration.json"
                 configuration_path.write_text("{}", encoding="utf-8")
                 overlay_path = root / "reviewed-overlay.json"
@@ -745,6 +904,8 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 artifact_root = root / "retained-artifacts"
                 if create_retained_source:
                     (artifact_root / "artifacts").mkdir(parents=True)
+                    for index in range(artifact_entries):
+                        (artifact_root / "artifacts" / f"entry-{index}").write_bytes(b"x")
                 durable_root = root / "profile-frozen"
                 durable_artifacts_dir = (
                     durable_root / "frozen-artifacts" / "artifacts"
@@ -1119,8 +1280,8 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             )
             payload, durable_artifacts_initialized = result[0], result[-1]
             self.assertFalse(payload["ok"])
-            self.assertEqual(payload["adapter_stage"], "CHECK_RETRY_PRECONDITIONS")
-            self.assertEqual(payload["failure_category"], "path_missing_or_unreadable")
+            self.assertEqual(payload["adapter_stage"], "LOAD_FROZEN_MANIFEST")
+            self.assertEqual(payload["failure_category"], "retained_artifacts_missing")
             self.assertFalse(durable_artifacts_initialized)
 
         with self.subTest(missing="retry coordinator API"):
@@ -1178,6 +1339,84 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             record = payload["frozen_install_source"]
             self.assertFalse(record["replaced"])
             self.assertEqual(record["sha256_before"], record["sha256_after"])
+
+        expected_records = {
+            "manifest_missing": (
+                {"create_manifest": False},
+                "retained_manifest_missing",
+                {
+                    "manifest_present": False, "manifest_readable": False,
+                    "artifact_store_present": True, "artifact_store_readable": True,
+                    "artifact_entry_count": 1,
+                },
+            ),
+            "manifest_unreadable": (
+                {"manifest_unreadable": True},
+                "retained_manifest_unreadable",
+                {
+                    "manifest_present": True, "manifest_readable": False,
+                    "artifact_store_present": True, "artifact_store_readable": True,
+                    "artifact_entry_count": 1,
+                },
+            ),
+            "artifact_store_empty": (
+                {"artifact_entries": 0},
+                "retained_artifacts_missing",
+                {
+                    "manifest_present": True, "manifest_readable": True,
+                    "artifact_store_present": True, "artifact_store_readable": True,
+                    "artifact_entry_count": 0,
+                },
+            ),
+            "artifact_store_absent": (
+                {"create_retained_source": False},
+                "retained_artifacts_missing",
+                {
+                    "manifest_present": True, "manifest_readable": True,
+                    "artifact_store_present": False, "artifact_store_readable": False,
+                    "artifact_entry_count": 0,
+                },
+            ),
+        }
+        for mode in ("retry", "install"):
+            for name, (options, category, record) in expected_records.items():
+                with self.subTest(mode=mode, retained=name):
+                    result = execute(
+                        mode, precreate_durable_artifacts=(mode != "retry"), **options
+                    )
+                    payload, dispatch, coordinator_calls = result[:3]
+                    self.assertFalse(payload["ok"])
+                    self.assertEqual(payload["adapter_mode"], mode)
+                    self.assertEqual(payload["adapter_stage"], "LOAD_FROZEN_MANIFEST")
+                    self.assertEqual(payload["failing_callable"], "pathlib.Path")
+                    self.assertEqual(payload["failure_category"], category)
+                    self.assertEqual(payload["error_type"], "Exception")
+                    self.assertEqual(payload["retained_inputs"], record)
+                    self.assertEqual(dispatch, {"recover": [], "retry": [], "install": []})
+                    self.assertEqual(coordinator_calls, [])
+                    serialized = json.dumps(payload)
+                    self.assertNotIn("/", serialized)
+                    self.assertNotIn("reviewed-manifest", serialized)
+
+        for mode in ("retry", "install"):
+            with self.subTest(mode=mode, retained="present"):
+                payload = execute(mode, precreate_durable_artifacts=(mode != "retry"))[0]
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["adapter_mode"], mode)
+                self.assertEqual(
+                    payload["retained_inputs"],
+                    {
+                        "manifest_present": True, "manifest_readable": True,
+                        "artifact_store_present": True, "artifact_store_readable": True,
+                        "artifact_entry_count": 1,
+                    },
+                )
+                self.assertNotIn("failure_category", payload)
+
+        with self.subTest(mode="recover", retained="not checked"):
+            payload = execute("recover", create_manifest=False)[0]
+            self.assertTrue(payload["ok"])
+            self.assertNotIn("retained_inputs", payload)
 
 
 class TestBm023aRetainedArtifactStaging(unittest.TestCase):

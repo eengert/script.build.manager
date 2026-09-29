@@ -23,12 +23,14 @@ from adapter_support import (
     AdapterBootstrapError,
     choose_missing_artifact_resolution,
     identify_adapter_result,
+    inspect_retained_inputs,
     parse_adapter_mode,
     recover_frozen_install,
     retry_held_frozen_install,
     safe_failure_payload,
     reject_cached_production_modules,
     repair_frozen_install_source,
+    require_retained_inputs,
     stage_manifest_artifacts,
     verify_build_manager_source,
     verify_frozen_install_source,
@@ -38,6 +40,7 @@ from adapter_support import (
 
 RESULT_PATH = None
 FROZEN_INSTALL_SOURCE_RECORD = None
+RETAINED_INPUTS_RECORD = None
 STAGE = "LOCATE_BUILD_MANAGER"
 FAILING_CALLABLE = "xbmcvfs.translatePath"
 
@@ -98,6 +101,7 @@ def _write_result(payload):
 
 def main():
     global STAGE, FAILING_CALLABLE, RESULT_PATH, FROZEN_INSTALL_SOURCE_RECORD
+    global RETAINED_INPUTS_RECORD
     payload = {"ok": False, "error_type": "not_started"}
     mode = "unselected"
     try:
@@ -216,6 +220,8 @@ def main():
 
             STAGE = "LOAD_FROZEN_MANIFEST"
             FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD)
             manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
             FAILING_CALLABLE = "FrozenBuildManifest.from_json"
             manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
@@ -298,6 +304,8 @@ def main():
 
             STAGE = "LOAD_FROZEN_MANIFEST"
             FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD)
             manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
             FAILING_CALLABLE = "FrozenBuildManifest.from_json"
             manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
@@ -389,6 +397,8 @@ def main():
     payload = identify_adapter_result(payload, mode)
     if FROZEN_INSTALL_SOURCE_RECORD is not None:
         payload["frozen_install_source"] = dict(FROZEN_INSTALL_SOURCE_RECORD)
+    if RETAINED_INPUTS_RECORD is not None:
+        payload["retained_inputs"] = dict(RETAINED_INPUTS_RECORD)
     _write_result(payload)
 
 

@@ -12,7 +12,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.11"
+ADAPTER_VERSION = "0.0.12"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -85,10 +85,21 @@ FAILURE_CATEGORIES = frozenset({
     "source_target_invalid",
     "source_replace_failed",
     "source_reverify_failed",
+    "retained_manifest_missing",
+    "retained_manifest_unreadable",
+    "retained_artifacts_missing",
 })
 SAFE_ERROR_TYPES = frozenset({
     "TypeError", "OSError", "ImportError", "ModuleNotFoundError",
     "ValueError", "RuntimeError", "Exception",
+    "FileNotFoundError", "PermissionError",
+})
+RETAINED_INPUTS_KEYS = frozenset({
+    "manifest_present",
+    "manifest_readable",
+    "artifact_store_present",
+    "artifact_store_readable",
+    "artifact_entry_count",
 })
 
 
@@ -761,6 +772,52 @@ def repair_frozen_install_source(
             pass
         raise _bootstrap_error(stage, callable_name, "source_reverify_failed")
     return {"sha256_before": before, "sha256_after": after, "replaced": True}
+
+
+def inspect_retained_inputs(manifest_path: Any, artifact_root: Any) -> Dict[str, Any]:
+    """Report only booleans and a count about the retained manifest and artifacts."""
+    manifest_present = manifest_readable = False
+    try:
+        manifest = Path(manifest_path)
+        manifest_present = manifest.is_file()
+        if manifest_present:
+            with open(manifest, "rb") as handle:
+                handle.read(1)
+            manifest_readable = True
+    except (TypeError, ValueError, OSError):
+        pass
+
+    store_present = store_readable = False
+    entry_count = 0
+    try:
+        artifacts_dir = Path(artifact_root) / "artifacts"
+        store_present = artifacts_dir.is_dir()
+        if store_present:
+            with os.scandir(artifacts_dir) as entries:
+                entry_count = sum(1 for _ in entries)
+            store_readable = True
+    except (TypeError, ValueError, OSError):
+        entry_count = 0
+    return {
+        "manifest_present": manifest_present,
+        "manifest_readable": manifest_readable,
+        "artifact_store_present": store_present,
+        "artifact_store_readable": store_readable,
+        "artifact_entry_count": entry_count,
+    }
+
+
+def require_retained_inputs(record: Dict[str, Any]) -> None:
+    """Fail with one distinct sanitized category before the manifest is read."""
+    if not record["manifest_present"]:
+        category = "retained_manifest_missing"
+    elif not record["manifest_readable"]:
+        category = "retained_manifest_unreadable"
+    elif not record["artifact_store_present"] or record["artifact_entry_count"] < 1:
+        category = "retained_artifacts_missing"
+    else:
+        return
+    raise _bootstrap_error("LOAD_FROZEN_MANIFEST", "pathlib.Path", category)
 
 
 def verify_production_module_sources(addon_root: Any, modules: Dict[str, ModuleType]) -> None:
