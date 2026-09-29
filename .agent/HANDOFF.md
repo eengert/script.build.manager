@@ -1,3 +1,16 @@
+# Current Handoff - BM-023A recovery identity binding (2026-09-29; lease 8c01966e-7ce0-4657-820a-0f96d5ac7ea1)
+
+**Result:** `RECOVERY_IDENTITY_BOUND; OFFLINE_VALIDATION_PASSED`. Work ID `7f3b6bfc-8763-4098-ab3c-2e303b1305da`. Agent: codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- The checkout already contained intentional edits in `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`; they were preserved. The support module now shares the retry identity helper with recovery. Recover mode loads the retained manifest and compares the durable transaction's manifest path, build ID, manifest fingerprint, configuration manifest path, device profile ID, and private overlay ID to reviewed manifest data and adapter constants before `abandon`. The mismatch category is fixed and sanitized. The temporary adapter is 0.0.13; package member-set coverage remains in place.
+- Adapter tests cover a valid foreign transaction ID with mismatched durable identity, each tuple-field mismatch, absent/malformed transactions, sanitized diagnostics, and the generated entrypoint. A matching identity records exactly one `abandon(acknowledge_restore_failure=False)`; mismatches record zero.
+- Validation: focused adapter tests **78/78**; frozen-install tests **36/36**; full offline suite **1,925/1,925**; `python3 -m compileall -q resources tools tests`; all **7** tracked JSON files parsed; `git diff --check` passed.
+- No commit, Test.app/Kodi/profile/device access, network, LAN, staging, or live recovery was performed. The four product files remain dirty for the separate reviewed-checkpoint process. No user input is required.
+
+Smallest next step: independent review of the exact dirty snapshot and its checkpoint handling.
+
+---
+
 # Current Handoff - BM-023A action retained-input result sanitization (2026-09-28; lease 0b2f87ed-5c45-4412-a1c6-e38d853de09a)
 
 **Result:** `ACTION_RETAINED_INPUTS_ALLOWLIST_UPDATED; FULL_SUITE_SANDBOX_LIMITED`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.

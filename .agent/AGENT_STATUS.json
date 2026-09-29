@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "BM-023A action retained-input sanitization is complete in the granted action worktree; changes remain uncommitted for supervisor review. Focused module passed 15/15. Full action suite ran 428 tests with 3 failures and 41 sandbox/environment errors. No validation action or Test.app access occurred.",
+  "reason": "BM-023A recovery identity binding is implemented in the product worktree; exact dirty snapshot remains uncommitted for independent review. Adapter 78/78, frozen-install 36/36, and full offline suite 1925/1925 passed; compileall, tracked JSON parsing, and diff check passed. No host or network action occurred.",
   "status": "complete",
-  "task": "BM-023A action retained-input result sanitization",
+  "task": "BM-023A recovery transaction identity binding",
   "updated_at": "2026-09-28"
 }

@@ -1,6 +1,16 @@
 # Current Task
 
-## BM-023A action retained-input result sanitization - 2026-09-28
+## BM-023A recovery identity binding - 2026-09-29
+
+**Status:** `COMPLETE_UNCOMMITTED_REVIEW_REQUIRED`. Work ID `7f3b6bfc-8763-4098-ab3c-2e303b1305da`; lease `8c01966e-7ce0-4657-820a-0f96d5ac7ea1`.
+
+Bound the temporary adapter's recovery path to the reviewed six-field durable identity tuple using the helper shared with retry. Recovery reads the retained manifest, compares identity before abandon, and reports only the fixed `recovery_identity_mismatch` category. Adapter version is 0.0.13. Existing changes in four product files were preserved.
+
+Focused adapter tests passed 78/78; frozen-install tests passed 36/36; full offline suite passed 1,925/1,925. Compileall, parsing of 7 tracked JSON files, and `git diff --check` passed. No commit or host/network action. Smallest next step: independent review and reviewed-checkpoint handling. No user input required.
+
+---
+
+## Previous task: BM-023A action retained-input result sanitization - 2026-09-28
 
 **Status:** `COMPLETE_WITH_FULL_SUITE_SANDBOX_FAILURES`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`; lease `0b2f87ed-5c45-4412-a1c6-e38d853de09a`.
 
