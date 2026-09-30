@@ -1,5 +1,15 @@
 # Current Task
 
+## AI-Supervisor BM-023A provenance reconciliation implementation - 2026-09-30
+
+**Status:** `REVIEW_REQUIRED_IMPLEMENTATION_COMPLETE_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `9fb0a2c8-c2df-402b-a6c5-27fb83c4ab41`; lease `9114d27a-c828-46e3-80a7-b817156f0347`.
+
+Finished the provenance-source prevention path, immutable checkpoint-pair reconciliation engine, controller-gated CLI/broker support, documentation, and regression coverage in the granted isolated framework worktree. Focused suites passed **107/107**; full suite ran **828 tests, 1 failure, 45 errors** from process/network/environment restrictions. `compileall` and `git diff --check` passed. Framework changes are intentionally unstaged because the linked worktree index is under the external, read-only common Git directory `/Users/eengert/Documents/Kodi/tools/ai-supervisor/.git/worktrees/ai-supervisor4`.
+
+Smallest next step: independent review the completed dirty framework snapshot, then restore a writable Git metadata path before normal staging/commit. No user input is required.
+
+---
+
 ## AI-Supervisor BM-023A provenance attribution and reconciliation - 2026-09-29
 
 **Status:** `REVIEW_REQUIRED_FRAMEWORK_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `8c5c755b-0155-4a0e-b356-dc4207c708a2`; lease `d00ccfe8-cab3-43da-afde-24ef4351b56a`.
