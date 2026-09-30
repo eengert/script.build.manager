@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Framework semantics require source_work_id to identify the dirty implementation snapshot; the pair names bd30d7e0, a read-only review, while implementation work is 930ce877. The source checkout is clean and supervisor state has no armed checkpoint/queued review, so a corrected pair cannot be generated safely here. Focused tests passed 39/39; diff checks passed. No staging action, Test.app, profile/device access, network, or host action occurred.",
+  "reason": "The prevention fix is implemented and focused tests passed 6/6, but the isolated framework worktree Git metadata resolves to a read-only common .git directory outside the granted writable root. Framework source and initial CLI/controller-broker wiring remain unstaged and uncommitted; the reconciliation engine and full validation were not completed. No Build Manager product files or live targets were changed.",
   "status": "review_required",
-  "task": "BM-023A trusted staging-action provenance reconciliation",
+  "task": "AI-Supervisor BM-023A provenance attribution and reconciliation",
   "updated_at": "2026-09-29"
 }

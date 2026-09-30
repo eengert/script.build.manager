@@ -1,3 +1,15 @@
+# Review Required - Framework Git metadata outside the granted writable scope (2026-09-29; lease d00ccfe8-cab3-43da-afde-24ef4351b56a)
+
+**Result:** `REVIEW_REQUIRED_FRAMEWORK_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `8c5c755b-0155-4a0e-b356-dc4207c708a2`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Root cause identified: autonomy replanning attributes a dirty continuation to the immediate planner source. After an intermediate read-only review, that ID can be the reviewer rather than the workspace-write task that left the dirty snapshot.
+- Prevention implementation and regression tests are saved, uncommitted, in the granted framework worktree `codex/provenance-reconcile` at base `3d5fdb269deb6e50219093d519bfdc9051a844e4`. The change captures and fingerprints completed workspace-write dirt, carries its source work ID across planner replans, revalidates it before checkpoint interposition, and fails closed on snapshot drift. Initial CLI/controller-broker wiring is also present but unvalidated; the reconciliation engine and its tests have not been written.
+- Focused prevention tests passed **6/6**; `git diff --check` passed. The full suite and `compileall` were not run.
+- Staging and commit failed because the worktree Git metadata resolves to `/Users/eengert/Documents/Kodi/tools/ai-supervisor/.git/worktrees/ai-supervisor4/index.lock`, outside the writable grant and explicitly read-only in this sandbox. The framework branch and Build Manager product files were not changed by Git operations; framework source and wiring remain unstaged. No reconciliation was run against the Build Manager repository. No network, host action, Test.app, Kodi, profile, or device access occurred.
+- Smallest next step: supervisor review of the sandbox scope and restoration of a writable isolated Git metadata path for this branch, then resume this same bounded task to inspect/complete the wiring, commit the prevention fix, and implement/test the reconciliation primitive. No user input is required.
+
+---
+
 # Review Required - BM-023A source-work provenance cannot be reconciled from the current checkpoint state (2026-09-29; lease f13b58b9-880e-4393-849f-45bfbf577922)
 
 **Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_UNRECONCILED`. Work ID `ea679b54-87b6-4504-b78f-ffe00c35fc73`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
