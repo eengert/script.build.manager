@@ -1,3 +1,15 @@
+# Review Required - BM-023A staging-action source-work attribution (2026-09-29; lease e9495433-93ab-48b2-89cf-68a89a323a6b)
+
+**Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`. Agent: codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Independently reviewed the intentional two-file diff in the authorized action checkout (`action/bm023a-trusted`, HEAD `5e80f900`). Its pin resolves source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef` and immediate tracking child `733ddbf911e1120e5e359cc2482eb714ca26d195`. Both Git messages carry review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6` and snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`; the source commit changes exactly the three adapter/test paths and the tracking commit only changes `.agent/**`. The adapter version is 0.0.14.
+- **Attribution does not pass review.** The pair's `AI-Supervisor-Source-Work` trailer is `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`. The retained supervisor checkpoint identifies `bd30d7e0` as a read-only review work item whose handoff explicitly says no repository files were changed. The adapter implementation is attributed in `.agent/USAGE_HISTORY.md` and its handoff to `930ce877-b902-4c0f-92bf-5380acfac610`. Thus the commit pair and action pin are exact to each other, but the source-work identity does not identify the implementation task.
+- Focused upgrade/source-binding tests passed **39/39**. The full action suite ran **436** tests: **3 failures, 41 errors**. Forty errors are `PermissionError` in network/loopback policy tests under the offline sandbox; one is an orphaned-process recovery timeout. The three failures are process identity recovery, the configured Codex binary path check, and a synthetic soak cascade after recovery fails. These are outside the two modified adapter-upgrade files. `git diff --check` passed.
+- The prepared action diff remains uncommitted and unchanged. No staging action, Test.app, Kodi/profile/device access, network operation, or host validation action occurred.
+- Smallest next step: have the supervisor reissue or correct the reviewed checkpoint so its source-work ID is the implementation work (`930ce877…`) or provide an auditable reconciliation. Corrected trailers require new source/tracking commit IDs and corresponding action pin/test updates. Then commit the verified two-file action diff through normal Git history to restore a trusted clean action workspace. No user input is required.
+
+---
+
 # Current Handoff - BM-023A stage action pinned to reviewed adapter 0.0.14 (2026-09-29; lease dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe)
 
 **Result:** `PINNED_TO_EXACT_REVIEWED_0_0_14_SOURCE; OFFLINE_TESTED; STAGING_NOT_RUN`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`. Agent: Codex (`GPT-6` runtime label; effort unavailable). Usage readings unavailable per `AGENTS.md`.

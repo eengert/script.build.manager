@@ -1,5 +1,15 @@
 # Current Task
 
+## BM-023A staging-action exact source review - 2026-09-29
+
+**Status:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`; lease `e9495433-93ab-48b2-89cf-68a89a323a6b`.
+
+The prepared action diff exactly pins source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`, adjacent tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`, review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, and snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`. The exact source/tracking path sets and adapter version 0.0.14 match. However, Git attributes the pair to source work `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, which supervisor records identify as a read-only review that made no repository changes; the implementation work is `930ce877-b902-4c0f-92bf-5380acfac610`.
+
+Focused source-binding tests passed 39/39. The offline action suite ran 436 tests with 3 failures and 41 errors; 40 network/loopback errors were sandbox `PermissionError`s, one process recovery timed out, and the failures were process identity recovery, configured Codex binary path, and recovery soak. These are unrelated to the two modified adapter-upgrade files. The action diff remains intentionally uncommitted; no staging, Test.app, network, or host action occurred. Smallest next step: supervisor corrects/reissues source-work attribution, then refresh the action pin from the new reviewed commit pair and commit the verified action diff normally. Usage readings unavailable per AGENTS.md.
+
+---
+
 ## BM-023A fixed staging action pinned to adapter 0.0.14 - 2026-09-29
 
 **Status:** `OFFLINE_REVISION_READY_FOR_REVIEW`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`; lease `dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe`.
