@@ -1,5 +1,15 @@
 # Current Task
 
+## BM-023A staging validator provenance reconciliation gate - 2026-09-30
+
+**Status:** `COMPLETE_OFFLINE_VALIDATOR_AND_TESTS`; real source reconciliation remains absent. Work ID `25bc27a1-c3e1-4fe3-8778-9b7cf90dc4cf`; lease `50ad8d3a-4976-43c3-b78f-416e082f214c`.
+
+The trusted action validator and its tests now bind adapter source selection to the exact canonical reconciliation record, immutable audit ref, original/corrected commit pairs, source/review IDs, snapshot, and retained evidence digests. Existing action-checkout changes were preserved. Focused offline tests passed **46/46** and `git diff --check` passed. A synthetic reconciliation fixture was used because no real `.ai/checkpoints` record/ref existed when inspected; production continues to fail closed until the supervisor creates it. No action staging or Test.app access occurred.
+
+Smallest next step: supervisor creates the exact immutable reconciliation record and reviews this action change before any separately authorized host validation.
+
+---
+
 ## AI-Supervisor BM-023A provenance reconciliation implementation - 2026-09-30
 
 **Status:** `REVIEW_REQUIRED_IMPLEMENTATION_COMPLETE_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `9fb0a2c8-c2df-402b-a6c5-27fb83c4ab41`; lease `9114d27a-c828-46e3-80a7-b817156f0347`.

@@ -1,3 +1,15 @@
+# Complete - BM-023A staging validator checks immutable provenance reconciliation (2026-09-30; lease 50ad8d3a-4976-43c3-b78f-416e082f214c)
+
+**Result:** `COMPLETE_OFFLINE_VALIDATOR_AND_TESTS`. Work ID `25bc27a1-c3e1-4fe3-8778-9b7cf90dc4cf`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Updated only the existing dirty validator and test files in the authorized action checkout: `ai_supervisor/bm023a_adapter_upgrade.py` and `tests/test_bm023a_adapter_upgrade.py`. Existing work was preserved and extended in place; nothing was staged or committed.
+- The validator pins the original source/tracking/base commits, original misattributed source ID, corrected implementation source ID, review ID, snapshot, repository, and branch. It accepts the corrected substantive commit only when the canonical reconciliation file matches its create-only `refs/ai-supervisor/review-provenance/<id>` target, the audit commit has the exact tree/parent/message, corrected commits preserve original trees/authors/ancestry with only the source-work trailer corrected, and all three retained evidence files match their recorded SHA-256 and work/snapshot semantics. The ref is re-read after verification.
+- Added synthetic Git-record coverage for successful acceptance and fail-closed missing record/ref, mismatched original/corrected identity or snapshot, altered record, and altered evidence cases. Focused offline suite `python3 -m unittest tests.test_bm023a_adapter_upgrade`: **46/46 passed**. `git diff --check`: passed.
+- The actual reconciliation record and `refs/ai-supervisor/review-provenance/*` ref were absent from the supervised source checkout and supervisor `.ai/checkpoints` when inspected. The tested record is a synthetic fixture; the production validator remains fail-closed until the supervisor creates the exact record for this source pair. No host validation action was requested, no staging occurred, and Test.app was not accessed.
+- Smallest next step: supervisor creates the immutable reconciliation for the original pair using the retained source implementation/review evidence, then reviews the exact record-bound validator diff before any separately authorized host staging action. No user input is required.
+
+---
+
 # Review Required - BM-023A provenance reconciliation implementation complete (2026-09-30; lease 9114d27a-c828-46e3-80a7-b817156f0347)
 
 **Result:** `REVIEW_REQUIRED_IMPLEMENTATION_COMPLETE_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `9fb0a2c8-c2df-402b-a6c5-27fb83c4ab41`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
