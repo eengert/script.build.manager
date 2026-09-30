@@ -1,3 +1,15 @@
+# Review Required - BM-023A source-work provenance cannot be reconciled from the current checkpoint state (2026-09-29; lease f13b58b9-880e-4393-849f-45bfbf577922)
+
+**Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_UNRECONCILED`. Work ID `ea679b54-87b6-4504-b78f-ffe00c35fc73`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- The deployed framework semantics make the attribution material. `README.md`'s reviewed-worker-checkpoint procedure says `source_work_id` identifies the work whose dirty snapshot is reviewed; `review_checkpoint.py` stores `source_work_id` separately from `review_work_id` and writes those values to separate trailers. Retained worker evidence identifies `930ce877-b902-4c0f-92bf-5380acfac610` as the adapter implementation and `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce` as a read-only review with no repository changes. Therefore `bd30d7e0` is not a valid source-work attribution for this implementation snapshot.
+- The existing source pair is otherwise exact: substantive `bdfb916976a8b141b8925a328ef8b1af21da1fef`, adjacent tracking `733ddbf911e1120e5e359cc2482eb714ca26d195`, checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`, expected three source paths, adapter 0.0.14. The supervised branch is clean at `e75cccdbc2687c9e882238cb6a6fd1779489ea5b`; the trusted action branch is `action/bm023a-trusted` at `5e80f900f9f16f3578f6418b4f2cc393ca4f2859` with only the prepared adapter-upgrade module and test modified.
+- A corrected pair cannot be produced safely from this lease's current state: the source worktree is already clean and supervisor state has no armed `review_checkpoint` or queued review. The framework checkpoint path commits only the currently reviewed dirty paths. Rewriting the existing trailers or creating a hand-authored replacement would violate the history/provenance rules. The action diff is intentionally preserved and uncommitted.
+- Validation: focused action source-binding tests **39/39 passed** in 131.754 seconds; `git diff --check` passed in both worktrees. No staging action, Test.app, Kodi/profile/device access, network operation, or host validation action occurred.
+- Smallest next step: the supervisor/control plane must add or issue an immutable, framework-generated provenance reconciliation keyed to the exact source commit, tracking child, checkpoint, and snapshot. It must bind source work `930ce877-b902-4c0f-92bf-5380acfac610` separately from reviewer `01825057-69fc-45ac-8ddc-910ee126d3a6`, cite the retained implementation/review evidence, and preserve the old commits. The action validator can then bind to that reconciliation and unchanged source pair before its diff is committed. No user input is required.
+
+---
+
 # Review Required - BM-023A staging-action source-work attribution (2026-09-29; lease e9495433-93ab-48b2-89cf-68a89a323a6b)
 
 **Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`. Agent: codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.

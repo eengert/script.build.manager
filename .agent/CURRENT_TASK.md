@@ -1,5 +1,17 @@
 # Current Task
 
+## BM-023A trusted staging-action provenance reconciliation - 2026-09-29
+
+**Status:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_UNRECONCILED`. Work ID `ea679b54-87b6-4504-b78f-ffe00c35fc73`; lease `f13b58b9-880e-4393-849f-45bfbf577922`.
+
+Framework documentation and implementation define `source_work_id` as the task whose dirty snapshot is reviewed, with the reviewer represented separately. The retained evidence identifies `930ce877-b902-4c0f-92bf-5380acfac610` as the adapter implementation and `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce` as a read-only review that changed no repository files. The committed pair therefore has invalid source attribution even though its source commit, tracking child, checkpoint, snapshot, three-file diff, and 0.0.14 version match the prepared action pin.
+
+Focused action source-binding tests passed **39/39** in 131.754 seconds; both `git diff --check` runs passed. The supervised checkout is product-clean at `e75cccdbc2687c9e882238cb6a6fd1779489ea5b`. Action checkout HEAD is `5e80f900f9f16f3578f6418b4f2cc393ca4f2859`; its intentional two-file diff remains uncommitted. No staging, Test.app, profile/device, network, or host action occurred.
+
+The current supervisor state has no armed checkpoint or queued review, and the framework commits currently dirty reviewed paths. Do not rewrite the old pair or hand-author a replacement. Smallest next step: supervisor/control plane provides an immutable framework-generated provenance reconciliation keyed to the exact source commit, tracking child, checkpoint, and snapshot; it must bind source work `930ce877-b902-4c0f-92bf-5380acfac610` separately from reviewer `01825057-69fc-45ac-8ddc-910ee126d3a6` and cite retained implementation/review evidence. The action validator can then consume that record and the unchanged pair. Usage readings unavailable per `AGENTS.md`.
+
+---
+
 ## BM-023A staging-action exact source review - 2026-09-29
 
 **Status:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`; lease `e9495433-93ab-48b2-89cf-68a89a323a6b`.
