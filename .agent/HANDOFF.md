@@ -1,3 +1,17 @@
+# Complete - stage-source preflight tolerates .agent-only reconcile commits (2026-10-01; work f36d808f-a174-4d8f-8f5f-ba2efa7bafdd)
+
+- `tools/check_bm023a_stage_source.py`: a commit whose trailers are exactly `AI-Supervisor-Part: tracking` + `AI-Supervisor-Tracking-Reconcile: v1` and which changes only `.agent/**` is passed during the walk (never counts as the tracking half of a pair). Reconcile commit touching product paths -> `reconcile_product_commit`; malformed/extra reconcile trailers -> `checkpoint_metadata_incomplete`; substantive lacking the four trailers still fails closed; product drift after the source still reports `product_changes_after_source`/`untrailered_product_commit`.
+- Tests: 6 new cases in `tests/test_check_bm023a_stage_source.py`; module run: 24 tests OK (slow, ~145s, machine under load). Full suite not run (directive: focused only).
+- Checker against a clean clone of HEAD (559d746) with `--expected-version 0.0.14`: ok, source bdfb916, ADAPTER_VERSION 0.0.14, no product changes. In the working tree it reports `uncommitted_product_changes` only because these edits are not yet committed (correct fail-closed). Expected driver version is 0.0.14 (0.0.13 was stale).
+- Not done: no named action invoked (bm023a-recover not repeated); Test.app, transaction and lock files untouched; nothing committed.
+
+## Trusted adapter (outside this worktree; NOT edited)
+
+Path: `/Users/eengert/Documents/Kodi/tools/ai-supervisor/ai_supervisor/bm023a_adapter_upgrade.py` (identical copies exist in sibling `tools/ai-supervisor-*/` trees).
+`_checkpoint_metadata` (line ~42) requires all four trailers and raises `reviewed source checkpoint metadata is incomplete` for reconcile commits, so the real adapter will still reject this lineage even though the preflight now passes. Minimal change: in `_checkpoint_metadata`, accept a message whose trailers are exactly `AI-Supervisor-Part: tracking` + `AI-Supervisor-Tracking-Reconcile: v1` (no duplicates, no other trailers) and return a marker (e.g. `{'part': 'tracking', 'reconcile': 'v1'}`); in the walk (~lines 163-200) treat such a commit as pass-through only if all its paths satisfy `_is_tracking_path`, without setting `child_tracking_metadata` (reset to None) and without counting it toward `_MAX_TRACKING_COMMITS` pair logic beyond the existing bound. Keep substantive and pair commits requiring the full four trailers.
+
+Next step: commit these two files, then have the controller apply the adapter change above.
+
 # Complete - sanitized failure-stage codes for bm-test-app-relaunch (2026-10-01; lease c1edcaab-6d82-47ff-99f7-4e2ebac376a4)
 
 **Result:** `COMPLETE_FRAMEWORK_FAILURE_STAGES_ADDED_UNCOMMITTED_PER_SECONDARY_GIT_POLICY`. Work ID `15993eba-0af4-44a9-a9fd-37a22ac0bffa`. Agent: Claude (`claude-sonnet-5-5`, high). Usage readings unavailable per `AGENTS.md`.
