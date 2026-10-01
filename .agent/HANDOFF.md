@@ -1,3 +1,25 @@
+# Review Required - BM-023A Test.app relaunch refused again (2026-09-30; lease 9f49c96e-9afa-4daf-92e4-7e5239332565)
+
+**Result:** `REVIEW_REQUIRED_RELAUNCH_REFUSED_NO_LAUNCH_BINDING`. Work ID `0aca9bde-4903-4866-ba79-4d0f8e16af80`. Agent: Claude (`claude-sonnet-5-5`). Usage readings unavailable per `AGENTS.md`.
+
+- `validation-action --action bm-test-app-relaunch` run exactly once. Sanitized result: `ok:false`, `error_type=ValidationActionError`, `error="secondary workspace lacks trusted launch-time filesystem binding for this action"`. This is the same refusal as the earlier attempt. The action did not run, so Test.app was not quit or relaunched.
+- Not done, per directive: no retry, no `bm023a-stage-adapter`/install/recover/restore-config, no LAN reads, no file edits other than this note, no Kodi.app or real-profile access. Driver rescan is unconfirmed; the last readback was still 0.0.13 (stage reported 0.0.14).
+- Smallest next step: controller fixes the launch-time filesystem binding for the `bm023a-actions` secondary root for this action (internal supervisor configuration), then reissues the relaunch directive. No user input required.
+
+---
+
+# Review Required - BM-023A stage action ran; Kodi still reports driver 0.0.13 (2026-09-30; lease a7881ee8-5dec-47de-8483-7e05d186cbab)
+
+**Result:** `REVIEW_REQUIRED_STAGE_OK_BUT_LAN_READBACK_STALE`. Work ID `dd6b20fe-9dbf-4dcd-beb7-cead8dfc692f`. Agent: Claude (`claude-sonnet-5-5`). Usage readings unavailable per `AGENTS.md`.
+
+- Preflight (lan-read, `test-app-kodi`): `Addons.GetAddonDetails` driver `script.build.manager.bm023a_driver` 0.0.13, enabled. `Application.GetProperties` (version only, per policy) responded Kodi 21.3 stable. The policy permits no richer identity read, so portable-app identity was not independently confirmed beyond the alias binding. Frozen-transaction existence is not observable through the permitted RPC methods; recorded as unknown. Kodi.app and `~/Library/Application Support/Kodi` were not accessed.
+- `bm023a-stage-adapter` run exactly once: `ok:true`, `action=bm023a-stage-adapter`, `version_before=0.0.13`, `version_after=0.0.14` (matches pinned module), `already_current:false`, `files_verified:5`, `reviewed_source=97bd1bad477d06e42349d95e3583fd38cdefc63b`, return_code 0.
+- Post-action lan-read re-read of the installed driver version: still **0.0.13**. Likely Kodi's add-on database has not rescanned the replaced files (no relaunch/rescan permitted here), but this is unconfirmed. Stopped per directive on contradictory evidence; no retry, no install/recover/retry/restore-config/relaunch, no code changes.
+- Smallest next step: controller decides how to confirm the on-disk 0.0.14 (for example a separately authorized rescan/relaunch, then a lan-read re-check). No user input required.
+- No commits made.
+
+---
+
 # Review Required - BM-023A stage directive contradicts pinned driver version (2026-09-30)
 
 **Result:** `REVIEW_REQUIRED_DIRECTIVE_VERSION_MISMATCH`. Work ID `2ca0f0a4-c52c-4a18-b26e-3323226fb30d`; lease `85bd8af6-4a07-4479-8e73-dc0c151891d4`. Observed launch profile: Codex `gpt-6.1-sol`, `medium`.
