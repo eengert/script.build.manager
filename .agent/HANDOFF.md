@@ -1,3 +1,17 @@
+# Review Required - BM-023A stage directive contradicts pinned driver version (2026-09-30)
+
+**Result:** `REVIEW_REQUIRED_DIRECTIVE_VERSION_MISMATCH`. Work ID `2ca0f0a4-c52c-4a18-b26e-3323226fb30d`; lease `85bd8af6-4a07-4479-8e73-dc0c151891d4`. Observed launch profile: Codex `gpt-6.1-sol`, `medium`.
+
+- Read AGENTS.md, current handoff, and supervisor state in the required order. Primary checkout `agent/supervised-codex`, HEAD `d2d1344`, and secondary checkout were clean before tracking updates. Existing work was preserved.
+- Live read-only health was evaluated using the deployed framework's `validation_action_health(config, all_configured=True, work=current_work)`, with the current work's trusted secondary filesystem binding. Exact sanitized action evidence: `name=bm023a-stage-adapter`, `configured_head=0584f4c18667224981d8fccce39309ec9677fd92`, `actual_head=0584f4c18667224981d8fccce39309ec9677fd92`, `clean=true`, `healthy=true`, `error=null`, `git_trust=launch_binding`. The retained planner-only binding error does not describe this live bound check.
+- Blocking contradiction: the directive authorizes staging and verifying driver **0.0.9**. Configured action command is `/usr/local/bin/python3 -m ai_supervisor.bm023a_adapter_upgrade`; the exact pinned module defines `_PINNED_ADAPTER_VERSION = '0.0.14'`, checks the builder against that version, and returns `version_after=expected_version`. Its staging result contract contains `action=bm023a-stage-adapter`, not `adapter_mode=stage`. Invoking this action cannot satisfy the requested 0.0.9 version/result contract. Stopped before mutation rather than substituting versions or inventing mode evidence.
+- Checks permitted/performed: clean Git status and recent commit/diff inspection; bound live action health (passed); static version/result-contract inspection. No unit/full suite was run: this bounded directive permits preflight/staging evidence only and forbids code fixes. No behavior changed.
+- Initial `status --json` diagnostic resolved an unrelated default project and failed with sandbox PermissionError before producing status; it was not used as health evidence. The subsequent read-only bound health check above succeeded without changing configuration/state.
+- Not done: **zero** named action invocations, no Test.app/LAN preflight, no installed-driver or fresh adapter result verification, no retry/install/recover, no product or secondary source edits, no staging/commits/push, no Kodi.app/real-profile/Apple TV access. Only primary `.agent` tracking files updated.
+- Smallest next step: controller internally reconciles the directive's 0.0.9 / `adapter_mode=stage` expectations with the reviewed pinned action's 0.0.14 / staging result contract, then issues a consistent bounded directive. No personal user decision or new authority is required for this technical evidence review.
+
+---
+
 # Complete - controller-gated dirty_source attestation retention command (2026-09-30; lease 4a162d5d-2d3f-4242-9760-941891df7381)
 
 **Result:** `COMPLETE_FRAMEWORK_COMMAND_ADDED_COMMITTED_LOCAL`. Work ID `d4d83ef6-bb04-415d-b1d7-641a4c3ca1c0`. Agent: Claude (`claude-sonnet-5-5`, high). Usage readings unavailable per `AGENTS.md`.

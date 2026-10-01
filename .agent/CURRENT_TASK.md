@@ -1,5 +1,13 @@
 # Current Task
 
+## BM-023A staging version contradiction - 2026-09-30
+
+**Status:** `REVIEW_REQUIRED_DIRECTIVE_VERSION_MISMATCH`. Work ID `2ca0f0a4-c52c-4a18-b26e-3323226fb30d`; lease `85bd8af6-4a07-4479-8e73-dc0c151891d4`.
+
+Bound live action health passed with clean pinned HEAD 0584f4c and launch_binding. Directive requests driver 0.0.9 and adapter_mode=stage; configured pinned action stages 0.0.14 and reports action/version_after. No LAN/device access or action invocation occurred. Controller must reconcile the technical contract before staging. No user input required.
+
+---
+
 ## BM-023A staging validator provenance reconciliation gate - 2026-09-30
 
 **Status:** `COMPLETE_OFFLINE_VALIDATOR_AND_TESTS`; real source reconciliation remains absent. Work ID `25bc27a1-c3e1-4fe3-8778-9b7cf90dc4cf`; lease `50ad8d3a-4976-43c3-b78f-416e082f214c`.

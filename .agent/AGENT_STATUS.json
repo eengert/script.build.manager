@@ -3,8 +3,8 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "The trusted BM-023A staging validator and focused tests now verify the exact immutable provenance reconciliation record, corrected commit pair, and evidence binding. Focused offline suite passed 46/46 and diff check passed. No real reconciliation record/ref was present, so production stays fail-closed pending supervisor creation and review. No staging or Test.app access occurred.",
-  "status": "complete",
-  "task": "BM-023A staging validator provenance reconciliation gate",
-  "updated_at": "2026-09-30"
+  "reason": "Bound live health passed; directive requires 0.0.9 and adapter_mode=stage, but pinned action stages 0.0.14 and reports action/version_after. Zero action invocations or LAN/device access. Controller technical contract reconciliation required.",
+  "status": "review-required",
+  "task": "BM-023A staging version contradiction",
+  "updated_at": "2026-09-30T22:58:06-04:00"
 }
