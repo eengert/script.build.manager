@@ -2,7 +2,8 @@
 
 Replicates the trusted stage adapter's checkpoint-pair selection: a bounded
 first-parent walk from HEAD passes tracking checkpoints (and, additionally,
-commits with no supervisor trailers that change only ``.agent/**``) until it
+commits with no supervisor trailers, or only the ``Part: tracking`` +
+``Tracking-Reconcile: v1`` reconcile trailers, that change only ``.agent/**``) until it
 reaches the nearest ``AI-Supervisor-Part: substantive`` checkpoint, whose
 immediate child must be a ``tracking`` checkpoint with the same
 Review-Checkpoint, Source-Work and Snapshot trailers. Reports the commit and
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +34,10 @@ TRAILER_PREFIXES = {
     "snapshot": "AI-Supervisor-Snapshot:",
     "part": "AI-Supervisor-Part:",
 }
+RECONCILE_PREFIX = "AI-Supervisor-Tracking-Reconcile:"
+RECONCILE_VALUE = "v1"
+TRAILER_FAMILY = "AI-Supervisor-"
+KNOWN_PREFIXES = dict(TRAILER_PREFIXES, reconcile=RECONCILE_PREFIX)
 PAIR_KEYS = ("review", "source", "snapshot")
 SUPPORT_PATH = "tools/bm023a_adapter_support.py"
 TRACKING_PREFIX = ".agent/"
@@ -49,11 +55,15 @@ class StageSourceError(RuntimeError):
 
 
 def _git(root: Path, *args: str) -> str:
+    # Like the trusted adapter, walk the true object graph: replace refs must
+    # not be able to substitute or re-parent the commits being validated.
+    environment = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
     try:
         return subprocess.check_output(
             ["git", "-C", str(root), *args],
             text=True,
             stderr=subprocess.DEVNULL,
+            env=environment,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise StageSourceError("git_unavailable") from exc
@@ -67,19 +77,41 @@ def _rev(root: Path, spec: str) -> Optional[str]:
 
 
 def checkpoint_metadata(root: Path, commit: str) -> Dict[str, str]:
-    """Parse supervisor trailers exactly as the trusted adapter does."""
+    """Parse supervisor trailers exactly as the trusted adapter does.
+
+    One value per semantic key: a repeated key, identical or conflicting, makes
+    the commit's identity ambiguous and fails closed instead of letting the
+    last line win. A family line that matches no known key is recorded as
+    ``unrecognized`` so the commit can never be mistaken for an untrailered one.
+    """
     message = _git(root, "show", "-s", "--format=%B", commit)
     values: Dict[str, str] = {}
     for line in message.splitlines():
         stripped = line.strip()
-        for key, prefix in TRAILER_PREFIXES.items():
+        if not stripped.startswith(TRAILER_FAMILY):
+            continue
+        for key, prefix in KNOWN_PREFIXES.items():
             if stripped.startswith(prefix):
+                if key in values:
+                    raise StageSourceError("checkpoint_metadata_ambiguous")
                 values[key] = stripped[len(prefix):].strip()
+                break
+        else:
+            values["unrecognized"] = stripped
     return values
 
 
 def _complete(meta: Dict[str, str]) -> bool:
     return all(meta.get(key) for key in TRAILER_PREFIXES)
+
+
+def _is_reconcile(meta: Dict[str, str]) -> bool:
+    """Exactly ``Part: tracking`` + ``Tracking-Reconcile: v1`` and nothing else."""
+    return (
+        set(meta) == {"part", "reconcile"}
+        and meta["part"] == "tracking"
+        and meta["reconcile"] == RECONCILE_VALUE
+    )
 
 
 def declared_adapter_version(root: Path, commit: str) -> Optional[str]:
@@ -158,6 +190,16 @@ def select_stage_source(root: Path) -> str:
                 raise StageSourceError("untrailered_product_commit")
             child_tracking = None
             continue
+        if _is_reconcile(meta):
+            # ``.agent``-only reconcile commits carry no pair ids, so like
+            # untrailered ``.agent`` commits they are passed but never pair.
+            if not paths or not all(_is_tracking_path(path) for path in paths):
+                raise StageSourceError("reconcile_product_commit")
+            child_tracking = None
+            continue
+        if "reconcile" in meta and _complete(meta):
+            # Pair ids next to a reconcile marker: ambiguous classification.
+            raise StageSourceError("checkpoint_metadata_ambiguous")
         if not _complete(meta):
             raise StageSourceError("checkpoint_metadata_incomplete")
         if meta["part"] == "tracking":
@@ -182,8 +224,12 @@ def nearest_substantive(root: Path, head: str) -> Optional[str]:
         root, "rev-list", "--first-parent", f"--max-count={MAX_ANCESTOR_WALK}", head,
     )
     for commit in output.split():
-        meta = checkpoint_metadata(root, commit)
-        if _complete(meta) and meta["part"] == "substantive":
+        try:
+            meta = checkpoint_metadata(root, commit)
+        except StageSourceError:
+            # Diagnostics only: an ambiguous commit is never a candidate source.
+            continue
+        if _complete(meta) and meta["part"] == "substantive" and "reconcile" not in meta:
             return commit
     return None
 
