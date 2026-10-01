@@ -1,3 +1,15 @@
+# Review Required - BM-023A named Test.app relaunch failed (2026-10-01)
+
+**Result:** `REVIEW_REQUIRED_TEST_APP_RELAUNCH_FAILED`. Work ID `498f8cb5-faf0-4861-8c62-7796e693dab5`; lease `e035a6e3-74a0-40ff-b2ad-4fe7ce66d392`. Observed launch profile: Codex `gpt-6.1-sol`, `low`.
+
+- Read required context in order; inspected Git status, recent commits and latest commit summary. Checkout `agent/supervised-codex`, HEAD `b7c790a`, initially clean; existing work preserved.
+- Invoked authorized `bm-test-app-relaunch` exactly once. Sanitized broker result: `ok=false`, `error_type=ValidationActionFailed`, `error="validation action returned structured failure structured_failure"`, `failure_category=structured_failure`, `return_code=1`, `retry_allowed=false`, `cancelled=false`, `timed_out=false`, empty stderr. Action stdout: `{"action":"bm-test-app-relaunch","error":"authorized Test.app relaunch failed","error_type":"TestAppRelaunchError","ok":false}`.
+- Relaunch completion is not live-proven. Stopped on the action failure per directive; no LAN verification, so driver 0.0.14 visibility remains unconfirmed. No retry, stage/install/recover/restore-config, normal Kodi/profile or real-device access.
+- Only this mandated durable handoff updated; no product/action-worktree edits, other tracking edits, commits, or tests. Full suite not run because this bounded directive permits only the named action and subsequent authorized read. Usage start/end/delta unavailable per AGENTS.md.
+- Smallest next step: controller reviews the exact sanitized TestAppRelaunchError and resolves the internal relaunch prerequisite before issuing further bounded work. No personal user input required.
+
+---
+
 # Review Required - BM-023A Test.app relaunch refused again (2026-09-30; lease 9f49c96e-9afa-4daf-92e4-7e5239332565)
 
 **Result:** `REVIEW_REQUIRED_RELAUNCH_REFUSED_NO_LAUNCH_BINDING`. Work ID `0aca9bde-4903-4866-ba79-4d0f8e16af80`. Agent: Claude (`claude-sonnet-5-5`). Usage readings unavailable per `AGENTS.md`.
