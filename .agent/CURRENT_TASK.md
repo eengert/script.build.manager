@@ -1,3 +1,13 @@
+# Current Task - retrospective secondary checkpoint correction
+
+**Status:** `REVIEW_REQUIRED_SECONDARY_FRAMEWORK_BASELINE_RECONCILIATION`. Work `24f77347-f206-473c-bb80-da8b3bc02be9`; lease `fc95c3a8-9a8d-4901-b0ee-6811575b4338`.
+
+Required a004294 framework baseline is clean but lacks production native secondary capture/apply, trusted Git guards, and workspace-bound snapshot identity. Production cb32c8e has them; branches diverge at 3d5fdb2. No implementation changes or tests were made. Exact historical bridge security PASS and unchanged four hashes verified from retained reviewer transcript; product and action candidates preserved.
+
+Next: controller reconciles the framework source baseline and exact launch grant before reassigning this bounded correction. No personal user input required. Prior evidence and full details are in HANDOFF.md.
+
+---
+
 # Current Task - BM-023A trusted status bridge
 
 **Status:** `COMPLETE_OFFLINE_BRIDGE_AWAITING_INDEPENDENT_SECURITY_REVIEW`. Work `371ccdcd-d98f-4047-a84d-a23552cdddb9`; lease `b25a4ac1-79c7-495d-9a0d-55a93d299d48`.
