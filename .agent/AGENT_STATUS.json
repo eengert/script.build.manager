@@ -3,8 +3,11 @@
   "last_commit": null,
   "matrix_sha": "9086ad3955ffe3caf652c98612b56dbc9e5b010a",
   "next_agent": "supervisor",
-  "reason": "Bound live health passed; directive requires 0.0.9 and adapter_mode=stage, but pinned action stages 0.0.14 and reports action/version_after. Zero action invocations or LAN/device access. Controller technical contract reconciliation required.",
-  "status": "review-required",
-  "task": "BM-023A staging version contradiction",
-  "updated_at": "2026-09-30T22:58:06-04:00"
+  "reason": "Offline candidate complete; focused 110/110, full 1971/1971. Await separately armed independent exact-snapshot review; no review or stageability claimed.",
+  "status": "complete",
+  "task": "BM-023A source-lineage recovery and two defect corrections",
+  "updated_at": "2026-10-03T12:02:38+00:00",
+  "work_id": "c3dfd26d-a136-4c45-8108-59537611b139",
+  "lease_id": "6b09ed20-4208-4f80-8015-a0d177393145",
+  "base_head": "3f8f89024b033cca23f5c3e692bf062a36d1e25c"
 }

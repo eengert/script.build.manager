@@ -1,3 +1,13 @@
+# Current Task - BM-023A source-lineage recovery (2026-10-03)
+
+**Status:** `COMPLETE_OFFLINE_CANDIDATE_AWAITING_SEPARATE_REVIEW`. Work ID `c3dfd26d-a136-4c45-8108-59537611b139`; lease `6b09ed20-4208-4f80-8015-a0d177393145`.
+
+Reproduced exactly the four authorized product changes from the preserved read-only checkout at base `3f8f89024b033cca23f5c3e692bf062a36d1e25c`; corrected only finite status-code sanitization and nonblocking regular-record reads. Focused tests 110/110; full offline suite 1971/1971; diff check passed. Candidate remains uncommitted on `agent/beta-recovery`; no review/stageability claim or live validation.
+
+Next: separately armed independent exact-snapshot review of this new source work. No human input required. See HANDOFF.md for lineage, hashes and limitations.
+
+---
+
 # Current Task
 
 ## BM-023A staging version contradiction - 2026-09-30
