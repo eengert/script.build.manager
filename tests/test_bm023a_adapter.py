@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import ast
+import fcntl
 import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,10 +21,20 @@ from types import SimpleNamespace
 
 from resources.lib.artifacts import ArtifactStore
 from resources.lib.frozen import FrozenBuildManifest
-from resources.lib.frozen_install import FrozenInstallCoordinator
+from resources.lib.frozen_install import (
+    FrozenInstallCoordinator,
+    FrozenInstallPhase,
+    FrozenInstallTransaction,
+    FrozenLifecycleStage,
+)
+from resources.lib.build_manager import ReconcileRequest
+from resources.lib.restart import RestartRequirement
+from resources.lib.transaction import RestartTransaction, TransactionPhase
+from resources.lib.update_guard import AddonUpdatePolicy
 from tools import bm023a_adapter_support
 from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
+    STATUS_KEYS,
     AdapterBootstrapError,
     choose_missing_artifact_resolution,
     identify_adapter_result,
@@ -32,6 +46,7 @@ from tools.bm023a_adapter_support import (
     stage_manifest_artifacts,
     verify_build_manager_source,
     inspect_retained_inputs,
+    read_adapter_status,
     repair_frozen_install_source,
     require_retained_inputs,
     verify_frozen_install_source,
@@ -454,7 +469,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.14")
+            self.assertEqual(ADAPTER_VERSION, "0.0.15")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -499,7 +514,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.14"', addon_xml)
+            self.assertIn('version="0.0.15"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -2325,3 +2340,644 @@ class TestBm023aHeldRetryAdapter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SECRET = "PRIVATE-SENTINEL-4f9c"
+FROZEN_ID = "33333333-3333-4333-8333-333333333333"
+RESTART_ID = "44444444-4444-4444-8444-444444444444"
+SESSION = "55555555-5555-4555-8555-555555555555"
+
+
+def _frozen_transaction(**changes):
+    values = dict(
+        transaction_id=FROZEN_ID,
+        build_id=SECRET + "-build",
+        manifest_path="/" + SECRET + "/manifest.json",
+        device_profile_id=SECRET + "-profile",
+        manifest_fingerprint="a" * 64,
+        phase=FrozenInstallPhase.NEEDS_ATTENTION,
+        originating_kodi_session_id=SESSION,
+        original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+        created_at="2026-09-21T00:00:00Z",
+        updated_at="2026-09-21T00:00:00Z",
+        status_code="FROZEN_MANIFEST_INVALID",
+        status_message=SECRET + " message",
+        restart_transaction_id=RESTART_ID,
+        configuration_manifest_path="/" + SECRET + "/configuration.json",
+        lifecycle_stage=FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+        activation_hold_ids=("plugin.video.redlight", "plugin.private." + SECRET),
+        activation_hold_released=False,
+        lifecycle_restart_count=1,
+        private_overlay_id=SECRET + "-overlay",
+        private_overlay_required=True,
+    )
+    values.update(changes)
+    return FrozenInstallTransaction(**values)
+
+
+def _restart_transaction(**changes):
+    values = dict(
+        transaction_id=RESTART_ID,
+        phase=TransactionPhase.NEEDS_ATTENTION,
+        request=ReconcileRequest(
+            manifest_path="/" + SECRET + "/manifest.json",
+            device_profile_id=SECRET + "-profile",
+        ),
+        desired_state_fingerprint="sha256:" + "b" * 64,
+        restart_requirement=RestartRequirement.KODI_RESTART,
+        originating_kodi_session_id=SESSION,
+        restart_attempt_count=2,
+        created_at="2026-09-21T00:00:00Z",
+        updated_at="2026-09-21T00:00:00Z",
+        status_code="PREVIEW_FAILED",
+        status_message=SECRET + " restart message",
+    )
+    values.update(changes)
+    return RestartTransaction(**values)
+
+
+def _tree_snapshot(root: Path):
+    snapshot = {}
+    for path in sorted(root.rglob("*")):
+        info = path.lstat()
+        snapshot[str(path.relative_to(root))] = (
+            None if path.is_dir() else path.read_bytes(),
+            info.st_mtime_ns,
+            info.st_ino,
+            info.st_size,
+        )
+    return snapshot
+
+
+class TestBm023aStatusMode(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.frozen_path = self.root / "frozen_install_transaction.json"
+        self.frozen_lock = self.root / "frozen_install_transaction.lock"
+        self.restart_path = self.root / "restart_transaction.json"
+        self.restart_lock = self.root / "restart_transaction.lock"
+
+    def read(self):
+        return read_adapter_status(
+            self.frozen_path, self.frozen_lock, self.restart_path, self.restart_lock,
+            FrozenInstallTransaction.from_dict, RestartTransaction.from_dict,
+        )
+
+    def write_state(self, frozen=None, restart=None, locks=True):
+        if frozen is not None:
+            self.frozen_path.write_text(
+                json.dumps(frozen.to_dict(), sort_keys=True), encoding="utf-8"
+            )
+        if restart is not None:
+            self.restart_path.write_text(restart.to_json() + "\n", encoding="utf-8")
+        if locks:
+            self.frozen_lock.write_bytes(b"")
+            self.restart_lock.write_bytes(b"")
+
+    def test_status_mode_is_an_explicit_allowlisted_token_and_tags_results(self):
+        self.assertEqual(parse_adapter_mode(["status"]), "status")
+        self.assertEqual(parse_adapter_mode(["?mode=status"]), "status")
+        for bad in ([], [""], ["Status"], ["status", "install"], ["status "], ["?mode=statu"]):
+            with self.subTest(arguments=bad), self.assertRaises(AdapterBootstrapError):
+                parse_adapter_mode(bad)
+        self.assertEqual(
+            identify_adapter_result({"ok": True}, "status")["adapter_mode"], "status"
+        )
+
+    def test_absent_state_reports_fixed_schema_with_no_values(self):
+        status = self.read()
+        self.assertEqual(set(status), STATUS_KEYS)
+        self.assertEqual(status["adapter_version"], ADAPTER_VERSION)
+        self.assertEqual(status["frozen_transaction_state"], "absent")
+        self.assertEqual(status["restart_transaction_state"], "absent")
+        self.assertIs(status["frozen_lock_file_present"], False)
+        self.assertIs(status["restart_lock_file_present"], False)
+        for key in STATUS_KEYS - {
+            "adapter_version", "frozen_transaction_state", "restart_transaction_state",
+            "frozen_lock_file_present", "restart_lock_file_present",
+        }:
+            self.assertIsNone(status[key], key)
+
+    def test_present_state_reports_exact_allowlisted_values_only(self):
+        self.write_state(_frozen_transaction(), _restart_transaction())
+        status = self.read()
+        self.assertEqual(set(status), STATUS_KEYS)
+        self.assertEqual(status, {
+            "adapter_version": ADAPTER_VERSION,
+            "frozen_transaction_state": "present",
+            "frozen_phase": "needs_attention",
+            "frozen_lifecycle_stage": "quiescence_awaiting_restart",
+            "frozen_lifecycle_restart_count": 1,
+            "frozen_status_code": "FROZEN_MANIFEST_INVALID",
+            "activation_hold_count": 2,
+            "redlight_hold_present": True,
+            "activation_hold_released": False,
+            "updater_guard_required": True,
+            "private_overlay_required": True,
+            "original_update_policy": "AUTOMATIC",
+            "resolution_record_count": 0,
+            "restart_transaction_state": "present",
+            "restart_phase": "needs_attention",
+            "restart_attempt_count": 2,
+            "restart_status_code": "PREVIEW_FAILED",
+            "restart_transaction_linked": True,
+            "frozen_lock_file_present": True,
+            "restart_lock_file_present": True,
+        })
+
+    def test_unlinked_restart_transaction_is_reported_as_false(self):
+        other = "66666666-6666-4666-8666-666666666666"
+        self.write_state(_frozen_transaction(), _restart_transaction(transaction_id=other))
+        self.assertIs(self.read()["restart_transaction_linked"], False)
+
+    def test_output_never_contains_private_values_paths_ids_or_message_text(self):
+        self.write_state(_frozen_transaction(), _restart_transaction())
+        serialized = json.dumps(self.read(), sort_keys=True)
+        for forbidden in (
+            SECRET, "/", FROZEN_ID, RESTART_ID, SESSION, "manifest", "message",
+            "a" * 64, "b" * 64, "plugin.private",
+        ):
+            self.assertNotIn(forbidden, serialized, forbidden)
+
+    def test_hostile_status_codes_are_dropped_not_echoed(self):
+        for code in ("/private/tmp/" + SECRET, SECRET.lower(), "lower_case", "A" * 65, ""):
+            with self.subTest(code=code):
+                frozen = _frozen_transaction(status_code=code)
+                restart = _restart_transaction(status_code=code)
+                self.write_state(frozen, restart)
+                status = self.read()
+                if len(code) <= 96:
+                    self.assertIsNone(status["frozen_status_code"])
+                    self.assertIsNone(status["restart_status_code"])
+                self.assertNotIn(SECRET, json.dumps(status))
+
+    def test_uppercase_private_status_codes_are_not_public_codes(self):
+        for code in ("PRIVATE_SENTINEL_TOKEN_4F9C", "SECRET_PATH_HOME_ERICS_PROFILE",
+                     "FROZEN_PRIVATE_SENTINEL", "RESTART_PRIVATE_SENTINEL"):
+            with self.subTest(code=code):
+                self.write_state(_frozen_transaction(status_code=code),
+                                 _restart_transaction(status_code=code))
+                status = self.read()
+                self.assertEqual(status["frozen_transaction_state"], "present")
+                self.assertEqual(status["restart_transaction_state"], "present")
+                self.assertIsNone(status["frozen_status_code"])
+                self.assertIsNone(status["restart_status_code"])
+                self.assertNotIn(code, json.dumps(status))
+
+    def test_product_status_code_allowlists_preserve_known_public_codes(self):
+        for code in bm023a_adapter_support.STATUS_FROZEN_CODES:
+            with self.subTest(frozen_code=code):
+                self.write_state(_frozen_transaction(status_code=code), locks=False)
+                self.assertEqual(self.read()["frozen_status_code"], code)
+        for code in bm023a_adapter_support.STATUS_RESTART_CODES:
+            with self.subTest(restart_code=code):
+                self.write_state(restart=_restart_transaction(status_code=code), locks=False)
+                self.assertEqual(self.read()["restart_status_code"], code)
+
+    def test_code_from_the_other_transaction_domain_is_dropped(self):
+        self.write_state(_frozen_transaction(status_code="PREVIEW_FAILED"),
+                         _restart_transaction(status_code="FROZEN_MANIFEST_INVALID"))
+        status = self.read()
+        self.assertIsNone(status["frozen_status_code"])
+        self.assertIsNone(status["restart_status_code"])
+
+    def test_public_status_codes_come_from_product_definitions(self):
+        project = Path(__file__).parents[1]
+        literals = set()
+        for name in ("frozen_install", "resume", "build_manager"):
+            tree = ast.parse((project / "resources/lib" / (name + ".py")).read_text())
+            literals.update(node.value for node in ast.walk(tree)
+                            if isinstance(node, ast.Constant) and isinstance(node.value, str))
+        for code in bm023a_adapter_support.STATUS_FROZEN_CODES:
+            with self.subTest(code=code):
+                if code.startswith("FROZEN_CONFIGURATION_") and code not in literals:
+                    self.assertIn(code.removeprefix("FROZEN_CONFIGURATION_"), literals)
+                else:
+                    self.assertIn(code, literals)
+        self.assertLessEqual(bm023a_adapter_support.STATUS_RESTART_CODES, literals)
+
+    def _read_in_subprocess(self, *, replace_with_fifo=False):
+        # Contain a regression to a blocking FIFO open in a disposable child.
+        script = '''
+import json, os, sys
+from pathlib import Path
+from unittest.mock import patch
+from tests.test_bm023a_adapter import FrozenInstallTransaction, RestartTransaction
+from tools.bm023a_adapter_support import read_adapter_status
+root = Path(sys.argv[1])
+original_open = os.open
+def replacing_open(path, flags, *args, **kwargs):
+    Path(path).unlink()
+    os.mkfifo(path)
+    return original_open(path, flags, *args, **kwargs)
+with patch("os.open", replacing_open if sys.argv[2] == "race" else original_open):
+    status = read_adapter_status(
+        root / "frozen_install_transaction.json", root / "frozen_install_transaction.lock",
+        root / "restart_transaction.json", root / "restart_transaction.lock",
+        FrozenInstallTransaction.from_dict, RestartTransaction.from_dict)
+print(json.dumps(status))
+'''
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", script, str(self.root),
+             "race" if replace_with_fifo else "plain"],
+            cwd=Path(__file__).parents[1], capture_output=True, text=True,
+            timeout=5, check=True,
+        )
+        status = json.loads(result.stdout)
+        for key in ("frozen_transaction_state", "restart_transaction_state"):
+            self.assertEqual(status[key], "unreadable")
+        for key in ("frozen_phase", "restart_phase", "frozen_status_code",
+                    "restart_status_code", "restart_transaction_linked"):
+            self.assertIsNone(status[key])
+        return status
+
+    def test_fifo_records_without_writers_return_without_blocking(self):
+        for path in (self.frozen_path, self.restart_path):
+            os.mkfifo(path)
+        self._read_in_subprocess()
+        self.assertEqual({p.name for p in self.root.iterdir()},
+                         {self.frozen_path.name, self.restart_path.name})
+
+    def test_regular_records_replaced_by_fifos_before_open_do_not_block(self):
+        self.write_state(_frozen_transaction(), _restart_transaction(), locks=False)
+        self._read_in_subprocess(replace_with_fifo=True)
+
+    def test_symlink_records_to_regular_files_or_fifos_are_rejected(self):
+        regular = self.root / "regular.json"
+        regular.write_text(json.dumps(_frozen_transaction().to_dict()), encoding="utf-8")
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo)
+        self.frozen_path.symlink_to(regular)
+        self.restart_path.symlink_to(fifo)
+        self._read_in_subprocess()
+
+    def test_regular_file_replacement_before_open_is_rejected(self):
+        from unittest.mock import patch
+
+        self.write_state(_frozen_transaction(), _restart_transaction(), locks=False)
+        original_open = os.open
+        def replacing_open(path, flags, *args, **kwargs):
+            replacement = Path(path).with_suffix(".replacement")
+            replacement.write_bytes(Path(path).read_bytes())
+            os.replace(replacement, path)
+            return original_open(path, flags, *args, **kwargs)
+        with patch("os.open", replacing_open):
+            status = self.read()
+        self.assertEqual(status["frozen_transaction_state"], "unreadable")
+        self.assertEqual(status["restart_transaction_state"], "unreadable")
+
+    def test_path_replacement_after_open_is_rejected(self):
+        from unittest.mock import patch
+
+        self.write_state(_frozen_transaction(), _restart_transaction(), locks=False)
+        original_open = os.open
+        def replacing_open(path, flags, *args, **kwargs):
+            fd = original_open(path, flags, *args, **kwargs)
+            Path(path).unlink()
+            os.mkfifo(path)
+            return fd
+        with patch("os.open", replacing_open):
+            status = self.read()
+        self.assertEqual(status["frozen_transaction_state"], "unreadable")
+        self.assertEqual(status["restart_transaction_state"], "unreadable")
+
+    def test_regular_records_replaced_by_symlinks_or_directories_are_rejected(self):
+        from unittest.mock import Mock, patch
+
+        for replacement_type in ("symlink", "directory"):
+            with self.subTest(replacement_type=replacement_type):
+                record = self.root / replacement_type
+                record.write_text("{}", encoding="utf-8")
+                target = self.root / (replacement_type + "-target")
+                target.write_text("{}", encoding="utf-8")
+                original_open = os.open
+                def replacing_open(path, flags, *args, **kwargs):
+                    Path(path).unlink()
+                    if replacement_type == "symlink":
+                        Path(path).symlink_to(target)
+                    else:
+                        Path(path).mkdir()
+                    return original_open(path, flags, *args, **kwargs)
+                loader = Mock(side_effect=AssertionError("replacement decoded"))
+                with patch("os.open", replacing_open):
+                    state, value = bm023a_adapter_support._status_load(record, 128, loader)
+                self.assertEqual((state, value), ("unreadable", None))
+                loader.assert_not_called()
+
+    def test_missing_nonblocking_or_nofollow_flag_fails_closed_without_open(self):
+        from unittest.mock import patch
+
+        self.write_state(_frozen_transaction(), _restart_transaction(), locks=False)
+        for flag in ("O_NONBLOCK", "O_NOFOLLOW"):
+            with self.subTest(flag=flag), patch.dict(os.__dict__):
+                os.__dict__.pop(flag, None)
+                with patch("os.open", side_effect=AssertionError("unsafe open")):
+                    status = self.read()
+                self.assertEqual(status["frozen_transaction_state"], "unreadable")
+                self.assertEqual(status["restart_transaction_state"], "unreadable")
+
+    def test_nonregular_open_descriptor_is_rejected_and_closed_before_read(self):
+        import stat
+        from unittest.mock import Mock, patch
+
+        self.frozen_path.write_text("{}", encoding="utf-8")
+        original_fstat = os.fstat
+        original_open = os.open
+        for mode in (stat.S_IFIFO, stat.S_IFCHR, stat.S_IFSOCK, stat.S_IFDIR):
+            with self.subTest(mode=mode):
+                descriptors = []
+                def recording_open(*args, **kwargs):
+                    fd = original_open(*args, **kwargs)
+                    descriptors.append(fd)
+                    return fd
+                def nonregular_fstat(fd):
+                    info = original_fstat(fd)
+                    return SimpleNamespace(st_mode=mode, st_dev=info.st_dev, st_ino=info.st_ino)
+                loader = Mock(side_effect=AssertionError("nonregular file decoded"))
+                with patch("os.open", recording_open), patch("os.fstat", nonregular_fstat), \
+                        patch("os.fdopen", side_effect=AssertionError("nonregular file read")):
+                    state, value = bm023a_adapter_support._status_load(self.frozen_path, 128, loader)
+                self.assertEqual((state, value), ("unreadable", None))
+                loader.assert_not_called()
+                self.assertEqual(len(descriptors), 1)
+                with self.assertRaises(OSError):
+                    original_fstat(descriptors[0])
+
+    def test_unexpected_enum_and_count_values_are_dropped(self):
+        frozen = SimpleNamespace(
+            phase="not-a-phase", lifecycle_stage=SECRET, lifecycle_restart_count=True,
+            status_code=SECRET, activation_hold_ids=[SECRET], activation_hold_released="yes",
+            updater_guard_required=1, private_overlay_required=None,
+            original_update_policy=SimpleNamespace(name=SECRET),
+            resolution_records=[object(), object()], restart_transaction_id="",
+        )
+        restart = SimpleNamespace(
+            phase=SECRET, restart_attempt_count=10**9, status_code=SECRET, transaction_id="",
+        )
+        self.frozen_path.write_text("{}", encoding="utf-8")
+        self.restart_path.write_text("{}", encoding="utf-8")
+        status = read_adapter_status(
+            self.frozen_path, self.frozen_lock, self.restart_path, self.restart_lock,
+            lambda _value: frozen, lambda _value: restart,
+        )
+        self.assertEqual(set(status), STATUS_KEYS)
+        self.assertNotIn(SECRET, json.dumps(status))
+        for key in (
+            "frozen_phase", "frozen_lifecycle_stage", "frozen_lifecycle_restart_count",
+            "frozen_status_code", "activation_hold_released", "updater_guard_required",
+            "private_overlay_required", "original_update_policy", "restart_phase",
+            "restart_attempt_count", "restart_status_code",
+        ):
+            self.assertIsNone(status[key], key)
+        self.assertEqual(status["resolution_record_count"], 2)
+        self.assertIs(status["restart_transaction_linked"], False)
+
+    def test_corrupt_oversized_and_unreadable_records_report_state_only(self):
+        corrupt = "{" + SECRET
+        cases = {
+            "invalid": (corrupt, "invalid"),
+            "oversized": (SECRET * 200000, "invalid"),
+            "wrong-schema": (json.dumps({"private": SECRET}), "invalid"),
+        }
+        for label, (text, expected) in cases.items():
+            with self.subTest(label=label):
+                self.frozen_path.write_text(text, encoding="utf-8")
+                self.restart_path.write_text(text, encoding="utf-8")
+                status = self.read()
+                self.assertEqual(status["frozen_transaction_state"], expected)
+                self.assertEqual(status["restart_transaction_state"], expected)
+                self.assertIsNone(status["frozen_phase"])
+                self.assertNotIn(SECRET, json.dumps(status))
+        self.frozen_path.chmod(0)
+        self.restart_path.chmod(0)
+        try:
+            if os.access(self.frozen_path, os.R_OK):
+                self.skipTest("file permissions are not enforced")
+            status = self.read()
+            self.assertEqual(status["frozen_transaction_state"], "unreadable")
+            self.assertEqual(status["restart_transaction_state"], "unreadable")
+        finally:
+            self.frozen_path.chmod(0o600)
+            self.restart_path.chmod(0o600)
+
+    def test_directory_in_place_of_transaction_is_unreadable(self):
+        self.frozen_path.mkdir()
+        self.assertEqual(self.read()["frozen_transaction_state"], "unreadable")
+
+    def test_reading_mutates_nothing_and_creates_nothing(self):
+        self.write_state(_frozen_transaction(), _restart_transaction())
+        before = _tree_snapshot(self.root)
+        self.read()
+        self.read()
+        self.assertEqual(_tree_snapshot(self.root), before)
+
+    def test_absent_files_and_directories_are_not_created(self):
+        missing = self.root / "never" / "created"
+        read_adapter_status(
+            missing / "f.json", missing / "f.lock", missing / "r.json", missing / "r.lock",
+            FrozenInstallTransaction.from_dict, RestartTransaction.from_dict,
+        )
+        self.assertFalse((self.root / "never").exists())
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_a_held_exclusive_lock_is_neither_waited_on_nor_disturbed(self):
+        self.write_state(_frozen_transaction(), _restart_transaction())
+        handles = []
+        try:
+            for lock in (self.frozen_lock, self.restart_lock):
+                handle = lock.open("a+")
+                handles.append(handle)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            status = self.read()
+            self.assertEqual(status["frozen_transaction_state"], "present")
+            self.assertEqual(status["restart_transaction_state"], "present")
+            for handle in handles:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            for handle in handles:
+                handle.close()
+
+    def test_status_source_has_no_mutating_or_locking_calls(self):
+        support = Path(bm023a_adapter_support.__file__).read_text(encoding="utf-8")
+        start = support.index("def _status_file_present")
+        end = support.index("def choose_missing_artifact_resolution")
+        body = support[start:end]
+        for forbidden in (
+            "flock", "mkdir", "makedirs", "unlink", "rename", "replace(", "write",
+            "touch", "chmod", "remove", "rmtree", "mkstemp", "O_CREAT",
+            "import_module", "FrozenInstallStore", "TransactionStore", "abandon",
+        ):
+            self.assertNotIn(forbidden, body, forbidden)
+        self.assertIn("os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW", body)
+        self.assertIn('os.fdopen(fd, "rb", closefd=False)', body)
+
+    def test_entrypoint_status_branch_never_constructs_stores_or_coordinators(self):
+        source = (
+            Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
+        ).read_text(encoding="utf-8")
+        start = source.index('        if mode == "status":\n            frozen_install_module')
+        end = source.index('        if mode == "status":\n            pass')
+        branch = source[start:end]
+        for forbidden in (
+            "FrozenInstallStore", "FrozenInstallCoordinator", "TransactionStore.inspect",
+            ".inspect(", "locked", "abandon", "repair_frozen_install_source",
+            "retry_held", "recover_frozen", "install(", "stage_manifest_artifacts",
+            "PrivateOverlayStore", "_rpc", "executeJSONRPC",
+        ):
+            self.assertNotIn(forbidden, branch, forbidden)
+        self.assertIn("repair_frozen_install_source", source)
+        self.assertIn('if mode != "status":\n            FROZEN_INSTALL_SOURCE_RECORD', source)
+
+    def test_allowlists_cover_status_labels(self):
+        self.assertIn("READ_STATUS", bm023a_adapter_support.ADAPTER_STAGES)
+        self.assertIn("read_adapter_status", bm023a_adapter_support.ADAPTER_CALLABLES)
+        self.assertEqual(
+            bm023a_adapter_support.STATUS_FROZEN_PHASES,
+            {member.value for member in FrozenInstallPhase},
+        )
+        self.assertEqual(
+            bm023a_adapter_support.STATUS_LIFECYCLE_STAGES,
+            {member.value for member in FrozenLifecycleStage},
+        )
+        self.assertEqual(
+            bm023a_adapter_support.STATUS_RESTART_PHASES,
+            {member.value for member in TransactionPhase},
+        )
+        self.assertEqual(
+            bm023a_adapter_support.STATUS_UPDATE_POLICIES,
+            {member.name for member in AddonUpdatePolicy},
+        )
+
+
+class TestBm023aStatusEntrypoint(unittest.TestCase):
+    def run_status(self, *, with_state=True, frozen_install_matches=True):
+        import importlib
+        import runpy
+        from unittest.mock import patch
+
+        project = Path(__file__).parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile_root = (
+                root / "Kodi Build Manager Test.app" / "Contents" / "Resources"
+                / "Kodi" / "portable_data" / "userdata"
+            )
+            addons_root = profile_root.parent / "addons"
+            addon_root = addons_root / "script.build.manager"
+            (addon_root / "resources").mkdir(parents=True)
+            shutil.copytree(
+                project / "resources" / "lib", addon_root / "resources" / "lib",
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            if not frozen_install_matches:
+                (addon_root / "resources" / "lib" / "frozen_install.py").write_text(
+                    "# tampered\n", encoding="utf-8"
+                )
+            data_dir = profile_root / "addon_data" / "script.build.manager"
+            data_dir.mkdir(parents=True)
+            if with_state:
+                (data_dir / "frozen_install_transaction.json").write_text(
+                    json.dumps(_frozen_transaction().to_dict()), encoding="utf-8"
+                )
+                (data_dir / "restart_transaction.json").write_text(
+                    _restart_transaction().to_json() + "\n", encoding="utf-8"
+                )
+                (data_dir / "frozen_install_transaction.lock").write_bytes(b"")
+                (data_dir / "restart_transaction.lock").write_bytes(b"")
+            values = {key: str(root / key.lower()) for key in (
+                "MANIFEST_PATH", "ARTIFACT_ROOT", "CONFIGURATION_PATH", "OVERLAY_SOURCE",
+            )}
+            values.update({"DEVICE_PROFILE_ID": "p", "EXPECTED_OVERLAY_ID": "o"})
+            archive = build_adapter(root / "generated", values)
+            generated_root = archive.parent / "script.build.manager.bm023a_driver"
+            entrypoint = generated_root / "default.py"
+
+            xbmc_module = ModuleType("xbmc")
+            xbmc_module.executeJSONRPC = lambda _request: self.fail("status must not call JSON-RPC")
+            xbmcvfs_module = ModuleType("xbmcvfs")
+            translated = {
+                "special://profile/": profile_root,
+                "special://home/addons": addons_root,
+                "special://home/addons/script.build.manager": addon_root,
+                "special://profile/addon_data/script.build.manager": data_dir,
+            }
+            xbmcvfs_module.translatePath = lambda path: str(translated[path])
+
+            cached = [
+                name for name in sys.modules
+                if name == "resources" or name.startswith("resources.")
+                or name in ("adapter_config", "adapter_support")
+            ]
+            saved_modules = {name: sys.modules.pop(name) for name in cached}
+            saved_path = list(sys.path)
+            saved_argv = sys.argv
+            before = _tree_snapshot(profile_root)
+            try:
+                sys.path.insert(0, str(generated_root))
+                sys.argv = [str(entrypoint), "status"]
+                with patch.dict(sys.modules, {"xbmc": xbmc_module, "xbmcvfs": xbmcvfs_module}):
+                    runpy.run_path(str(entrypoint), run_name="__main__")
+                    imported = {
+                        name for name in sys.modules if name.startswith("resources.lib.")
+                    }
+            finally:
+                sys.path[:] = saved_path
+                sys.argv = saved_argv
+                for name in [
+                    n for n in sys.modules
+                    if n == "resources" or n.startswith("resources.")
+                    or n in ("adapter_config", "adapter_support")
+                ]:
+                    sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+            result_path = data_dir / "bm023a_live_result.json"
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+            after = _tree_snapshot(profile_root)
+            result_key = str(result_path.relative_to(profile_root))
+            directories = lambda snap: {k for k, v in snap.items() if v[0] is None}
+            self.assertEqual(directories(before), directories(after))
+            changed = {
+                key for key in set(before) | set(after)
+                if before.get(key) != after.get(key) and key not in directories(before)
+            }
+            backups = (data_dir.parent / "script.build.manager.bm023a_driver").exists()
+            return payload, changed, result_key, imported, backups
+
+    def test_generated_status_run_writes_only_the_sanitized_result(self):
+        payload, changed, result_key, imported, backups = self.run_status()
+        self.assertEqual(set(payload), {"ok", "adapter_mode", "status"})
+        self.assertIs(payload["ok"], True)
+        self.assertEqual(payload["adapter_mode"], "status")
+        self.assertEqual(set(payload["status"]), STATUS_KEYS)
+        self.assertEqual(payload["status"]["frozen_phase"], "needs_attention")
+        self.assertEqual(payload["status"]["frozen_lifecycle_restart_count"], 1)
+        self.assertEqual(payload["status"]["restart_attempt_count"], 2)
+        self.assertIs(payload["status"]["redlight_hold_present"], True)
+        self.assertIs(payload["status"]["restart_transaction_linked"], True)
+        serialized = json.dumps(payload)
+        for forbidden in (SECRET, "/", FROZEN_ID, RESTART_ID, SESSION):
+            self.assertNotIn(forbidden, serialized, forbidden)
+        self.assertEqual(changed, {result_key})
+        self.assertFalse(backups)
+        self.assertNotIn("resources.lib.restart_coordinator", imported)
+
+    def test_generated_status_run_with_no_state_creates_no_state_files(self):
+        payload, changed, result_key, _imported, _backups = self.run_status(with_state=False)
+        self.assertIs(payload["ok"], True)
+        self.assertEqual(payload["status"]["frozen_transaction_state"], "absent")
+        self.assertEqual(payload["status"]["restart_transaction_state"], "absent")
+        self.assertEqual(changed, {result_key})
+
+    def test_source_mismatch_fails_closed_without_repair_or_state_read(self):
+        payload, changed, result_key, _imported, backups = self.run_status(
+            frozen_install_matches=False
+        )
+        self.assertIs(payload["ok"], False)
+        self.assertEqual(payload["adapter_mode"], "status")
+        self.assertNotIn("status", payload)
+        self.assertNotIn("frozen_install_source", payload)
+        self.assertEqual(changed, {result_key})
+        self.assertFalse(backups)
+        self.assertNotIn(SECRET, json.dumps(payload))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -12,7 +13,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.14"
+ADAPTER_VERSION = "0.0.15"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -34,6 +35,7 @@ ADAPTER_STAGES = frozenset({
     "INVOKE_RECOVERY",
     "CHECK_RETRY_PRECONDITIONS",
     "INVOKE_RETRY",
+    "READ_STATUS",
     "SERIALIZE_RESULT",
 })
 ADAPTER_CALLABLES = frozenset({
@@ -57,6 +59,7 @@ ADAPTER_CALLABLES = frozenset({
     "FrozenInstallCoordinator.abandon",
     "UpdatePolicyBackend.get_policy",
     "KodiRuntimeFrozenArtifactBackend.get_addon_details",
+    "read_adapter_status",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -103,6 +106,88 @@ RETAINED_INPUTS_KEYS = frozenset({
     "artifact_store_readable",
     "artifact_entry_count",
 })
+
+
+STATUS_KEYS = frozenset({
+    "adapter_version",
+    "frozen_transaction_state",
+    "frozen_phase",
+    "frozen_lifecycle_stage",
+    "frozen_lifecycle_restart_count",
+    "frozen_status_code",
+    "activation_hold_count",
+    "redlight_hold_present",
+    "activation_hold_released",
+    "updater_guard_required",
+    "private_overlay_required",
+    "original_update_policy",
+    "resolution_record_count",
+    "restart_transaction_state",
+    "restart_phase",
+    "restart_attempt_count",
+    "restart_status_code",
+    "restart_transaction_linked",
+    "frozen_lock_file_present",
+    "restart_lock_file_present",
+})
+STATUS_FROZEN_PHASES = frozenset({
+    "preparing", "installing_software", "configuring", "awaiting_restart",
+    "resuming", "validating", "needs_attention", "complete",
+})
+STATUS_LIFECYCLE_STAGES = frozenset({
+    "none", "installing_software", "quiescence_awaiting_restart", "configuring",
+    "configuration_awaiting_restart", "private_verified", "activation_released",
+    "final_activation_awaiting_restart",
+})
+STATUS_RESTART_PHASES = frozenset({"awaiting_restart", "resuming", "needs_attention"})
+STATUS_UPDATE_POLICIES = frozenset({"AUTOMATIC", "NOTIFY_ONLY", "NEVER_CHECK"})
+# Public diagnostics emitted by frozen_install and resume. Durable records
+# permit arbitrary bounded strings: a code-shaped string is not public data.
+# Unknown codes (including dynamically formed exception codes) stay null.
+STATUS_FROZEN_CODES = frozenset({
+    "FROZEN_INSTALL_ERROR", "FROZEN_INSTALL_FAILED", "FROZEN_MANIFEST_INVALID",
+    "FROZEN_TRANSACTION_PERSISTENCE_FAILED", "FROZEN_TRANSACTION_STATE_CONFLICT",
+    "QUIESCENCE_RESTART_REQUIRED", "QUIESCENCE_VALIDATION_FAILED",
+    "LIFECYCLE_RESTART_LIMIT", "FROZEN_RESUME_FAILED",
+    "FROZEN_HELD_RETRY_CONTINUATION_FAILED", "FROZEN_TRANSACTION_CLEAR_FAILED",
+    "FROZEN_ACTIVATION_HOLD_MISMATCH", "FROZEN_PRIVATE_OVERLAY_IDENTITY_MISMATCH",
+    "FROZEN_ADDON_REGISTRY_CHECK_FAILED", "FROZEN_TRANSACTION_INSPECTION_FAILED",
+    "FROZEN_LIFECYCLE_STAGE_INVALID", "FROZEN_UPDATER_NOT_QUARANTINED",
+    "FROZEN_UPDATER_STATE_UNAVAILABLE", "FROZEN_ACTIVATION_HOLD_UNAVAILABLE",
+    "FROZEN_HELD_RESOLUTION_MISSING", "PRIVATE_RESOURCE_RESUME_NOT_VERIFIED",
+    "PRIVATE_OVERLAY_RESUME_MISMATCH", "FINAL_VALIDATION_FAILED",
+    "PRIVATE_RESOURCE_NOT_VERIFIED", "INSTALL_RESOLUTION_MISSING",
+    "RESOLVED_VERSION_VALIDATION_FAILED", "FINAL_STATE_VALIDATION_FAILED",
+    "RESOLUTION_FINGERPRINT_MISMATCH", "RESOLUTION_PERSISTENCE_FAILED",
+    "SKIPPED_ADDON_PRESENT", "UPDATE_POLICY_RESTORE_FAILED", "UPDATER_REASSERT_FAILED",
+    "FROZEN_CONFIGURATION_FAILED",
+    "FROZEN_CONFIGURATION_ACTION_FAILED", "FROZEN_CONFIGURATION_ACTION_EXECUTION_FAILED",
+    "FROZEN_CONFIGURATION_INSPECTION_FAILED", "FROZEN_CONFIGURATION_INVALID_REQUEST",
+    "FROZEN_CONFIGURATION_MANIFEST_LOAD_FAILED", "FROZEN_CONFIGURATION_PLANNING_FAILED",
+    "FROZEN_CONFIGURATION_POST_VALIDATION_FAILED", "FROZEN_CONFIGURATION_PREFLIGHT_FAILED",
+    "FROZEN_CONFIGURATION_PRIVATE_OVERLAY_SUPPORT_UNAVAILABLE",
+    "FROZEN_CONFIGURATION_RESOLUTION_FAILED", "FROZEN_CONFIGURATION_UNKNOWN_ACTION_KIND",
+    "FROZEN_CONFIGURATION_VALIDATION_FAILED",
+})
+STATUS_RESTART_CODES = frozenset({
+    "SESSION_IDENTITY_UNAVAILABLE", "PREVIEW_FAILED", "FINGERPRINT_MISMATCH",
+    "PRIVATE_OVERLAY_FINGERPRINT_MISMATCH", "PRE_RECONCILE_READINESS_FAILED",
+    "RECONCILE_EXCEPTION", "RECONCILE_FAILED", "FINAL_FINGERPRINT_MISMATCH",
+    "RESTART_REQUIRED_AFTER_RESUME", "UNSUPPORTED_RESTART_REQUIREMENT", "RESUME_FAILED",
+    "ACTION_FAILED", "ACTION_EXECUTION_FAILED", "INSPECTION_FAILED", "INVALID_REQUEST",
+    "MANIFEST_LOAD_FAILED", "PLANNING_FAILED", "POST_VALIDATION_FAILED", "PREFLIGHT_FAILED",
+    "PRIVATE_OVERLAY_SUPPORT_UNAVAILABLE", "RESOLUTION_FAILED", "UNKNOWN_ACTION_KIND",
+    "VALIDATION_FAILED",
+    "FROZEN_TRANSACTION_INSPECTION_FAILED", "FROZEN_LIFECYCLE_STAGE_INVALID",
+    "FROZEN_SAME_SESSION", "FROZEN_RESUME_IDENTITY_MISMATCH",
+    "FROZEN_PRIVATE_OVERLAY_IDENTITY_MISMATCH", "FROZEN_RESUME_IDENTITY_INVALID",
+    "FROZEN_UPDATER_NOT_QUARANTINED", "FROZEN_UPDATER_STATE_UNAVAILABLE",
+    "FROZEN_ACTIVATION_HOLD_UNAVAILABLE", "FROZEN_ACTIVATION_HOLD_MISMATCH",
+    "FROZEN_HELD_RESOLUTION_MISSING", "FROZEN_ADDON_REGISTRY_CHECK_FAILED",
+})
+_STATUS_MAX_COUNT = 10000
+_STATUS_FROZEN_MAX_BYTES = 1024 * 1024
+_STATUS_RESTART_MAX_BYTES = 128 * 1024
 
 
 class AdapterBootstrapError(Exception):
@@ -162,7 +247,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover", "retry"):
+        if token in ("install", "recover", "retry", "status"):
             return token
         if token == "?mode=install":
             return "install"
@@ -170,6 +255,8 @@ def parse_adapter_mode(arguments: list[str]) -> str:
             return "recover"
         if token == "?mode=retry":
             return "retry"
+        if token == "?mode=status":
+            return "status"
     raise _bootstrap_error(
         "LOCATE_BUILD_MANAGER", "result_serializer", "mode_invalid"
     )
@@ -177,10 +264,165 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
-    safe_mode = mode if mode in ("install", "recover", "retry") else "unselected"
+    safe_mode = (
+        mode if mode in ("install", "recover", "retry", "status") else "unselected"
+    )
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
     return identified
+
+
+def _status_enum_value(value: Any, allowed: frozenset) -> Any:
+    candidate = getattr(value, "value", value)
+    return candidate if isinstance(candidate, str) and candidate in allowed else None
+
+
+def _status_code(value: Any, allowed: frozenset) -> Any:
+    return value if isinstance(value, str) and value in allowed else None
+
+
+def _status_count(value: Any) -> Any:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= _STATUS_MAX_COUNT else None
+
+
+def _status_bool(value: Any) -> Any:
+    return value if isinstance(value, bool) else None
+
+
+def _status_file_present(path: Any) -> bool:
+    try:
+        os.lstat(path)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _status_load(path: Any, limit: int, loader: Any) -> tuple[str, Any]:
+    """Read a bounded regular record without locks or blocking FIFO opens."""
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return "absent", None
+    except (OSError, TypeError, ValueError):
+        return "unreadable", None
+    if not stat.S_ISREG(before.st_mode):
+        return "unreadable", None
+    # Never fall back to a blocking or symlink-following open on a platform
+    # lacking these flags. fstat checks the opened object, not a raced path.
+    if not hasattr(os, "O_NONBLOCK") or not hasattr(os, "O_NOFOLLOW"):
+        return "unreadable", None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or (
+                opened.st_dev, opened.st_ino
+            ) != (before.st_dev, before.st_ino):
+                return "unreadable", None
+            with os.fdopen(fd, "rb", closefd=False) as handle:
+                raw = handle.read(limit + 1)
+            after = os.lstat(path)
+            if not stat.S_ISREG(after.st_mode) or (
+                after.st_dev, after.st_ino
+            ) != (opened.st_dev, opened.st_ino):
+                return "unreadable", None
+        finally:
+            os.close(fd)
+    except (OSError, TypeError, ValueError):
+        return "unreadable", None
+    if len(raw) > limit:
+        return "invalid", None
+    try:
+        return "present", loader(json.loads(raw.decode("utf-8")))
+    except Exception:
+        return "invalid", None
+
+
+def read_adapter_status(
+    frozen_transaction_path: Any,
+    frozen_lock_path: Any,
+    restart_transaction_path: Any,
+    restart_lock_path: Any,
+    load_frozen: Any,
+    load_restart: Any,
+) -> Dict[str, Any]:
+    """Return the fixed sanitized status record from read-only file reads.
+
+    No lock is taken (so no other process is ever blocked), nothing is
+    created, and only enumerated values, bounded counts and booleans leave.
+    """
+    status: Dict[str, Any] = {key: None for key in STATUS_KEYS}
+    status["adapter_version"] = ADAPTER_VERSION
+    status["frozen_lock_file_present"] = _status_file_present(frozen_lock_path)
+    status["restart_lock_file_present"] = _status_file_present(restart_lock_path)
+
+    frozen_state, frozen = _status_load(
+        frozen_transaction_path, _STATUS_FROZEN_MAX_BYTES, load_frozen
+    )
+    restart_state, restart = _status_load(
+        restart_transaction_path, _STATUS_RESTART_MAX_BYTES, load_restart
+    )
+    status["frozen_transaction_state"] = frozen_state
+    status["restart_transaction_state"] = restart_state
+
+    if frozen is not None:
+        hold_ids = getattr(frozen, "activation_hold_ids", None)
+        hold_ids = tuple(hold_ids) if isinstance(hold_ids, (tuple, list)) else ()
+        policy = getattr(frozen, "original_update_policy", None)
+        records = getattr(frozen, "resolution_records", None)
+        status.update({
+            "frozen_phase": _status_enum_value(
+                getattr(frozen, "phase", None), STATUS_FROZEN_PHASES
+            ),
+            "frozen_lifecycle_stage": _status_enum_value(
+                getattr(frozen, "lifecycle_stage", None), STATUS_LIFECYCLE_STAGES
+            ),
+            "frozen_lifecycle_restart_count": _status_count(
+                getattr(frozen, "lifecycle_restart_count", None)
+            ),
+            "frozen_status_code": _status_code(
+                getattr(frozen, "status_code", None), STATUS_FROZEN_CODES
+            ),
+            "activation_hold_count": _status_count(len(hold_ids)),
+            "redlight_hold_present": HELD_RETRY_OWNER_ID in hold_ids,
+            "activation_hold_released": _status_bool(
+                getattr(frozen, "activation_hold_released", None)
+            ),
+            "updater_guard_required": _status_bool(
+                getattr(frozen, "updater_guard_required", None)
+            ),
+            "private_overlay_required": _status_bool(
+                getattr(frozen, "private_overlay_required", None)
+            ),
+            "original_update_policy": (
+                getattr(policy, "name", None)
+                if getattr(policy, "name", None) in STATUS_UPDATE_POLICIES
+                else None
+            ),
+            "resolution_record_count": _status_count(
+                len(records) if isinstance(records, (tuple, list)) else None
+            ),
+        })
+    if restart is not None:
+        status.update({
+            "restart_phase": _status_enum_value(
+                getattr(restart, "phase", None), STATUS_RESTART_PHASES
+            ),
+            "restart_attempt_count": _status_count(
+                getattr(restart, "restart_attempt_count", None)
+            ),
+            "restart_status_code": _status_code(
+                getattr(restart, "status_code", None), STATUS_RESTART_CODES
+            ),
+        })
+    if frozen is not None and restart is not None:
+        linked = getattr(frozen, "restart_transaction_id", None)
+        status["restart_transaction_linked"] = bool(linked) and linked == getattr(
+            restart, "transaction_id", None
+        )
+    return status
 
 
 def choose_missing_artifact_resolution(prompt: Any, resolution_choice: Any) -> Any:
