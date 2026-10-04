@@ -18,18 +18,21 @@ Status: idle. No task is assigned.
 - Guidance re-sync: commit aa5ed38 refreshed six of those files (`.orchestrator/{HANDOFF,PROJECT,WORKFLOW}.md`,
   `AGENTS.md`, `CLAUDE.md`, `BUILD_MANAGER_PROJECT_PLAN.md`) from `matrix`
   a5fbadfa96cc0d44e4742717b7a1ab05e79d20b6 (again a path-level copy, documentation only).
+- Guidance re-sync: commit 6fb6654 refreshed six files (`.orchestrator/{BOOTSTRAP,CHATGPT_PROJECT_INSTRUCTIONS_MANUAL,DECISIONS,HANDOFF,WORKFLOW}.md`,
+  `AGENTS.md`) from `matrix` 299cf81dce75363966cd363c6bfdc58e3a97dcce (path-level copy, documentation
+  only). It adds decision D-026 and removes the retired Antigravity notes from `AGENTS.md`.
 - Not pushed: `origin/agent/codex` is still d8ab24b.
 
 ## Read before starting work
 
 - The manual-mode repository guidance on this branch is a path-level copy of `matrix`:
   `.orchestrator/{BOOTSTRAP,CHATGPT_PROJECT_INSTRUCTIONS_MANUAL,DECISIONS,HANDOFF,PROJECT,WORKFLOW}.md`,
-  `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` (as of matrix a5fbadf; the three
-  files the re-sync did not touch are as of cee9d0b). Start from
-  `.orchestrator/BOOTSTRAP.md`. Local `matrix` in `/Users/eengert/Documents/Kodi/script.build.manager`
-  remains the canonical copy: later `matrix` changes are not propagated automatically, and the
-  `.orchestrator/HANDOFF.md` here is a snapshot as of a5fbadf. `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`
-  and older `.agent/**` records are historical, not current instructions.
+  `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md`, all identical to `matrix` 299cf81.
+  Start from `.orchestrator/BOOTSTRAP.md`. Local `matrix` in
+  `/Users/eengert/Documents/Kodi/script.build.manager` remains the canonical copy: later `matrix`
+  changes are not propagated automatically, and the `.orchestrator/HANDOFF.md` here is a snapshot as
+  of 299cf81. `BUILD_MANAGER_SUPERVISOR_HANDOFF.md` and older `.agent/**` records are historical,
+  not current instructions.
 - The `.agent/**` records that were here described ai-supervisor-era work and were replaced
   by this note. They remain in history: 19ee48f (previous Codex endpoint) and e57a5b6
   (candidate, second parent of c56a06e). Uncommitted shutdown notes about the same era remain
