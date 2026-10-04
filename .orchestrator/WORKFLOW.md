@@ -49,7 +49,9 @@ No provider automatically fails over to another. Eric/ChatGPT choose deliberatel
 
 `matrix` remains the protected integration branch.
 
-Manual work must use the exact branch/worktree named in the task prompt. Do not assume old supervisor-owned Codex/Claude worktrees are active.
+Manual work must use the exact branch/worktree named in the task prompt. The normal working worktrees are the Agent Handoff Codex and Claude endpoints described in `.orchestrator/PROJECT.md`; the prompt still names the one it authorizes. Old ai-supervisor-era worktrees (`supervised-*`, `supervisor`) are retired and must not be assumed active.
+
+When repository guidance on `matrix` changes, bring it to the endpoints with an explicit-path, history-preserving copy (for example `git restore --source=<matrix SHA> --staged --worktree -- <paths>` in each endpoint, then a local commit). A guidance update does not merge `matrix` wholesale into an endpoint and does not copy `matrix` `.agent/**`; product source, tests, and assets change only through a deliberate product decision, not through a guidance sync.
 
 Normal implementation should not occur directly on `matrix`. Integration to `matrix` happens only after ChatGPT has reconciled accepted review/validation evidence and Eric's current instructions permit it.
 

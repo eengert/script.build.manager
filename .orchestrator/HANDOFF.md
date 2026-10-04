@@ -1,12 +1,14 @@
-# Current Handoff — Build Manager Manual Mode (2026-10-03)
+# Current Handoff — Build Manager Manual Mode (refreshed 2026-10-04)
 
 ## Operating mode
 
-Build Manager is now intentionally in **manual relay mode**.
+Build Manager is intentionally in **manual relay mode**.
 
 Active loop:
 
 `ChatGPT plans/supervises -> Eric runs a bounded Codex/Claude prompt -> Eric pastes the report back -> ChatGPT reviews/chooses the next task`.
+
+Normal future work happens in the two Agent Handoff endpoints described below (Codex and Claude), each task naming the exact worktree/branch it may use, with ChatGPT supervising.
 
 Do not start, resume, reinstall, or depend on ai-supervisor unless Eric explicitly decides to resurrect that separate framework project. Relay-v1 is deferred.
 
@@ -20,18 +22,34 @@ Do not turn unfinished ai-supervisor provenance, planner, trusted-action pinning
 
 ## Current product candidate
 
-Manual continuation should begin by reconciling this exact worktree:
+The reviewed BM 0.0.15 product candidate is carried by the Codex and Claude Agent Handoff endpoints (next section), whose product trees outside `.agent/**` are identical. They were restored on 2026-10-04 from the former working worktree:
 
-- worktree: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-beta-recovery`
-- branch: `agent/beta-recovery`
-- last verified HEAD before manual-mode transition: `e57a5b6d47a7ed53d3f8bd526de300960d9f7e32`
+- `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-beta-recovery`, branch `agent/beta-recovery`, last verified HEAD `e57a5b6d47a7ed53d3f8bd526de300960d9f7e32`
 - reviewed substantive BM 0.0.15 commit: `8789329054b77815c6f9548fd4ce9beacbe1d348`
 - reviewed product/tracking identity includes `16435a892b4ad2cf54c34d3b049c28ed3f1703eb`
 - independent product review work: `4ef22b35-da05-454a-99c4-0ae08aea4882`
 
-The worktree intentionally has manual bookkeeping edits under `.agent/**` from the shutdown/resumability cleanup. They are not product changes.
+beta-recovery is retained as a historical/safety reference for that candidate, not as a normal working endpoint. It intentionally still has uncommitted manual bookkeeping edits under `.agent/**` from the ai-supervisor shutdown cleanup; they are not product changes and should be left alone.
 
-Before any new implementation, re-run read-only Git status/identity checks; current live Git always wins over this snapshot.
+`matrix` currently carries the guidance/orchestration documents but not the BM 0.0.15 product source. Integrating the product candidate into `matrix` is a later, deliberate step and has not been done. `matrix` also has a newer `resources/images/icon.png` than the endpoints; whether that icon belongs in the candidate is an open product/asset decision, separate from guidance synchronization.
+
+Before any new implementation, re-run read-only Git status/identity checks on the endpoint the prompt names; current live Git always wins over this snapshot. Endpoint HEADs are deliberately not recorded here.
+
+## Agent Handoff endpoints (restored 2026-10-04)
+
+Agent Handoff is retained as the mechanism for maintaining the two manual agent worktrees. Its source is `/Users/eengert/Documents/Kodi/agent-handoff`; the installed `Agent Handoff.app` matches that source and includes the macOS `USAGE_HISTORY` union fix.
+
+- Codex endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`
+- Claude endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude`, branch `agent/claude`
+- Only these two endpoints are configured for Build Manager. Antigravity is retired from the Build Manager Agent Handoff configuration and must not be recreated.
+- Active worker at this refresh: Codex. Agent Handoff records the active worker; it changes only through a real handoff or the supported `set-active-agent` recovery command.
+- At this refresh Agent Handoff `status` reported Codex as the current agent with both endpoints clean and containing `origin/matrix`. Re-verify live before relying on it:
+
+  `AGENT_HANDOFF_PROJECT=build-manager "/Applications/Agent Handoff.app/Contents/Resources/agent_handoff_controller.sh" status`
+
+  This is read-only apart from a bounded fetch of `origin/matrix`.
+- A real handoff (`continue <agent>`) merges the outgoing endpoint into the incoming one and pushes the incoming branch to `origin`. Do not run one without Eric's explicit authorization. As of this refresh neither endpoint has been pushed since restoration.
+- Each endpoint's `.agent/**` is endpoint-specific; do not copy `matrix` `.agent/**`. The `.orchestrator/**`, `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` copies on the endpoints are path-level snapshots of `matrix`; after changing them here, re-sync them with an explicit-path history-preserving copy (see `.orchestrator/WORKFLOW.md`), never a wholesale merge.
 
 ## Product evidence already established
 
@@ -100,6 +118,8 @@ A fuller `Relay-v1_Plan_and_Context.md` was exported separately for Eric.
 
 Build Manager frozen artifact data was relocated on 2026-10-04 to `/Users/eengert/Documents/Kodi/archives/build-manager-frozen-artifacts-2026-10-04`. The 61 preserved payload files were verified byte-for-byte by SHA-256 before the retired `~/.local/state/ai-supervisor` copy was removed. This is product/qualification evidence, not active framework runtime state.
 
+The uncommitted state of the retired `supervised-codex` and `supervised-claude` worktrees (plus a stale non-worktree directory found at the old Codex endpoint path) was preserved before those worktrees were removed, at `/Users/eengert/Documents/Kodi/archives/build-manager-supervised-worktrees-retirement-2026-10-04` (with a `.zip` beside it; zip SHA-256 `57862288421f67346181da2bbc30dda1d2c38e90a1a79af769f670f9885d063c`). The branches of those and the other retired historical worktrees (`bm023a-reviewed-0.0.9/-0.0.10`, `outcome-driven-supervision`, `stage-source-reconcile`) were kept; only the worktree directories were removed.
+
 ## Safety boundaries that still apply
 
 - Never access normal `/Applications/Kodi.app` for BM validation.
@@ -119,11 +139,11 @@ Do not assume historical ai-supervisor named actions/brokers exist. If a require
 
 ## Smallest next manual step
 
-Start with a **read-only manual reconciliation** of the beta-recovery worktree and the current beta exit checklist.
+Start with a **read-only manual reconciliation** of the product candidate in the Codex or Claude endpoint the prompt names (their product trees are identical; `agent/beta-recovery` is the historical reference) and the current beta exit checklist.
 
 The first new Codex/Claude task should answer, from current Git and repository tooling:
 
-1. Is the reviewed BM 0.0.15 product candidate still byte-identical to the accepted snapshot?
+1. Is the reviewed BM 0.0.15 product candidate still byte-identical to the accepted snapshot (compare the endpoint's product tree outside `.agent/**` with `agent/beta-recovery` and the reviewed 0.0.15 commit above)?
 2. Which macOS Beta Qualification exit items remain genuinely unproven?
 3. What is the smallest safe path to stage/identify the reviewed candidate in the portable Test.app **without depending on retired ai-supervisor infrastructure**?
 4. Does the repository already contain a safe host-side/manual staging/auth helper; if not, what minimal helper is actually required?
@@ -132,6 +152,6 @@ That task should not change product source. It should produce a concrete manual 
 
 ## Historical files
 
-`BUILD_MANAGER_SUPERVISOR_HANDOFF.md`, old `.agent/**` records, ai-supervisor state/checkpoints, and the cold-storage archive are historical evidence.
+`BUILD_MANAGER_SUPERVISOR_HANDOFF.md`, old `.agent/**` records (the endpoints' current `.agent/**` notes are endpoint-specific, not project policy), ai-supervisor state/checkpoints, and the cold-storage archives are historical evidence.
 
 They do not override current Git plus this manual-mode `.orchestrator` guidance.

@@ -126,4 +126,4 @@ If the start reading was missed but an end reading exists, record
 ### Where it goes
 
 One row per task in `.agent/USAGE_HISTORY.md`. Never paste raw usage output
-into `BUILD_MANAGER_PROJECT_PLAN.md` or `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`.
+into `BUILD_MANAGER_PROJECT_PLAN.md` or `.orchestrator/HANDOFF.md`.
