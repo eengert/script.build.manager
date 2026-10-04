@@ -10,6 +10,8 @@ Eric works with ChatGPT as the human-facing planner/supervisor. ChatGPT prepares
 
 The previous local `ai-supervisor` autonomous orchestration framework is retired to cold storage. Do **not** start, resume, reinstall, or depend on ai-supervisor unless Eric explicitly asks to resurrect it.
 
+The manual working lanes are two **Agent Handoff** endpoints, Codex (`agent/codex`) and Claude (`agent/claude`). Agent Handoff is retained as the supported mechanism for switching ownership between them; Antigravity is retired. Endpoint paths, the live status check, and the rules for switching agents are in `.orchestrator/PROJECT.md`, `.orchestrator/HANDOFF.md`, and decision D-026 in `.orchestrator/DECISIONS.md`.
+
 Remain in normal Chat mode. Do not hand Build Manager work to ChatGPT Work unless Eric explicitly changes this rule.
 
 ## Read order
@@ -19,18 +21,18 @@ At the start of a new Build Manager chat, read:
 1. `.orchestrator/BOOTSTRAP.md` — this file.
 2. `.orchestrator/PROJECT.md` — stable project facts and safety boundaries.
 3. `.orchestrator/WORKFLOW.md` — the manual implementation/review workflow.
-4. `.orchestrator/DECISIONS.md` — settled decisions and historical overrides.
+4. `.orchestrator/DECISIONS.md` — settled decisions and historical overrides; D-025 (manual relay) and D-026 (Agent Handoff endpoints) are the current execution decisions.
 5. `.orchestrator/HANDOFF.md` — current project checkpoint and next manual task.
 6. `BUILD_MANAGER_PROJECT_PLAN.md` only as needed for the current milestone/checklist.
 7. `AGENTS.md` plus the provider-specific file for the agent being used.
 
-Then reconcile current Git/worktree state before issuing a mutation prompt.
+Then reconcile current Git/worktree state and the live, read-only Agent Handoff status (command in `.orchestrator/HANDOFF.md`) before issuing a mutation prompt.
 
 ## Source authority
 
 When sources disagree, prefer:
 
-1. Current Git/worktree state.
+1. Current Git/worktree state and live Agent Handoff status.
 2. Current `.orchestrator/HANDOFF.md`.
 3. `.orchestrator/PROJECT.md`, `WORKFLOW.md`, and `DECISIONS.md`.
 4. The current project plan and implementation docs.
@@ -100,7 +102,7 @@ These remain in force regardless of execution model:
 - The authorized macOS runtime target is only `/Applications/Kodi Build Manager Test.app` in portable `-p` mode.
 - Real Apple TV / Shield / Fire TV devices are non-mutating unless Eric explicitly authorizes a named action on a named device.
 - Do not expose credentials, private overlay values, tokens, or secrets.
-- No push, release, force-push, destructive history rewrite, or destructive cleanup unless Eric explicitly authorizes it.
+- No push, release, force-push, destructive history rewrite, or destructive cleanup unless Eric explicitly authorizes it. The only standing exception is the narrow agent-switch publication authorization in D-026.
 - Preserve exact reviewed evidence and do not fabricate provenance, test results, or review status.
 
 Manual mode removes ai-supervisor's machinery; it does not remove these safeguards.

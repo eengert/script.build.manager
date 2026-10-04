@@ -8,6 +8,8 @@ These decisions are considered settled unless new contradictory evidence appears
 
 The active Build Manager workflow is manual ChatGPT -> Codex/Claude relay. ai-supervisor and Relay-v1 are retired to cold storage unless Eric explicitly resurrects them.
 
+**D-026 (2026-10-04)** records the current manual endpoint architecture (Codex and Claude Agent Handoff endpoints, Antigravity retired) and the narrow standing authorization for the push that completes an explicitly requested agent switch.
+
 ## D-001 — Desired-state product, not backup/restore
 
 Build Manager is declarative desired-state provisioning/reconciliation. It is not Backup Pro and does not clone arbitrary filesystem/profile snapshots.
@@ -145,3 +147,14 @@ Consequences:
 - no push/release/destructive history rewrite without Eric's explicit authorization.
 
 The ai-supervisor/Relay-v1 design is preserved in cold storage for possible later reuse rather than completed now.
+
+## D-026 — Manual Codex/Claude Agent Handoff endpoints and switch authorization
+
+As of 2026-10-04, Build Manager's manual working lanes are two Agent Handoff endpoints. This builds on D-025 and does not reopen it.
+
+- **Endpoints.** Codex: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`. Claude: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude`, branch `agent/claude`. They are manual working endpoints, not autonomous supervisor workers: nothing runs in them unless Eric launches Codex or Claude with a bounded prompt, and each prompt still names the exact worktree/branch it may use.
+- **Agent Handoff is retained** (`/Users/eengert/Documents/Kodi/agent-handoff`, installed as `Agent Handoff.app`) as the supported mechanism for switching ownership between the two endpoints. Which agent is current is recorded by Agent Handoff and determined live with its read-only status check, not assumed from documents or chat memory.
+- **Antigravity is retired** from Build Manager Agent Handoff and must not be recreated (worktree, branch endpoint, or configuration entry) unless Eric explicitly changes this decision.
+- **ai-supervisor remains retired** and cold-stored (D-025).
+- **`matrix` is the canonical guidance and protected integration lane.** Product candidate work continues in the endpoints; integrating that candidate into `matrix` is a separate deliberate decision. Endpoint copies of guidance are synchronized explicitly by path from `matrix` (path-level restore plus a local commit; see `.orchestrator/WORKFLOW.md`), never by merging `matrix` wholesale into the candidate branches, and `matrix` `.agent/**` is never copied.
+- **Standing agent-switch publication authorization.** When Eric explicitly tells the Build Manager Supervisor to switch from one configured agent to another, that request also authorizes Agent Handoff to perform the normal publication push of the target (incoming) agent branch that is required to complete that specific handoff. The authorization covers only that push, for only that requested switch. It does not authorize any unrelated push, any push of `matrix`, any release, any force-push, any history rewrite, or any push not required to complete the requested switch. A handoff Eric has not explicitly requested is not covered. This is the only standing exception to D-025's no-push rule.
