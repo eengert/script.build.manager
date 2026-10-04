@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "bm022-fixture",
+  "settings": [
+    {
+      "target": "addon",
+      "addon_id": "plugin.video.bm022.fixture",
+      "key": "bm022.enabled",
+      "type": "bool",
+      "value": true
+    }
+  ],
+  "files": []
+}

@@ -31,7 +31,6 @@ INSTALL_ADDON      -- install an add-on not currently present; desired_state
                       the executor must handle the disabled case explicitly.
 ENABLE_ADDON       -- enable an installed but currently disabled add-on.
 DISABLE_ADDON      -- disable an installed but currently enabled add-on.
-ENSURE_ABSENT      -- remove an installed add-on whose desired state is "absent".
 SET_SKIN           -- activate a skin add-on.
 CONFIGURE          -- placeholder: managed configuration reconciliation is
                       required. BM-005 does not inspect config state, so the
@@ -43,7 +42,6 @@ desired \ actual  | missing          | disabled     | enabled
 ------------------+------------------+--------------+-------------------
 enabled           | INSTALL_ADDON*   | ENABLE_ADDON | (no action)
 disabled          | INSTALL_ADDON**  | (no action)  | DISABLE_ADDON
-absent            | (no action)      | ENSURE_ABSENT| ENSURE_ABSENT
 
 *  desired_state="enabled"
 ** desired_state="disabled"; executor must install then disable.
@@ -51,8 +49,7 @@ absent            | (no action)      | ENSURE_ABSENT| ENSURE_ABSENT
 Unmanaged add-ons
 -----------------
 Add-ons present in KodiState but not mentioned in ResolvedBuild.addons are
-left untouched. The planner never emits ENSURE_ABSENT for an add-on that is
-not explicitly listed with state="absent" in the desired build.
+left untouched. Build Manager does not uninstall add-ons.
 
 Repository planning
 -------------------
@@ -76,7 +73,7 @@ current_state="unchecked" (actual config state is not inspected by BM-005).
 
 Duplicate-action prevention
 ---------------------------
-A skin add-on present in desired.addons (state != absent) already generates
+A skin add-on present in desired.addons already generates
 an INSTALL_ADDON. The planner tracks install targets and skips the separate
 skin INSTALL_ADDON to avoid duplication.
 
@@ -87,9 +84,8 @@ category. Category order:
   1. INSTALL_REPOSITORY
   2. INSTALL_ADDON
   3. ENABLE_ADDON, DISABLE_ADDON   (lexical by addon_id)
-  4. ENSURE_ABSENT
-  5. SET_SKIN
-  6. CONFIGURE
+  4. SET_SKIN
+  5. CONFIGURE
 This ordering is stable and independent of Python dict/set iteration order or
 the order add-ons appear in the manifest or KodiState.
 
@@ -130,7 +126,6 @@ INSTALL_REPOSITORY: str = "INSTALL_REPOSITORY"
 INSTALL_ADDON: str = "INSTALL_ADDON"
 ENABLE_ADDON: str = "ENABLE_ADDON"
 DISABLE_ADDON: str = "DISABLE_ADDON"
-ENSURE_ABSENT: str = "ENSURE_ABSENT"
 SET_SKIN: str = "SET_SKIN"
 CONFIGURE: str = "CONFIGURE"
 
@@ -139,9 +134,8 @@ _CATEGORY_ORDER: Dict[str, int] = {
     INSTALL_ADDON:      1,
     ENABLE_ADDON:       2,
     DISABLE_ADDON:      2,
-    ENSURE_ABSENT:      3,
-    SET_SKIN:           4,
-    CONFIGURE:          5,
+    SET_SKIN:           3,
+    CONFIGURE:          4,
 }
 
 
@@ -158,7 +152,7 @@ class PlanAction:
     kind         -- one of the action kind constants (INSTALL_ADDON, etc.)
     addon_id     -- the add-on or skin being acted on; empty string for CONFIGURE
     desired_state -- intended end state:
-                    "enabled" | "disabled" | "absent" | "installed" |
+                    "enabled" | "disabled" | "installed" |
                     "active" | "configured"
     current_state -- observed actual state:
                     "missing" | "enabled" | "disabled" | skin_addon_id |
@@ -205,8 +199,7 @@ def plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan:
 
     Raises:
         PlanningError: if KodiState contains duplicate addon_ids, or if the
-            desired build contains contradictory declarations (e.g. skin also
-            declared absent, or required repository also declared absent).
+            desired build contains contradictory skin declarations.
     """
     _validate_no_contradictions(desired)
     actual_map = _build_actual_map(actual)
@@ -239,20 +232,16 @@ def plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan:
     # Phase 4 — enable/disable transitions (category 2)
     enable_disable_actions = _plan_enable_disable(desired, actual_map)
 
-    # Phase 5 — ensure-absent (category 3)
-    absent_actions = _plan_ensure_absent(desired, actual_map)
-
-    # Phase 6 — skin activation (category 4)
+    # Phase 5 — skin activation (category 3)
     skin_actions = _plan_skin_activate(desired, actual)
 
-    # Phase 7 — configuration reconciliation (category 5)
+    # Phase 6 — configuration reconciliation (category 4)
     config_actions = _plan_config(desired)
 
     all_actions: List[PlanAction] = (
         repo_actions
         + install_actions
         + enable_disable_actions
-        + absent_actions
         + skin_actions
         + config_actions
     )
@@ -267,24 +256,8 @@ def plan_changes(desired: ResolvedBuild, actual: KodiState) -> Plan:
 def _validate_no_contradictions(desired: ResolvedBuild) -> None:
     """Raise PlanningError for cross-declaration contradictions in desired state.
 
-    Two contradictions are detected:
-
-    1. Desired skin also declared absent in desired.addons.
-       These are mutually exclusive: the planner cannot install+activate a skin
-       that is simultaneously required to be absent.
-
-    2. A required repository also declared absent in desired.addons.
-       These are mutually exclusive: the planner cannot install a required
-       repository that is simultaneously required to be absent.
+    The planner rejects a desired skin that is not explicitly enabled.
     """
-    absent_ids: Set[str] = {e.addon_id for e in desired.addons if e.state == "absent"}
-
-    if desired.skin is not None and desired.skin.addon_id in absent_ids:
-        raise PlanningError(
-            f"Desired skin {desired.skin.addon_id!r} is also declared absent "
-            f"in desired add-ons"
-        )
-
     if desired.skin is not None:
         skin_entries = {
             e.addon_id: e.state for e in desired.addons
@@ -294,17 +267,6 @@ def _validate_no_contradictions(desired: ResolvedBuild) -> None:
             raise PlanningError(
                 f"Desired skin {desired.skin.addon_id!r} must be declared enabled"
             )
-
-    required_repo_ids: Set[str] = {
-        r.addon_id for r in desired.repositories if r.required
-    }
-    conflicting = sorted(required_repo_ids & absent_ids)
-    if conflicting:
-        raise PlanningError(
-            f"Required repository {conflicting[0]!r} is also declared absent "
-            f"in desired add-ons"
-        )
-
 
 def _build_actual_map(actual: KodiState) -> Dict[str, InstalledAddon]:
     """Index actual.addons by addon_id. Raise PlanningError on duplicates."""
@@ -332,7 +294,7 @@ def _plan_repositories(
     When the same addon_id also appears in desired.addons with state="disabled",
     the INSTALL_REPOSITORY action carries desired_state="disabled" so that the
     executor knows to disable the add-on after repository installation.  For all
-    other overlapping desired add-on states ("enabled" or absent from the list),
+    when no overlapping desired state is declared,
     desired_state="installed" is used (implying enabled, Kodi's default).
     """
     desired_addon_states: Dict[str, str] = {
@@ -383,8 +345,6 @@ def _plan_addon_installs(
     addon_ids: Set[str] = set()
 
     for entry in sorted(desired.addons, key=lambda e: e.addon_id):
-        if entry.state == "absent":
-            continue
         if entry.addon_id in actual_map:
             continue
         if entry.addon_id in repo_install_ids:
@@ -449,8 +409,6 @@ def _plan_enable_disable(
         entries[desired.skin.addon_id] = "enabled"
 
     for addon_id, desired_state in sorted(entries.items()):
-        if desired_state == "absent":
-            continue
         actual_addon = actual_map.get(addon_id)
         if actual_addon is None:
             # Not installed; covered by INSTALL_ADDON
@@ -472,31 +430,6 @@ def _plan_enable_disable(
                 current_state="enabled",
                 reason="Add-on is installed and enabled; desired state: disabled",
             ))
-
-    return actions
-
-
-def _plan_ensure_absent(
-    desired: ResolvedBuild,
-    actual_map: Dict[str, InstalledAddon],
-) -> List[PlanAction]:
-    """Plan ENSURE_ABSENT actions for add-ons whose desired state is 'absent'."""
-    actions: List[PlanAction] = []
-
-    for entry in sorted(desired.addons, key=lambda e: e.addon_id):
-        if entry.state != "absent":
-            continue
-        actual_addon = actual_map.get(entry.addon_id)
-        if actual_addon is None:
-            continue
-        current = "enabled" if actual_addon.enabled else "disabled"
-        actions.append(PlanAction(
-            kind=ENSURE_ABSENT,
-            addon_id=entry.addon_id,
-            desired_state="absent",
-            current_state=current,
-            reason="Add-on is installed; desired state: absent",
-        ))
 
     return actions
 

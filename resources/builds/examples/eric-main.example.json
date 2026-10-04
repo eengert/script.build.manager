@@ -27,19 +27,39 @@
     "config_packages": ["af3-common"]
   },
   "config": {
-    "packages": ["af3-common", "redlight-common"],
+    "packages": ["af3-common"],
     "managed_settings": [
       {
-        "addon_id": "plugin.video.redlight",
-        "keys": ["server_url", "playback_quality", "subtitle_language"]
-      },
-      {
+        "target": "skin",
         "addon_id": "skin.arctic.fuse.3",
-        "keys": ["home_menu_items", "widget_refresh_interval"]
+        "keys": ["HomeSwitcher.Vertical", "HomeSwitcher.EnableIcons", "HomeSwitcher.EnableIconText", "HomeSwitcher.DisableHeader", "HomeSwitcher.DisableDate", "HomeSwitcher.DisableSearch", "HomeSwitcher.DisableFirstWidgetFocus", "HomeSwitcher.LoopBack", "Spotlight.EnableSlide", "Spotlight.UseMenuButton", "View.UseDetailedListLabels", "Widgets.EnableShowMore", "Widgets.DisableNoResultsItem", "Navigation.OnBack", "Seekbar.TimeDisplay", "Skin.FlixArt.Size"]
       }
     ],
-    "managed_files": [
-      "addon_data/skin.arctic.fuse.3/settings.xml"
+    "managed_files": [],
+    "structured_private_resources": [
+      {
+        "resource_type": "sqlite.settings",
+        "owner_addon_id": "plugin.video.redlight",
+        "supported_versions": ["2.6.8"],
+        "schema_id": "redlight-settings-v1",
+        "resource_id": "redlight.settings",
+        "adapter_id": "redlight.sqlite.settings.v1",
+        "lifecycle": "quiesced",
+        "required": true,
+        "configure_before_activation": true,
+        "fields": [
+          {"field_id": "mdblist.refresh", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "mdblist.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "mdblist.user", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "pm.account_id", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "pm.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "tb.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.expires", "type": "string", "required": false, "sensitivity": "private_identifier"},
+          {"field_id": "trakt.refresh", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.token", "type": "string", "required": false, "sensitivity": "token"},
+          {"field_id": "trakt.user", "type": "string", "required": false, "sensitivity": "private_identifier"}
+        ]
+      }
     ]
   },
   "platform_profiles": {
@@ -74,7 +94,13 @@
     },
     "family-room": {
       "label": "Family Room Apple TV",
-      "extends": "tvos"
+      "extends": "tvos",
+      "frozen_install_policies": [
+        {
+          "addon_id": "plugin.video.youtube",
+          "policy": "exact_first_with_repository_fallback_or_skip"
+        }
+      ]
     },
     "shield": {
       "label": "Nvidia Shield Pro",
@@ -93,6 +119,7 @@
   ],
   "private_overlay": {
     "type": "local_file",
+    "overlay_id": "family-room-redlight-2.6.8",
     "path_hint": "~/.config/kodi-private/eric-main-private.json",
     "description": "Optional private overlay for portable authorization state (Real-Debrid, Trakt, EasyNews, etc.). Never committed to the public repository."
   },

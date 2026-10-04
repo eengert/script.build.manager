@@ -248,9 +248,9 @@ class TestAddonEntries(unittest.TestCase):
         doc = self._doc_with_addons([{"addon_id": "plugin.video.foo", "state": "disabled"}])
         validate_manifest(doc)
 
-    def test_valid_state_absent(self):
+    def test_absent_state_rejected_with_actionable_error(self):
         doc = self._doc_with_addons([{"addon_id": "plugin.video.foo", "state": "absent"}])
-        validate_manifest(doc)
+        _assert_invalid(self, doc, contains="unsupported")
 
     def test_invalid_state(self):
         doc = self._doc_with_addons([{"addon_id": "plugin.video.foo", "state": "maybe"}])

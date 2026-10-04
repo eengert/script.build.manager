@@ -111,6 +111,12 @@ from pathlib import Path
 from typing import FrozenSet, Optional
 
 from resources.lib.manifest import Repository
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +152,17 @@ class RepositoryInstallResult:
     addon_id: str
     status: RepositoryStatus
     message: str
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
+
+    @property
+    def restart_report(self) -> RestartReport:
+        """Typed restart metadata for this repository result."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status is RepositoryStatus.INSTALLED,
+            succeeded=self.status is not RepositoryStatus.FAILED,
+            operation=f"install-repository:{self.addon_id}",
+        ),))
 
 
 # ---------------------------------------------------------------------------
@@ -437,8 +454,18 @@ def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
 
+    roots = {
+        name.split("/", 1)[0]
+        for name in names
+        if name and not name.endswith("/")
+    }
     prefix = f"{addon_id}/"
     has_prefix = any(n.startswith(prefix) and n != prefix for n in names)
+    alternate_prefix = ""
+    if not has_prefix and len(roots) == 1:
+        candidate = next(iter(roots))
+        if any(n.startswith(f"{candidate}/") for n in names):
+            alternate_prefix = f"{candidate}/"
 
     target.mkdir(parents=True, exist_ok=True)
     target_resolved = target.resolve()
@@ -451,6 +478,8 @@ def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> 
                 if not name.startswith(prefix):
                     continue
                 rel = name[len(prefix):]
+            elif alternate_prefix:
+                rel = name[len(alternate_prefix):]
             else:
                 rel = name
             if not rel:
@@ -504,6 +533,16 @@ class RepositoryManager:
         Returns FAILED with a descriptive message on any error.
         """
         addon_id = repository.addon_id
+
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception:
+            return RepositoryInstallResult(
+                addon_id=addon_id,
+                status=RepositoryStatus.FAILED,
+                message="repository installation is held or activation-hold state is unavailable",
+            )
 
         # Detection: already in Kodi's database? No mutation.
         if self.is_installed(addon_id):
@@ -729,6 +768,13 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
         SetAddonEnabled. Raises RepositoryInstallError if the addon does not
         appear within _ENABLE_WAIT_TIMEOUT seconds, or if SetAddonEnabled fails.
         """
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise RepositoryInstallError(
+                "repository activation is held or activation-hold state is unavailable"
+            ) from exc
         xbmc = self._xbmc()
 
         # Wait for UpdateLocalAddons to register the addon (as disabled)

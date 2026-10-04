@@ -487,8 +487,10 @@ passwords, API keys, OAuth state, debrid credentials, Trakt credentials, or
 EasyNews credentials.
 
 BM-015 does not read `private_overlay` and has no notion of a secret value.
-Portable authentication state is the subject of BM-017, which will define it
-architecturally. There is deliberately **no heuristic secret detection** here —
+Portable authentication state is the subject of BM-017A. BM-017A applies
+validated private entries through the same `ConfigurationBackend` after this
+public manager completes; it does not create a parallel settings engine.
+There is deliberately **no heuristic secret detection** here —
 a scanner would be a poor substitute for keeping secrets out of the public
 package format in the first place.
 
@@ -505,6 +507,14 @@ deepest winning skin supplies its package list; duplicate IDs are collapsed by
 first-seen order. Skin-selected packages do not gain authority to modify
 undeclared targets: `config.managed_settings` and `config.managed_files`
 remain the ownership boundary. There is no separate skin package format.
+
+The production `af3-common` package is a typed skin-target package for
+`skin.arctic.fuse.3`. It contains the supervisor-approved common AF3 bool and
+string policy only and has `files: []`; the exact key/value contract and the
+six intentionally unmanaged reviewed candidates are recorded in
+[`docs/AF3_PORTABILITY.md`](AF3_PORTABILITY.md). A manifest using it must
+declare each exact skin target with `target: "skin"`. No package can claim
+ownership merely by appearing in `skin.config_packages`.
 
 ---
 

@@ -37,10 +37,12 @@ from resources.lib.manifest import (
     BuildInfo,
     ConfigDeclarations,
     DeviceProfile,
+    FrozenInstallPolicy,
     ManifestError,
     ManagedSettingScope,
     Manifest,
     OptionalGroup,
+    PrivateSettingDeclaration,
     PrivateOverlayRef,
     ProfileLayer,
     Repository,
@@ -84,6 +86,7 @@ class ResolvedBuild:
     optional_groups_applied: Tuple[str, ...]
     restart_policy: Optional[RestartPolicy]
     private_overlay: Optional[PrivateOverlayRef]
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +145,10 @@ def resolve_manifest(manifest: Manifest, device_profile_id: str) -> ResolvedBuil
     if skin is not None and skin.config_packages:
         config_layers.append(ConfigDeclarations(packages=skin.config_packages))
     config = _merge_config(config_layers)
+    frozen_install_policies = _merge_frozen_install_policies(
+        platform.frozen_install_policies,
+        device.frozen_install_policies,
+    )
 
     return ResolvedBuild(
         build=manifest.build,
@@ -155,7 +162,19 @@ def resolve_manifest(manifest: Manifest, device_profile_id: str) -> ResolvedBuil
         optional_groups_applied=tuple(applied_ids),
         restart_policy=manifest.restart_policy,
         private_overlay=manifest.private_overlay,
+        frozen_install_policies=frozen_install_policies,
     )
+
+
+def _merge_frozen_install_policies(
+    *layers: Tuple[FrozenInstallPolicy, ...],
+) -> Tuple[FrozenInstallPolicy, ...]:
+    """Merge explicit recovery policies, with the deepest profile winning."""
+    policies: Dict[str, FrozenInstallPolicy] = {}
+    for layer in layers:
+        for policy in layer:
+            policies[policy.addon_id] = policy
+    return tuple(policies[addon_id] for addon_id in sorted(policies))
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +263,9 @@ def _merge_config(
     - managed_settings: per (target kind, addon_id), keys unioned in
       first-seen order, scope order is first-seen
     - managed_files: union in first-seen order, no duplicates
+    - private_settings: union by exact target; conflicting declarations fail
+    - structured_private_resources: union by resource ID; conflicting
+      declarations fail
 
     Returns None when every supplied layer has no config.
     """
@@ -256,6 +278,12 @@ def _merge_config(
 
     file_seen: set = set()
     files: List[str] = []
+
+    private_order: List[Tuple[object, str, str]] = []
+    private_map: Dict[Tuple[object, str, str], PrivateSettingDeclaration] = {}
+
+    resource_order: List[str] = []
+    resource_map = {}
 
     any_config = False
     for cfg in layers:
@@ -284,6 +312,34 @@ def _merge_config(
                 file_seen.add(path)
                 files.append(path)
 
+        for declaration in cfg.private_settings:
+            identity = (
+                declaration.target_kind,
+                declaration.addon_id,
+                declaration.key,
+            )
+            previous = private_map.get(identity)
+            if previous is not None and previous != declaration:
+                raise ManifestResolutionError(
+                    "conflicting private setting declaration for "
+                    f"{declaration.target_kind.value}:{declaration.addon_id}/"
+                    f"{declaration.key}"
+                )
+            if previous is None:
+                private_order.append(identity)
+                private_map[identity] = declaration
+
+        for declaration in cfg.structured_private_resources:
+            previous = resource_map.get(declaration.resource_id)
+            if previous is not None and previous != declaration:
+                raise ManifestResolutionError(
+                    "conflicting structured private resource declaration for "
+                    f"{declaration.resource_id!r}"
+                )
+            if previous is None:
+                resource_order.append(declaration.resource_id)
+                resource_map[declaration.resource_id] = declaration
+
     if not any_config:
         return None
 
@@ -298,4 +354,6 @@ def _merge_config(
             for target_kind, addon_id in ms_order
         ),
         managed_files=tuple(files),
+        private_settings=tuple(private_map[item] for item in private_order),
+        structured_private_resources=tuple(resource_map[item] for item in resource_order),
     )

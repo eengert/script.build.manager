@@ -32,6 +32,15 @@ Commands
   validate-addon-state   BM-013 live validation: enable/disable reconciliation
   validate-post-operations  BM-014 live validation: post-operation state validation
   validate-config BM-015 live validation: configuration package deployment
+  validate-af3-package BM-018E live validation: production AF3 package
+  validate-build-manager BM-020A live validation: production executor
+  validate-build-manager-transaction BM-020B live validation: transaction startup
+  validate-build-manager-manual-restart BM-020C1 live validation: manual restart handoff
+  validate-build-manager-resume BM-020C live validation: automatic post-restart resume
+  validate-frozen-capture BM-021B disposable exact-artifact capture proof
+  validate-updater-guard BM-021B disposable global updater-guard proof
+  validate-frozen-install BM-022 disposable exact frozen-install proof
+  validate-bm017f-lifecycle BM-017F retained Red Light deferred-activation proof
 """
 
 from __future__ import annotations
@@ -55,7 +64,7 @@ import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved relative to this file's location
@@ -75,11 +84,16 @@ KODI = Path("/Applications/Kodi.app/Contents/MacOS/Kodi")
 KODI_SYSTEM_ADDONS_DIR = KODI.parent.parent / "Resources" / "Kodi" / "addons"
 
 ADDON_ID = "script.build.manager"
-ADDON_INCLUDE: frozenset = frozenset({"addon.xml", "default.py", "resources"})
+ADDON_INCLUDE: frozenset = frozenset({"addon.xml", "default.py", "service.py", "resources"})
 
 WEBSERVER_PORT = 8920
 WEBSERVER_USERNAME = "bm-test"
 WEBSERVER_PASSWORD = "bm-test-only"
+
+_BM022_REPO_ID = "repository.bm022.fixture"
+_BM022_DEP_ID = "script.module.bm022.dep"
+_BM022_APP_ID = "plugin.video.bm022.fixture"
+_BM022_VERSION = "1.0.0"
 
 # The real Kodi profile — this harness must never overlap with it.
 NORMAL_APPDATA_DIR = Path.home() / "Library" / "Application Support" / "Kodi"
@@ -93,11 +107,12 @@ _process: Optional[subprocess.Popen] = None  # type: ignore[type-arg]
 
 
 def _inside(child: Path, parent: Path) -> bool:
-    """True if child equals parent or is nested inside it (both resolved)."""
+    """True if child equals parent or is nested inside it lexically."""
     try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-    except ValueError:
+        child_path = os.path.normpath(os.path.abspath(os.fspath(child)))
+        parent_path = os.path.normpath(os.path.abspath(os.fspath(parent)))
+        return os.path.commonpath((child_path, parent_path)) == parent_path
+    except (OSError, ValueError):
         return False
 
 
@@ -112,30 +127,51 @@ def _overlaps(a: Path, b: Path) -> bool:
 
 
 def verify_isolation() -> None:
-    """Raise RuntimeError if disposable paths would overlap the real profile.
+    """Require Kodi's profile paths to use the exact disposable HOME.
 
     Called by reset, install, configure_webserver, and launch before they
     touch the filesystem or spawn a process. Fails closed on any violation.
+
+    This check is deliberately lexical: it never resolves, stats, or otherwise
+    probes the normal Kodi profile. It proves the configured disposable HOME
+    is exactly below this project and rejects symlinks in its profile path
+    before any operation can follow one.
     """
-    if ROOT.resolve() == Path("/").resolve():
+    project = Path(os.path.normpath(os.path.abspath(os.fspath(PROJECT))))
+    root = Path(os.path.normpath(os.path.abspath(os.fspath(ROOT))))
+    home = Path(os.path.normpath(os.path.abspath(os.fspath(HOME))))
+    appdata = Path(os.path.normpath(os.path.abspath(os.fspath(KODI_APPDATA_DIR))))
+    expected_root = project / ".kodi-test"
+    expected_home = expected_root / "home"
+    expected_appdata = expected_home / "Library" / "Application Support" / "Kodi"
+
+    if root == Path("/"):
         raise RuntimeError("ROOT must not be the filesystem root")
-    if not _inside(ROOT, PROJECT):
+    if root != expected_root:
         raise RuntimeError(
-            f"Safety: ROOT {ROOT} is not inside PROJECT {PROJECT}"
+            "Safety: ROOT must be the project's exact .kodi-test directory"
         )
-    if not _inside(HOME, ROOT):
+    if home != expected_home:
         raise RuntimeError(
-            f"Safety: HOME {HOME} is not inside ROOT {ROOT}"
+            "Safety: HOME must be the exact disposable .kodi-test/home directory"
         )
-    if not _inside(KODI_APPDATA_DIR, HOME):
+    if appdata != expected_appdata:
         raise RuntimeError(
-            f"Safety: KODI_APPDATA_DIR {KODI_APPDATA_DIR} is not inside HOME {HOME}"
+            "Safety: KODI_APPDATA_DIR must be derived from the disposable HOME"
         )
-    if _overlaps(KODI_APPDATA_DIR, NORMAL_APPDATA_DIR):
-        raise RuntimeError(
-            f"Safety: disposable profile {KODI_APPDATA_DIR} "
-            f"overlaps real profile {NORMAL_APPDATA_DIR}"
-        )
+    # Check each disposable path component in order. If an ancestor is a
+    # symlink, stop before any descendant lookup could follow it elsewhere.
+    for path in (
+        ROOT,
+        HOME,
+        HOME / "Library",
+        HOME / "Library" / "Application Support",
+        KODI_APPDATA_DIR,
+    ):
+        if path.is_symlink():
+            raise RuntimeError(
+                "Safety: symlink-based disposable Kodi profile paths are unsupported"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -3837,6 +3873,70 @@ def _run_external_skin_write(config, job):
     return {"written": True}
 
 
+def _run_build_manager(addon_root, job):
+    """Invoke the real BM-020A executor inside disposable Kodi."""
+    from resources.lib.build_manager import BuildManager, ReconcileRequest
+
+    manifest_filename = job.get("manifest_filename", "bm020a-executor.example.json")
+    if (
+        not isinstance(manifest_filename, str)
+        or not manifest_filename.endswith(".json")
+        or os.path.basename(manifest_filename) != manifest_filename
+    ):
+        raise ValueError("manifest_filename must be a fixture JSON filename")
+    manifest_path = os.path.join(
+        addon_root, "resources", "builds", "examples", manifest_filename
+    )
+    request = ReconcileRequest(
+        manifest_path=manifest_path,
+        device_profile_id=job.get("device_profile_id", "family-room"),
+    )
+    result = BuildManager().reconcile(request)
+    payload = result.to_dict()
+    if result.validation_report is not None:
+        payload["validation_checks"] = [
+            {
+                "domain": check.domain.value,
+                "subject": check.subject,
+                "status": check.status.value,
+                "expected": check.expected,
+                "actual_state": check.actual_state,
+                "reason": check.reason,
+            }
+            for check in result.validation_report.checks
+        ]
+    configure_result = next(
+        (
+            item.owner_result
+            for item in result.action_results
+            if item.action.kind == "CONFIGURE"
+        ),
+        None,
+    )
+    if configure_result is not None:
+        payload["configuration_summary"] = {
+            "setting_targets": [item.target for item in configure_result.settings],
+            "file_targets": [item.target for item in configure_result.files],
+            "changed_targets": [item.target for item in configure_result.changed],
+            "unchanged_targets": [item.target for item in configure_result.unchanged],
+        }
+    payload["owner_dispatch"] = [
+        {
+            "action_kind": action["kind"],
+            "owner": {
+                "INSTALL_REPOSITORY": "RepositoryManager",
+                "INSTALL_ADDON": "DependencyAwareInstaller",
+                "ENABLE_ADDON": "AddonStateReconciler",
+                "DISABLE_ADDON": "AddonStateReconciler",
+                "SET_SKIN": "SkinActivator",
+                "CONFIGURE": "ConfigurationManager",
+            }.get(action["kind"], "unknown"),
+        }
+        for action in payload["planned_actions"]
+    ]
+    return payload
+
+
 def main():
     payload = {"ok": False}
     nonce = ""
@@ -3853,6 +3953,299 @@ def main():
             payload = _run_external_skin_write(config, job)
         elif job.get("mode") == "observe":
             payload = _run_observe(config, job)
+        elif job.get("mode") == "bootstrap_skin_schema":
+            import xbmc
+            commands = (
+                "Skin.SetBool(View.UseDetailedListLabels)",
+                "Skin.SetBool(Widgets.EnableShowMore)",
+                "Skin.SetBool(Widgets.DisableNoResultsItem)",
+                "Skin.Reset(Widgets.DisableNoResultsItem)",
+                "Skin.SetString(Navigation.OnBack,Previous)",
+            )
+            for command in commands:
+                try:
+                    xbmc.executebuiltin(command, True)
+                except TypeError:
+                    xbmc.executebuiltin(command)
+            payload = {"written": list(commands)}
+        elif job.get("mode") == "build_manager":
+            payload = _run_build_manager(addon_root, job)
+        elif job.get("mode") == "frozen_install":
+            from pathlib import Path
+            from resources.lib.artifacts import ArtifactStore
+            from resources.lib.build_manager import BuildManager, ReconcileResult
+            from resources.lib.frozen import FrozenBuildManifest
+            from resources.lib.frozen_install import (
+                FrozenInstallCoordinator,
+                FrozenInstallStore,
+                KodiRuntimeFrozenArtifactBackend,
+            )
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.restart_coordinator import RestartCoordinator
+            from resources.lib.update_guard import KodiJsonRpcUpdatePolicyBackend
+
+            def _policy_rpc(method, params):
+                import xbmc
+                response = json.loads(xbmc.executeJSONRPC(json.dumps({
+                    "jsonrpc": "2.0", "method": method, "params": params, "id": 1,
+                })))
+                return response.get("result", response)
+
+            manifest_path = job["manifest_path"]
+            configuration_path = job["configuration_manifest_path"]
+            manifest = FrozenBuildManifest.from_json(
+                Path(manifest_path).read_text(encoding="utf-8")
+            )
+            manager = BuildManager()
+            if job.get("force_restart"):
+                def _configure_then_request_restart(configuration_request):
+                    real_result = manager.reconcile(configuration_request)
+                    if not real_result.success or not real_result.desired_fingerprint:
+                        failure = (
+                            real_result.failure.to_dict()
+                            if real_result.failure is not None
+                            else {"code": "UNKNOWN", "message": "no failure detail"}
+                        )
+                        failure["actions"] = [
+                            {
+                                "action": result.action.kind,
+                                "addon_id": result.action.addon_id,
+                                "succeeded": result.succeeded,
+                                "changed": result.changed,
+                                "message": result.message,
+                                "owner_failures": [
+                                    getattr(failed, "detail", "")
+                                    for failed in getattr(result.owner_result, "failed", ())
+                                ],
+                            }
+                            for result in real_result.action_results
+                        ]
+                        owner_failures = [
+                            getattr(failed, "detail", "")
+                            for result in real_result.action_results
+                            for failed in getattr(result.owner_result, "failed", ())
+                            if getattr(failed, "detail", "")
+                        ]
+                        if owner_failures:
+                            failure["message"] = owner_failures[0]
+                        raise RuntimeError(
+                            "BM-022 configuration failed: "
+                            f"{failure}"
+                        )
+                    trigger = ReconcileResult(
+                        success=True,
+                        request=configuration_request,
+                        desired_fingerprint=real_result.desired_fingerprint,
+                        restart_report=RestartReport(RestartRequirement.KODI_RESTART, 1, 0),
+                    )
+                    return RestartCoordinator(manager).handle_result(configuration_request, trigger)
+
+                configuration_runner = _configure_then_request_restart
+            else:
+                configuration_runner = lambda request: RestartCoordinator(manager).reconcile(request)
+            coordinator = FrozenInstallCoordinator(
+                store=FrozenInstallStore(),
+                artifact_store=ArtifactStore(Path(job["artifact_root"])),
+                policy_backend=KodiJsonRpcUpdatePolicyBackend(_policy_rpc),
+                installer=KodiRuntimeFrozenArtifactBackend(),
+                configuration_runner=configuration_runner,
+            )
+            result = coordinator.install(
+                manifest,
+                manifest_path=manifest_path,
+                device_profile_id=job["device_profile_id"],
+                configuration_manifest_path=configuration_path,
+            )
+            installed = {}
+            for node in manifest.addons:
+                if node.system:
+                    continue
+                detail = coordinator.installer.get_addon_details(node.addon_id)
+                installed[node.addon_id] = (
+                    {
+                        "version": detail.version,
+                        "enabled": detail.enabled,
+                        "broken": detail.broken,
+                    }
+                    if detail is not None else None
+                )
+            transaction = FrozenInstallStore().inspect()
+            policy_readback = _policy_rpc(
+                "Settings.GetSettingValue",
+                {"setting": "general.addonupdates"},
+            )
+            payload = {
+                "outcome": result.outcome,
+                "code": result.code,
+                "message": result.message,
+                "transaction": transaction.to_dict() if transaction else None,
+                "installed": installed,
+                "installation_order": list(coordinator.installer.install_order),
+                "policy": policy_readback.get("value") if isinstance(policy_readback, dict) else None,
+                "policy_readback": policy_readback,
+            }
+        elif job.get("mode") == "frozen_inspect":
+            from resources.lib.frozen_install import FrozenInstallStore
+            transaction = FrozenInstallStore().inspect()
+            payload = {"transaction": transaction.to_dict() if transaction else None}
+        elif job.get("mode") == "bm017f_second_reconcile":
+            from resources.lib.build_manager import BuildManager, ReconcileRequest
+            result = BuildManager().reconcile(ReconcileRequest(
+                manifest_path=job["manifest_path"],
+                device_profile_id=job["device_profile_id"],
+                source_software_fingerprint=job.get("source_software_fingerprint", ""),
+            ))
+            payload = {
+                "success": result.success,
+                "planned_action_count": len(result.planned_actions),
+                "changed_action_count": sum(
+                    1 for item in result.action_results if item.changed
+                ),
+                "failed_action_count": sum(
+                    1 for item in result.action_results if not item.succeeded
+                ),
+                "failure_code": result.failure.code if result.failure else "",
+            }
+        elif job.get("mode") == "frozen_observe_setting":
+            import xbmcaddon
+            addon = xbmcaddon.Addon(job["addon_id"])
+            payload = {"value": addon.getSettingBool(job["key"])}
+        elif job.get("mode") == "transaction_prepare":
+            from resources.lib.build_manager import ReconcileRequest, ReconcileResult
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.transaction import (
+                TransactionStore,
+                prepare_restart_transaction,
+            )
+            request = ReconcileRequest(
+                manifest_path="/harness/bm020b-selector-only.json",
+                device_profile_id="bm020b-disposable",
+            )
+            reconcile_result = ReconcileResult(
+                success=True,
+                request=request,
+                desired_fingerprint="sha256:" + "b" * 64,
+                restart_report=RestartReport(
+                    RestartRequirement.KODI_RESTART, 1, 0
+                ),
+            )
+            prepared = prepare_restart_transaction(
+                request,
+                reconcile_result,
+                job["session_id"],
+                store=TransactionStore(),
+            )
+            payload = {
+                "created": prepared.created,
+                "succeeded": prepared.succeeded,
+                "failure": (
+                    {"code": prepared.failure.code, "message": prepared.failure.message}
+                    if prepared.failure else None
+                ),
+                "transaction": (
+                    prepared.transaction.to_dict() if prepared.transaction else None
+                ),
+            }
+        elif job.get("mode") == "transaction_session":
+            from resources.lib.session import get_current_kodi_session_id
+            payload = {"session_id": get_current_kodi_session_id()}
+        elif job.get("mode") == "transaction_startup_property":
+            import xbmcgui
+            from resources.lib.startup import STARTUP_CLASSIFICATION_PROPERTY
+            payload = {
+                "classification": xbmcgui.Window(10000).getProperty(
+                    STARTUP_CLASSIFICATION_PROPERTY
+                )
+            }
+        elif job.get("mode") == "transaction_resume_properties":
+            import xbmcgui
+            from resources.lib.startup import (
+                RESUME_FINGERPRINT_PROPERTY,
+                RESUME_OUTCOME_PROPERTY,
+                RESUME_REQUIREMENT_PROPERTY,
+                STARTUP_CLASSIFICATION_PROPERTY,
+            )
+            window = xbmcgui.Window(10000)
+            payload = {
+                "classification": window.getProperty(STARTUP_CLASSIFICATION_PROPERTY),
+                "resume_outcome": window.getProperty(RESUME_OUTCOME_PROPERTY),
+                "resume_fingerprint": window.getProperty(RESUME_FINGERPRINT_PROPERTY),
+                "resume_requirement": window.getProperty(RESUME_REQUIREMENT_PROPERTY),
+            }
+        elif job.get("mode") == "transaction_classify":
+            from resources.lib.startup import classify_startup_transaction
+            from resources.lib.transaction import TransactionStore
+            status = classify_startup_transaction(
+                job["session_id"], store=TransactionStore()
+            )
+            payload = {
+                "classification": status.classification.value,
+                "eligible_for_resume": status.eligible_for_resume,
+                "code": status.code,
+                "message": status.message,
+                "transaction": (
+                    status.transaction.to_dict() if status.transaction else None
+                ),
+            }
+        elif job.get("mode") == "transaction_clear":
+            from resources.lib.transaction import TransactionStore
+            payload = {"cleared": TransactionStore().clear()}
+        elif job.get("mode") == "transaction_inspect":
+            from resources.lib.transaction import TransactionStore
+            transaction = TransactionStore().inspect()
+            payload = {
+                "transaction": transaction.to_dict() if transaction else None,
+            }
+        elif job.get("mode") == "restart_manual_trigger":
+            from resources.lib.build_manager import BuildManager, ReconcileRequest, ReconcileResult
+            from resources.lib.restart import RestartReport, RestartRequirement
+            from resources.lib.restart_coordinator import (
+                RestartCapabilityResolver,
+                RestartCoordinator,
+            )
+            from resources.lib.session import get_current_kodi_session_id
+
+            manifest_path = os.path.join(
+                addon_root, "resources", "builds", "examples",
+                job.get("manifest_filename", "bm020a-executor.example.json"),
+            )
+            request = ReconcileRequest(
+                manifest_path=manifest_path,
+                device_profile_id=job.get("device_profile_id", "bm020a-disposable"),
+            )
+            manager = BuildManager()
+            real_result = manager.reconcile(request)
+            if not real_result.success or not real_result.desired_fingerprint:
+                payload = {
+                    "real_result": real_result.to_dict(),
+                    "coordinator": None,
+                    "session_id": get_current_kodi_session_id(),
+                }
+            else:
+                # This typed result is the test-only hypothetical trigger. The
+                # request and fingerprint are real; only the restart requirement
+                # is synthetic because no current production operation needs it.
+                trigger = ReconcileResult(
+                    success=True,
+                    request=request,
+                    desired_fingerprint=real_result.desired_fingerprint,
+                    restart_report=RestartReport(
+                        RestartRequirement.KODI_RESTART, 1, 0
+                    ),
+                )
+                coordinator = RestartCoordinator(
+                    manager,
+                    capability_resolver=RestartCapabilityResolver(
+                        platform_id=job.get("platform", "macos")
+                    ),
+                )
+                coordinated = coordinator.handle_result(request, trigger)
+                payload = {
+                    "real_result": real_result.to_dict(),
+                    "trigger": trigger.to_dict(),
+                    "coordinator": coordinated.to_dict(),
+                    "session_id": get_current_kodi_session_id(),
+                }
         else:
             payload = _run_apply(config, manifest, job)
         payload["ok"] = True
@@ -4655,6 +5048,30 @@ _BM018D_UNMANAGED_VALUE = "leave-me-alone"
 _BM018D_AF3_SOURCE_ROOT = (
     Path.home() / "Library" / "Application Support" / "Kodi" / "addons"
 )
+_BM018E_MANIFEST = PROJECT / "resources" / "builds" / "examples" / "eric-main.example.json"
+_BM018E_PROFILE = "family-room"
+_BM020A_FIXTURE = "bm020a-executor.example.json"
+_BM020A_PROFILE = "bm020a-disposable"
+_BM020A_MANAGED_SETTINGS = {
+    "HomeSwitcher.Vertical": ("bool", False),
+    "HomeSwitcher.EnableIcons": ("bool", False),
+    "HomeSwitcher.EnableIconText": ("bool", True),
+    "HomeSwitcher.DisableHeader": ("bool", True),
+    "HomeSwitcher.DisableDate": ("bool", True),
+    "HomeSwitcher.DisableSearch": ("bool", False),
+    "HomeSwitcher.DisableFirstWidgetFocus": ("bool", False),
+    "HomeSwitcher.LoopBack": ("bool", False),
+    "Spotlight.EnableSlide": ("bool", False),
+    "Spotlight.UseMenuButton": ("bool", False),
+    "View.UseDetailedListLabels": ("bool", True),
+    "Widgets.EnableShowMore": ("bool", True),
+    "Widgets.DisableNoResultsItem": ("bool", False),
+    "Navigation.OnBack": ("string", "Previous"),
+    "Seekbar.TimeDisplay": ("string", "Combined"),
+    "Skin.FlixArt.Size": ("string", "ExtraLarge"),
+}
+_BM020A_UNMANAGED_KEY = "TMDbHelper.Corner.Radius"
+_BM020A_UNMANAGED_VALUE = "bm020a-unmanaged"
 
 
 def _bm018d_copy_af3_and_dependencies() -> tuple[str, ...]:
@@ -4806,6 +5223,52 @@ def _bm018d_warm_af3_runtime() -> None:
         if returned.get("status") != "activated":
             raise RuntimeError(f"could not return disposable Kodi to Estuary: {returned}")
 
+    # Four AF3 settings are real Skin.* variables but are not present in
+    # Kodi's typed m_settings map on a pristine profile. Exercise their
+    # runtime paths once while AF3 is active so Kodi emits typed entries in
+    # the disposable settings.xml. The production adapter still uses that
+    # file only as a key/type eligibility guard; effective values continue to
+    # come from Skin.HasSetting/Skin.String.
+    bootstrap = _bm018d_activate(_BM018D_SKIN_ID)
+    if bootstrap.get("status") not in ("activated", "already_active"):
+        raise RuntimeError(f"could not activate AF3 for fallback bootstrap: {bootstrap}")
+    bootstrap_result = _bm018d_run_job({"mode": "bootstrap_skin_schema"})
+    if not bootstrap_result.get("ok"):
+        raise RuntimeError(
+            "AF3 fallback schema bootstrap failed: "
+            f"{bootstrap_result.get('error_type')}: {bootstrap_result.get('error')}"
+        )
+    deadline = time.time() + 5.0
+    fallback_ids = {
+        "view.usedetailedlistlabels": "bool",
+        "widgets.enableshowmore": "bool",
+        "widgets.disablenoresultsitem": "bool",
+        "navigation.onback": "string",
+    }
+    settings_path = (
+        KODI_USERDATA_DIR / "addon_data" / _BM018D_SKIN_ID / "settings.xml"
+    )
+    while True:
+        try:
+            root = ET.parse(settings_path).getroot()
+            observed = {
+                (node.get("id") or node.get("name", "")).casefold(): node.get("type")
+                for node in root.findall("setting")
+            }
+            if all(observed.get(key) == kind for key, kind in fallback_ids.items()):
+                break
+        except (ET.ParseError, OSError):
+            pass
+        if time.time() >= deadline:
+            raise RuntimeError(
+                "AF3 fallback schema bootstrap did not persist all typed entries"
+            )
+        time.sleep(0.1)
+    returned = _bm018d_activate("skin.estuary")
+    if returned.get("status") != "activated":
+        raise RuntimeError(f"could not return disposable Kodi to Estuary: {returned}")
+    print("  AF3 fallback Skin.* schema entries persisted in disposable profile ✓")
+
 
 def _bm018d_install_runner() -> None:
     """Install the existing harness runner used for in-process Kodi APIs."""
@@ -4931,6 +5394,289 @@ def _bm018d_external_write(key: str, value: Any, setting_type: str) -> None:
             f"BM-018D external write failed: {result.get('error_type')}: "
             f"{result.get('error')}"
         )
+
+
+def _bm018e_apply(declarations) -> Dict[str, Any]:
+    """Apply the production AF3 configuration through the live runner."""
+    return _bm018d_run_job({
+        "mode": "apply",
+        "packages": list(declarations.packages),
+        "managed_settings": [
+            {
+                "target": scope.target_kind.value,
+                "addon_id": scope.addon_id,
+                "keys": list(scope.keys),
+            }
+            for scope in declarations.managed_settings
+        ],
+        "managed_files": list(declarations.managed_files),
+    })
+
+
+def _bm018e_observe(effective) -> Dict[str, Any]:
+    """Read every production AF3 target through the typed runtime backend."""
+    result = _bm018d_run_job({
+        "mode": "observe",
+        "observe": [
+            {
+                "target": setting.target_kind.value,
+                "addon_id": setting.addon_id,
+                "key": setting.key,
+                "type": setting.setting_type.value,
+            }
+            for setting in effective.settings
+        ],
+    })
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"BM-018E observe failed: {result.get('error_type')}: "
+            f"{result.get('error')}"
+        )
+    observed = {}
+    for key, entry in result.get("observed", {}).items():
+        if not entry.get("ok"):
+            raise RuntimeError(
+                f"BM-018E observe could not read {key!r}: {entry.get('error')}"
+            )
+        observed[key] = entry["value"]
+    return observed
+
+
+def validate_af3_package() -> None:
+    """Live BM-018E validation using the checked-in production AF3 package.
+
+    The manifest and profile are loaded from the installed Build Manager copy,
+    the winning skin package is resolved from ``skin.config_packages``, and
+    the resulting typed settings are applied by the production BM-015 runner.
+    AF3 and its complete installed dependency closure are copied read-only
+    from the real add-on tree into the disposable profile. No real profile or
+    device is touched.
+    """
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.config import ConfigPackageLoader, ConfigSettingType
+    from resources.lib.inspector import KodiStateInspector
+    from resources.lib.manifest import (
+        ConfigDeclarations,
+        ManagedSettingScope,
+        SettingTargetKind,
+        load_manifest_file,
+    )
+    from resources.lib.planner import CONFIGURE, SET_SKIN, plan_changes
+    from resources.lib.resolver import resolve_manifest
+
+    print("=== Build Manager BM-018E live validation: production AF3 package ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/14] reset disposable profile and install production add-on")
+        reset()
+        install(source=PROJECT)
+        installed_manifest = KODI_ADDONS_DIR / ADDON_ID / "resources" / "builds" / "examples" / _BM018E_MANIFEST.name
+        manifest = load_manifest_file(str(installed_manifest))
+        desired = resolve_manifest(manifest, _BM018E_PROFILE)
+        if desired.skin is None or desired.skin.addon_id != _BM018D_SKIN_ID:
+            raise RuntimeError(f"production profile resolved unexpected skin: {desired.skin!r}")
+        if tuple(desired.skin.config_packages) != ("af3-common",):
+            raise RuntimeError(
+                f"production skin selected unexpected packages: {desired.skin.config_packages!r}"
+            )
+        if desired.config is None:
+            raise RuntimeError("production profile resolved no configuration declarations")
+        skin_scopes = tuple(
+            scope for scope in desired.config.managed_settings
+            if scope.target_kind is SettingTargetKind.SKIN
+        )
+        if len(skin_scopes) != 1 or skin_scopes[0].addon_id != _BM018D_SKIN_ID:
+            raise RuntimeError(f"production manifest resolved unexpected AF3 ownership: {skin_scopes!r}")
+        af3_declarations = ConfigDeclarations(
+            packages=desired.skin.config_packages,
+            managed_settings=skin_scopes,
+            managed_files=(),
+        )
+        package_root = _bm015_installed_packages_root()
+        effective = ConfigPackageLoader(str(package_root)).resolve(af3_declarations)
+        if effective.packages != ("af3-common",) or len(effective.settings) != 16:
+            raise RuntimeError(
+                f"production AF3 package resolved unexpected effective configuration: "
+                f"packages={effective.packages!r}, settings={len(effective.settings)}, "
+                f"files={len(effective.files)}"
+            )
+        if effective.files:
+            raise RuntimeError("production af3-common unexpectedly contains file targets")
+        expected = {setting.key: setting.value for setting in effective.settings}
+        expected_types = {setting.key: setting.setting_type for setting in effective.settings}
+        if any(setting.setting_type not in (ConfigSettingType.BOOL, ConfigSettingType.STRING)
+               for setting in effective.settings):
+            raise RuntimeError("production AF3 package contains a non-bool/string target")
+        print(
+            f"  resolved installed manifest={installed_manifest} profile={_BM018E_PROFILE!r} "
+            f"skin={desired.skin.addon_id!r} packages={effective.packages!r} "
+            f"settings={len(effective.settings)} files=0 ✓"
+        )
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_install_runner()
+        configure_webserver()
+
+        print("\n[2/14] launch disposable Kodi with Estuary")
+        launch()
+        wait_for_ready(timeout=90.0)
+        initial = inspect()
+        if initial["active_skin"] != "skin.estuary":
+            raise RuntimeError(f"expected Estuary before BM-018E, got {initial['active_skin']!r}")
+        print("  Estuary active before BM-018A activation ✓")
+
+        runner_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "properties": ["enabled"],
+        })
+        runner = runner_detail.get("addon") if isinstance(runner_detail, dict) else None
+        if not isinstance(runner, dict):
+            raise RuntimeError(
+                f"BM-018E in-process runner was not discovered: {runner_detail!r}"
+            )
+        if runner.get("enabled") is not True:
+            jsonrpc("Addons.SetAddonEnabled", {
+                "addonid": _BM015_RUNNER_ADDON_ID,
+                "enabled": True,
+            })
+        print("  BM-018E in-process runner discovered and enabled ✓")
+
+        print("\n[3/14] verify AF3 dependency closure")
+        _bm018d_verify_dependency_state(af3_closure)
+
+        print("\n[4/14] prove production planner ordering")
+        actual = KodiStateInspector(backend=_HttpKodiStateBackend()).inspect()
+        plan = plan_changes(desired, actual)
+        kinds = [action.kind for action in plan.actions]
+        skin_index = kinds.index(SET_SKIN)
+        config_index = kinds.index(CONFIGURE)
+        if skin_index >= config_index:
+            raise RuntimeError(f"production planner order was {kinds!r}")
+        print(f"  planner actions include SET_SKIN -> CONFIGURE at {skin_index} -> {config_index} ✓")
+
+        print("\n[5/14] bootstrap AF3 generated runtime state in disposable profile")
+        _bm018d_warm_af3_runtime()
+
+        print("\n[6/14] activate AF3 through BM-018A")
+        activated = _bm018d_activate(_BM018D_SKIN_ID)
+        if (
+            activated.get("status") != "activated"
+            or activated.get("persisted_skin") != _BM018D_SKIN_ID
+            or activated.get("loaded_skin") != _BM018D_SKIN_ID
+        ):
+            raise RuntimeError(f"BM-018A did not keep AF3 active: {activated}")
+        print("  confirmation accepted, persisted skin and xbmc.getSkinDir() are AF3 ✓")
+
+        print("\n[7/14] preserve unmanaged AF3 setting")
+        _bm018d_external_write(_BM018D_UNMANAGED_KEY, _BM018D_UNMANAGED_VALUE, "string")
+        print(f"  {_BM018D_UNMANAGED_KEY} seeded outside managed scope ✓")
+
+        print("\n[8/14] apply actual af3-common package")
+        applied = _bm018e_apply(af3_declarations)
+        if not applied.get("ok") or not applied.get("all_applied"):
+            raise RuntimeError(f"production AF3 apply failed: {applied}")
+        if applied.get("packages") != ["af3-common"]:
+            raise RuntimeError(f"runner used unexpected packages: {applied.get('packages')!r}")
+        if applied["validation_state"]["file_targets"]:
+            raise RuntimeError(f"production package deployed files: {applied['validation_state']['file_targets']!r}")
+        observed = _bm018e_observe(effective)
+        if observed != expected:
+            raise RuntimeError(f"production AF3 read-back mismatch: {observed!r}")
+        if len(applied.get("operations", [])) != 16:
+            raise RuntimeError(f"expected 16 production AF3 operations: {applied.get('operations')!r}")
+        print("  16 typed settings applied; authoritative read-back matches; files=[] ✓")
+
+        print("\n[9/14] reapply production package idempotently")
+        identical = _bm018e_apply(af3_declarations)
+        if not identical.get("ok") or identical.get("changed"):
+            raise RuntimeError(f"production AF3 idempotency failed: {identical}")
+        if len(identical.get("unchanged", [])) != 16:
+            raise RuntimeError(f"expected 16 unchanged production AF3 settings: {identical}")
+        print("  16/16 already correct; zero mutations ✓")
+
+        print("\n[10/14] repair managed drift and verify unmanaged preservation")
+        drift_key = next(key for key, kind in expected_types.items() if kind is ConfigSettingType.STRING)
+        _bm018d_external_write(drift_key, "ExternallyDrifted", "string")
+        repaired = _bm018e_apply(af3_declarations)
+        if repaired.get("changed") != [f"skin:{_BM018D_SKIN_ID}/{drift_key}"]:
+            raise RuntimeError(f"expected one production AF3 drift repair: {repaired}")
+        unmanaged = _bm018d_run_job({
+            "mode": "observe",
+            "observe": [{
+                "target": "skin", "addon_id": _BM018D_SKIN_ID,
+                "key": _BM018D_UNMANAGED_KEY, "type": "string",
+            }],
+        })
+        if not unmanaged.get("ok") or unmanaged["observed"][_BM018D_UNMANAGED_KEY].get("value") != _BM018D_UNMANAGED_VALUE:
+            raise RuntimeError(f"unmanaged production AF3 setting changed: {unmanaged}")
+        print(f"  repaired {drift_key}; unmanaged {_BM018D_UNMANAGED_KEY} preserved ✓")
+
+        print("\n[11/14] reject incomplete ownership before mutation")
+        before = _bm018e_observe(effective)
+        incomplete = ConfigDeclarations(
+            packages=af3_declarations.packages,
+            managed_settings=(ManagedSettingScope(
+                target_kind=SettingTargetKind.SKIN,
+                addon_id=_BM018D_SKIN_ID,
+                keys=tuple(key for key in skin_scopes[0].keys if key != drift_key),
+            ),),
+            managed_files=(),
+        )
+        rejected = _bm018e_apply(incomplete)
+        after = _bm018e_observe(effective)
+        if rejected.get("ok") or rejected.get("error_type") != "ConfigOwnershipError" or after != before:
+            raise RuntimeError(f"production ownership gate did not fail closed: {rejected}")
+        print("  ConfigOwnershipError with zero AF3 mutations ✓")
+
+        print("\n[12/14] restart and verify AF3 persistence")
+        restart()
+        wait_for_ready(timeout=90.0)
+        persisted = inspect()
+        if persisted["active_skin"] != _BM018D_SKIN_ID:
+            raise RuntimeError(f"AF3 did not remain active after restart: {persisted}")
+        after_restart = _bm018e_observe(effective)
+        if after_restart != expected:
+            raise RuntimeError(f"production AF3 values did not persist: {after_restart!r}")
+        post_restart = _bm018e_apply(af3_declarations)
+        if not post_restart.get("ok") or post_restart.get("changed"):
+            raise RuntimeError(f"post-restart production AF3 apply was not idempotent: {post_restart}")
+        print("  AF3 active, all 16 values persisted, post-restart apply made 0 mutations ✓")
+
+        print("\n[13/14] wrong-skin deployment fails before mutation")
+        estuary = _bm018d_activate("skin.estuary")
+        if estuary.get("status") != "activated":
+            raise RuntimeError(f"could not switch disposable Kodi to Estuary: {estuary}")
+        wrong_skin = _bm018e_apply(af3_declarations)
+        if (
+            not wrong_skin.get("ok")
+            or wrong_skin.get("changed")
+            or len(wrong_skin.get("failed", [])) != 16
+        ):
+            raise RuntimeError(f"wrong-skin production deployment did not fail safely: {wrong_skin}")
+        _bm018d_activate(_BM018D_SKIN_ID)
+        if _bm018e_observe(effective) != expected:
+            raise RuntimeError("wrong-skin attempt changed production AF3 values")
+        print("  Estuary rejected production AF3 deployment before mutation ✓")
+    finally:
+        print("\n[14/14] stop disposable Kodi")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+
+    print("\n[14/14] verify real Kodi profile untouched")
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+        if current_mtime_ns != real_mtime_ns:
+            raise RuntimeError(
+                f"Validation FAILED: real profile mtime changed! Was {real_mtime_ns}, now {current_mtime_ns}"
+            )
+    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n=== BM-018E production AF3 validation PASSED ===\n")
 
 
 def validate_skin_config() -> None:
@@ -5209,6 +5955,1633 @@ def validate_skin_config() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BM-020A live validation — production reconciliation executor
+# ---------------------------------------------------------------------------
+
+def _bm020a_run_job(
+    *, device_profile_id: str = _BM020A_PROFILE
+) -> Dict[str, Any]:
+    """Invoke BuildManager.reconcile() inside disposable Kodi."""
+    return _bm015_run_job({
+        "mode": "build_manager",
+        "device_profile_id": device_profile_id,
+        "manifest_filename": _BM020A_FIXTURE,
+    }, timeout=120.0)
+
+
+def _bm020b_run_job(mode: str, **kwargs) -> Dict[str, Any]:
+    """Invoke a narrowly scoped BM-020B harness seam inside disposable Kodi."""
+    return _bm015_run_job({"mode": mode, **kwargs}, timeout=30.0)
+
+
+def _bm020c1_wait_startup_classification(
+    expected: str, *, timeout: float = 30.0
+) -> Dict[str, Any]:
+    """Wait for service classification, not merely JSON-RPC readiness."""
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = _bm020b_run_job("transaction_startup_property")
+        if last.get("classification") == expected:
+            return last
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"startup classification did not become {expected!r}: {last!r}"
+    )
+
+
+def _bm020c_wait_resume_completion(
+    expected_fingerprint: str, *, timeout: float = 60.0
+) -> Dict[str, Any]:
+    """Wait on service-published completion and durable transaction removal."""
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = _bm020b_run_job("transaction_resume_properties")
+        inspected = _bm020b_run_job("transaction_inspect")
+        if (
+            last.get("resume_outcome") == "completed"
+            and last.get("resume_fingerprint") == expected_fingerprint
+            and last.get("resume_requirement") == "none"
+            and inspected.get("transaction") is None
+        ):
+            last["transaction"] = None
+            return last
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"automatic resume did not complete: properties={last!r}, "
+        f"transaction={inspected!r}"
+    )
+
+
+def _bm020b_log_text() -> str:
+    if not KODI_LOG_FILE.is_file():
+        return ""
+    return KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+
+
+def _bm020b_enable_production_addon() -> None:
+    """Enable the copied production add-on before its next Kodi startup."""
+    detail = jsonrpc("Addons.GetAddonDetails", {
+        "addonid": ADDON_ID,
+        "properties": ["enabled"],
+    })
+    addon = detail.get("addon") if isinstance(detail, dict) else None
+    if not isinstance(addon, dict):
+        raise RuntimeError(f"Build Manager add-on was not discovered: {detail!r}")
+    if addon.get("enabled") is not True:
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": ADDON_ID,
+            "enabled": True,
+        })
+    print("  disposable Build Manager service add-on enabled ✓")
+
+
+def validate_build_manager_transaction() -> None:
+    """Prove BM-020B transaction classification across a real Kodi restart."""
+    print("=== Build Manager BM-020B live validation: transaction startup ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/9] reset, install, configure, and install the harness runner")
+        reset()
+        install(source=PROJECT)
+        configure_webserver()
+        _install_bm015_config_runner()
+
+        print("\n[2/9] enable the service add-on and prove its startup fast path")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020b_enable_production_addon()
+        # A copied add-on is initially disabled in a fresh disposable profile.
+        # Restarting after the explicit enable mirrors normal installation of an
+        # enabled production package and proves Kodi's automatic service load.
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        initial_status = _bm020b_run_job("transaction_startup_property")
+        if initial_status.get("classification") != "no_transaction":
+            raise RuntimeError("BM-020B service did not report the no-transaction fast path")
+        print("  xbmc.service startup fast path reported no transaction ✓")
+        first_session = _bm020b_run_job("transaction_session")
+        if not first_session.get("ok") or not first_session.get("session_id"):
+            raise RuntimeError(f"could not obtain first Kodi session: {first_session}")
+        session_id = first_session["session_id"]
+        print("  first process session identity obtained ✓")
+
+        print("\n[3/9] create a real awaiting-restart transaction through production storage")
+        prepared = _bm020b_run_job("transaction_prepare", session_id=session_id)
+        if not prepared.get("ok") or not prepared.get("succeeded") or not prepared.get("created"):
+            raise RuntimeError(f"transaction preparation failed: {prepared}")
+        print("  AWAITING_RESTART transaction created without invoking restart ✓")
+
+        print("\n[4/9] classify the pending transaction in the same Kodi process")
+        same = _bm020b_run_job("transaction_classify", session_id=session_id)
+        if (
+            not same.get("ok")
+            or same.get("classification") != "same_session_awaiting_restart"
+            or same.get("eligible_for_resume")
+        ):
+            raise RuntimeError(f"same-session classification failed: {same}")
+        print("  SAME_SESSION classification preserved the transaction and did not resume ✓")
+
+        print("\n[5/9] externally stop and relaunch disposable Kodi")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        second_session = _bm020b_run_job("transaction_session")
+        if not second_session.get("ok") or second_session.get("session_id") == session_id:
+            raise RuntimeError(f"Kodi process did not receive a new session ID: {second_session}")
+        print("  external process boundary produced a different session identity ✓")
+
+        print("\n[6/9] prove automatic service classification after restart")
+        restarted_status = _bm020b_run_job("transaction_startup_property")
+        if restarted_status.get("classification") != "ready_for_resume":
+            raise RuntimeError("service did not automatically report READY_FOR_RESUME after restart")
+        ready = _bm020b_run_job(
+            "transaction_classify", session_id=second_session["session_id"]
+        )
+        if (
+            not ready.get("ok")
+            or ready.get("classification") != "ready_for_resume"
+            or not ready.get("eligible_for_resume")
+        ):
+            raise RuntimeError(f"new-session classification failed: {ready}")
+        print("  service reported READY_FOR_RESUME; transaction remained durable ✓")
+
+        print("\n[7/9] explicitly clear the transaction through the recovery API")
+        cleared = _bm020b_run_job("transaction_clear")
+        if not cleared.get("ok") or not cleared.get("cleared"):
+            raise RuntimeError(f"explicit transaction clear failed: {cleared}")
+        inspected = _bm020b_run_job("transaction_inspect")
+        if not inspected.get("ok") or inspected.get("transaction") is not None:
+            raise RuntimeError(f"cleared transaction is still present: {inspected}")
+        print("  explicit clear removed the pending transaction ✓")
+
+        print("\n[8/9] verify normal startup returns to the fast path")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        final_status = _bm020b_run_job("transaction_startup_property")
+        if final_status.get("classification") != "no_transaction":
+            raise RuntimeError("service did not return to the no-transaction fast path")
+        print("  no-transaction startup remained silent and did not create a record ✓")
+    finally:
+        print("\n[9/9] stop disposable Kodi and verify the real profile")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+            if current_mtime_ns != real_mtime_ns:
+                raise RuntimeError(
+                    f"Validation FAILED: real profile mtime changed! "
+                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
+                )
+        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("  production BuildManager did not restart Kodi or resume reconciliation ✓")
+    print("\n=== BM-020B transaction validation PASSED (9/9) ===\n")
+
+
+def validate_build_manager_manual_restart() -> None:
+    """Prove BM-020C1's manual restart handoff across disposable processes."""
+    print("=== Build Manager BM-020C1 live validation: manual restart handoff ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/8] reset disposable profile and prepare the real BM-020A fixture")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _install_bm015_config_runner()
+        configure_webserver()
+
+        print("\n[2/8] launch Kodi and enable the production service add-on")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020b_enable_production_addon()
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm020a_ensure_runner_enabled()
+        _bm018d_warm_af3_runtime()
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm020c1_wait_startup_classification("no_transaction")
+        first_session = _bm020b_run_job("transaction_session")
+        if not first_session.get("ok") or not first_session.get("session_id"):
+            raise RuntimeError(f"could not obtain first Kodi session: {first_session}")
+        first_session_id = first_session["session_id"]
+        first_pid = status().get("pid")
+        print(f"  first session={first_session_id}; pid={first_pid} ✓")
+
+        print("\n[3/8] run real reconciliation and pass the typed manual trigger")
+        triggered = _bm020b_run_job(
+            "restart_manual_trigger",
+            manifest_filename=_BM020A_FIXTURE,
+            device_profile_id=_BM020A_PROFILE,
+            platform="macos",
+        )
+        if not triggered.get("ok"):
+            raise RuntimeError(f"manual trigger runner failed: {triggered}")
+        real_result = triggered.get("real_result") or {}
+        coordinator = triggered.get("coordinator") or {}
+        transaction = coordinator.get("transaction") or {}
+        if (
+            not real_result.get("success")
+            or not real_result.get("desired_fingerprint")
+            or coordinator.get("outcome") != "manual_restart_required"
+            or coordinator.get("capability") != "manual_app_restart_required"
+            or transaction.get("phase") != "awaiting_restart"
+            or transaction.get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"manual handoff contract failed: {triggered}")
+        if status().get("pid") != first_pid or not status().get("running"):
+            raise RuntimeError("manual coordinator unexpectedly stopped Kodi")
+        print("  real fingerprint persisted with AWAITING_RESTART/count=0 ✓")
+        print("  Kodi remained in the same process; no production restart invoked ✓")
+
+        print("\n[4/8] prove same-session behavior")
+        same = _bm020b_run_job(
+            "transaction_classify", session_id=first_session_id
+        )
+        if (
+            not same.get("ok")
+            or same.get("classification") != "same_session_awaiting_restart"
+            or same.get("eligible_for_resume")
+            or (same.get("transaction") or {}).get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"same-session manual handoff failed: {same}")
+        print("  SAME_SESSION classification preserved count=0 and did not resume ✓")
+
+        print("\n[5/8] externally restart disposable Kodi through the harness only")
+        restart()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        second_session = _bm020b_run_job("transaction_session")
+        if (
+            not second_session.get("ok")
+            or second_session.get("session_id") == first_session_id
+        ):
+            raise RuntimeError(f"manual restart did not create a new session: {second_session}")
+        second_session_id = second_session["session_id"]
+        print(f"  new session={second_session_id} differs from the first ✓")
+
+        print("\n[6/8] prove BM-020B handoff readiness without resume yet")
+        _bm020c1_wait_startup_classification("ready_for_resume")
+        ready = _bm020b_run_job(
+            "transaction_classify", session_id=second_session_id
+        )
+        if (
+            not ready.get("ok")
+            or ready.get("classification") != "ready_for_resume"
+            or not ready.get("eligible_for_resume")
+            or (ready.get("transaction") or {}).get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"manual new-session handoff failed: {ready}")
+        print("  READY_FOR_RESUME accepted with manual count=0; no reconcile yet ✓")
+
+        print("\n[7/8] explicitly clear the BM-020C1 handoff")
+        cleared = _bm020b_run_job("transaction_clear")
+        if not cleared.get("ok") or not cleared.get("cleared"):
+            raise RuntimeError(f"manual handoff clear failed: {cleared}")
+        inspected = _bm020b_run_job("transaction_inspect")
+        if not inspected.get("ok") or inspected.get("transaction") is not None:
+            raise RuntimeError(f"manual handoff remained after clear: {inspected}")
+        print("  explicit clear removed the pending transaction ✓")
+    finally:
+        print("\n[8/8] stop disposable Kodi and verify the real profile")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+            if current_mtime_ns != real_mtime_ns:
+                raise RuntimeError(
+                    f"Validation FAILED: real profile mtime changed! "
+                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
+                )
+        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-020C1 manual restart validation PASSED (8/8) ===\n")
+
+
+def validate_build_manager_resume() -> None:
+    """Prove automatic BM-020C resume after a harness-only restart."""
+    print("=== Build Manager BM-020C live validation: post-restart resume ===")
+    verify_isolation()
+    real_mtime_ns: Optional[int] = None
+    if NORMAL_APPDATA_DIR.exists():
+        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+
+    try:
+        print("\n[1/8] reset disposable profile and prepare the real BM-020A fixture")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _install_bm015_config_runner()
+        configure_webserver()
+
+        print("\n[2/8] launch Kodi, warm AF3, and establish the no-transaction state")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020b_enable_production_addon()
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm020a_ensure_runner_enabled()
+        _bm018d_warm_af3_runtime()
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm020c1_wait_startup_classification("no_transaction")
+        first_session = _bm020b_run_job("transaction_session")
+        if not first_session.get("ok") or not first_session.get("session_id"):
+            raise RuntimeError(f"could not obtain first Kodi session: {first_session}")
+        first_session_id = first_session["session_id"]
+        print(f"  first session={first_session_id}; AF3 closure 18/18 healthy ✓")
+
+        print("\n[3/8] run real reconciliation and create the test-only restart handoff")
+        triggered = _bm020b_run_job(
+            "restart_manual_trigger",
+            manifest_filename=_BM020A_FIXTURE,
+            device_profile_id=_BM020A_PROFILE,
+            platform="macos",
+        )
+        real_result = triggered.get("real_result") or {}
+        coordinator = triggered.get("coordinator") or {}
+        transaction = coordinator.get("transaction") or {}
+        if (
+            not triggered.get("ok")
+            or not real_result.get("success")
+            or not real_result.get("desired_fingerprint")
+            or coordinator.get("outcome") != "manual_restart_required"
+            or transaction.get("phase") != "awaiting_restart"
+            or transaction.get("restart_attempt_count") != 0
+        ):
+            raise RuntimeError(f"automatic-resume handoff setup failed: {triggered!r}")
+        original_fingerprint = real_result["desired_fingerprint"]
+        print("  real fingerprint persisted with AWAITING_RESTART/count=0 ✓")
+        print("  production coordinator left Kodi running ✓")
+
+        print("\n[4/8] prove same-session service behavior remains non-resuming")
+        same = _bm020b_run_job("transaction_classify", session_id=first_session_id)
+        if (
+            same.get("classification") != "same_session_awaiting_restart"
+            or same.get("eligible_for_resume")
+        ):
+            raise RuntimeError(f"same-session service behavior failed: {same!r}")
+        print("  SAME_SESSION_AWAITING_RESTART preserved the handoff ✓")
+
+        print("\n[5/8] externally restart disposable Kodi through the harness only")
+        restart()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        second_session = _bm020b_run_job("transaction_session")
+        if (
+            not second_session.get("ok")
+            or second_session.get("session_id") == first_session_id
+        ):
+            raise RuntimeError(f"restart did not create a new session: {second_session!r}")
+        print("  new Kodi session differs from originating session ✓")
+
+        print("\n[6/8] wait for service.py to preview, claim, reconcile, and clear")
+        resumed = _bm020c_wait_resume_completion(original_fingerprint)
+        if resumed.get("classification") != "no_transaction":
+            raise RuntimeError(f"resume service did not return no_transaction: {resumed!r}")
+        print("  service automatically resumed normal BuildManager reconciliation ✓")
+        print("  final fingerprint matched; RestartRequirement.NONE; transaction cleared ✓")
+
+        print("\n[7/8] verify AF3 state and no second handoff")
+        observed = _bm020a_observe()
+        expected_values = {
+            key: value for key, (_setting_type, value) in _BM020A_MANAGED_SETTINGS.items()
+        }
+        if {key: observed.get(key) for key in expected_values} != expected_values:
+            raise RuntimeError(f"resumed AF3 settings mismatch: {observed!r}")
+        if inspect().get("active_skin") != _BM018D_SKIN_ID:
+            raise RuntimeError(f"resumed active skin mismatch: {inspect()!r}")
+        if _bm020b_run_job("transaction_inspect").get("transaction") is not None:
+            raise RuntimeError("resumed reconciliation left a second transaction")
+        print("  all 16 AF3 managed settings verified; unmanaged preservation remains covered by BM-020A ✓")
+        print("  no second restart or handoff exists ✓")
+
+        print("\n[8/8] restart again and verify the normal no-transaction fast path")
+        restart()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm020c1_wait_startup_classification("no_transaction")
+        final = _bm020b_run_job("transaction_inspect")
+        if final.get("transaction") is not None:
+            raise RuntimeError(f"later startup found stale transaction: {final!r}")
+        print("  later startup remained NO_TRANSACTION with no automatic retry ✓")
+    finally:
+        try:
+            stop()
+        except RuntimeError:
+            pass
+        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
+            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
+            if current_mtime_ns != real_mtime_ns:
+                raise RuntimeError(
+                    f"Validation FAILED: real profile mtime changed! "
+                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
+                )
+        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+
+    print("\n=== BM-020C post-restart resume validation PASSED (8/8) ===\n")
+
+
+def _bm020a_observe() -> Dict[str, Any]:
+    result = _bm018d_run_job({
+        "mode": "observe",
+        "observe": [
+            {
+                "target": "skin",
+                "addon_id": _BM018D_SKIN_ID,
+                "key": key,
+                "type": setting_type,
+            }
+            for key, (setting_type, _value) in _BM020A_MANAGED_SETTINGS.items()
+        ] + [{
+            "target": "skin",
+            "addon_id": _BM018D_SKIN_ID,
+            "key": _BM020A_UNMANAGED_KEY,
+            "type": "string",
+        }],
+    })
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"BM-020A typed observation failed: {result.get('error_type')}: "
+            f"{result.get('error')}"
+        )
+    observed = {}
+    for key, entry in result.get("observed", {}).items():
+        if not entry.get("ok"):
+            raise RuntimeError(
+                f"BM-020A typed observation could not read {key!r}: "
+                f"{entry.get('error')}"
+            )
+        observed[key] = entry["value"]
+    return observed
+
+
+def _bm020a_ensure_runner_enabled() -> None:
+    detail = jsonrpc("Addons.GetAddonDetails", {
+        "addonid": _BM015_RUNNER_ADDON_ID,
+        "properties": ["enabled"],
+    })
+    addon = detail.get("addon") if isinstance(detail, dict) else None
+    if not isinstance(addon, dict):
+        raise RuntimeError(f"BM-020A runner was not discovered: {detail!r}")
+    if addon.get("enabled") is not True:
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "enabled": True,
+        })
+    print("  BM-020A in-process runner discovered and enabled ✓")
+
+
+def validate_build_manager() -> None:
+    """Run BM-020A against the explicit AF3 disposable executor fixture."""
+    print("=== Build Manager BM-020A live validation: production executor ===")
+    verify_isolation()
+
+    try:
+        print("\n[1/6] reset disposable profile and prepare AF3 fixture")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _bm018d_install_runner()
+        configure_webserver()
+        print(
+            f"  fixture={_BM020A_FIXTURE!r} profile={_BM020A_PROFILE!r}; "
+            f"copied AF3 closure={len(af3_closure)}; real af3-common remains in installed Build Manager ✓"
+        )
+
+        print("\n[2/6] launch disposable Kodi and inspect initial state")
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        before = inspect()
+        if before.get("active_skin") != "skin.estuary":
+            raise RuntimeError(
+                f"expected disposable Kodi to start on Estuary, got {before!r}"
+            )
+        print("  disposable Kodi started on Estuary ✓")
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm018d_warm_af3_runtime()
+        warmed = inspect()
+        if warmed.get("active_skin") != "skin.estuary":
+            raise RuntimeError(
+                f"AF3 fixture preparation did not return to Estuary: {warmed!r}"
+            )
+        print("  AF3 disposable runtime prepared and returned to Estuary ✓")
+
+        print("\n[3/6] invoke production BuildManager.reconcile() with fixture")
+        first = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
+        print(json.dumps(first, indent=2, sort_keys=True, default=str))
+        if not first.get("ok"):
+            raise RuntimeError(
+                f"BM-020A runner failed: {first.get('error_type')}: "
+                f"{first.get('error')}"
+            )
+        if not first.get("success"):
+            failure = first.get("failure") or {}
+            raise RuntimeError(
+                "BM-020A disposable gate blocked before a successful pass: "
+                f"phase={failure.get('phase')!r} code={failure.get('code')!r} "
+                f"message={failure.get('message')!r}"
+            )
+
+        request = first.get("request") or {}
+        if request.get("device_profile_id") != _BM020A_PROFILE:
+            raise RuntimeError(f"unexpected executor request: {request!r}")
+        if not request.get("manifest_path", "").endswith(
+            f"/resources/builds/examples/{_BM020A_FIXTURE}"
+        ):
+            raise RuntimeError(f"unexpected fixture manifest path: {request!r}")
+        if not first.get("desired_fingerprint"):
+            raise RuntimeError("executor returned no desired-state fingerprint")
+        if first.get("restart_report", {}).get("requirement") != "none":
+            raise RuntimeError(
+                f"unexpected first-pass restart requirement: {first.get('restart_report')!r}"
+            )
+        first_kinds = [action["kind"] for action in first.get("planned_actions", [])]
+        if first_kinds != ["SET_SKIN", "CONFIGURE"]:
+            raise RuntimeError(f"unexpected fixture planner actions: {first_kinds!r}")
+        first_owners = [entry["owner"] for entry in first.get("owner_dispatch", [])]
+        if first_owners != ["SkinActivator", "ConfigurationManager"]:
+            raise RuntimeError(f"unexpected fixture owner dispatch: {first_owners!r}")
+        if not all(result.get("succeeded") for result in first.get("action_results", [])):
+            raise RuntimeError(f"fixture action failed: {first.get('action_results')!r}")
+        configure_result = next(
+            result for result in first["action_results"]
+            if result["action"]["kind"] == "CONFIGURE"
+        )
+        if not configure_result.get("changed"):
+            raise RuntimeError(
+                f"fixture did not reconcile af3-common configuration: {configure_result!r}"
+            )
+        if first.get("validation_passed") is not True:
+            raise RuntimeError(f"fixture post-validation did not pass: {first!r}")
+        summary = first.get("configuration_summary") or {}
+        if summary.get("file_targets") != []:
+            raise RuntimeError(
+                f"production af3-common unexpectedly planned file deployment: {summary!r}"
+            )
+        expected_targets = [
+            f"skin:{_BM018D_SKIN_ID}/{key}"
+            for key in sorted(_BM020A_MANAGED_SETTINGS)
+        ]
+        if sorted(summary.get("setting_targets", [])) != expected_targets:
+            raise RuntimeError(
+                f"production af3-common setting scope mismatch: {summary!r}"
+            )
+        first_values = _bm020a_observe()
+        expected_values = {
+            key: value for key, (_setting_type, value) in _BM020A_MANAGED_SETTINGS.items()
+        }
+        if {
+            key: first_values.get(key) for key in expected_values
+        } != expected_values:
+            raise RuntimeError(
+                f"production af3-common typed read-back mismatch: {first_values!r}"
+            )
+        _bm018d_external_write(
+            _BM020A_UNMANAGED_KEY, _BM020A_UNMANAGED_VALUE, "string"
+        )
+        unmanaged_baseline = _bm020a_observe()
+        if unmanaged_baseline.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError(f"could not seed unmanaged preservation probe: {unmanaged_baseline!r}")
+        print("  all 16 production settings read back exactly; files=[] ✓")
+        print("  production executor first pass succeeded with RestartRequirement.NONE ✓")
+
+        print("\n[4/6] rerun the exact fixture request and verify idempotency")
+        second = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
+        print(json.dumps(second, indent=2, sort_keys=True, default=str))
+        if not second.get("ok") or not second.get("success"):
+            raise RuntimeError(f"BM-020A second pass failed: {second!r}")
+        if second.get("desired_fingerprint") != first.get("desired_fingerprint"):
+            raise RuntimeError("BM-020A fingerprint changed between identical passes")
+        if second.get("restart_report", {}).get("requirement") != "none":
+            raise RuntimeError(
+                f"unexpected second-pass restart requirement: {second.get('restart_report')!r}"
+            )
+        second_kinds = [action["kind"] for action in second.get("planned_actions", [])]
+        if second_kinds != ["CONFIGURE"]:
+            raise RuntimeError(f"second pass had unexpected actions: {second_kinds!r}")
+        if any(result.get("changed") for result in second.get("action_results", [])):
+            raise RuntimeError(
+                f"second pass performed an unnecessary mutation: {second.get('action_results')!r}"
+            )
+        if not all(result.get("succeeded") for result in second.get("action_results", [])):
+            raise RuntimeError(f"second pass action failed: {second.get('action_results')!r}")
+        second_values = _bm020a_observe()
+        if second_values.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError(f"unmanaged setting changed during idempotent pass: {second_values!r}")
+        print("  exact request retained its fingerprint and produced no mutation ✓")
+
+        print("\n[5/6] drift one managed setting and repair it")
+        _bm018d_external_write("Navigation.OnBack", "Home", "string")
+        drifted = _bm020a_observe()
+        if drifted.get("Navigation.OnBack") != "Home":
+            raise RuntimeError(f"managed drift was not observable: {drifted!r}")
+        repaired = _bm020a_run_job(device_profile_id=_BM020A_PROFILE)
+        if not repaired.get("ok") or not repaired.get("success"):
+            raise RuntimeError(f"BM-020A drift repair failed: {repaired!r}")
+        if repaired.get("desired_fingerprint") != first.get("desired_fingerprint"):
+            raise RuntimeError("drift repair changed the desired-state fingerprint")
+        repair_summary = repaired.get("configuration_summary") or {}
+        if repair_summary.get("changed_targets") != [
+            f"skin:{_BM018D_SKIN_ID}/Navigation.OnBack"
+        ]:
+            raise RuntimeError(f"unexpected drift repair targets: {repair_summary!r}")
+        repaired_values = _bm020a_observe()
+        if {
+            key: repaired_values.get(key) for key in expected_values
+        } != expected_values:
+            raise RuntimeError(f"production drift repair read-back mismatch: {repaired_values!r}")
+        if repaired_values.get(_BM020A_UNMANAGED_KEY) != _BM020A_UNMANAGED_VALUE:
+            raise RuntimeError("unmanaged setting changed during drift repair")
+        print("  managed drift repaired; all 16 values and unmanaged preservation verified ✓")
+
+        print("\n[6/6] invalid selector smoke check")
+        unchanged_before = inspect()
+        invalid = _bm020a_run_job(device_profile_id="does-not-exist")
+        unchanged_after = inspect()
+        if (
+            not invalid.get("ok")
+            or invalid.get("success")
+            or (invalid.get("failure") or {}).get("phase") != "resolve"
+            or unchanged_before != unchanged_after
+        ):
+            raise RuntimeError(
+                f"invalid selector did not fail closed without mutation: {invalid!r}"
+            )
+        print("  invalid selector failed in resolve phase; disposable state unchanged ✓")
+        print("\n[6/6] combined evidence boundary")
+        print(
+            "  live executor composition proven here; repository/add-on installation "
+            "and dedicated AF3/configuration behavior remain covered by existing gates ✓"
+        )
+    finally:
+        print("\nstop disposable Kodi")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+
+    print("real Kodi profile was not accessed by this gate ✓")
+    print("\n=== BM-020A validation PASSED ===\n")
+
+
+def validate_frozen_capture() -> None:
+    """Exercise BM-021B capture against only the disposable AF3 fixture."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.artifacts import ArtifactStore
+    from resources.lib.frozen import KodiInventoryBackend, capture_frozen_build
+
+    print("=== Build Manager BM-021B live validation: frozen capture ===")
+    verify_isolation()
+    try:
+        print("\n[1/4] reset and prepare the disposable AF3 closure")
+        reset()
+        install(source=PROJECT)
+        af3_closure = _bm018d_copy_af3_and_dependencies()
+        _bm018d_seed_first_run_guard()
+        _bm018d_install_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        _bm020a_ensure_runner_enabled()
+        _bm018d_verify_dependency_state(af3_closure)
+        _bm018d_warm_af3_runtime()
+        if inspect().get("active_skin") != "skin.estuary":
+            raise RuntimeError("capture proof must finish on disposable Estuary")
+        print(f"  disposable AF3 closure prepared ({len(af3_closure)} nodes) ✓")
+
+        print("\n[2/4] capture representative installed software")
+        backend = KodiInventoryBackend(
+            jsonrpc,
+            addons_dir=KODI_ADDONS_DIR,
+            package_cache_dir=KODI_APPDATA_DIR / "addons" / "packages",
+        )
+        store = ArtifactStore(ROOT / "bm021b-artifacts")
+        result = capture_frozen_build(
+            backend=backend,
+            store=store,
+            root_addon_ids=(
+                _BM018D_SKIN_ID,
+                "plugin.video.themoviedb.helper",
+                "metadata.themoviedb.org.python",
+                "script.module.pil",
+            ),
+            build_id="bm021b-disposable-proof",
+            name="BM-021B disposable proof",
+            created_at="2026-09-21T00:00:00Z",
+            platform="macos",
+        )
+        print(json.dumps(result.manifest.to_dict(), indent=2, sort_keys=True))
+        for node in result.manifest.addons:
+            print(
+                f"  {node.addon_id}: version={node.version!r} status={node.status.value!r} "
+                f"artifact={'yes' if node.artifact else 'no'} provenance={node.provenance.value!r}"
+            )
+        if not any(node.addon_id == _BM018D_SKIN_ID for node in result.manifest.addons):
+            raise RuntimeError("AF3 was absent from the captured inventory")
+        print("  installed identity, dependency classification, and honest artifact availability recorded ✓")
+
+        print("\n[3/4] verify exact artifact bytes and duplicate reuse")
+        artifact_nodes = [node for node in result.manifest.addons if node.artifact is not None]
+        if artifact_nodes:
+            node = artifact_nodes[0]
+            data = store.read_bytes(node.artifact.sha256)
+            reused = store.import_zip(
+                data,
+                expected_addon_id=node.addon_id,
+                expected_version=node.version,
+                source="duplicate-proof",
+            )
+            if reused.sha256 != node.artifact.sha256:
+                raise RuntimeError("duplicate artifact import changed the digest")
+            print(f"  {len(artifact_nodes)} exact artifact(s) hashed, read back, and deduplicated ✓")
+        else:
+            print("  no disposable cache artifact was available; capture correctly remains incomplete")
+
+        print("\n[4/4] enforce incomplete-capture boundary")
+        if not result.complete:
+            print(f"  capture status={result.manifest.capture_status.value}; no COMPLETE claim made ✓")
+        else:
+            print("  all selected required nodes had exact artifacts; COMPLETE is justified ✓")
+    finally:
+        print("\nstop disposable Kodi")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("real Kodi profile was not accessed by this gate ✓")
+    print("\n=== BM-021B frozen capture validation FINISHED ===\n")
+
+
+def validate_updater_guard() -> None:
+    """Prove the global updater setting through two disposable restarts."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import (
+        AddonUpdatePolicy,
+        AddonUpdateGuard,
+        KodiJsonRpcUpdatePolicyBackend,
+    )
+
+    print("=== Build Manager BM-021B live validation: global updater guard ===")
+    verify_isolation()
+    guard = None
+    restored = False
+    try:
+        reset()
+        install(source=PROJECT)
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        backend = KodiJsonRpcUpdatePolicyBackend(jsonrpc)
+        guard = AddonUpdateGuard(backend)
+        original = backend.get_policy()
+        print(f"  initial policy={original.name} read through Settings.GetSettingValue ✓")
+        guard.engage()
+        if backend.get_policy() != AddonUpdatePolicy.NEVER_CHECK:
+            raise RuntimeError("NEVER_CHECK was not read back after setting it")
+        print("  NEVER_CHECK set and read back through Settings.SetSettingValue ✓")
+        log_before_restart = _bm020b_log_text()
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        persisted = backend.get_policy()
+        if persisted != AddonUpdatePolicy.NEVER_CHECK:
+            guard.reassert()
+            if backend.get_policy() != AddonUpdatePolicy.NEVER_CHECK:
+                raise RuntimeError("NEVER_CHECK could not be deterministically reasserted after restart")
+            print(
+                f"  NEVER_CHECK did not persist (observed {persisted.name}); "
+                "deterministic reassertion succeeded before any capture mutation ✓"
+            )
+        else:
+            print("  NEVER_CHECK survived the disposable restart ✓")
+        log_after_restart = _bm020b_log_text()
+        appended = log_after_restart[len(log_before_restart):]
+        forbidden = ("running scheduled update", "checking for updates")
+        if any(marker in appended for marker in forbidden):
+            raise RuntimeError("repository updater activity occurred while NEVER_CHECK was active")
+        print("  no scheduled updater activity appeared while NEVER_CHECK was active ✓")
+        guard.restore()
+        restored = True
+        if backend.get_policy() != original:
+            raise RuntimeError("original updater policy did not restore")
+        print(f"  original policy={original.name} restored and verified ✓")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        if backend.get_policy() != original:
+            raise RuntimeError("restored updater policy did not survive restart")
+        print("  restored policy survived the second disposable restart ✓")
+    finally:
+        if guard is not None and guard.engaged and not restored:
+            print("  guard remains engaged after failure; no silent restoration performed")
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("supported Settings API only; no Kodi database writes; real profile untouched ✓")
+    print("\n=== BM-021B updater guard validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
+# BM-022: exact frozen installation
+# ---------------------------------------------------------------------------
+
+def _make_bm022_fixture_zip(
+    addon_id: str,
+    version: str,
+    *,
+    requires: Optional[List[tuple]] = None,
+    repository: bool = False,
+    setting: bool = False,
+) -> bytes:
+    """Create a real, self-contained Kodi ZIP for the BM-022 disposable gate."""
+    requires = requires or []
+    requires_xml = "".join(
+        f'<import addon="{addon}" version="{minimum}"/>'
+        for addon, minimum in requires
+    )
+    extension = (
+        '<extension point="xbmc.addon.repository">'
+        '<dir><info>http://127.0.0.1:9999/addons.xml</info>'
+        '<datadir zip="true">http://127.0.0.1:9999/</datadir></dir>'
+        '</extension>'
+        if repository else
+        '<extension point="xbmc.python.pluginsource" library="default.py"/>'
+    )
+    xml = (
+        f'<addon id="{addon_id}" name="{addon_id}" version="{version}" '
+        'provider-name="Build Manager">'
+        f'<requires>{requires_xml}</requires>{extension}'
+        '<extension point="xbmc.addon.metadata"><summary lang="en_gb">'
+        'BM-022 disposable fixture</summary><platform>all</platform></extension>'
+        '</addon>'
+    ).encode("utf-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{addon_id}/addon.xml", xml)
+        if repository:
+            archive.writestr(f"{addon_id}/icon.png", b"BM-022 repository fixture")
+        else:
+            archive.writestr(f"{addon_id}/default.py", b"# BM-022 fixture")
+            if setting:
+                archive.writestr(
+                    f"{addon_id}/resources/settings.xml",
+                    b'<settings version="1">'
+                    b'<section id="bm022"><category id="general" label="30000">'
+                    b'<group id="1" label="30000">'
+                    b'<setting id="bm022.enabled" type="boolean" label="30001">'
+                    b'<level>0</level><default>false</default>'
+                    b'<control type="toggle"/>'
+                    b'</setting></group></category></section></settings>',
+                )
+    return buf.getvalue()
+
+
+def _prepare_bm022_fixture() -> Dict[str, Path]:
+    """Build a complete fixture in the disposable profile's artifact store."""
+    from resources.lib.artifacts import ArtifactStore
+    from resources.lib.frozen import (
+        AddonCaptureNode,
+        CaptureStatus,
+        DependencyEdge,
+        FrozenBuildManifest,
+        ProvenanceStatus,
+    )
+
+    artifact_root = KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen-artifacts"
+    artifact_store = ArtifactStore(artifact_root)
+    definitions = (
+        (
+            _BM022_REPO_ID,
+            _make_bm022_fixture_zip(_BM022_REPO_ID, _BM022_VERSION, repository=True),
+            "xbmc.addon.repository",
+            False,
+            (),
+        ),
+        (
+            _BM022_DEP_ID,
+            _make_bm022_fixture_zip(_BM022_DEP_ID, _BM022_VERSION),
+            "xbmc.python.module",
+            True,
+            (),
+        ),
+        (
+            _BM022_APP_ID,
+            _make_bm022_fixture_zip(
+                _BM022_APP_ID,
+                _BM022_VERSION,
+                requires=((_BM022_DEP_ID, _BM022_VERSION),),
+                setting=True,
+            ),
+            "xbmc.python.pluginsource",
+            True,
+            (DependencyEdge(_BM022_DEP_ID, _BM022_VERSION, False, (_BM022_APP_ID,)),),
+        ),
+    )
+    nodes = []
+    hashes = {}
+    for addon_id, data, addon_type, enabled, edges in definitions:
+        metadata = artifact_store.import_zip(
+            data,
+            expected_addon_id=addon_id,
+            expected_version=_BM022_VERSION,
+            source="bm022-test-fixture",
+        )
+        hashes[addon_id] = metadata.sha256
+        nodes.append(AddonCaptureNode(
+            addon_id=addon_id,
+            version=_BM022_VERSION,
+            addon_type=addon_type,
+            desired_enabled=enabled,
+            provenance=ProvenanceStatus.MANUAL_OR_UNKNOWN,
+            provenance_detail={"fixture": "repository-owned-test-artifact"},
+            artifact=metadata,
+            dependency_edges=edges,
+            status=CaptureStatus.COMPLETE,
+        ))
+    nodes.append(AddonCaptureNode(
+        addon_id="xbmc.python",
+        version="3.0.1",
+        addon_type="system",
+        desired_enabled=True,
+        provenance=ProvenanceStatus.UNKNOWN,
+        system=True,
+        status=CaptureStatus.SYSTEM,
+    ))
+    manifest = FrozenBuildManifest(
+        schema_version=1,
+        build_id="bm022-disposable-fixture",
+        name="BM-022 complete disposable fixture",
+        created_at="2026-09-21T00:00:00Z",
+        kodi_version="21.1",
+        platform="macos",
+        capture_status=CaptureStatus.COMPLETE,
+        addons=tuple(nodes),
+        source_metadata={"fixture": "test-only-real-kodi-zips"},
+    )
+    manifest_path = ROOT / "bm022-frozen-manifest.json"
+    manifest_path.write_text(manifest.to_json(), encoding="utf-8")
+    configuration_path = ROOT / "bm022-configuration-manifest.json"
+    configuration_path.write_text(json.dumps({
+        "schema_version": 1,
+        "engine_min_version": "0.1.0",
+        "build": {
+            "id": "bm022-configuration-fixture",
+            "version": "1.0.0",
+            "name": "BM-022 configuration fixture",
+            "description": "Disposable test-only configuration binding.",
+        },
+        "addons": [{"addon_id": _BM022_APP_ID, "state": "enabled"}],
+        "config": {
+            "packages": ["bm022-fixture"],
+            "managed_settings": [{
+                "target": "addon",
+                "addon_id": _BM022_APP_ID,
+                "keys": ["bm022.enabled"],
+            }],
+            "managed_files": [],
+        },
+        "platform_profiles": {"disposable": {"label": "BM-022 disposable"}},
+        "device_profiles": {
+            "bm022-disposable": {
+                "label": "BM-022 disposable configuration",
+                "extends": "disposable",
+            }
+        },
+    }, indent=2) + "\n", encoding="utf-8")
+    return {
+        "artifact_root": artifact_root,
+        "manifest_path": manifest_path,
+        "configuration_path": configuration_path,
+        "hashes": hashes,
+    }
+
+
+def _prepare_bm017f_fixture(
+    retained_manifest_path: Path,
+    retained_artifact_root: Path,
+) -> Dict[str, Any]:
+    """Copy only Red Light's retained exact required closure into .kodi-test."""
+    from dataclasses import replace
+    from resources.lib.artifacts import ArtifactStore, validate_addon_zip
+    from resources.lib.frozen import CaptureStatus, FrozenBuildManifest
+    from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayStore
+    from resources.lib.private_resource import (
+        StructuredPrivateResourceOverlay,
+        StructuredPrivateValue,
+    )
+    from resources.lib.redlight_resource import (
+        REDLIGHT_ADDON_ID,
+        REDLIGHT_RESOURCE_ID,
+        REDLIGHT_SCHEMA_ID,
+        REDLIGHT_VERSION,
+        redlight_declaration,
+    )
+
+    retained = FrozenBuildManifest.from_json(
+        Path(retained_manifest_path).read_text(encoding="utf-8")
+    )
+    retained_nodes = {node.addon_id: node for node in retained.addons}
+    redlight = retained_nodes.get(REDLIGHT_ADDON_ID)
+    if (
+        redlight is None
+        or redlight.version != REDLIGHT_VERSION
+        or redlight.artifact is None
+        or redlight.artifact.sha256
+        != "64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927"
+    ):
+        raise RuntimeError("retained manifest does not contain the pinned Red Light artifact")
+
+    retained_store = ArtifactStore(Path(retained_artifact_root))
+    disposable_store = ArtifactStore(
+        KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen-artifacts"
+    )
+    selected: Dict[str, Any] = {}
+    hashes: Dict[str, str] = {}
+    pending = [REDLIGHT_ADDON_ID]
+    while pending:
+        addon_id = pending.pop()
+        if addon_id in selected:
+            continue
+        node = retained_nodes.get(addon_id)
+        if node is None or node.is_absent_optional_dependency:
+            raise RuntimeError("retained Red Light required dependency graph is incomplete")
+        if node.system:
+            selected[addon_id] = node
+            continue
+        if node.artifact is None or node.status is not CaptureStatus.COMPLETE:
+            raise RuntimeError("retained Red Light required dependency artifact is incomplete")
+        metadata = retained_store.get_metadata(node.artifact.sha256)
+        if (
+            metadata.addon_id != node.addon_id
+            or metadata.version != node.version
+            or metadata.size != node.artifact.size
+        ):
+            raise RuntimeError("retained Red Light dependency metadata is inconsistent")
+        data = retained_store.read_bytes(metadata.sha256)
+        verified = validate_addon_zip(
+            data,
+            expected_addon_id=node.addon_id,
+            expected_version=node.version,
+        )
+        if verified.sha256 != metadata.sha256 or verified.size != metadata.size:
+            raise RuntimeError("retained Red Light dependency bytes failed validation")
+        copied = disposable_store.import_zip(
+            data,
+            expected_addon_id=node.addon_id,
+            expected_version=node.version,
+            source="BM-017F disposable retained artifact",
+        )
+        if copied.sha256 != metadata.sha256 or copied.size != metadata.size:
+            raise RuntimeError("disposable Red Light fixture changed an artifact")
+        selected[addon_id] = replace(node, artifact=copied)
+        hashes[addon_id] = copied.sha256
+        pending.extend(
+            edge.addon_id for edge in node.dependency_edges if not edge.optional
+        )
+
+    manifest = FrozenBuildManifest(
+        schema_version=1,
+        build_id="bm017f-redlight-lifecycle",
+        name="BM-017F disposable Red Light lifecycle",
+        created_at="2026-09-23T00:00:00Z",
+        kodi_version=retained.kodi_version,
+        platform=retained.platform,
+        capture_status=CaptureStatus.COMPLETE,
+        addons=tuple(selected[key] for key in sorted(selected)),
+        source_metadata={"fixture": "retained-exact-artifacts"},
+    )
+    manifest_path = ROOT / "bm017f-frozen-manifest.json"
+    manifest_path.write_text(manifest.to_json(), encoding="utf-8")
+
+    declaration = redlight_declaration()
+    fake_value = "BM017F_FAKE_PRIVATE_" + __import__("uuid").uuid4().hex
+    resource_overlay = StructuredPrivateResourceOverlay(
+        REDLIGHT_RESOURCE_ID,
+        REDLIGHT_ADDON_ID,
+        REDLIGHT_VERSION,
+        REDLIGHT_SCHEMA_ID,
+        (StructuredPrivateValue("pm.account_id", "string", fake_value),),
+    )
+    overlay_id = "bm017f-redlight-lifecycle"
+    overlay = PrivateOverlay(
+        overlay_id=overlay_id,
+        target_build_id=f"sha256:{manifest.fingerprint()}",
+        entries=(),
+        resources=(resource_overlay,),
+    )
+    PrivateOverlayStore(KODI_USERDATA_DIR).save(overlay)
+
+    configuration_path = ROOT / "bm017f-configuration-manifest.json"
+    configuration_path.write_text(json.dumps({
+        "schema_version": 1,
+        "engine_min_version": "0.1.0",
+        "build": {
+            "id": "bm017f-redlight-lifecycle",
+            "version": "1.0.0",
+            "name": "BM-017F disposable lifecycle",
+            "description": "Disposable-only deferred structured-resource fixture.",
+        },
+        "repositories": [],
+        "addons": [{"addon_id": REDLIGHT_ADDON_ID, "state": "enabled"}],
+        "config": {
+            "packages": [],
+            "managed_settings": [],
+            "managed_files": [],
+            "structured_private_resources": [declaration.safe_dict()],
+        },
+        "platform_profiles": {"disposable": {"label": "BM-017F disposable"}},
+        "device_profiles": {
+            "bm017f-disposable": {
+                "label": "BM-017F disposable lifecycle",
+                "extends": "disposable",
+            }
+        },
+        "private_overlay": {
+            "type": "local_file",
+            "overlay_id": overlay_id,
+            "required": True,
+        },
+        "restart_policy": {"allow_skin_reload": True, "allow_kodi_restart": True},
+    }, indent=2) + "\n", encoding="utf-8")
+    return {
+        "artifact_root": disposable_store.root,
+        "manifest_path": manifest_path,
+        "configuration_path": configuration_path,
+        "hashes": hashes,
+        "software_fingerprint": manifest.fingerprint(),
+        "versions": {
+            addon_id: node.version for addon_id, node in selected.items()
+            if not node.system
+        },
+        "fake_value": fake_value,
+        "overlay_id": overlay_id,
+        "owner_id": REDLIGHT_ADDON_ID,
+    }
+
+
+def _bm017f_resume_poll_status(
+    detail_response: Any,
+    transaction: Any,
+) -> Tuple[Dict[str, Any], bool]:
+    """Interpret the unwrapped JSON-RPC add-on result and durable transaction."""
+    owner_details: Dict[str, Any] = {}
+    if isinstance(detail_response, dict):
+        addon_details = detail_response.get("addon", {})
+        if isinstance(addon_details, dict):
+            owner_details = addon_details
+
+    if isinstance(transaction, dict) and transaction.get("phase") == "needs_attention":
+        code = str(transaction.get("status_code", "UNKNOWN"))
+        detail = str(transaction.get("status_message", ""))
+        raise RuntimeError(
+            f"BM-017F restart resume needs attention ({code}; {detail})"
+        )
+
+    resume_complete = owner_details.get("enabled") is True and transaction is None
+    return owner_details, resume_complete
+
+
+def _validate_bm017f_lifecycle_marker_order(log_text: str) -> Dict[str, int]:
+    """Require all lifecycle markers and enforce only the production safety order.
+
+    BM-020's startup classification is logged after the resume call returns,
+    so it is a required diagnostic marker but has no ordering constraint here.
+    """
+    markers = {
+        "updater_guard": "Build Manager BM-022 updater guard reasserted before BM-020 startup",
+        "bm020_classification": "Build Manager BM-020C startup",
+        "private_verified": "Build Manager BM-022 private resource verified; activation remains held",
+        "activation_released": "Build Manager BM-022 activation hold released after private verification",
+        "service_start": "Main Monitor Service Starting",
+    }
+    indexes = {name: log_text.find(marker) for name, marker in markers.items()}
+    missing = [name for name, index in indexes.items() if index < 0]
+    if missing:
+        raise RuntimeError(
+            "BM-017F lifecycle markers were incomplete in disposable Kodi log: "
+            + ", ".join(missing)
+        )
+    safety_order = (
+        indexes["updater_guard"],
+        indexes["private_verified"],
+        indexes["activation_released"],
+        indexes["service_start"],
+    )
+    if not all(before < after for before, after in zip(safety_order, safety_order[1:])):
+        raise RuntimeError(
+            "BM-017F updater/private-verification/activation/service ordering was invalid"
+        )
+    return indexes
+
+
+def _wait_for_bm017f_service_start(timeout: float = 30.0, interval: float = 0.25) -> None:
+    """Wait for Red Light's asynchronous service entrypoint in this run's log."""
+    deadline = time.monotonic() + timeout
+    marker = "Main Monitor Service Starting"
+    while True:
+        try:
+            current_log = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            current_log = ""
+        if marker in current_log:
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                "BM-017F Red Light service did not start after activation release"
+            )
+        time.sleep(min(interval, remaining))
+
+
+def validate_bm017f_lifecycle(
+    retained_manifest_path: Path,
+    retained_artifact_root: Path,
+) -> None:
+    """Exercise retained Red Light through BM-022/BM-020 in disposable Kodi."""
+    import sqlite3
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import AddonUpdatePolicy, KodiJsonRpcUpdatePolicyBackend
+
+    print("=== Build Manager BM-017F disposable Red Light lifecycle ===")
+    verify_isolation()
+    try:
+        print("\n[1/8] reset disposable profile and prepare exact retained dependency closure")
+        reset()
+        install(source=PROJECT)
+        fixture = _prepare_bm017f_fixture(retained_manifest_path, retained_artifact_root)
+        _install_bm015_config_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        for addon_id in (ADDON_ID, _BM015_RUNNER_ADDON_ID):
+            jsonrpc("Addons.SetAddonEnabled", {
+                "addonid": addon_id,
+                "enabled": True,
+            })
+            detail = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id,
+                "properties": ["enabled"],
+            }).get("addon", {})
+            if detail.get("enabled") is not True:
+                raise RuntimeError("Build Manager disposable runner could not be enabled")
+
+        original_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        print("  test profile is isolated; BM runner and retained exact artifacts are ready ✓")
+
+        print("\n[2/8] start the production frozen coordinator and verify the durable hold")
+        started = _bm015_run_job({
+            "mode": "frozen_install",
+            "manifest_path": str(fixture["manifest_path"]),
+            "configuration_manifest_path": str(fixture["configuration_path"]),
+            "artifact_root": str(fixture["artifact_root"]),
+            "device_profile_id": "bm017f-disposable",
+        }, timeout=180.0)
+        if not started.get("ok"):
+            raise RuntimeError(
+                "BM-017F frozen coordinator failed in the disposable profile "
+                f"({started.get('error_type', 'unknown')})"
+            )
+        tx = started.get("transaction") or {}
+        if (
+            started.get("outcome") != "awaiting_restart"
+            or tx.get("lifecycle_stage") != "quiescence_awaiting_restart"
+            or tx.get("activation_hold_released") is not False
+            or fixture["owner_id"] not in tx.get("activation_hold_ids", ())
+        ):
+            raise RuntimeError(
+                "BM-017F quiescence checkpoint mismatch: "
+                f"outcome={started.get('outcome', '')}, code={started.get('code', '')}, "
+                f"phase={tx.get('phase', '')}, stage={tx.get('lifecycle_stage', '')}, "
+                f"owner_held={fixture['owner_id'] in tx.get('activation_hold_ids', ())}, "
+                f"released={tx.get('activation_hold_released', '')}, "
+                f"detail={tx.get('status_message', '')}, "
+                f"attempted={','.join(started.get('installation_order', ()))}, "
+                f"installed_count={sum(1 for value in started.get('installed', {}).values() if value)}"
+            )
+        if started.get("policy") != int(AddonUpdatePolicy.NEVER_CHECK):
+            raise RuntimeError("BM-017F did not quarantine the updater before installation")
+        if set(started.get("installation_order", ())) != set(fixture["versions"]):
+            raise RuntimeError("BM-017F did not install the exact required closure")
+        for addon_id, version in fixture["versions"].items():
+            details = started.get("installed", {}).get(addon_id)
+            if not isinstance(details, dict) or details.get("version") != version:
+                raise RuntimeError("BM-017F installed an unexpected exact artifact version")
+            if addon_id == fixture["owner_id"] and details.get("enabled") is not False:
+                raise RuntimeError("Red Light was enabled before private configuration")
+        db_path = (
+            KODI_USERDATA_DIR / "addon_data" / fixture["owner_id"]
+            / "databases" / "settings.db"
+        )
+        if db_path.exists():
+            raise RuntimeError("Red Light settings database appeared before held initialization")
+        time.sleep(1.5)
+        initial_log = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        if "Main Monitor Service Starting" in initial_log:
+            raise RuntimeError("Red Light service started before private configuration")
+        current_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if current_policy is not AddonUpdatePolicy.NEVER_CHECK:
+            raise RuntimeError("updater quarantine did not persist through staged installation")
+        print("  exact versions installed disabled; settings DB absent; no Red Light service start; updater guarded ✓")
+        print("  BM-022 persisted its hold and requested a full Kodi session boundary ✓")
+
+        print("\n[3/8] restart only the disposable Kodi instance and wait for BM-020/BM-022 resume")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        deadline = time.time() + 180.0
+        owner_details = {}
+        final_transaction = None
+        resume_complete = False
+        while time.time() < deadline:
+            detail_response = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": fixture["owner_id"],
+                "properties": ["enabled", "version", "broken"],
+            })
+            tx_path = (
+                KODI_USERDATA_DIR / "addon_data" / ADDON_ID
+                / "frozen_install_transaction.json"
+            )
+            try:
+                final_transaction = json.loads(tx_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                final_transaction = None
+            owner_details, resume_complete = _bm017f_resume_poll_status(
+                detail_response,
+                final_transaction,
+            )
+            if resume_complete:
+                break
+            time.sleep(0.5)
+        if not resume_complete:
+            raise RuntimeError("BM-017F did not finish its staged restart resume")
+        if owner_details.get("version") != fixture["versions"][fixture["owner_id"]]:
+            raise RuntimeError("Red Light version changed across lifecycle resume")
+        print("  updater guard was reasserted before BM-020 startup; lifecycle hold survived restart ✓")
+
+        print("  waiting up to 30 seconds for the Red Light service-start marker in the current disposable log")
+        _wait_for_bm017f_service_start(timeout=30.0, interval=0.25)
+
+        print("\n[4/8] verify private verification, hold release, and service-start ordering")
+        log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        _validate_bm017f_lifecycle_marker_order(log_after)
+        if fixture["fake_value"] in log_after:
+            raise RuntimeError("fake private marker leaked into the disposable Kodi log")
+        policy_after = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if policy_after is not original_policy:
+            raise RuntimeError("the original updater policy was not restored after lifecycle completion")
+        print("  private verification → hold release → first service start ordering verified ✓")
+        print("  original updater policy restored after successful completion ✓")
+
+        print("\n[5/8] run a second Build Manager reconciliation against the same configuration")
+        second = _bm015_run_job({
+            "mode": "bm017f_second_reconcile",
+            "manifest_path": str(fixture["configuration_path"]),
+            "device_profile_id": "bm017f-disposable",
+            "source_software_fingerprint": fixture["software_fingerprint"],
+        }, timeout=120.0)
+        if not second.get("ok") or second.get("success") is not True:
+            raise RuntimeError("second BM-017F reconciliation did not succeed")
+        if second.get("changed_action_count") != 0 or second.get("failed_action_count") != 0:
+            raise RuntimeError("second BM-017F reconciliation was not a no-op")
+        print("  second reconciliation verified configured values read-only with no changes ✓")
+
+        print("\n[6/8] stop disposable Kodi and read back the isolated Red Light settings DB")
+        stop()
+        if not db_path.is_file():
+            raise RuntimeError("Red Light settings database was not initialized")
+        uri = f"file:{db_path}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=1.0) as connection:
+            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            table_columns = tuple(
+                row[1] for row in connection.execute("PRAGMA table_info(settings)")
+            )
+            private_row = connection.execute(
+                "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
+                ("pm.account_id",),
+            ).fetchone()
+            unrelated_row = connection.execute(
+                "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
+                ("auto_start_redlight",),
+            ).fetchone()
+            row_count = connection.execute("SELECT count(*) FROM settings").fetchone()[0]
+        if table_columns != ("setting_id", "setting_type", "setting_default", "setting_value"):
+            raise RuntimeError("Red Light settings schema read-back was invalid")
+        if journal_mode != "wal":
+            raise RuntimeError("Red Light settings DB is not in audited WAL mode")
+        if not private_row or private_row[0] != "string" or private_row[1] != fixture["fake_value"]:
+            raise RuntimeError("fake private field read-back did not match")
+        if not unrelated_row or unrelated_row[0] != "boolean" or unrelated_row[1] != "false":
+            raise RuntimeError("unrelated Red Light default row was not preserved")
+        if row_count < 100:
+            raise RuntimeError("Red Light package defaults were not initialized completely")
+        if fixture["fake_value"] in log_after:
+            raise RuntimeError("fake private marker leaked into lifecycle diagnostics")
+        transaction_path = KODI_USERDATA_DIR / "addon_data" / ADDON_ID / "frozen_install_transaction.json"
+        if transaction_path.exists() and fixture["fake_value"] in transaction_path.read_text(encoding="utf-8"):
+            raise RuntimeError("fake private marker leaked into BM-022 transaction state")
+        print("  exact schema, WAL, default rows, and fake private read-back verified without displaying values ✓")
+        print("  test marker absent from Kodi logs and durable lifecycle state ✓")
+
+        print("\n[7/8] verify disposable files contain the exact retained root package identity")
+        root_sha = fixture["hashes"][fixture["owner_id"]]
+        if root_sha != "64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927":
+            raise RuntimeError("BM-017F disposable root artifact digest changed")
+        print(f"  plugin.video.redlight {fixture['versions'][fixture['owner_id']]} SHA-256={root_sha} ✓")
+        print(f"  required exact dependency artifacts staged: {len(fixture['hashes']) - 1} ✓")
+
+        print("\n[8/8] validation complete; all inspection remained inside .kodi-test")
+    finally:
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    print("\n=== BM-017F disposable lifecycle validation PASSED ===\n")
+
+
+def validate_frozen_install() -> None:
+    """Prove exact install, restart reassertion, configuration, and release."""
+    if str(PROJECT) not in sys.path:
+        sys.path.insert(0, str(PROJECT))
+    from resources.lib.update_guard import AddonUpdatePolicy, KodiJsonRpcUpdatePolicyBackend
+
+    print("=== Build Manager BM-022 live validation: frozen installation ===")
+    verify_isolation()
+    real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns if NORMAL_APPDATA_DIR.exists() else None
+    try:
+        print("\n[1/18] reset, install Build Manager, and prepare complete fixture")
+        reset()
+        install(source=PROJECT)
+        fixture = _prepare_bm022_fixture()
+        _install_bm015_config_runner()
+        configure_webserver()
+        launch()
+        wait_for_ready(timeout=90.0)
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": ADDON_ID,
+            "enabled": True,
+        })
+        production_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(production_detail, dict)
+            and isinstance(production_detail.get("addon"), dict)
+            and production_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(
+                f"BM-022 production add-on could not be enabled: {production_detail!r}"
+            )
+        jsonrpc("Addons.SetAddonEnabled", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "enabled": True,
+        })
+        runner_detail = jsonrpc("Addons.GetAddonDetails", {
+            "addonid": _BM015_RUNNER_ADDON_ID,
+            "properties": ["enabled"],
+        })
+        if not (
+            isinstance(runner_detail, dict)
+            and isinstance(runner_detail.get("addon"), dict)
+            and runner_detail["addon"].get("enabled") is True
+        ):
+            raise RuntimeError(f"BM-022 runner could not be enabled: {runner_detail!r}")
+        original = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        print(f"  original global updater policy={original.name} ✓")
+        print("  complete fixture contains repository, dependency, ordinary add-on, and system boundary ✓")
+
+        print("\n[2/18] start production BM-022 coordinator and persist transaction")
+        started = _bm015_run_job({
+            "mode": "frozen_install",
+            "manifest_path": str(fixture["manifest_path"]),
+            "configuration_manifest_path": str(fixture["configuration_path"]),
+            "artifact_root": str(fixture["artifact_root"]),
+            "device_profile_id": "bm022-disposable",
+            "force_restart": True,
+        })
+        if not started.get("ok") or started.get("outcome") != "awaiting_restart":
+            raise RuntimeError(f"BM-022 coordinator did not reach restart handoff: {started}")
+        if started.get("policy") != int(AddonUpdatePolicy.NEVER_CHECK):
+            raise RuntimeError("BM-022 did not leave NEVER_CHECK active at restart handoff")
+        tx = started.get("transaction") or {}
+        if tx.get("phase") != "awaiting_restart":
+            raise RuntimeError(f"unexpected frozen transaction phase: {tx}")
+        print("  transaction persisted before mutation and phase=awaiting_restart ✓")
+        print("  NEVER_CHECK verified before exact package installation ✓")
+
+        print("\n[3/18] verify exact frozen versions and dependency ordering")
+        expected_versions = {
+            _BM022_REPO_ID: _BM022_VERSION,
+            _BM022_DEP_ID: _BM022_VERSION,
+            _BM022_APP_ID: _BM022_VERSION,
+        }
+        for addon_id, version in expected_versions.items():
+            detail = jsonrpc("Addons.GetAddonDetails", {
+                "addonid": addon_id, "properties": ["enabled", "version"]
+            }).get("addon", {})
+            if detail.get("version") != version:
+                raise RuntimeError(f"wrong exact version for {addon_id}: {detail}")
+            print(f"  {addon_id} installed exactly at {version} ✓")
+        expected_order = [_BM022_REPO_ID, _BM022_DEP_ID, _BM022_APP_ID]
+        if started.get("installation_order") != expected_order:
+            raise RuntimeError(
+                "unexpected deterministic installation order: "
+                f"{started.get('installation_order')}"
+            )
+        print("  repository → dependency → ordinary add-on ordering verified ✓")
+
+        print("\n[4/18] verify BM-020 restart transaction and exact artifact selection")
+        bm020_tx = _bm015_run_job({"mode": "transaction_inspect"})
+        if not bm020_tx.get("ok") or not bm020_tx.get("transaction"):
+            raise RuntimeError(f"BM-020 transaction missing at restart boundary: {bm020_tx}")
+        for addon_id, digest in fixture["hashes"].items():
+            print(f"  {addon_id}: artifact_sha256={digest} exact fixture selected ✓")
+
+        print("\n[5/18] cross Kodi restart and allow startup coordinator to resume")
+        stop()
+        launch()
+        wait_for_ready(timeout=90.0)
+        deadline = time.time() + 60.0
+        final_tx = None
+        while time.time() < deadline:
+            final_tx = _bm015_run_job({"mode": "frozen_inspect"})
+            if final_tx.get("ok") and final_tx.get("transaction") is None:
+                break
+            time.sleep(0.5)
+        if final_tx.get("transaction") is not None:
+            raise RuntimeError(f"frozen transaction did not finalize after restart: {final_tx}")
+        print("  frozen transaction survived restart and later cleared after resume ✓")
+
+        log_after = KODI_LOG_FILE.read_text(encoding="utf-8", errors="replace") if KODI_LOG_FILE.exists() else ""
+        guard_marker = "BM-022 updater guard reasserted before BM-020 startup"
+        resume_marker = "Build Manager BM-020C startup"
+        guard_index = log_after.rfind(guard_marker)
+        resume_index = log_after.rfind(resume_marker)
+        if guard_index < 0 or resume_index < 0:
+            raise RuntimeError("restart log did not contain BM-022 guard and BM-020 startup evidence")
+        if guard_index > resume_index:
+            raise RuntimeError("BM-020 startup log preceded BM-022 guard reassertion")
+        print("  log ordering proves updater guard reasserted before BM-020 startup ✓")
+
+        print("\n[6/18] verify configuration, final state, and updater restoration")
+        setting = _bm015_run_job({
+            "mode": "frozen_observe_setting",
+            "addon_id": _BM022_APP_ID,
+            "key": "bm022.enabled",
+        })
+        if not setting.get("ok") or setting.get("value") is not True:
+            raise RuntimeError(f"configuration was not applied through Build Manager: {setting}")
+        final_policy = KodiJsonRpcUpdatePolicyBackend(jsonrpc).get_policy()
+        if final_policy != original:
+            raise RuntimeError(f"original updater policy was not restored: {final_policy.name}")
+        if _bm015_run_job({"mode": "transaction_inspect"}).get("transaction") is not None:
+            raise RuntimeError("BM-020 transaction remained after frozen completion")
+        print("  existing Build Manager configuration path succeeded ✓")
+        print(f"  original updater policy={original.name} restored and verified ✓")
+        print("  BM-020 transaction absent and final frozen release complete ✓")
+    finally:
+        try:
+            stop()
+        except RuntimeError:
+            pass
+    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists() and NORMAL_APPDATA_DIR.stat().st_mtime_ns != real_mtime_ns:
+        raise RuntimeError("real Kodi profile mtime changed during BM-022 gate")
+    print("  real Kodi profile remained untouched ✓")
+    print("\n=== BM-022 frozen installation validation PASSED ===\n")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -5253,7 +7626,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("validate-addon-state", help="BM-013 live validation: enable/disable state reconciliation")
     sub.add_parser("validate-post-operations", help="BM-014 live validation: post-operation state validation")
     sub.add_parser("validate-config", help="BM-015 live validation: configuration package deployment")
+    sub.add_parser("validate-af3-package", help="BM-018E live validation: production AF3 package")
     sub.add_parser("validate-skin-config", help="BM-018D live validation: typed AF3 skin configuration")
+    sub.add_parser("validate-build-manager", help="BM-020A live validation: production executor")
+    sub.add_parser("validate-build-manager-transaction", help="BM-020B live validation: transaction startup")
+    sub.add_parser("validate-build-manager-manual-restart", help="BM-020C1 live validation: manual restart handoff")
+    sub.add_parser("validate-build-manager-resume", help="BM-020C live validation: automatic post-restart resume")
+    sub.add_parser("validate-frozen-capture", help="BM-021B disposable exact-artifact capture proof")
+    sub.add_parser("validate-updater-guard", help="BM-021B disposable global updater-guard proof")
+    sub.add_parser("validate-frozen-install", help="BM-022 disposable exact frozen-install proof")
+    p_bm017f = sub.add_parser(
+        "validate-bm017f-lifecycle",
+        help="BM-017F retained Red Light deferred-activation proof",
+    )
+    p_bm017f.add_argument("--retained-manifest", type=Path, required=True)
+    p_bm017f.add_argument("--artifact-store", type=Path, required=True)
 
     args = parser.parse_args(argv)
     cmd: str = args.command
@@ -5296,6 +7683,24 @@ def main(argv: Optional[List[str]] = None) -> int:
             validate_config()
         elif cmd == "validate-skin-config":
             validate_skin_config()
+        elif cmd == "validate-af3-package":
+            validate_af3_package()
+        elif cmd == "validate-build-manager":
+            validate_build_manager()
+        elif cmd == "validate-build-manager-transaction":
+            validate_build_manager_transaction()
+        elif cmd == "validate-build-manager-manual-restart":
+            validate_build_manager_manual_restart()
+        elif cmd == "validate-build-manager-resume":
+            validate_build_manager_resume()
+        elif cmd == "validate-frozen-capture":
+            validate_frozen_capture()
+        elif cmd == "validate-updater-guard":
+            validate_updater_guard()
+        elif cmd == "validate-frozen-install":
+            validate_frozen_install()
+        elif cmd == "validate-bm017f-lifecycle":
+            validate_bm017f_lifecycle(args.retained_manifest, args.artifact_store)
         return 0
     except (RuntimeError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)

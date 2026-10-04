@@ -40,6 +40,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
+from resources.lib.private_resource import (
+    PrivateResourceValidationError,
+    StructuredPrivateResourceDeclaration,
+    StructuredResourceFieldDeclaration,
+)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -72,7 +78,7 @@ class BuildInfo:
 @dataclass(frozen=True)
 class AddonEntry:
     addon_id: str
-    state: str          # "enabled" | "disabled" | "absent"
+    state: str          # "enabled" | "disabled"
     note: str = ""
 
 
@@ -104,10 +110,74 @@ class ManagedSettingScope:
 
 
 @dataclass(frozen=True)
+class PrivateSettingDeclaration:
+    """Public declaration for one private setting target.
+
+    Only target identity, type, requirement, and sensitivity classification are
+    public. The corresponding value is supplied by a separate private overlay.
+    """
+
+    addon_id: str
+    key: str
+    setting_type: str
+    required: bool = True
+    sensitivity: str = "private_identifier"
+    target_kind: SettingTargetKind = SettingTargetKind.ADDON
+
+
+@dataclass(frozen=True)
 class ConfigDeclarations:
     packages: Tuple[str, ...] = ()
     managed_settings: Tuple[ManagedSettingScope, ...] = ()
     managed_files: Tuple[str, ...] = ()
+    private_settings: Tuple[PrivateSettingDeclaration, ...] = ()
+    structured_private_resources: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
+
+
+class FrozenInstallPolicyMode(str, Enum):
+    """Explicit recovery choices for a missing exact frozen artifact."""
+
+    EXACT_REQUIRED = "exact_required"
+    EXACT_FIRST_REPOSITORY = "exact_first_with_repository_fallback"
+    EXACT_FIRST_REPOSITORY_OR_SKIP = "exact_first_with_repository_fallback_or_skip"
+
+
+@dataclass(frozen=True)
+class FrozenInstallPolicy:
+    """Profile-scoped policy for resolving one captured add-on at install time."""
+
+    addon_id: str
+    mode: FrozenInstallPolicyMode = FrozenInstallPolicyMode.EXACT_REQUIRED
+    repository_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.addon_id, str) or not _RE_ADDON_ID.fullmatch(self.addon_id):
+            raise ValueError("frozen install policy add-on ID is invalid")
+        if not isinstance(self.mode, FrozenInstallPolicyMode):
+            raise ValueError("frozen install policy mode is invalid")
+        if not isinstance(self.repository_id, str):
+            raise ValueError("frozen install policy repository ID is invalid")
+        if self.repository_id and not _RE_REPO_ID.fullmatch(self.repository_id):
+            raise ValueError("frozen install policy repository ID is invalid")
+        if self.repository_id and self.mode is FrozenInstallPolicyMode.EXACT_REQUIRED:
+            raise ValueError("exact-only policy cannot declare a fallback repository")
+
+    @property
+    def repository_fallback_allowed(self) -> bool:
+        return self.mode in (
+            FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY,
+            FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP,
+        )
+
+    @property
+    def skip_allowed(self) -> bool:
+        return self.mode is FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP
+
+    def to_dict(self) -> dict:
+        value = {"addon_id": self.addon_id, "policy": self.mode.value}
+        if self.repository_id:
+            value["repository_id"] = self.repository_id
+        return value
 
 
 @dataclass(frozen=True)
@@ -117,6 +187,7 @@ class ProfileLayer:
     config: Optional[ConfigDeclarations] = None
     skin: Optional[SkinEntry] = None
     include_optional: Tuple[str, ...] = ()
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -127,6 +198,7 @@ class DeviceProfile:
     config: Optional[ConfigDeclarations] = None
     skin: Optional[SkinEntry] = None
     include_optional: Tuple[str, ...] = ()
+    frozen_install_policies: Tuple[FrozenInstallPolicy, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -143,6 +215,8 @@ class PrivateOverlayRef:
     type: str
     path_hint: str = ""
     description: str = ""
+    overlay_id: str = "default"
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -183,7 +257,7 @@ _RE_REPO_ID    = re.compile(r'^repository\.[a-z0-9._-]+$')
 _RE_SKIN_ID    = re.compile(r'^skin\.[a-z0-9._-]+$')
 _RE_OPT_ID     = re.compile(r'^[a-z0-9][a-z0-9_-]*$')
 
-_VALID_ADDON_STATES   = frozenset({"enabled", "disabled", "absent"})
+_VALID_ADDON_STATES   = frozenset({"enabled", "disabled"})
 _VALID_OVERLAY_TYPES  = frozenset({"local_file"})
 _VALID_URL_SCHEMES    = frozenset({"https", "http"})
 
@@ -196,12 +270,14 @@ _BUILD_KEYS             = frozenset({"id", "version", "name", "description"})
 _REPO_KEYS              = frozenset({"addon_id", "bootstrap_url", "required"})
 _ADDON_KEYS             = frozenset({"addon_id", "state", "note"})
 _SKIN_KEYS              = frozenset({"addon_id", "config_packages"})
-_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files"})
+_CONFIG_KEYS            = frozenset({"packages", "managed_settings", "managed_files", "private_settings", "structured_private_resources"})
 _MANAGED_SETTING_KEYS   = frozenset({"target", "addon_id", "keys"})
-_PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional"})
-_DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional"})
+_PRIVATE_SETTING_KEYS   = frozenset({"target", "addon_id", "key", "type", "required", "sensitivity"})
+_PROFILE_KEYS           = frozenset({"label", "addons", "config", "skin", "include_optional", "frozen_install_policies"})
+_DEVICE_PROFILE_KEYS    = frozenset({"label", "extends", "addons", "config", "skin", "include_optional", "frozen_install_policies"})
+_FROZEN_INSTALL_POLICY_KEYS = frozenset({"addon_id", "policy", "repository_id"})
 _OPTIONAL_GROUP_KEYS    = frozenset({"id", "label", "description", "addons", "config"})
-_OVERLAY_KEYS           = frozenset({"type", "path_hint", "description"})
+_OVERLAY_KEYS           = frozenset({"type", "path_hint", "description", "overlay_id", "required"})
 _RESTART_POLICY_KEYS    = frozenset({"allow_skin_reload", "allow_kodi_restart"})
 
 
@@ -471,8 +547,14 @@ def _parse_addon_entry(raw: object, *, label: str) -> AddonEntry:
 
     state = _require_str(raw, "state", label)
     if state not in _VALID_ADDON_STATES:
+        if state == "absent":
+            raise ManifestValidationError(
+                f"{label}.state: add-on removal is unsupported by Kodi's public "
+                "API; valid managed states are 'enabled' or 'disabled'. "
+                "Omit the add-on to leave it unmanaged."
+            )
         raise ManifestValidationError(
-            f"{label}.state: expected enabled|disabled|absent, got {state!r}"
+            f"{label}.state: expected enabled|disabled, got {state!r}"
         )
 
     note = ""
@@ -574,10 +656,101 @@ def _parse_config(raw: object, *, label: str) -> Optional[ConfigDeclarations]:
             mf_list.append(normalized)
         managed_files = tuple(mf_list)
 
+    private_settings: Tuple[PrivateSettingDeclaration, ...] = ()
+    if "private_settings" in raw:
+        ps_raw = raw["private_settings"]
+        if not isinstance(ps_raw, list):
+            raise ManifestValidationError(f"{label}.private_settings: must be an array")
+        seen_private: set = set()
+        private_list = []
+        for j, declaration in enumerate(ps_raw):
+            dlbl = f"{label}.private_settings[{j}]"
+            parsed = _parse_private_setting_declaration(declaration, label=dlbl)
+            identity = (parsed.target_kind, parsed.addon_id, parsed.key)
+            if identity in seen_private:
+                raise ManifestValidationError(
+                    f"{dlbl}: duplicate private setting target "
+                    f"{parsed.target_kind.value}:{parsed.addon_id}/{parsed.key}"
+                )
+            seen_private.add(identity)
+            private_list.append(parsed)
+        private_settings = tuple(private_list)
+
+    structured_private_resources: Tuple[StructuredPrivateResourceDeclaration, ...] = ()
+    if "structured_private_resources" in raw:
+        resources_raw = raw["structured_private_resources"]
+        if not isinstance(resources_raw, list):
+            raise ManifestValidationError(f"{label}.structured_private_resources: must be an array")
+        resource_list = []
+        seen_resources = set()
+        for j, resource in enumerate(resources_raw):
+            rlabel = f"{label}.structured_private_resources[{j}]"
+            try:
+                parsed = _parse_structured_private_resource(resource, label=rlabel)
+            except PrivateResourceValidationError as exc:
+                raise ManifestValidationError(f"{rlabel}: {exc}") from exc
+            if parsed.resource_id in seen_resources:
+                raise ManifestValidationError(f"{rlabel}.resource_id: duplicate resource ID")
+            seen_resources.add(parsed.resource_id)
+            resource_list.append(parsed)
+        structured_private_resources = tuple(resource_list)
+
     return ConfigDeclarations(
         packages=packages,
         managed_settings=managed_settings,
         managed_files=managed_files,
+        private_settings=private_settings,
+        structured_private_resources=structured_private_resources,
+    )
+
+
+def _parse_structured_private_resource(
+    raw: object, *, label: str
+) -> StructuredPrivateResourceDeclaration:
+    if not isinstance(raw, dict):
+        raise PrivateResourceValidationError("must be an object")
+    keys = {
+        "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+        "resource_id", "fields", "adapter_id", "lifecycle", "required",
+        "configure_before_activation",
+    }
+    unknown = set(raw) - keys
+    if unknown:
+        raise PrivateResourceValidationError("contains unsupported fields")
+    required_keys = {"resource_type", "owner_addon_id", "supported_versions", "schema_id", "resource_id", "fields", "adapter_id"}
+    if not required_keys.issubset(raw):
+        raise PrivateResourceValidationError("is missing required metadata")
+    fields_raw = raw["fields"]
+    if not isinstance(fields_raw, list):
+        raise PrivateResourceValidationError("fields must be an array")
+    fields = []
+    for index, field in enumerate(fields_raw):
+        if not isinstance(field, dict):
+            raise PrivateResourceValidationError(f"field {index} must be an object")
+        if set(field) - {"field_id", "type", "required", "sensitivity"}:
+            raise PrivateResourceValidationError(f"field {index} contains unsupported metadata")
+        if "field_id" not in field or "type" not in field:
+            raise PrivateResourceValidationError(f"field {index} is missing identity/type")
+        fields.append(StructuredResourceFieldDeclaration(
+            field_id=field["field_id"],
+            value_type=field["type"],
+            required=field.get("required", False),
+            sensitivity=field.get("sensitivity", "private_identifier"),
+        ))
+    versions = raw["supported_versions"]
+    if not isinstance(versions, list):
+        raise PrivateResourceValidationError("supported_versions must be an array")
+    return StructuredPrivateResourceDeclaration(
+        resource_type=raw["resource_type"],
+        owner_addon_id=raw["owner_addon_id"],
+        supported_versions=tuple(versions),
+        schema_id=raw["schema_id"],
+        resource_id=raw["resource_id"],
+        fields=tuple(fields),
+        adapter_id=raw["adapter_id"],
+        lifecycle=raw.get("lifecycle", "quiesced"),
+        required=raw.get("required", True),
+        configure_before_activation=raw.get("configure_before_activation", False),
     )
 
 
@@ -608,6 +781,45 @@ def _parse_managed_setting_scope(raw: object, *, label: str) -> ManagedSettingSc
     return ManagedSettingScope(
         addon_id=addon_id,
         keys=tuple(keys_raw),
+        target_kind=target_kind,
+    )
+
+
+def _parse_private_setting_declaration(
+    raw: object, *, label: str
+) -> PrivateSettingDeclaration:
+    if not isinstance(raw, dict):
+        raise ManifestValidationError(f"{label}: must be an object")
+    _reject_unknown(raw, _PRIVATE_SETTING_KEYS, label)
+
+    target_kind = _parse_setting_target_kind(raw.get("target", "addon"), label=label)
+    addon_id = _require_str(raw, "addon_id", label)
+    if not _RE_ADDON_ID.match(addon_id):
+        raise ManifestValidationError(f"{label}.addon_id: invalid add-on ID {addon_id!r}")
+    key = _require_str(raw, "key", label)
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", key):
+        raise ManifestValidationError(f"{label}.key: invalid setting key")
+    setting_type = _require_str(raw, "type", label)
+    if setting_type not in {"string", "bool", "int", "number"}:
+        raise ManifestValidationError(
+            f"{label}.type: unsupported setting type {setting_type!r}"
+        )
+    required = raw.get("required", True)
+    if not isinstance(required, bool):
+        raise ManifestValidationError(f"{label}.required: must be boolean")
+    sensitivity = raw.get("sensitivity", "private_identifier")
+    if not isinstance(sensitivity, str) or sensitivity not in {
+        "secret", "credential", "token", "private_identifier"
+    }:
+        raise ManifestValidationError(
+            f"{label}.sensitivity: unsupported private sensitivity class"
+        )
+    return PrivateSettingDeclaration(
+        addon_id=addon_id,
+        key=key,
+        setting_type=setting_type,
+        required=required,
+        sensitivity=sensitivity,
         target_kind=target_kind,
     )
 
@@ -667,6 +879,11 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
                 )
         include_optional = tuple(io)
 
+    frozen_install_policies = _parse_frozen_install_policies(
+        raw.get("frozen_install_policies", []),
+        label=f"{label}.frozen_install_policies",
+    )
+
     profile_label = ""
     if "label" in raw:
         lv = raw["label"]
@@ -682,6 +899,7 @@ def _parse_profile_layer(raw: object, *, label: str) -> ProfileLayer:
         config=config,
         skin=skin,
         include_optional=include_optional,
+        frozen_install_policies=frozen_install_policies,
     )
 
 
@@ -733,6 +951,11 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
                 )
         include_optional = tuple(io)
 
+    frozen_install_policies = _parse_frozen_install_policies(
+        raw.get("frozen_install_policies", []),
+        label=f"{label}.frozen_install_policies",
+    )
+
     profile_label = ""
     if "label" in raw:
         lv = raw["label"]
@@ -749,7 +972,44 @@ def _parse_device_profile(raw: object, *, label: str) -> DeviceProfile:
         config=config,
         skin=skin,
         include_optional=include_optional,
+        frozen_install_policies=frozen_install_policies,
     )
+
+
+def _parse_frozen_install_policies(
+    raw: object, *, label: str
+) -> Tuple[FrozenInstallPolicy, ...]:
+    if not isinstance(raw, list):
+        raise ManifestValidationError(f"{label}: must be an array")
+    out = []
+    seen = set()
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        if not isinstance(item, dict):
+            raise ManifestValidationError(f"{item_label}: must be an object")
+        _reject_unknown(item, _FROZEN_INSTALL_POLICY_KEYS, item_label)
+        addon_id = _require_str(item, "addon_id", item_label)
+        if not _RE_ADDON_ID.fullmatch(addon_id):
+            raise ManifestValidationError(f"{item_label}.addon_id: invalid add-on ID")
+        if addon_id in seen:
+            raise ManifestValidationError(f"{item_label}.addon_id: duplicate policy")
+        seen.add(addon_id)
+        try:
+            mode = FrozenInstallPolicyMode(_require_str(item, "policy", item_label))
+        except ValueError as exc:
+            raise ManifestValidationError(f"{item_label}.policy: unsupported frozen install policy") from exc
+        repository_id = item.get("repository_id", "")
+        if not isinstance(repository_id, str):
+            raise ManifestValidationError(f"{item_label}.repository_id: must be a string")
+        if repository_id:
+            if not _RE_REPO_ID.fullmatch(repository_id):
+                raise ManifestValidationError(f"{item_label}.repository_id: invalid repository ID")
+            if mode is FrozenInstallPolicyMode.EXACT_REQUIRED:
+                raise ManifestValidationError(
+                    f"{item_label}.repository_id: exact-only policy cannot declare a fallback repository"
+                )
+        out.append(FrozenInstallPolicy(addon_id, mode, repository_id))
+    return tuple(out)
 
 
 # ---------------------------------------------------------------------------
@@ -856,7 +1116,22 @@ def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
             )
         overlay_desc = dv
 
-    return PrivateOverlayRef(type=ov_type, path_hint=path_hint, description=overlay_desc)
+    overlay_id = raw.get("overlay_id", "default")
+    if not isinstance(overlay_id, str) or not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", overlay_id):
+        raise ManifestValidationError(
+            "private_overlay.overlay_id: must be a safe lower-case identifier"
+        )
+    required = raw.get("required", False)
+    if not isinstance(required, bool):
+        raise ManifestValidationError("private_overlay.required: must be boolean")
+
+    return PrivateOverlayRef(
+        type=ov_type,
+        path_hint=path_hint,
+        description=overlay_desc,
+        overlay_id=overlay_id,
+        required=required,
+    )
 
 
 # ---------------------------------------------------------------------------

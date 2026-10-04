@@ -33,8 +33,11 @@ FakeDependencyBackend: in-memory backend for all tests requiring a resolver.
     to simulate infrastructure failure (DependencyError or otherwise)
 """
 
+import sys
+import types
 import unittest
 from typing import Dict, List, Optional, Set, Tuple
+from unittest.mock import patch
 
 from resources.lib.addons import AddonInstallResult, AddonStatus, InstalledAddonInfo
 import json
@@ -42,6 +45,7 @@ import json
 from resources.lib.dependencies import (
     DependencyAction,
     DependencyActionKind,
+    DependencyAwareInstaller,
     DependencyClosure,
     DependencyBackend,
     DependencyError,
@@ -57,6 +61,7 @@ from resources.lib.dependencies import (
     _parse_version,
     _version_satisfies,
 )
+from resources.lib.restart import RestartRequirement
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +93,11 @@ def _info(addon_id: str, enabled: bool = True, version: str = "1.0.0") -> Instal
     return InstalledAddonInfo(addon_id=addon_id, enabled=enabled, version=version)
 
 
-def _install_ok(addon_id: str, version: str = "1.0.0") -> AddonInstallResult:
+def _install_ok(
+    addon_id: str,
+    version: str = "1.0.0",
+    restart_requirement: RestartRequirement = RestartRequirement.NONE,
+) -> AddonInstallResult:
     return AddonInstallResult(
         addon_id=addon_id,
         status=AddonStatus.INSTALLED,
@@ -96,6 +105,7 @@ def _install_ok(addon_id: str, version: str = "1.0.0") -> AddonInstallResult:
         enabled=True,
         version=version,
         message="installed",
+        restart_requirement=restart_requirement,
     )
 
 
@@ -145,6 +155,9 @@ class FakeDependencyBackend(DependencyBackend):
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
         return self.addon_xmls.get(addon_id)
 
+    def read_available_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        return self.addon_xmls.get(addon_id)
+
     def install_addon(self, addon_id: str, desired_state: str = "enabled") -> AddonInstallResult:
         self.install_calls.append(addon_id)
         result = self.canned_install_results.get(addon_id, _install_fail(addon_id))
@@ -184,6 +197,12 @@ class TestIsSystemDependency(unittest.TestCase):
 
     def test_xbmc_addon_metadata(self) -> None:
         self.assertTrue(_is_system_dependency("xbmc.addon.metadata"))
+
+    def test_kodi_resource(self) -> None:
+        self.assertTrue(_is_system_dependency("kodi.resource"))
+
+    def test_kodi_resource_prefix_is_not_broadly_assumed(self) -> None:
+        self.assertFalse(_is_system_dependency("kodi.resource.example"))
 
     def test_script_module_not_system(self) -> None:
         self.assertFalse(_is_system_dependency("script.module.foo"))
@@ -752,6 +771,25 @@ class TestReconcileDependencies(unittest.TestCase):
         self.assertEqual(enable_actions[0].addon_id, "dis.dep")
         self.assertTrue(result.all_required_satisfied)
 
+    def test_activation_hold_blocks_required_dependency_enable_before_mutation(self) -> None:
+        xml = _xml("root", requires=_imp("held.dep"))
+        backend = FakeDependencyBackend(
+            installed={"held.dep": _info("held.dep", enabled=False)},
+            addon_xmls={"root": xml, "held.dep": _xml("held.dep")},
+        )
+        resolver = DependencyResolver(
+            backend,
+            activation_hold_provider=lambda: frozenset({"held.dep"}),
+        )
+        result = resolver.reconcile_dependencies(["root"])
+        self.assertFalse(result.all_required_satisfied)
+        self.assertEqual(backend.set_enabled_calls, [])
+        self.assertEqual(backend.install_calls, [])
+        self.assertEqual(
+            [item.kind for item in result.actions],
+            [DependencyActionKind.FAILED_ACTIVATION_HOLD],
+        )
+
     def test_install_failure_recorded_as_failed_install(self) -> None:
         xml = _xml("root", requires=_imp("broken.dep"))
         r = self._resolver(
@@ -909,6 +947,158 @@ class TestReconcileDependencies(unittest.TestCase):
         install_actions = [a for a in result.actions if a.kind == DependencyActionKind.INSTALLED]
         self.assertEqual(len(install_actions), 1)
         self.assertTrue(result.all_required_satisfied)
+
+    def test_required_disabled_dependency_conflict_fails_before_mutation(self) -> None:
+        """An explicit disabled dependency blocks the whole owning operation."""
+        backend = FakeDependencyBackend(
+            addon_xmls={
+                "root": _xml("root", requires=_imp("required.dep")),
+                "required.dep": _xml("required.dep"),
+            },
+            canned_install_results={"required.dep": _install_ok("required.dep")},
+            install_side_effects={"required.dep": _info("required.dep")},
+        )
+        result = DependencyResolver(backend).reconcile_dependencies(
+            ["root"],
+            explicit_desired_states={"required.dep": "disabled"},
+        )
+        self.assertFalse(result.all_required_satisfied)
+        self.assertEqual(backend.install_calls, [])
+        conflicts = [
+            action for action in result.actions
+            if action.kind == DependencyActionKind.FAILED_CONFLICT
+        ]
+        self.assertEqual(len(conflicts), 1)
+        self.assertIn("root", conflicts[0].reason)
+        self.assertIn("required.dep", conflicts[0].reason)
+        self.assertIn("disabled", conflicts[0].reason)
+        self.assertEqual(result.restart_report.successful_changes, 0)
+
+    def test_dependency_install_restart_requirement_propagates(self) -> None:
+        backend = FakeDependencyBackend(
+            addon_xmls={
+                "root": _xml("root", requires=_imp("restart.dep")),
+                "restart.dep": _xml("restart.dep"),
+            },
+            canned_install_results={
+                "restart.dep": _install_ok(
+                    "restart.dep",
+                    restart_requirement=RestartRequirement.KODI_RESTART,
+                ),
+            },
+            install_side_effects={"restart.dep": _info("restart.dep")},
+        )
+        result = DependencyResolver(backend).reconcile_dependencies(["root"])
+        action = next(
+            action for action in result.actions
+            if action.addon_id == "restart.dep"
+        )
+        self.assertEqual(action.restart_requirement, RestartRequirement.KODI_RESTART)
+        self.assertIsNotNone(action.operation_result)
+        self.assertEqual(
+            result.restart_report.requirement,
+            RestartRequirement.KODI_RESTART,
+        )
+        self.assertEqual(result.restart_report.successful_changes, 1)
+
+    def test_dependency_aware_installer_nests_target_result(self) -> None:
+        backend = FakeDependencyBackend(
+            addon_xmls={"root": _xml("root")},
+        )
+        resolver = DependencyResolver(backend)
+
+        class TargetManager:
+            def __init__(self):
+                self.calls = []
+
+            def install(self, addon_id, desired_state="enabled"):
+                self.calls.append((addon_id, desired_state))
+                return _install_ok(
+                    addon_id,
+                    restart_requirement=RestartRequirement.KODI_RESTART,
+                )
+
+        manager = TargetManager()
+        result = DependencyAwareInstaller(resolver, manager).install(
+            "root", desired_state="disabled"
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(manager.calls, [("root", "disabled")])
+        self.assertIsNotNone(result.install_result)
+        self.assertEqual(result.restart_report.requirement, RestartRequirement.KODI_RESTART)
+
+    def test_dependency_aware_installer_does_not_install_target_on_conflict(self) -> None:
+        backend = FakeDependencyBackend(
+            addon_xmls={
+                "root": _xml("root", requires=_imp("required.dep")),
+                "required.dep": _xml("required.dep"),
+            },
+        )
+        resolver = DependencyResolver(backend)
+
+        class TargetManager:
+            def __init__(self):
+                self.calls = []
+
+            def install(self, addon_id, desired_state="enabled"):
+                self.calls.append((addon_id, desired_state))
+                return _install_ok(addon_id)
+
+        manager = TargetManager()
+        result = DependencyAwareInstaller(resolver, manager).install(
+            "root", explicit_desired_states={"required.dep": "disabled"}
+        )
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.install_result)
+        self.assertEqual(manager.calls, [])
+
+    def test_dependency_aware_installer_stops_before_target_on_dependency_failure(self) -> None:
+        backend = FakeDependencyBackend(
+            addon_xmls={
+                "root": _xml("root", requires=_imp("broken.dep")),
+                "broken.dep": _xml("broken.dep"),
+            },
+            canned_install_results={
+                "broken.dep": _install_fail("broken.dep", "package unavailable"),
+            },
+        )
+        resolver = DependencyResolver(backend)
+
+        class TargetManager:
+            def __init__(self):
+                self.calls = []
+
+            def install(self, addon_id, desired_state="enabled"):
+                self.calls.append((addon_id, desired_state))
+                return _install_ok(addon_id)
+
+        manager = TargetManager()
+        result = DependencyAwareInstaller(resolver, manager).install("root")
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.install_result)
+        self.assertEqual(manager.calls, [])
+
+    def test_dependency_aware_installer_fails_closed_without_target_metadata(self) -> None:
+        backend = FakeDependencyBackend()
+        resolver = DependencyResolver(backend)
+
+        class TargetManager:
+            def __init__(self):
+                self.calls = []
+
+            def install(self, addon_id, desired_state="enabled"):
+                self.calls.append((addon_id, desired_state))
+                return _install_ok(addon_id)
+
+        manager = TargetManager()
+        result = DependencyAwareInstaller(resolver, manager).install("root")
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.install_result)
+        self.assertEqual(manager.calls, [])
+        self.assertEqual(
+            result.dependency_result.unresolved[0].status,
+            DependencyStatus.METADATA_ERROR,
+        )
 
     def test_result_has_closure(self) -> None:
         r = self._resolver(addon_xmls={"root": _xml("root")})
@@ -1340,6 +1530,36 @@ class TestKodiRuntimeGetAddonDetails(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.addon_id, "my.addon")
         self.assertTrue(result.enabled)
+
+
+class TestKodiRuntimeAddonXmlFallback(unittest.TestCase):
+    """Freshly discovered disabled add-ons remain readable without mutation."""
+
+    def test_read_addon_xml_uses_direct_vfs_path_when_addon_handle_unavailable(self):
+        class _File:
+            def __init__(self, _path):
+                self._data = b'<addon id="fresh.addon" version="1.0.0"/>'
+
+            def read(self):
+                return self._data
+
+            def close(self):
+                return None
+
+        def _unavailable(_addon_id):
+            raise RuntimeError("disabled add-on handle is not ready")
+
+        fake_addon = types.SimpleNamespace(Addon=_unavailable)
+        fake_vfs = types.SimpleNamespace(
+            File=_File,
+            translatePath=lambda path: "/disposable/addons/fresh.addon",
+        )
+        with patch.dict(
+            sys.modules,
+            {"xbmcaddon": fake_addon, "xbmcvfs": fake_vfs},
+        ):
+            result = KodiRuntimeDependencyBackend().read_addon_xml("fresh.addon")
+        self.assertEqual(result, b'<addon id="fresh.addon" version="1.0.0"/>')
 
 
 # ---------------------------------------------------------------------------

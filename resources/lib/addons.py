@@ -134,9 +134,16 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Tuple
+
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +438,16 @@ class InstalledAddonInfo:
     version: str
 
 
+@dataclass(frozen=True, repr=False)
+class RepositoryPackage:
+    """One validated current package resolved from an explicitly named repo."""
+
+    addon_id: str
+    repository_id: str
+    version: str
+    zip_bytes: bytes = field(repr=False)
+
+
 @dataclass(frozen=True)
 class AddonInstallResult:
     """Immutable result of an AddonManager.install() call.
@@ -443,6 +460,7 @@ class AddonInstallResult:
     enabled       -- observed enabled state from Kodi's database (None on FAILED)
     version       -- observed version string from Kodi's database (None on FAILED)
     message       -- human-readable description of the outcome
+    restart_requirement -- lifecycle requirement declared by the operation
     """
     addon_id: str
     status: AddonStatus
@@ -450,7 +468,17 @@ class AddonInstallResult:
     enabled: Optional[bool]
     version: Optional[str]
     message: str
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
 
+    @property
+    def restart_report(self) -> RestartReport:
+        """Typed restart metadata for this install result."""
+        return aggregate_restart_requirements((RestartObservation(
+            requirement=self.restart_requirement,
+            changed=self.status is AddonStatus.INSTALLED,
+            succeeded=self.status is not AddonStatus.FAILED,
+            operation=f"install:{self.addon_id}",
+        ),))
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -766,14 +794,14 @@ class KodiRuntimeAddonBackend(AddonBackend):
             version=str(version) if version else "",
         )
 
-    def _resolve_package_url(self, addon_id: str) -> Tuple[str, str]:
+    def _resolve_package_url(
+        self, addon_id: str, *, repository_id: str = ""
+    ) -> Tuple[str, str]:
         """Find addon_id in installed+enabled repositories. Returns (zip_url, version).
 
-        Enumerates repositories via JSON-RPC, reads each repo's addon.xml via
-        xbmcvfs, fetches its addons.xml, and returns the first match.
-        Repositories are iterated in lexical order of their addon ID so that
-        resolution is deterministic regardless of Kodi return order.
-        Raises AddonInstallError if addon_id is not found in any enabled repo.
+        With ``repository_id``, inspect only that captured, installed repository;
+        do not fall through to any other source. Without it, preserve the legacy
+        deterministic scan used by the ordinary add-on manager.
         """
         xbmc = self._xbmc()
         try:
@@ -807,6 +835,12 @@ class KodiRuntimeAddonBackend(AddonBackend):
             for a in addons_list
             if isinstance(a, dict) and "addonid" in a
         )
+        if repository_id:
+            if not re.fullmatch(r"repository\.[a-z0-9._-]+", repository_id):
+                raise AddonInstallError("captured repository identity is invalid")
+            if repository_id not in repo_ids:
+                raise AddonInstallError("captured repository is not installed")
+            repo_ids = [repository_id]
 
         if not repo_ids:
             raise AddonInstallError(
@@ -898,9 +932,22 @@ class KodiRuntimeAddonBackend(AddonBackend):
                         )
                         return pkg_url, version
 
-        raise AddonInstallError(
-            f"{addon_id!r} not found in any installed+enabled repository"
+        source_label = repository_id or "installed+enabled repositories"
+        raise AddonInstallError(f"{addon_id!r} not found in {source_label}")
+
+    def fetch_current_from_repository(
+        self, addon_id: str, repository_id: str
+    ) -> RepositoryPackage:
+        """Fetch one package from only the supplied installed repository ID."""
+        _validate_addon_id(addon_id)
+        if not isinstance(repository_id, str) or not repository_id.startswith("repository."):
+            raise AddonInstallError("captured repository identity is invalid")
+        package_url, version = self._resolve_package_url(
+            addon_id, repository_id=repository_id
         )
+        zip_bytes = _fetch_bytes(package_url, max_bytes=_MAX_ADDON_ZIP_BYTES)
+        _validate_addon_zip(zip_bytes, addon_id, expected_version=version)
+        return RepositoryPackage(addon_id, repository_id, version, zip_bytes)
 
     def invoke_install(self, addon_id: str) -> None:
         """Install addon_id via the constrained package-install fallback.
@@ -908,6 +955,13 @@ class KodiRuntimeAddonBackend(AddonBackend):
         Sequence: resolve URL → download → validate → staged extract →
         UpdateLocalAddons. Does not enable; that is set_addon_enabled()'s job.
         """
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise AddonInstallError(
+                "add-on installation is held or activation-hold state is unavailable"
+            ) from exc
         # 1. Resolve package URL from configured repositories
         pkg_url, version = self._resolve_package_url(addon_id)
 
@@ -933,6 +987,14 @@ class KodiRuntimeAddonBackend(AddonBackend):
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
         """Set enabled state of addon_id via Addons.SetAddonEnabled JSON-RPC."""
+        if enabled:
+            try:
+                from resources.lib.activation import reject_held_activation
+                reject_held_activation(addon_id)
+            except Exception as exc:
+                raise AddonInstallError(
+                    "add-on activation is held or activation-hold state is unavailable"
+                ) from exc
         xbmc = self._xbmc()
         req = json.dumps({
             "jsonrpc": "2.0",

@@ -49,7 +49,12 @@ from resources.lib.config import (
     validate_package_id,
     values_equal,
 )
-from resources.lib.manifest import ConfigDeclarations, ManagedSettingScope
+from resources.lib.manifest import (
+    ConfigDeclarations,
+    ManagedSettingScope,
+    load_manifest_file,
+)
+from resources.lib.resolver import resolve_manifest
 
 
 # ---------------------------------------------------------------------------
@@ -2806,6 +2811,95 @@ class TestDefaultPackagesRoot(unittest.TestCase):
     def test_loader_rejects_empty_root(self):
         with self.assertRaises(ConfigPackageError):
             ConfigPackageLoader("")
+
+
+class TestAF3CommonProductionPackage(unittest.TestCase):
+    """The reviewed BM-018E package is exact, typed, and skin-scoped."""
+
+    SKIN = "skin.arctic.fuse.3"
+    BOOLS = {
+        "HomeSwitcher.Vertical": False,
+        "HomeSwitcher.EnableIcons": False,
+        "HomeSwitcher.EnableIconText": True,
+        "HomeSwitcher.DisableHeader": True,
+        "HomeSwitcher.DisableDate": True,
+        "HomeSwitcher.DisableSearch": False,
+        "HomeSwitcher.DisableFirstWidgetFocus": False,
+        "HomeSwitcher.LoopBack": False,
+        "Spotlight.EnableSlide": False,
+        "Spotlight.UseMenuButton": False,
+        "View.UseDetailedListLabels": True,
+        "Widgets.EnableShowMore": True,
+        "Widgets.DisableNoResultsItem": False,
+    }
+    STRINGS = {
+        "Navigation.OnBack": "Previous",
+        "Seekbar.TimeDisplay": "Combined",
+        "Skin.FlixArt.Size": "ExtraLarge",
+    }
+    UNMANAGED = {
+        "OSD.AutoOnPause", "OSD.AutoOnPause.Delay", "Plotline.Movie",
+        "Plotline.TVShow", "Mouse.PointerSize", "SeasonalTheme.PropsDensity",
+    }
+
+    def _declarations(self):
+        return ConfigDeclarations(
+            packages=("af3-common",),
+            managed_settings=(ManagedSettingScope(
+                target_kind=ConfigTargetKind.SKIN,
+                addon_id=self.SKIN,
+                keys=tuple(list(self.BOOLS) + list(self.STRINGS)),
+            ),),
+            managed_files=(),
+        )
+
+    def test_exact_policy_values_and_types_resolve(self):
+        effective = ConfigPackageLoader(default_packages_root()).resolve(
+            self._declarations()
+        )
+        self.assertEqual(effective.packages, ("af3-common",))
+        self.assertEqual(effective.files, ())
+        actual = {
+            setting.key: (setting.setting_type.value, setting.value)
+            for setting in effective.settings
+        }
+        expected = {
+            **{key: ("bool", value) for key, value in self.BOOLS.items()},
+            **{key: ("string", value) for key, value in self.STRINGS.items()},
+        }
+        self.assertEqual(actual, expected)
+        self.assertTrue(all(setting.target_kind is ConfigTargetKind.SKIN
+                            for setting in effective.settings))
+
+    def test_six_reviewed_candidates_are_not_managed(self):
+        effective = ConfigPackageLoader(default_packages_root()).resolve(
+            self._declarations()
+        )
+        self.assertTrue(self.UNMANAGED.isdisjoint(
+            {setting.key for setting in effective.settings}
+        ))
+
+    def test_package_descriptor_has_no_file_overlay(self):
+        package = ConfigPackageLoader(default_packages_root()).load_package(
+            "af3-common"
+        )
+        self.assertEqual(len(package.settings), 16)
+        self.assertEqual(package.files, ())
+
+    def test_example_manifest_declares_exact_skin_ownership(self):
+        manifest = load_manifest_file(os.path.join(
+            os.path.dirname(__file__), "..", "resources", "builds", "examples",
+            "eric-main.example.json",
+        ))
+        resolved = resolve_manifest(manifest, "family-room")
+        skin_scope = next(
+            scope for scope in resolved.config.managed_settings
+            if scope.target_kind is ConfigTargetKind.SKIN
+        )
+        self.assertEqual(skin_scope.addon_id, self.SKIN)
+        self.assertEqual(set(skin_scope.keys), set(self.BOOLS) | set(self.STRINGS))
+        self.assertEqual(resolved.config.managed_files, ())
+        self.assertIn("af3-common", resolved.config.packages)
 
 
 if __name__ == "__main__":

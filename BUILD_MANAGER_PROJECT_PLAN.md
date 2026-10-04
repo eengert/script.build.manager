@@ -899,27 +899,24 @@ rather than entire generated files.
 
 Restart handling should be designed early rather than bolted on later.
 
-Operations should be able to declare:
+BM-019 establishes a typed operation-result contract for the lifecycle levels
+currently needed by the implementation:
 
 ```text
 NONE
-SKIN_RELOAD
 KODI_RESTART
 ```
 
-The planner should aggregate requirements.
+Operations declare their requirement locally; orchestration aggregates only
+successful operations that actually changed state. The aggregation is
+monotonic, so only the strongest required action remains visible. Idempotent
+operations report `NONE`, and a later failure cannot erase an earlier
+successful restart requirement. The planner remains non-mutating and does not
+infer a final restart from an action kind.
 
-Example:
-
-```text
-Install addon       NONE
-Change AF3 config   SKIN_RELOAD
-Change skin         KODI_RESTART
-```
-
-Only perform the strongest required action once.
-
-Build Manager should persist progress before restart and resume deterministically afterward.
+No current BM-018D/BM-018E operation requires a restart. The typed framework is
+documented in `docs/RESTART_REQUIREMENTS.md`; Kodi restart execution,
+transaction persistence, and deterministic resume remain BM-020 scope.
 
 ---
 
@@ -1717,6 +1714,34 @@ Implement AF3 provisioning.
 
 ### BM-019
 Implement restart requirement aggregation.
+
+### BM-020A1 (current prerequisite)
+Complete the executable action-ownership prerequisites for reconciliation:
+
+- managed add-on states are `enabled` and `disabled`; an omitted add-on is
+  unmanaged, and `absent` is rejected because unattended add-on removal is not
+  supported by Kodi's public API;
+- a target install owns its required dependency preflight and reconciliation
+  through `DependencyAwareInstaller`, returning one nested aggregate result;
+- explicit desired-disabled required dependencies fail before mutation; and
+- nested `AddonInstallResult.restart_requirement` values propagate through
+  `DependencyAction`, `DependencyResult`, and the enclosing install result.
+
+### BM-020A (production reconciliation executor)
+Implement the callable production orchestration boundary in
+`resources/lib/build_manager.py`:
+
+- accept only a serializable manifest/device request;
+- load, inspect read-only, resolve, preflight, plan, execute through the
+  existing owners, and aggregate typed action/restart results;
+- fingerprint normalized resolved desired state without current or private
+  values; and
+- fail closed on unknown actions, preflight errors, and the first failed
+  execution action while preserving earlier results.
+
+BM-020A does not restart Kodi, persist transactions, resume after restart,
+manage session identity, handle restart loops, or acquire a process-wide lock.
+Those remain BM-020B/C scope.
 
 ### BM-020
 Implement restart/resume state.

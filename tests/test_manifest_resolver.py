@@ -290,11 +290,11 @@ class TestDeviceOverrides(unittest.TestCase):
             }},
             "device_profiles": {"dev": {
                 "extends": "tvos",
-                "addons": [_addon("plugin.video.foo", "absent")]
+                "addons": [_addon("plugin.video.foo", "enabled")]
             }},
         })
         r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(r.addons[0].state, "absent")
+        self.assertEqual(r.addons[0].state, "enabled")
 
     def test_device_adds_new_addon_appended(self):
         doc = _base({
@@ -534,12 +534,12 @@ class TestOptionalGroups(unittest.TestCase):
             platform_include=["extras"],
             groups=[{
                 "id": "extras",
-                "addons": [_addon("plugin.video.base", "absent")]
+                "addons": [_addon("plugin.video.base", "disabled")]
             }],
         )
         r = resolve_manifest(_make(doc), "dev")
         base_addon = next(a for a in r.addons if a.addon_id == "plugin.video.base")
-        self.assertEqual(base_addon.state, "absent")
+        self.assertEqual(base_addon.state, "disabled")
 
     def test_optional_config_merges_correctly(self):
         doc = self._doc_with_optional(
@@ -570,23 +570,6 @@ class TestAddonStates(unittest.TestCase):
         doc = _base({"addons": [_addon("plugin.video.foo", "disabled")]})
         r = resolve_manifest(_make(doc), "dev")
         self.assertEqual(r.addons[0].state, "disabled")
-
-    def test_absent_state_resolved(self):
-        doc = _base({"addons": [_addon("plugin.video.foo", "absent")]})
-        r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(r.addons[0].state, "absent")
-
-    def test_absent_remains_in_resolved_set(self):
-        doc = _base({
-            "addons": [_addon("plugin.video.foo", "enabled")],
-            "device_profiles": {"dev": {
-                "extends": "tvos",
-                "addons": [_addon("plugin.video.foo", "absent")]
-            }},
-        })
-        r = resolve_manifest(_make(doc), "dev")
-        self.assertEqual(len(r.addons), 1)
-        self.assertEqual(r.addons[0].state, "absent")
 
     def test_platform_disabled_then_device_enabled(self):
         doc = _base({
@@ -810,6 +793,16 @@ class TestEricMain(unittest.TestCase):
         rl = next(a for a in r.addons if a.addon_id == "plugin.video.redlight")
         self.assertEqual(rl.state, "enabled")
 
+    def test_bonus_room_redlight_resource_requires_pre_activation_configuration(self):
+        r = resolve_manifest(self.manifest, "bonus-room")
+        resource = next(
+            item for item in r.config.structured_private_resources
+            if item.resource_id == "redlight.settings"
+        )
+        self.assertEqual(resource.owner_addon_id, "plugin.video.redlight")
+        self.assertTrue(resource.required)
+        self.assertTrue(resource.configure_before_activation)
+
     def test_bonus_room_tmdb_helper_disabled(self):
         r = resolve_manifest(self.manifest, "bonus-room")
         tmdb = next(
@@ -861,6 +854,27 @@ class TestEricMain(unittest.TestCase):
         for addon_id in all_enabled:
             self.assertEqual(addon_map[addon_id], "enabled", addon_id)
 
+    def test_family_room_declares_redlight_overlay_resource(self):
+        r = resolve_manifest(self.manifest, "family-room")
+        self.assertEqual(
+            r.private_overlay.overlay_id, "family-room-redlight-2.6.8"
+        )
+        resources = r.config.structured_private_resources
+        self.assertEqual(len(resources), 1)
+        declaration = resources[0]
+        self.assertEqual(declaration.resource_id, "redlight.settings")
+        self.assertEqual(declaration.owner_addon_id, "plugin.video.redlight")
+        self.assertEqual(declaration.supported_versions, ("2.6.8",))
+        self.assertEqual(declaration.schema_id, "redlight-settings-v1")
+        self.assertEqual(
+            {field.field_id for field in declaration.fields},
+            {
+                "mdblist.refresh", "mdblist.token", "mdblist.user",
+                "pm.account_id", "pm.token", "tb.token", "trakt.expires",
+                "trakt.refresh", "trakt.token", "trakt.user",
+            },
+        )
+
     # --- shield (android platform, shield-extras optional group) ---
 
     def test_shield_resolves(self):
@@ -907,7 +921,7 @@ class TestEricMain(unittest.TestCase):
         r = resolve_manifest(self.manifest, "shield")
         self.assertIsNotNone(r.config)
         self.assertIn("af3-common", r.config.packages)
-        self.assertIn("redlight-common", r.config.packages)
+        self.assertEqual(r.config.packages, ("af3-common",))
 
 
 # ---------------------------------------------------------------------------

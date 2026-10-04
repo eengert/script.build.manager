@@ -116,14 +116,18 @@ A build definition can change (new add-ons, config updates) without changing the
 manifest format (`schema_version` stays `1`) and without requiring a new Build
 Manager release.
 
-### `enabled` vs `disabled` vs `absent` vs omitted
+### `enabled` vs `disabled` vs omitted
 
 | Value | Meaning |
 |---|---|
 | `"enabled"` | Install the add-on if missing; ensure it is enabled. |
 | `"disabled"` | Install the add-on if missing; ensure it is disabled. |
-| `"absent"` | Ensure the add-on is not installed. Uncommon; use cautiously. |
-| *(omitted from a profile)* | Inherit the state from the parent layer. **Not** equivalent to `"disabled"`. |
+| *(omitted from a profile)* | Inherit the state from the parent layer. At the top level, the add-on is unmanaged. **Not** equivalent to `"disabled"`. |
+
+Build Manager does not uninstall add-ons. The former `"absent"` state is
+rejected because Kodi does not expose a supported unattended removal API with
+the lifecycle and data-preservation guarantees required here. Omit an add-on
+to leave it unmanaged; do not translate removal into `"disabled"`.
 
 ### Repository vs add-on
 
@@ -279,12 +283,8 @@ Manager does not manage skin selection.
 
 ```json
 "config": {
-  "packages": ["af3-common", "redlight-common"],
+  "packages": ["af3-common"],
   "managed_settings": [
-    {
-      "addon_id": "plugin.video.redlight",
-      "keys": ["server_url", "playback_quality"]
-    },
     {
       "target": "skin",
       "addon_id": "skin.arctic.fuse.3",
@@ -371,17 +371,25 @@ Named optional component groups. Activated by platform or device profiles via
 ```json
 "private_overlay": {
   "type": "local_file",
-  "path_hint": "~/.config/kodi-private/eric-main-private.json",
-  "description": "Portable auth state for Real-Debrid, Trakt, EasyNews."
+  "overlay_id": "family-room-private",
+  "required": true,
+  "path_hint": "~/.config/kodi-private/family-room-private.json",
+  "description": "Portable auth state supplied separately by the user."
 }
 ```
 
-A reference to a private overlay file. The engine locates this file at runtime
-on the target device. If absent or missing, the engine continues without it.
+A public reference to a separately supplied private overlay. `overlay_id` is the
+stable profile-local identity and `required` distinguishes a missing required
+overlay from an optional one. `path_hint` is an import hint only; the active
+overlay is reopened through profile-local Build Manager storage.
 
 **The private overlay must never be committed to the public repository.**
 
 `type` must be `"local_file"` in v1. Future versions may support other types.
+BM-017A stores the active file under
+`special://profile/addon_data/script.build.manager/private_overlays/` with
+restrictive permissions where supported. The initial backend is plaintext
+JSON, not encrypted storage; no custom cryptography is used.
 
 ### `restart_policy` *(optional)*
 
@@ -427,15 +435,23 @@ must be rejected.
 - `bootstrap_url` values are used only for initial repository bootstrap. The
   engine must validate downloaded artifacts before installation.
 - The `private_overlay` field contains only a reference. Credential values live
-  in the private overlay file, which is never parsed by this schema.
+  in the private overlay file, which is validated separately by BM-017A.
+- `config.structured_private_resources` contains only vetted resource metadata:
+  exact owner/version/schema, adapter identity, lifecycle, and field-level
+  types/ownership. It cannot contain values, SQL, table names, filesystem
+  paths, wildcard keys, or whole-file targets. Values remain in the protected
+  overlay and are applied only by the resource-specific adapter. See
+  [`docs/BM017C_PRIVATE_RESOURCES.md`](BM017C_PRIVATE_RESOURCES.md).
 
 ---
 
 ## Unresolved questions for BM-005+
 
-1. **Private overlay schema**: The format of the private overlay file is not
-   defined in v1. A dedicated task should define it before authentication work
-   begins.
+1. ~~**Private overlay schema**~~ — **Defined by BM-017A/BM-017C.** Values are
+   validated against public `config.private_settings` and structured-resource
+   declarations and remain outside the public manifest and packages. See
+   [`docs/PRIVATE_OVERLAYS.md`](PRIVATE_OVERLAYS.md) and
+   [`docs/BM017C_PRIVATE_RESOURCES.md`](BM017C_PRIVATE_RESOURCES.md).
 
 2. ~~**Config package format**~~ — **Resolved by BM-015.** A package is a
    directory under `resources/config/packages/<package-id>/` containing a

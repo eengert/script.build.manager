@@ -22,8 +22,11 @@ sys.path.insert(0, REPO_ROOT)
 SCHEMA_PATH = os.path.join(REPO_ROOT, "resources", "builds", "schema-v1.json")
 MINIMAL_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "minimal.json")
 ERIC_MAIN_PATH = os.path.join(REPO_ROOT, "resources", "builds", "examples", "eric-main.example.json")
+BM020A_FIXTURE_PATH = os.path.join(
+    REPO_ROOT, "resources", "builds", "examples", "bm020a-executor.example.json"
+)
 
-VALID_ADDON_STATES = {"enabled", "disabled", "absent"}
+VALID_ADDON_STATES = {"enabled", "disabled"}
 VALID_OVERLAY_TYPES = {"local_file"}
 
 KNOWN_TOP_LEVEL_KEYS = {
@@ -210,7 +213,10 @@ def _validate_config_declarations(config, *, label):
     _assert(isinstance(config, dict), f"{label}: must be an object")
     for key in config:
         _assert(
-            key in {"packages", "managed_settings", "managed_files"},
+            key in {
+                "packages", "managed_settings", "managed_files", "private_settings",
+                "structured_private_resources",
+            },
             f"{label}: unknown key {key!r}"
         )
     if "packages" in config:
@@ -233,11 +239,82 @@ def _validate_config_declarations(config, *, label):
                 isinstance(scope["keys"], list) and scope["keys"],
                 f"{label}.managed_settings[{i}]: 'keys' must be a non-empty array"
             )
+    if "private_settings" in config:
+        private = config["private_settings"]
+        _assert(isinstance(private, list), f"{label}: 'private_settings' must be an array")
+        seen = set()
+        for i, declaration in enumerate(private):
+            _assert(isinstance(declaration, dict), f"{label}.private_settings[{i}]: must be an object")
+            allowed = {"target", "addon_id", "key", "type", "required", "sensitivity"}
+            _assert(set(declaration) <= allowed, f"{label}.private_settings[{i}]: unknown key")
+            identity = (
+                declaration.get("target", "addon"),
+                declaration.get("addon_id"),
+                declaration.get("key"),
+            )
+            _assert(identity not in seen, f"{label}.private_settings[{i}]: duplicate target")
+            seen.add(identity)
+            _assert(isinstance(declaration.get("addon_id"), str), f"{label}.private_settings[{i}]: addon_id")
+            _assert(isinstance(declaration.get("key"), str), f"{label}.private_settings[{i}]: key")
+            _assert(declaration.get("type") in {"string", "bool", "int", "number"}, f"{label}.private_settings[{i}]: type")
+            _assert(declaration.get("sensitivity") in {"secret", "credential", "token", "private_identifier"}, f"{label}.private_settings[{i}]: sensitivity")
+            if "required" in declaration:
+                _assert(isinstance(declaration["required"], bool), f"{label}.private_settings[{i}]: required")
+    if "structured_private_resources" in config:
+        resources = config["structured_private_resources"]
+        _assert(isinstance(resources, list), f"{label}: 'structured_private_resources' must be an array")
+        seen_resources = set()
+        for i, declaration in enumerate(resources):
+            resource_label = f"{label}.structured_private_resources[{i}]"
+            _assert(isinstance(declaration, dict), f"{resource_label}: must be an object")
+            allowed = {
+                "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+                "resource_id", "fields", "adapter_id", "lifecycle", "required",
+                "configure_before_activation",
+            }
+            _assert(set(declaration) <= allowed, f"{resource_label}: unknown key")
+            required_keys = {
+                "resource_type", "owner_addon_id", "supported_versions", "schema_id",
+                "resource_id", "fields", "adapter_id",
+            }
+            _assert(required_keys <= set(declaration), f"{resource_label}: missing required keys")
+            for key in ("resource_type", "owner_addon_id", "schema_id", "resource_id", "adapter_id"):
+                _assert(isinstance(declaration[key], str) and declaration[key], f"{resource_label}.{key}: must be a non-empty string")
+            identity = (declaration["resource_type"], declaration["resource_id"])
+            _assert(identity not in seen_resources, f"{resource_label}: duplicate resource")
+            seen_resources.add(identity)
+            versions = declaration["supported_versions"]
+            _assert(isinstance(versions, list) and versions, f"{resource_label}.supported_versions: must be a non-empty array")
+            _assert(all(isinstance(version, str) and version for version in versions), f"{resource_label}.supported_versions: entries must be non-empty strings")
+            _assert(declaration.get("lifecycle", "quiesced") in {"initialized_idle", "active", "quiesced", "restart_required"}, f"{resource_label}.lifecycle: invalid lifecycle")
+            if "required" in declaration:
+                _assert(isinstance(declaration["required"], bool), f"{resource_label}.required: must be a boolean")
+            if "configure_before_activation" in declaration:
+                _assert(
+                    isinstance(declaration["configure_before_activation"], bool),
+                    f"{resource_label}.configure_before_activation: must be a boolean",
+                )
+            fields = declaration["fields"]
+            _assert(isinstance(fields, list) and fields, f"{resource_label}.fields: must be a non-empty array")
+            seen_fields = set()
+            for j, field in enumerate(fields):
+                field_label = f"{resource_label}.fields[{j}]"
+                _assert(isinstance(field, dict), f"{field_label}: must be an object")
+                _assert(set(field) <= {"field_id", "type", "required", "sensitivity"}, f"{field_label}: unknown key")
+                _assert({"field_id", "type"} <= set(field), f"{field_label}: missing required keys")
+                _assert(isinstance(field["field_id"], str) and field["field_id"], f"{field_label}.field_id: must be a non-empty string")
+                _assert(field["field_id"] not in seen_fields, f"{field_label}: duplicate field_id")
+                seen_fields.add(field["field_id"])
+                _assert(field["type"] in {"string", "bool", "int", "number"}, f"{field_label}.type: invalid type")
+                if "required" in field:
+                    _assert(isinstance(field["required"], bool), f"{field_label}.required: must be a boolean")
+                if "sensitivity" in field:
+                    _assert(field["sensitivity"] in {"secret", "credential", "token", "private_identifier"}, f"{field_label}.sensitivity: invalid sensitivity")
 
 
 def _validate_profile_layer(layer, *, label):
     _assert(isinstance(layer, dict), f"{label}: must be an object")
-    allowed = {"label", "addons", "config", "skin", "include_optional"}
+    allowed = {"label", "addons", "config", "skin", "include_optional", "frozen_install_policies"}
     for key in layer:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
     if "addons" in layer:
@@ -254,11 +331,13 @@ def _validate_profile_layer(layer, *, label):
             isinstance(layer["include_optional"], list),
             f"{label}: 'include_optional' must be an array"
         )
+    if "frozen_install_policies" in layer:
+        _validate_frozen_install_policies(layer["frozen_install_policies"], label=label)
 
 
 def _validate_device_profile(profile, *, label):
     _assert(isinstance(profile, dict), f"{label}: must be an object")
-    allowed = {"label", "extends", "addons", "config", "skin", "include_optional"}
+    allowed = {"label", "extends", "addons", "config", "skin", "include_optional", "frozen_install_policies"}
     for key in profile:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
     _assert("extends" in profile, f"{label}: 'extends' is required for every device profile")
@@ -279,6 +358,35 @@ def _validate_device_profile(profile, *, label):
             isinstance(profile["include_optional"], list),
             f"{label}: 'include_optional' must be an array"
         )
+    if "frozen_install_policies" in profile:
+        _validate_frozen_install_policies(profile["frozen_install_policies"], label=label)
+
+
+def _validate_frozen_install_policies(policies, *, label):
+    _assert(isinstance(policies, list), f"{label}: 'frozen_install_policies' must be an array")
+    allowed_policies = {
+        "exact_required",
+        "exact_first_with_repository_fallback",
+        "exact_first_with_repository_fallback_or_skip",
+    }
+    seen = set()
+    for index, policy in enumerate(policies):
+        entry_label = f"{label}.frozen_install_policies[{index}]"
+        _assert(isinstance(policy, dict), f"{entry_label}: must be an object")
+        _assert(set(policy) <= {"addon_id", "policy", "repository_id"}, f"{entry_label}: unknown key")
+        addon_id = policy.get("addon_id")
+        _assert(isinstance(addon_id, str) and addon_id, f"{entry_label}: addon_id is required")
+        _assert(addon_id not in seen, f"{entry_label}: duplicate addon_id")
+        seen.add(addon_id)
+        _assert(policy.get("policy") in allowed_policies, f"{entry_label}: unsupported policy")
+        repository_id = policy.get("repository_id", "")
+        _assert(isinstance(repository_id, str), f"{entry_label}: repository_id must be a string")
+        if repository_id:
+            _assert(repository_id.startswith("repository."), f"{entry_label}: invalid repository_id")
+            _assert(
+                policy["policy"] != "exact_required",
+                f"{entry_label}: exact-only policy cannot name a repository",
+            )
 
 
 def _validate_optional_group(group, *, label):
@@ -305,7 +413,7 @@ def _validate_private_overlay_ref(ref, *, label):
         ref["type"] in VALID_OVERLAY_TYPES,
         f"{label}: 'type' must be one of {VALID_OVERLAY_TYPES}, got {ref['type']!r}"
     )
-    allowed = {"type", "path_hint", "description"}
+    allowed = {"type", "path_hint", "description", "overlay_id", "required"}
     for key in ref:
         _assert(key in allowed, f"{label}: unknown key {key!r}")
 
@@ -357,8 +465,8 @@ class TestSchemaFile(unittest.TestCase):
         state_enum = schema["definitions"]["addon_state"]["enum"]
         self.assertIn("enabled", state_enum)
         self.assertIn("disabled", state_enum)
-        self.assertIn("absent", state_enum)
-        self.assertEqual(len(state_enum), 3, "addon_state enum should have exactly 3 values")
+        self.assertNotIn("absent", state_enum)
+        self.assertEqual(len(state_enum), 2, "addon_state enum should have exactly 2 values")
 
     def test_schema_defines_all_key_definitions(self):
         with open(SCHEMA_PATH) as f:
@@ -367,6 +475,8 @@ class TestSchemaFile(unittest.TestCase):
         for name in (
             "addon_state", "addon_entry", "addon_override", "repository",
             "skin_entry", "config_declarations", "managed_setting_scope",
+            "private_setting_declaration",
+            "structured_private_resource",
             "profile_layer", "device_profile", "optional_group",
             "private_overlay_ref", "restart_policy",
         ):
@@ -446,6 +556,26 @@ class TestEricMainExample(unittest.TestCase):
         skin = self.doc.get("skin", {})
         self.assertEqual(skin.get("addon_id"), "skin.arctic.fuse.3")
 
+    def test_shipped_executable_examples_select_existing_packages(self):
+        examples_dir = os.path.join(REPO_ROOT, "resources", "builds", "examples")
+        packages_root = os.path.join(REPO_ROOT, "resources", "config", "packages")
+        for filename in sorted(os.listdir(examples_dir)):
+            if not filename.endswith(".example.json"):
+                continue
+            with self.subTest(example=filename):
+                with open(os.path.join(examples_dir, filename), encoding="utf-8") as handle:
+                    document = json.load(handle)
+                package_ids = document.get("config", {}).get("packages", [])
+                skin = document.get("skin", {})
+                package_ids = list(package_ids) + list(skin.get("config_packages", []))
+                for package_id in package_ids:
+                    package_path = os.path.join(packages_root, package_id)
+                    self.assertTrue(
+                        os.path.isfile(os.path.join(package_path, "package.json")),
+                        f"{filename} selects unavailable package {package_id!r}",
+                    )
+
+
     def test_eric_main_has_platform_profiles(self):
         pp = self.doc.get("platform_profiles", {})
         self.assertIn("tvos", pp)
@@ -507,6 +637,21 @@ class TestEricMainExample(unittest.TestCase):
             url = repo.get("bootstrap_url", "")
             if url:
                 self.assertIn(".invalid", url, "Example bootstrap_url should use .invalid TLD")
+
+
+class TestBM020AExecutorFixture(unittest.TestCase):
+
+    def test_fixture_is_valid_and_explicitly_disposable(self):
+        with open(BM020A_FIXTURE_PATH, encoding="utf-8") as handle:
+            document = json.load(handle)
+        validate_manifest_structure(document, label="bm020a-executor.example.json")
+        self.assertEqual(document["build"]["id"], "bm020a-executor-validation")
+        self.assertEqual(
+            document["device_profiles"]["bm020a-disposable"]["extends"],
+            "disposable",
+        )
+        self.assertEqual(document["skin"]["config_packages"], ["af3-common"])
+        self.assertEqual(document["config"]["managed_files"], [])
 
 
 # ---------------------------------------------------------------------------

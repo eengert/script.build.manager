@@ -42,10 +42,12 @@ DependencyClosure(root_addon_ids, nodes)
 
 DependencyActionKind
     INSTALLED | ENABLED | SKIPPED_SATISFIED | FAILED_INSTALL | FAILED_ENABLE
-    | SKIPPED_VERSION_INSUFFICIENT
+    | FAILED_CONFLICT | SKIPPED_VERSION_INSUFFICIENT
 
-DependencyAction(addon_id, kind, reason, required_by)
-    One action taken (or skipped) during reconciliation.
+DependencyAction(addon_id, kind, reason, required_by, restart_requirement,
+                 operation_result)
+    One action taken (or skipped) during reconciliation.  A successful install
+    keeps the owning AddonInstallResult nested in the action.
 
 DependencyResult(closure, actions, all_required_satisfied, unresolved)
     Complete result of reconcile_dependencies().
@@ -57,8 +59,18 @@ DependencyError          -- base class for all dependency errors
 Architecture (BM-012)
 ---------------------
 Dependency metadata is read from installed add-on addon.xml files on the
-filesystem via the backend. For missing add-ons, the status is MISSING and
-transitive discovery continues after installation in subsequent rounds.
+filesystem via the backend. A runtime backend may also inspect package
+metadata read-only for a missing root target so the owning install operation
+can preflight its complete required closure. For missing dependencies, the
+status is MISSING and transitive discovery continues after installation in
+subsequent rounds.
+
+Operation ownership (BM-020A1)
+------------------------------
+Dependency reconciliation is owned by the target install operation through
+DependencyAwareInstaller. It is not an executor-wide phase: the operation
+preflights explicit desired-state conflicts, reconciles required dependencies,
+then installs the target and returns one nested aggregate result.
 
 Required vs optional
 --------------------
@@ -67,10 +79,11 @@ status=OPTIONAL and excluded from the required closure. <import> with no
 optional attribute, or optional="false", is treated as required.
 
 System/builtin dependencies
-----------------------------
-Add-on IDs beginning with "xbmc." are Kodi-provided builtins. They are
-never installed by BM-012. They are recorded with status=SYSTEM and treated
-as satisfied. Examples: xbmc.python, xbmc.gui, xbmc.json.
+---------------------------
+Kodi-provided builtin add-ons are never installed by BM-012. They are
+recorded with status=SYSTEM and treated as satisfied. This includes runtime
+IDs beginning with "xbmc." and the built-in resource package "kodi.resource".
+Examples: xbmc.python, xbmc.gui, xbmc.json, kodi.resource.
 
 Multi-path requirement consolidation
 --------------------------------------
@@ -138,13 +151,25 @@ No shell commands, no direct database edits.
 
 from __future__ import annotations
 
+import io
+import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple, TYPE_CHECKING
+
+from resources.lib.restart import (
+    RestartObservation,
+    RestartRequirement,
+    RestartReport,
+    aggregate_restart_requirements,
+    aggregate_restart_reports,
+)
 
 # Type alias used in docstrings — imported lazily at runtime
 # InstalledAddonInfo and AddonInstallResult come from resources.lib.addons
+if TYPE_CHECKING:
+    from resources.lib.addons import AddonInstallResult
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +211,8 @@ class DependencyActionKind(str, Enum):
     SKIPPED_SATISFIED = "skipped_satisfied"
     FAILED_INSTALL = "failed_install"
     FAILED_ENABLE = "failed_enable"
+    FAILED_CONFLICT = "failed_conflict"
+    FAILED_ACTIVATION_HOLD = "failed_activation_hold"
     SKIPPED_VERSION_INSUFFICIENT = "skipped_version_insufficient"
 
 
@@ -271,6 +298,8 @@ class DependencyAction:
     kind: DependencyActionKind
     reason: str
     required_by: Tuple[str, ...]
+    restart_requirement: RestartRequirement = RestartRequirement.NONE
+    operation_result: Optional["AddonInstallResult"] = None
 
 
 @dataclass(frozen=True)
@@ -281,6 +310,32 @@ class DependencyResult:
     all_required_satisfied: bool
     unresolved: Tuple[DependencyNode, ...]  # MISSING, VERSION_INSUFFICIENT, METADATA_ERROR, failed
 
+    @property
+    def restart_report(self) -> RestartReport:
+        """Aggregate only successful dependency changes."""
+        return aggregate_restart_requirements(
+            RestartObservation(
+                requirement=action.restart_requirement,
+                changed=action.kind in (
+                    DependencyActionKind.INSTALLED,
+                    DependencyActionKind.ENABLED,
+                ),
+                succeeded=action.kind not in (
+                    DependencyActionKind.FAILED_INSTALL,
+                    DependencyActionKind.FAILED_ENABLE,
+                    DependencyActionKind.FAILED_CONFLICT,
+                    DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                ),
+                operation=f"dependency:{action.addon_id}",
+            )
+            for action in self.actions
+        )
+
+    @property
+    def restart_requirement(self) -> RestartRequirement:
+        """The final typed requirement for dependency reconciliation."""
+        return self.restart_report.requirement
+
 
 # ---------------------------------------------------------------------------
 # System dependency detection
@@ -289,11 +344,11 @@ class DependencyResult:
 def _is_system_dependency(addon_id: str) -> bool:
     """True if addon_id is a Kodi-provided builtin that should never be installed.
 
-    Kodi provides add-ons whose IDs start with "xbmc." as part of the runtime.
-    Examples: xbmc.python, xbmc.gui, xbmc.json, xbmc.addon.metadata.
-    These are treated as always-satisfied and never passed to install_addon().
+    Kodi provides add-ons whose IDs start with "xbmc." and the built-in
+    ``kodi.resource`` package as part of the runtime. These are treated as
+    always-satisfied and never passed to install_addon().
     """
-    return addon_id.startswith("xbmc.")
+    return addon_id.startswith("xbmc.") or addon_id == "kodi.resource"
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +544,16 @@ class DependencyBackend:
         Should not raise; callers treat unhandled exceptions as metadata errors.
         """
         raise NotImplementedError
+
+    def read_available_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        """Read package metadata for an add-on not yet installed, if available.
+
+        This is a read-only preflight hook.  Backends that cannot inspect the
+        configured package source may return ``None``; reconciliation then
+        reports the target's dependency metadata as unavailable rather than
+        guessing at its closure.
+        """
+        return None
 
     def install_addon(self, addon_id: str, desired_state: str = "enabled"):
         """Install addon_id using BM-011 AddonManager.install().
@@ -758,10 +823,16 @@ class DependencyResolver:
         resolver = DependencyResolver(backend)
     """
 
-    def __init__(self, backend: DependencyBackend) -> None:
+    def __init__(self, backend: DependencyBackend, *, activation_hold_provider=None) -> None:
         self._backend = backend
+        self._activation_hold_provider = activation_hold_provider
 
-    def resolve_closure(self, root_addon_ids: List[str]) -> DependencyClosure:
+    def resolve_closure(
+        self,
+        root_addon_ids: List[str],
+        *,
+        require_root_metadata: bool = False,
+    ) -> DependencyClosure:
         """Compute the transitive required dependency closure. Pure: no mutation.
 
         Reads addon.xml for each installed root add-on and traverses required
@@ -779,6 +850,10 @@ class DependencyResolver:
         verified. Root add-ons with METADATA_ERROR appear in nodes even though
         roots are normally excluded.
 
+        When require_root_metadata is true, an unresolved root is recorded as
+        METADATA_ERROR instead of being silently treated as having an unknown
+        closure.  Owning target-install operations use this fail-closed mode.
+
         Result is deterministic: roots are sorted lexically; sub-dependencies
         within each add-on are sorted lexically by addon_id; the final nodes
         tuple is sorted by addon_id (cycle back-edge nodes appended after).
@@ -794,6 +869,16 @@ class DependencyResolver:
                 xml_bytes = self._backend.read_addon_xml(root_id)
             except Exception:
                 xml_bytes = None
+
+            # A target installation may be missing from Kodi's database while
+            # its package metadata is available from a configured repository.
+            # Inspect that metadata before any dependency or target mutation so
+            # required-disabled conflicts can fail closed in preflight.
+            if xml_bytes is None:
+                try:
+                    xml_bytes = self._backend.read_available_addon_xml(root_id)
+                except Exception:
+                    xml_bytes = None
 
             if xml_bytes is None:
                 # Cannot read addon.xml. Determine why before deciding what to do:
@@ -821,6 +906,16 @@ class DependencyResolver:
                         status=DependencyStatus.METADATA_ERROR,
                         installed_version=root_details.version or "",
                         installed_enabled=root_details.enabled,
+                        min_version_required="",
+                        optional=False,
+                    )
+                elif require_root_metadata:
+                    result_map[root_id] = DependencyNode(
+                        addon_id=root_id,
+                        required_by=(),
+                        status=DependencyStatus.METADATA_ERROR,
+                        installed_version=None,
+                        installed_enabled=None,
                         min_version_required="",
                         optional=False,
                     )
@@ -878,7 +973,13 @@ class DependencyResolver:
             nodes=tuple(primary_nodes) + tuple(cycle_nodes),
         )
 
-    def reconcile_dependencies(self, root_addon_ids: List[str]) -> DependencyResult:
+    def reconcile_dependencies(
+        self,
+        root_addon_ids: List[str],
+        *,
+        explicit_desired_states: Optional[Mapping[str, str]] = None,
+        require_root_metadata: bool = False,
+    ) -> DependencyResult:
         """Discover the required closure, install missing deps, enable disabled deps.
 
         Iterates resolve_closure + apply actions until stable (no new required
@@ -896,10 +997,92 @@ class DependencyResolver:
         """
         all_actions: List[DependencyAction] = []
         acted_on: Set[str] = set()  # addon_ids acted on in any prior round
-        final_closure: Optional[DependencyClosure] = None
+        desired_states = explicit_desired_states or {}
+
+        # The complete closure must be known before any dependency mutation.
+        # An explicit disabled declaration is a conflict for a required
+        # dependency: BM-012 must not silently override the manifest.
+        preflight_closure = self.resolve_closure(
+            root_addon_ids,
+            require_root_metadata=require_root_metadata,
+        )
+        try:
+            from resources.lib.activation import current_activation_holds
+            activation_holds = current_activation_holds(
+                self._activation_hold_provider
+            )
+        except Exception:
+            failures = tuple(DependencyAction(
+                addon_id=addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="activation hold could not be inspected safely",
+                required_by=(),
+            ) for addon_id in sorted(set(root_addon_ids)))
+            return DependencyResult(
+                closure=preflight_closure,
+                actions=failures,
+                all_required_satisfied=False,
+                unresolved=preflight_closure.nodes,
+            )
+        blocked_nodes = tuple(
+            node for node in preflight_closure.nodes
+            if node.addon_id in activation_holds and not node.optional
+        )
+        blocked_roots = tuple(
+            addon_id for addon_id in sorted(set(root_addon_ids))
+            if addon_id in activation_holds
+        )
+        if blocked_nodes or blocked_roots:
+            failures = [DependencyAction(
+                addon_id=node.addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="required dependency is held for structured-resource configuration",
+                required_by=node.required_by,
+            ) for node in blocked_nodes]
+            failures.extend(DependencyAction(
+                addon_id=addon_id,
+                kind=DependencyActionKind.FAILED_ACTIVATION_HOLD,
+                reason="add-on installation or activation is held for structured-resource configuration",
+                required_by=(),
+            ) for addon_id in blocked_roots)
+            return DependencyResult(
+                closure=preflight_closure,
+                actions=tuple(failures),
+                all_required_satisfied=False,
+                unresolved=blocked_nodes,
+            )
+        root_ids = frozenset(root_addon_ids)
+        conflicts = tuple(
+            node for node in preflight_closure.nodes
+            if not node.optional
+            and node.addon_id not in root_ids
+            and desired_states.get(node.addon_id) == "disabled"
+        )
+        if conflicts:
+            for node in conflicts:
+                all_actions.append(DependencyAction(
+                    addon_id=node.addon_id,
+                    kind=DependencyActionKind.FAILED_CONFLICT,
+                    reason=(
+                        f"{node.addon_id!r} is required by "
+                        f"{node.required_by[0]!r} but is explicitly desired disabled"
+                    ),
+                    required_by=node.required_by,
+                ))
+            return DependencyResult(
+                closure=preflight_closure,
+                actions=tuple(all_actions),
+                all_required_satisfied=False,
+                unresolved=conflicts,
+            )
+
+        final_closure: Optional[DependencyClosure] = preflight_closure
 
         for _round in range(_MAX_RECONCILE_ROUNDS):
-            closure = self.resolve_closure(root_addon_ids)
+            closure = self.resolve_closure(
+                root_addon_ids,
+                require_root_metadata=require_root_metadata,
+            )
             final_closure = closure
 
             # Collect actionable nodes (missing or needs_enable) not yet acted on
@@ -939,6 +1122,10 @@ class DependencyResolver:
                         kind=DependencyActionKind.INSTALLED,
                         reason=result.message,
                         required_by=node.required_by,
+                        restart_requirement=getattr(
+                            result, "restart_requirement", RestartRequirement.NONE
+                        ),
+                        operation_result=result,
                     ))
                 else:
                     all_actions.append(DependencyAction(
@@ -946,6 +1133,7 @@ class DependencyResolver:
                         kind=DependencyActionKind.FAILED_INSTALL,
                         reason=result.message,
                         required_by=node.required_by,
+                        operation_result=result,
                     ))
 
             # Apply enables
@@ -1001,6 +1189,76 @@ class DependencyResolver:
             actions=tuple(all_actions),
             all_required_satisfied=all_required_satisfied,
             unresolved=unresolved,
+        )
+
+
+@dataclass(frozen=True)
+class DependencyAwareInstallResult:
+    """One target install with its required dependency work nested inside."""
+
+    addon_id: str
+    dependency_result: DependencyResult
+    install_result: Optional["AddonInstallResult"]
+
+    @property
+    def succeeded(self) -> bool:
+        if not self.dependency_result.all_required_satisfied:
+            return False
+        if self.install_result is None:
+            return False
+        status = getattr(self.install_result.status, "value", self.install_result.status)
+        return status != "failed"
+
+    @property
+    def changed(self) -> bool:
+        if self.dependency_result.restart_report.successful_changes:
+            return True
+        if self.install_result is None:
+            return False
+        status = getattr(self.install_result.status, "value", self.install_result.status)
+        return status == "installed"
+
+    @property
+    def restart_report(self) -> RestartReport:
+        reports = [self.dependency_result.restart_report]
+        if self.install_result is not None:
+            reports.append(self.install_result.restart_report)
+        return aggregate_restart_reports(reports)
+
+
+class DependencyAwareInstaller:
+    """Own required dependency reconciliation for one target installation."""
+
+    def __init__(self, resolver: DependencyResolver, addon_manager) -> None:
+        self._resolver = resolver
+        self._addon_manager = addon_manager
+
+    def install(
+        self,
+        addon_id: str,
+        *,
+        desired_state: str = "enabled",
+        explicit_desired_states: Optional[Mapping[str, str]] = None,
+    ) -> DependencyAwareInstallResult:
+        dependency_result = self._resolver.reconcile_dependencies(
+            [addon_id],
+            explicit_desired_states=explicit_desired_states,
+            require_root_metadata=True,
+        )
+        if not dependency_result.all_required_satisfied:
+            return DependencyAwareInstallResult(
+                addon_id=addon_id,
+                dependency_result=dependency_result,
+                install_result=None,
+            )
+        install_result = self._addon_manager.install(
+            addon_id,
+            desired_state=desired_state,
+        )
+        return DependencyAwareInstallResult(
+            addon_id=addon_id,
+            dependency_result=dependency_result,
+            install_result=install_result,
         )
 
 
@@ -1105,7 +1363,18 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
         try:
             path = xbmcaddon.Addon(addon_id).getAddonInfo("path")
         except Exception:
-            return None
+            path = None
+        # Kodi can temporarily reject xbmcaddon.Addon() for a freshly
+        # discovered disabled add-on even though its validated directory is
+        # present. The direct VFS path is read-only and remains fail-closed:
+        # an absent or unreadable addon.xml still returns None below.
+        if not path:
+            try:
+                path = xbmcvfs.translatePath(
+                    f"special://home/addons/{addon_id}"
+                )
+            except Exception:
+                return None
         if not path:
             return None
         addon_xml_path = path.rstrip("/") + "/addon.xml"
@@ -1119,14 +1388,46 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
             return raw.encode("utf-8")
         return raw if raw else None
 
+    def read_available_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        """Read addon.xml from the configured package without installing it."""
+        try:
+            from resources.lib.addons import (
+                KodiRuntimeAddonBackend,
+                _fetch_bytes,
+                _validate_addon_zip,
+            )
+            package_backend = KodiRuntimeAddonBackend()
+            package_url, version = package_backend._resolve_package_url(addon_id)
+            zip_data = _fetch_bytes(package_url, max_bytes=100 * 1024 * 1024)
+            _validate_addon_zip(zip_data, addon_id, expected_version=version)
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as archive:
+                return archive.read(f"{addon_id}/addon.xml")
+        except Exception:
+            return None
+
     def install_addon(self, addon_id: str, desired_state: str = "enabled"):
         """Install via BM-011 AddonManager(KodiRuntimeAddonBackend())."""
+        try:
+            from resources.lib.activation import reject_held_activation
+            reject_held_activation(addon_id)
+        except Exception as exc:
+            raise DependencyError(
+                "add-on installation is held or activation-hold state is unavailable"
+            ) from exc
         from resources.lib.addons import AddonManager, KodiRuntimeAddonBackend  # noqa: PLC0415
         mgr = AddonManager(KodiRuntimeAddonBackend())
         return mgr.install(addon_id, desired_state=desired_state)
 
     def set_addon_enabled(self, addon_id: str, enabled: bool) -> None:
         """Set enabled state via Addons.SetAddonEnabled JSON-RPC."""
+        if enabled:
+            try:
+                from resources.lib.activation import reject_held_activation
+                reject_held_activation(addon_id)
+            except Exception as exc:
+                raise DependencyError(
+                    "add-on activation is held or activation-hold state is unavailable"
+                ) from exc
         import json  # noqa: PLC0415
         xbmc = self._xbmc()
         req = json.dumps({
