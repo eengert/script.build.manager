@@ -5,13 +5,18 @@ the shared agent guidance.
 
 ## Before Starting Any Task
 
-1. Read `BUILD_MANAGER_SUPERVISOR_HANDOFF.md` for current project state.
-2. Read `.agent/CURRENT_TASK.md` for the assigned task scope.
-3. Read `.agent/HANDOFF.md` for the latest handoff from the previous session.
-4. Read `AGENTS.md` for shared rules.
+1. Read `.orchestrator/BOOTSTRAP.md`.
+2. Read `.orchestrator/HANDOFF.md` for current project state.
+3. Read `AGENTS.md` for shared rules.
+4. Read the exact manual task prompt Eric pasted into this session.
+5. Read `.agent/CURRENT_TASK.md` / `.agent/HANDOFF.md` only when the named
+   worktree uses those files as relevant history.
 
-Do not begin implementation until you understand the task scope and any open
-human gates.
+The active execution model is manual relay. Do not start or depend on
+ai-supervisor and do not autonomously choose the next project task.
+
+Do not begin implementation until you understand the assigned scope and any
+open human/safety gates.
 
 ## Task Scope
 
