@@ -1,5 +1,39 @@
 # Build Manager — Project Plan
 
+## Current Outcome: Build Manager macOS Beta Qualification
+
+### Milestone objective
+
+Establish enough trustworthy evidence to call the macOS implementation beta-qualified. This is the active milestone; it does not mean completing every Build Manager feature, the full MVP, or all platform work. The longer-range phases and old “Recommended First Milestone” below are planning history and do not override this current outcome.
+
+### Beta exit checklist
+
+Initial macOS beta territory is reached only when all seven evidence items are satisfied:
+
+1. **Clean trustworthy candidate** — one clearly identified product candidate suitable for beta qualification.
+2. **Restart/resume/recovery** — required restart, resume, and recovery behavior works end-to-end in portable macOS Test.app.
+3. **Frozen install/artifact truth** — frozen software/artifact behavior is validated and reports truthful state.
+4. **Configuration/skin/private resources** — required configuration, skin state, and structured private resources reach their intended state.
+5. **Truthful final validation** — final validation correctly distinguishes success from failure.
+6. **Second reconciliation** — a second run demonstrates idempotence or basic repair/reconciliation behavior.
+7. **No harmful residual state** — normal Kodi is undamaged; no secret/private data is exposed; no unsafe restart, updater quarantine, activation hold, or transaction state remains.
+
+Each criterion requires durable evidence tied to the exact candidate and authorized portable Test.app profile. A task is in this milestone only when it advances one item or removes a demonstrated blocker to one. If it maps to neither, defer it post-beta.
+
+### Critical-path admission
+
+Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, or represent a demonstrated control-plane blocker to one of those outcomes.
+
+### Framework freeze and validation tools
+
+Nonessential ai-supervisor feature development is frozen for this beta push. Do not reopen generalized provenance, provider architecture, Operator Controls, dashboard/UI polish, notifications, portability, generalized diagnostics, or unrelated observability unless the framework-work admission rule is met or a safety-critical defect creates real risk.
+
+Treat BM-023A adapter `0.0.15` as validation infrastructure. Do not create `0.0.16+` for diagnostics, observability, cleanup, ergonomics, theory, or nicer status. A new adapter version is justified only when bounded live beta qualification demonstrates a real blocker the current adapter cannot diagnose or correct.
+
+The known non-blocking Operator Controls follow-ups are post-beta: stale README wording about evaluation failure/user pause; overstated prerequisite wording in `OPERATOR_CONTROLS.md`; optional negative controller/restart-hold tests; and the one-shot `replan` behavior that skips the dirty-checkpoint decision inside `consume_reconcile`. Reopen one only if it becomes a reproduced beta blocker or a safety-critical defect.
+
+Apply Outcome-Driven Supervision throughout this milestone: define the expected product/evidence change before dispatch, use one bounded outcome-level runway for foreseeable steps, suppress duplicate work on unchanged blockers, require independent review according to risk, and run full product suites at meaningful candidate/qualification/release boundaries. Preserve valid full-suite evidence when candidate source is unchanged. Never weaken controller, sandbox, provider/quota, trusted-action, exact-identity, protected-branch, provenance, private-data, device/production, restart/recovery, or truthful-reporting safeguards.
+
 ## 1. Project Identity
 
 **Name:** Build Manager  

@@ -9,14 +9,25 @@ Work only on the task explicitly assigned. Do not modify files that are not
 part of the current task. Do not refactor, restructure, or "clean up"
 unrelated code while implementing a feature or fix.
 
+## Outcome and task admission
+
+Read the current milestone and its exit evidence in `.orchestrator/PROJECT.md`
+and `BUILD_MANAGER_PROJECT_PLAN.md`. During macOS Beta Qualification, every
+task must advance one of the seven exit items or fix a demonstrated blocker to
+one. Before work, identify the project state or acceptance evidence expected
+to change. Do not infer success from agent activity, reviews, bookkeeping,
+or orchestration work. If a task would only rediscover an unchanged blocker,
+stop unless it tests a materially different hypothesis that can produce new
+evidence.
+
 ## Branch Policy
 
-- Normal implementation work happens on your agent branch (`agent/codex` or
-  `agent/claude`), never directly on `matrix`.
+- The task prompt names the exact branch/worktree you may use. Do not assume a
+  fixed `agent/codex` / `agent/claude` branch.
+- Normal implementation never happens directly on `matrix`.
 - The `matrix` branch is protected. Do not push or merge to it unless the
-  task explicitly authorizes it (e.g., a bootstrap or release operation with
-  supervisor approval).
-- Do not create additional branches without explicit authorization.
+  task explicitly authorizes an integration operation.
+- Do not create additional branches/worktrees without explicit task authority.
 
 ## Kodi Profiles and Devices
 
@@ -42,8 +53,12 @@ unrelated code while implementing a feature or fix.
 
 - Add or update tests for every behavior change.
 - Do not reduce test coverage.
-- Run the full test suite before marking a task complete and include the
-  pass count in your handoff.
+- Run focused tests during iteration and related subsystem tests after
+  meaningful changes. Run the full suite at candidate, integration,
+  qualification, or release boundaries. Documentation changes, tiny harness
+  edits, checkpoint transitions, and unchanged-source provenance recovery do
+  not require repeated full-suite runs; preserve valid full-suite evidence when
+  the candidate source is unchanged. Record the checks relevant to this task.
 
 ## Handoff
 
@@ -118,16 +133,14 @@ efficiently" / "showed higher burn than expected on a comparable task").
 ### Known constraint
 
 Neither the `codex` nor the `claude` CLI exposes a documented, machine-readable
-quota/usage API. This was confirmed during Backup Pro and is documented in
-`/Users/eengert/Documents/Kodi/tools/ai-supervisor/README.md` under
-"Usage/quota detection"; the CLI help output was re-checked for this project
-and still shows no such command.
+quota/usage API. This was confirmed during Backup Pro and again during the
+historical ai-supervisor work. The retired ai-supervisor archive preserves that
+investigation; Build Manager must not depend on restoring the framework merely
+to inspect usage.
 
-The existing proven fallback in that tooling is **reactive** classification of
-a finished invocation (`ai_supervisor/usage_detect.py` plus
-`USAGE_EXHAUSTION_PHRASES` in `ai_supervisor/constants.py`), which sorts a run
-into `yielded` / `exhausted` / `crash` / `clean` / `error`. That mechanism
-detects exhaustion after the fact; it does not report remaining allowance.
+The former ai-supervisor project contained a reactive post-run exhaustion
+classifier, but ai-supervisor is retired from the active Build Manager
+workflow and must not be restored merely to collect usage telemetry.
 
 Agent-specific sources that *do* report remaining allowance are documented per
 agent (see `CLAUDE.md` for Claude, and "Codex-Specific Notes" below).
