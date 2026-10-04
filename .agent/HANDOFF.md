@@ -15,16 +15,20 @@ Status: idle. No task is assigned.
 - Guidance sync: commit 59ef609 copied the nine manual-mode guidance files listed below from
   local `matrix` cee9d0b7a2cc4a2ce2fa657c6a46d28dbc899fe3 (a path-level copy, not a merge of
   `matrix`). It changed documentation only.
+- Guidance re-sync: commit b576ce0 refreshed six of those files (`.orchestrator/{HANDOFF,PROJECT,WORKFLOW}.md`,
+  `AGENTS.md`, `CLAUDE.md`, `BUILD_MANAGER_PROJECT_PLAN.md`) from `matrix`
+  a5fbadfa96cc0d44e4742717b7a1ab05e79d20b6 (again a path-level copy, documentation only).
 - Not pushed: `origin/agent/claude` is still 98750fc.
 
 ## Read before starting work
 
-- The manual-mode repository guidance on this branch is the `matrix` cee9d0b copy of
+- The manual-mode repository guidance on this branch is a path-level copy of `matrix`:
   `.orchestrator/{BOOTSTRAP,CHATGPT_PROJECT_INSTRUCTIONS_MANUAL,DECISIONS,HANDOFF,PROJECT,WORKFLOW}.md`,
-  `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md`. Start from
+  `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` (as of matrix a5fbadf; the three
+  files the re-sync did not touch are as of cee9d0b). Start from
   `.orchestrator/BOOTSTRAP.md`. Local `matrix` in `/Users/eengert/Documents/Kodi/script.build.manager`
   remains the canonical copy: later `matrix` changes are not propagated automatically, and the
-  `.orchestrator/HANDOFF.md` here is a snapshot as of cee9d0b. `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`
+  `.orchestrator/HANDOFF.md` here is a snapshot as of a5fbadf. `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`
   and older `.agent/**` records are historical, not current instructions.
 - The `.agent/**` records that were here described ai-supervisor-era work and were replaced
   by this note. They remain in history: 98750fc (previous Claude endpoint) and e57a5b6
