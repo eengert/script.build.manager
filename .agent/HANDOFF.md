@@ -1,52 +1,1494 @@
-# Current Handoff — BM-023A installed runtime verified (2026-09-24)
+# Review Required - native secondary checkpoint substrate absent from granted baseline (2026-10-03)
 
-Result: Eric confirmed manual installation of the worker-matched package in
-Kodi Build Manager Test.app. The installed portable add-on files match worker
-`d8ab24ba3678302505c157501adbb216ba3935a6` byte-for-byte. Matrix remains
-`66b0fd8a123ef778b23ba42703937b07eefc4e6f`.
+**Result:** `REVIEW_REQUIRED_SECONDARY_FRAMEWORK_BASELINE_RECONCILIATION`. Work `24f77347-f206-473c-bb80-da8b3bc02be9`; lease `fc95c3a8-9a8d-4901-b0ee-6811575b4338`. Supervisor-observed launch profile: Codex `gpt-6.1-sol`, `high`.
 
-### Package and installed runtime
+- Read AGENTS.md, this handoff, then fresh supervisor state in the required order. Fresh state remained on this work/lease with `handoff_requested=false`. No substantive edit or new implementation phase started.
+- Verified authorized framework checkout is clean on `codex/provenance-reconcile` at exact required `a004294654e09233943ad0dc6c1b419356384882`. Production is `cb32c8edbffd32beb07e04aa6041e7636e7dd28b`; common ancestor is `3d5fdb269deb6e50219093d519bfdc9051a844e4`. These are divergent branches, not a production-equivalent baseline.
+- New precise blocker: granted baseline has no `ai_supervisor/write_capability.py` or `ai_supervisor/trusted_git.py`. Consequently it lacks production native `capture_secondary_checkpoint`, `apply_secondary_checkpoint`, `guarded_secondary_git`, `action_workspace_git_guard`, and `trusted_git.identity_guard`. Its `review_checkpoint.py` also lacks `snapshot_identity`, `workspace_identity`, and `validate_identity_block`; it uses the older subprocess Git and checkpoint path. Production contains all of those operations and the workspace/content-bound safeguards. A bounded wrapper here cannot reuse native secondary safeguards that do not exist here. Copying/replacing the production foundation would expand this correction into a baseline migration; no such migration was performed.
+- Historical PASS preserved and directly verified: retained `runtime/codex_2026-10-03T085936-0400.last_message.txt` explicitly says PASS and ends with exact review marker `55d39236-dd93-4731-9e8b-54212556a0b0`. Its corresponding retained JSONL records reviewer hash verification, exact branch/HEAD, empty secondary index, exactly four dirty paths, and final unchanged-file verification including untracked `tests/test_bm023a_status_bridge.py`. Reviewer manifest digest is `0cf31003403800320e9e9d946283e85a7f747ae231e7027d8ca9d10d58dcb787`. The linked disposable SECURITY_REVIEW.md/manifest are no longer present; retained transcripts are available. Handoff checkpoint records for source `371ccdcd-d98f-4047-a84d-a23552cdddb9` and review contain only primary Git summary/completion/usage, no secondary capture. No historical capture was invented, and later observation `1635632e...` was not treated as pre-review provenance.
+- Preservation checks: bridge remains at `9950ca51709d3799af9b5487ef3867088afe62cc` with the same three modified tracked paths plus untracked status test; all four SHA256 values match the previous handoff. Primary HEAD is existing `b6daea82c5a29bcb3cf40a2c3ae4e3a0c1281a4c`, a controller-created tracking-only child of `16435a892b4ad2cf54c34d3b049c28ed3f1703eb` changing only four `.agent/**` files with native tracking-reconcile trailers. Product candidate is preserved; existing tracking commit was not discarded.
+- Changes in this work: required primary `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`, `.agent/USAGE_HISTORY.md` only. No framework/product/action source edits, staging, commits, host actions, live checkpoint/state/config/envelope/pin changes, app/profile/device access, network, deploy, push or publication. No tests run because implementation stopped at the mandatory foundation reconciliation prerequisite; no implementation completion or test PASS claim. Previous product 110/110 and 1971/1971, exact bridge security PASS, and baseline-limited bridge framework 503/547 versus baseline 487/531 with identical 41 errors/3 failures remain preserved below.
+- Smallest next step: controller reconciles the authorized framework implementation baseline to a reviewed source containing the current native secondary capture/apply and trusted Git/workspace identity machinery, then refreshes its exact launch grant and assigns this same bounded retrospective correction. Do not weaken guards or fabricate historical records. This is an internal baseline prerequisite, not personal user input; no new human authorization gate and no repeat stageability diagnostic is needed. Staging-source contract changes remain deferred.
 
-- ZIP: `dist/script.build.manager-0.1.0-d8ab24b.zip`
-- ZIP SHA-256:
-  `42bad927c231d40df324ac56147a20c998e5abcbdee2b6d93cfcae66456d64e4`
-- ZIP size: 215,137 bytes; product version remains 0.1.0.
-- Verified under
-  `/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data/addons/script.build.manager`.
-- `resources/lib/build_manager.py` matches worker SHA-256
-  `68c58cada6644a4eaea3485aff897ba0ef52cd9ae55c65d3560c477b85b9c749`.
-- `resources/lib/frozen_install.py` matches worker SHA-256
-  `1073f3528bcdd1bfa96002f1ad45c890d42e2673a91015b665960af228c4621e`.
-- `resources/builds/examples/eric-main.example.json` matches worker SHA-256
-  `924ab96558111c1a9050592da5296d07dfbfc35520c380a554beea73fed308c4`.
-- Installed Red Light declaration has `configure_before_activation=true`;
-  installed runtime contains `PUBLIC_CONFIGURATION_OPERATION_FAILED`.
+---
+
+# Complete - BM-023A trusted status bridge ready for independent security review (2026-10-03)
+
+**Result:** `COMPLETE_OFFLINE_BRIDGE_AWAITING_INDEPENDENT_SECURITY_REVIEW`. Work `371ccdcd-d98f-4047-a84d-a23552cdddb9`; lease `b25a4ac1-79c7-495d-9a0d-55a93d299d48`. Supervisor-observed launch profile: Codex `gpt-6.1-sol`, `high`.
+
+- Identity/guidance: began with clean primary `16435a892b4ad2cf54c34d3b049c28ed3f1703eb` and clean secondary `bm023a-actions` / `action/bm023a-trusted` at `9950ca51709d3799af9b5487ef3867088afe62cc`. No applicable secondary/ancestor AGENTS.md exists; read secondary README trusted-action/safety guidance and supplied scope rules before edits. Verified substantive `8789329054b77815c6f9548fd4ce9beacbe1d348` and tracking pair bind source `c3dfd26d-a136-4c45-8108-59537611b139`, review `4ef22b35-da05-454a-99c4-0ae08aea4882`, snapshot `6852b5f730fd74675f53bb72c05aed0d549d31158c9bb9fe2f4c6870000e8af8`.
+- Exact secondary delta (four paths, source only; nothing staged or committed): `ai_supervisor/kodi_action.py` adds fixed `bm023a-status` -> `status` and a separate strict status sanitizer. It emits exactly the candidate's 20 STATUS_KEYS, exact booleans, integer counts 0..10000, finite phases/states/policies/version, and separate finite product-defined frozen/restart code domains. Unknown/private text and unexpected envelope/nested keys cannot escape; invalid field values become null. Non-object status, missing successful status, and mode mismatch fail closed; malformed success flags become false. Failure diagnostics retain only finite candidate enums. `ai_supervisor/bm023a_adapter_upgrade.py` changes expected version and CLI description to 0.0.15. `tests/test_bm023a_adapter_upgrade.py` updates version expectations and stale-version/downgrade fixtures (newer version is 0.0.16). New `tests/test_bm023a_status_bridge.py` adds 16 adversarial cases.
+- Safeguards: every pre-existing Kodi action function/class is AST-identical except the new status dispatch; staging source differs only in expected version and description. Exact-source reconciliation/ancestry, clean-tree and trusted-action guards, host-side auth, fixed endpoint/add-on/path, freshness/mode checks, swap/rollback and all existing actions remain unchanged. AST constant comparisons against the reviewed candidate matched STATUS_KEYS, phases, code domains, count bound and diagnostic enums. Bridge read-only test fixes the RPC to status, forbids filesystem write/create/unlink operations during the host read, and preserves disposable frozen/restart records and locks. All RPCs in bridge tests are mocks.
+- Final focused check: **35/35 OK**, 7.823s, no skips (`test_kodi_action`, new status module, exact downgrade/stale-version cases). In the final full run, existing action **17/17**, new status **16/16**, staging **54/54**, lineage **57/57** all pass: **144/144 relevant tests**.
+- Full offline framework check completed in disposable HOME with bytecode disabled: **547 run; 503 passed; 41 errors; 3 failures; 0 skips**, 803.197s. Exact clean-HEAD source archive baseline: **531 run; 487 passed; same 41 errors and 3 failures; 0 skips**, 1140.836s. All **44 nonpassing reports match exactly** after normalizing only checkout/disposable-directory paths. Forty errors are denied loopback HTTPServer binds; one is orphan fixture process timeout after process-identity refusal. Failures are unavailable process start signature, unavailable `/Applications/Codex.app/Contents/Resources/codex`, and corresponding synthetic-soak reattachment failure. The full suite is **not green in this sandbox**; no checks were skipped or weakened and no new nonpassing test remains. The initial runs loaded the obsolete downgrade fixture and failed it; it was corrected and passes both final focused and full checks.
+- Checks/artifacts: changed-file compilation without bytecode and both diff checks passed. Transient logs: `/tmp/bm023a-bridge-final-focused.log`, `/tmp/bm023a-bridge-final-full.log`, `/tmp/bm023a-bridge-baseline-full.log`; earlier diagnostic logs `/tmp/bm023a-bridge-focused.log`, `/tmp/bm023a-bridge-full.log`, `/tmp/bm023a-status-before.log`. Final secondary file SHA256:
+  - `ai_supervisor/kodi_action.py`: `616710f066c88dc37520ce4afc8d3d1e13a0235f968ea5cdd1e07a068d09766a`.
+  - `ai_supervisor/bm023a_adapter_upgrade.py`: `4dd97feef32fef0232f975f45ae48c35d5bdb63ce2af191d3677b57861c52b9c`.
+  - `tests/test_bm023a_adapter_upgrade.py`: `6fdf44d721a7d362d69bb905e0e5d07d50d378e317767636011ed2742bd6459f`.
+  - `tests/test_bm023a_status_bridge.py`: `b23f02651e5da41af5d7d3809864725564dbe26c2cd78cf1f3b93276f7c77523`.
+- Product preservation: all four reviewed product files still byte-identical to the substantive checkpoint. Product PASS evidence supplied by the directive and prior focused **110/110** / full **1971/1971** evidence are preserved below; no product test suite rerun or new product review verdict is claimed. Primary changed only required `.agent` tracking; both HEADs and secondary index remain unchanged.
+- Not done: no named host validation action was requested/invoked (stage capability only binds the source grant), no Test.app/normal Kodi/profile/device access, external network, live config/envelope/pin change, deployment, staging/commit, push or publication. No live qualification, stageability or milestone completion claim. The historical immutable 0.0.14 source/reconciliation pins intentionally remain unchanged: the expected-version bump alone does not make that source stageable. Binding a future stage to the reviewed 0.0.15 candidate remains a separately scoped internal prerequisite, not a user-input gate.
+- Smallest next step: separately armed independent exact-delta security review and host-side exact-snapshot checkpoint of these four secondary paths, with the baseline-limited full-suite evidence above. No human input required; do not silently stage or begin live qualification.
+
+---
+
+# Complete - BM-023A 0.0.15 source-lineage recovery and two defect corrections (2026-10-03)
+
+**Result:** `COMPLETE_OFFLINE_CANDIDATE_AWAITING_SEPARATE_REVIEW`. Work ID `c3dfd26d-a136-4c45-8108-59537611b139`; lease `6b09ed20-4208-4f80-8015-a0d177393145`. Supervisor launch profile: Codex `gpt-6.1-sol`, `high`.
+
+- Lineage: primary `agent/beta-recovery` began clean at exact HEAD `3f8f89024b033cca23f5c3e692bf062a36d1e25c`. Preserved `script.build.manager-supervised-codex` had the same HEAD and exactly four substantive dirty paths plus `.agent/HANDOFF.md`. Copied only those four product files, verified byte identity before corrections, and rechecked preserved product hashes unchanged afterward. No old tracking/control/provenance/transient files copied.
+- Four product paths: `tests/test_bm023a_adapter.py`, `tools/bm023a_adapter/addon.xml.in`, `tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter_support.py`. XML and entrypoint remain exact copies of the preserved 0.0.15 work. Further changes affect only support and adapter tests.
+- Review defect 1: separate finite `STATUS_FROZEN_CODES`/`STATUS_RESTART_CODES` accept defined product diagnostics. Unknown strings, including uppercase private sentinels, dynamically formed unknown codes and codes from the other domain, become null. Fixture-only `RESTART_ATTENTION` replaced with product-defined `PREVIEW_FAILED`; product provenance and acceptance tested.
+- Review defect 2: record reads reject non-regular lstat results, require `O_NONBLOCK` and `O_NOFOLLOW`, open read-only, fstat the descriptor, compare device/inode before opening and after reading, and close descriptors on rejection/error. Detected replacement races become unreadable. Reads remain bounded to 1 MiB frozen / 128 KiB restart plus one overflow byte; no transaction writes or locks. Unsupported required flags fail closed rather than falling back.
+- Added 12 adversarial tests: private uppercase values, public code/domain/provenance behavior, real FIFO without a writer, regular-to-FIFO replacement, symlink-to-regular/FIFO, regular replacement before open, path replacement after open, symlink/directory replacement, unavailable safety flags, and simulated FIFO/device/socket/directory descriptor rejection with closure before reading. FIFO cases run in timeout-bounded disposable subprocesses. Before the fix, five selected tests ran with 7 subtest/test failures and 1 FIFO timeout error, reproducing the private-text leak and blocking defect.
+- Validation: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter`: **110 tests OK**, 7.567s, no skips. `HOME=<disposable /tmp directory> PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests`: **1971 tests OK**, 71.622s, no skips. `git diff --check` passed. Full suite log: `/tmp/bm023a-recovery-full-suite.log` (transient, not source evidence).
+- Limits: offline fixture/unit coverage only, including a generated-entrypoint run against production modules copied into a disposable profile. No host validation, real app/profile/device access, network, trusted action, staging, review verdict, stageability claim, commit, push, release or publication. Concurrent in-place writes are not serialized; status remains an advisory bounded read without locks. Future unrecognized product codes deliberately project null until explicitly allowlisted.
+- Candidate remains uncommitted at the required base. Final product SHA256: tests `ed221589415d07f87d9bc60b72f3148c2a79b8c488086bb5b6e1988ad135811a`; support `d6a630ad8f9048a5adffb0344ece901396254fe8914b6af2386ae30df2fea50d`; XML `f67632546fa56da8e71459472212c3483bfbd68fed8b8b6855631093cff05754`; entrypoint `0b229e9ea8c69c25d6fdac5dc35d5ef4f41eb99ed9feb8e2a9a59e71faf6eed4`.
+- Smallest next step: controller separately arms an independent exact-snapshot review of this new source work, including the two corrections against review `03d870fc-98e0-4a42-84b5-5558b69d8481`. No human input required. No further implementation phase started.
+
+---
+
+# Complete - stage-source preflight tolerates .agent-only reconcile commits (2026-10-01; work f36d808f-a174-4d8f-8f5f-ba2efa7bafdd)
+
+- `tools/check_bm023a_stage_source.py`: a commit whose trailers are exactly `AI-Supervisor-Part: tracking` + `AI-Supervisor-Tracking-Reconcile: v1` and which changes only `.agent/**` is passed during the walk (never counts as the tracking half of a pair). Reconcile commit touching product paths -> `reconcile_product_commit`; malformed/extra reconcile trailers -> `checkpoint_metadata_incomplete`; substantive lacking the four trailers still fails closed; product drift after the source still reports `product_changes_after_source`/`untrailered_product_commit`.
+- Tests: 6 new cases in `tests/test_check_bm023a_stage_source.py`; module run: 24 tests OK (slow, ~145s, machine under load). Full suite not run (directive: focused only).
+- Checker against a clean clone of HEAD (559d746) with `--expected-version 0.0.14`: ok, source bdfb916, ADAPTER_VERSION 0.0.14, no product changes. In the working tree it reports `uncommitted_product_changes` only because these edits are not yet committed (correct fail-closed). Expected driver version is 0.0.14 (0.0.13 was stale).
+- Not done: no named action invoked (bm023a-recover not repeated); Test.app, transaction and lock files untouched; nothing committed.
+
+## Trusted adapter (outside this worktree; NOT edited)
+
+Path: `/Users/eengert/Documents/Kodi/tools/ai-supervisor/ai_supervisor/bm023a_adapter_upgrade.py` (identical copies exist in sibling `tools/ai-supervisor-*/` trees).
+`_checkpoint_metadata` (line ~42) requires all four trailers and raises `reviewed source checkpoint metadata is incomplete` for reconcile commits, so the real adapter will still reject this lineage even though the preflight now passes. Minimal change: in `_checkpoint_metadata`, accept a message whose trailers are exactly `AI-Supervisor-Part: tracking` + `AI-Supervisor-Tracking-Reconcile: v1` (no duplicates, no other trailers) and return a marker (e.g. `{'part': 'tracking', 'reconcile': 'v1'}`); in the walk (~lines 163-200) treat such a commit as pass-through only if all its paths satisfy `_is_tracking_path`, without setting `child_tracking_metadata` (reset to None) and without counting it toward `_MAX_TRACKING_COMMITS` pair logic beyond the existing bound. Keep substantive and pair commits requiring the full four trailers.
+
+Next step: commit these two files, then have the controller apply the adapter change above.
+
+# Complete - sanitized failure-stage codes for bm-test-app-relaunch (2026-10-01; lease c1edcaab-6d82-47ff-99f7-4e2ebac376a4)
+
+**Result:** `COMPLETE_FRAMEWORK_FAILURE_STAGES_ADDED_UNCOMMITTED_PER_SECONDARY_GIT_POLICY`. Work ID `15993eba-0af4-44a9-a9fd-37a22ac0bffa`. Agent: Claude (`claude-sonnet-5-5`, high). Usage readings unavailable per `AGENTS.md`.
+
+- Framework worktree `/Users/eengert/.codex/worktrees/ai-supervisor-provenance-reconcile/ai-supervisor`, branch `codex/provenance-reconcile`, HEAD `c0f8382` (unchanged). **No commit was made:** the directive says both "commit locally" and "do not stage or commit secondary repositories"; I followed the stricter trusted-secondary-Git policy. No commit SHA exists; the supervisor's exact-snapshot checkpoint should capture the two dirty files below.
+- Files changed: `ai_supervisor/bm_test_app_relaunch.py`, `tests/test_bm_test_app_relaunch.py` only.
+- Change: `TestAppRelaunchError` now carries a `stage` from the fixed vocabulary `process_identity`, `quit_timeout`, `launch_failed`, `launch_binding_missing`, `post_launch_readiness`, plus `unclassified` (any non-`TestAppRelaunchError` exception, or an unknown or forged stage). The failure JSON gains `failure_stage` and `failure_category` (same value; the supervisor already surfaces `failure_category`). `error_type` and `error` are unchanged, and `main()` never prints exception text, causes, paths, PIDs, start signatures or stderr. Stage mapping: inventory unavailable, ambiguous/multiple processes, non-portable or invalid process, missing or changed start identity, signal failure, process reappearing before launch -> `process_identity`; exit wait expiry -> `quit_timeout`; `open` nonzero/OSError/timeout -> `launch_failed`; non-fixed target or unavailable app, executable or launcher -> `launch_binding_missing`; relaunch never seen, ambiguous or non-portable after launch, missing/invalid/unchanged new start identity -> `post_launch_readiness`. `_process_rows`, `_require_portable` and `_single_process` take an optional `stage` (default `process_identity`), and the post-launch wait passes the readiness stage.
+- Safety checks preserved: unchanged logic and ordering for SIGTERM-only (no SIGKILL), exact `open <Test.app> --args -p`, fixed Test.app/launcher binding, portable `-p` check, single-process check and new-start-identity check. The only behavioral addition is that an `OSError` from the SIGTERM `os.kill` is now a classified `TestAppRelaunchError` (still fail-closed, still no launch).
+- Tests: `tests.test_bm_test_app_relaunch` **30/30** (24 new; each stage covered, sentinel path/PID/token/stderr/start-signature never present in output, exact result key set, forged stage not emitted, no SIGKILL/launch on quit timeout). Mutation checks (wrong stage, extra `detail` leak, wrong readiness stage, unvalidated stage) each made the suite fail. Related: `tests.test_provider_parity`, `tests.test_provider_policy`, `tests.test_autonomy` plus relaunch tests **144 passed** (one reported error was my mistaken module name `tests.test_procutil`, which does not exist). `compileall` and `git diff --check`: passed. The full framework suite was not run.
+- Not done: `bm-test-app-relaunch`/`bm023a-stage-adapter` were not invoked; `bm023a-actions`, Kodi.app, the normal profile, Test.app and the network were not touched; no push. The deployed supervisor needs this change deployed before real failures will carry the stage; the earlier live relaunch failure (work `498f8cb5`) remains unexplained.
+- Smallest next step: supervisor review/checkpoint of the two files, deploy, then re-run the authorized relaunch to read the stage. No user input required.
+
+---
+
+# Review Required - BM-023A named Test.app relaunch failed (2026-10-01)
+
+**Result:** `REVIEW_REQUIRED_TEST_APP_RELAUNCH_FAILED`. Work ID `498f8cb5-faf0-4861-8c62-7796e693dab5`; lease `e035a6e3-74a0-40ff-b2ad-4fe7ce66d392`. Observed launch profile: Codex `gpt-6.1-sol`, `low`.
+
+- Read required context in order; inspected Git status, recent commits and latest commit summary. Checkout `agent/supervised-codex`, HEAD `b7c790a`, initially clean; existing work preserved.
+- Invoked authorized `bm-test-app-relaunch` exactly once. Sanitized broker result: `ok=false`, `error_type=ValidationActionFailed`, `error="validation action returned structured failure structured_failure"`, `failure_category=structured_failure`, `return_code=1`, `retry_allowed=false`, `cancelled=false`, `timed_out=false`, empty stderr. Action stdout: `{"action":"bm-test-app-relaunch","error":"authorized Test.app relaunch failed","error_type":"TestAppRelaunchError","ok":false}`.
+- Relaunch completion is not live-proven. Stopped on the action failure per directive; no LAN verification, so driver 0.0.14 visibility remains unconfirmed. No retry, stage/install/recover/restore-config, normal Kodi/profile or real-device access.
+- Only this mandated durable handoff updated; no product/action-worktree edits, other tracking edits, commits, or tests. Full suite not run because this bounded directive permits only the named action and subsequent authorized read. Usage start/end/delta unavailable per AGENTS.md.
+- Smallest next step: controller reviews the exact sanitized TestAppRelaunchError and resolves the internal relaunch prerequisite before issuing further bounded work. No personal user input required.
+
+---
+
+# Review Required - BM-023A Test.app relaunch refused again (2026-09-30; lease 9f49c96e-9afa-4daf-92e4-7e5239332565)
+
+**Result:** `REVIEW_REQUIRED_RELAUNCH_REFUSED_NO_LAUNCH_BINDING`. Work ID `0aca9bde-4903-4866-ba79-4d0f8e16af80`. Agent: Claude (`claude-sonnet-5-5`). Usage readings unavailable per `AGENTS.md`.
+
+- `validation-action --action bm-test-app-relaunch` run exactly once. Sanitized result: `ok:false`, `error_type=ValidationActionError`, `error="secondary workspace lacks trusted launch-time filesystem binding for this action"`. This is the same refusal as the earlier attempt. The action did not run, so Test.app was not quit or relaunched.
+- Not done, per directive: no retry, no `bm023a-stage-adapter`/install/recover/restore-config, no LAN reads, no file edits other than this note, no Kodi.app or real-profile access. Driver rescan is unconfirmed; the last readback was still 0.0.13 (stage reported 0.0.14).
+- Smallest next step: controller fixes the launch-time filesystem binding for the `bm023a-actions` secondary root for this action (internal supervisor configuration), then reissues the relaunch directive. No user input required.
+
+---
+
+# Review Required - BM-023A stage action ran; Kodi still reports driver 0.0.13 (2026-09-30; lease a7881ee8-5dec-47de-8483-7e05d186cbab)
+
+**Result:** `REVIEW_REQUIRED_STAGE_OK_BUT_LAN_READBACK_STALE`. Work ID `dd6b20fe-9dbf-4dcd-beb7-cead8dfc692f`. Agent: Claude (`claude-sonnet-5-5`). Usage readings unavailable per `AGENTS.md`.
+
+- Preflight (lan-read, `test-app-kodi`): `Addons.GetAddonDetails` driver `script.build.manager.bm023a_driver` 0.0.13, enabled. `Application.GetProperties` (version only, per policy) responded Kodi 21.3 stable. The policy permits no richer identity read, so portable-app identity was not independently confirmed beyond the alias binding. Frozen-transaction existence is not observable through the permitted RPC methods; recorded as unknown. Kodi.app and `~/Library/Application Support/Kodi` were not accessed.
+- `bm023a-stage-adapter` run exactly once: `ok:true`, `action=bm023a-stage-adapter`, `version_before=0.0.13`, `version_after=0.0.14` (matches pinned module), `already_current:false`, `files_verified:5`, `reviewed_source=97bd1bad477d06e42349d95e3583fd38cdefc63b`, return_code 0.
+- Post-action lan-read re-read of the installed driver version: still **0.0.13**. Likely Kodi's add-on database has not rescanned the replaced files (no relaunch/rescan permitted here), but this is unconfirmed. Stopped per directive on contradictory evidence; no retry, no install/recover/retry/restore-config/relaunch, no code changes.
+- Smallest next step: controller decides how to confirm the on-disk 0.0.14 (for example a separately authorized rescan/relaunch, then a lan-read re-check). No user input required.
+- No commits made.
+
+---
+
+# Review Required - BM-023A stage directive contradicts pinned driver version (2026-09-30)
+
+**Result:** `REVIEW_REQUIRED_DIRECTIVE_VERSION_MISMATCH`. Work ID `2ca0f0a4-c52c-4a18-b26e-3323226fb30d`; lease `85bd8af6-4a07-4479-8e73-dc0c151891d4`. Observed launch profile: Codex `gpt-6.1-sol`, `medium`.
+
+- Read AGENTS.md, current handoff, and supervisor state in the required order. Primary checkout `agent/supervised-codex`, HEAD `d2d1344`, and secondary checkout were clean before tracking updates. Existing work was preserved.
+- Live read-only health was evaluated using the deployed framework's `validation_action_health(config, all_configured=True, work=current_work)`, with the current work's trusted secondary filesystem binding. Exact sanitized action evidence: `name=bm023a-stage-adapter`, `configured_head=0584f4c18667224981d8fccce39309ec9677fd92`, `actual_head=0584f4c18667224981d8fccce39309ec9677fd92`, `clean=true`, `healthy=true`, `error=null`, `git_trust=launch_binding`. The retained planner-only binding error does not describe this live bound check.
+- Blocking contradiction: the directive authorizes staging and verifying driver **0.0.9**. Configured action command is `/usr/local/bin/python3 -m ai_supervisor.bm023a_adapter_upgrade`; the exact pinned module defines `_PINNED_ADAPTER_VERSION = '0.0.14'`, checks the builder against that version, and returns `version_after=expected_version`. Its staging result contract contains `action=bm023a-stage-adapter`, not `adapter_mode=stage`. Invoking this action cannot satisfy the requested 0.0.9 version/result contract. Stopped before mutation rather than substituting versions or inventing mode evidence.
+- Checks permitted/performed: clean Git status and recent commit/diff inspection; bound live action health (passed); static version/result-contract inspection. No unit/full suite was run: this bounded directive permits preflight/staging evidence only and forbids code fixes. No behavior changed.
+- Initial `status --json` diagnostic resolved an unrelated default project and failed with sandbox PermissionError before producing status; it was not used as health evidence. The subsequent read-only bound health check above succeeded without changing configuration/state.
+- Not done: **zero** named action invocations, no Test.app/LAN preflight, no installed-driver or fresh adapter result verification, no retry/install/recover, no product or secondary source edits, no staging/commits/push, no Kodi.app/real-profile/Apple TV access. Only primary `.agent` tracking files updated.
+- Smallest next step: controller internally reconciles the directive's 0.0.9 / `adapter_mode=stage` expectations with the reviewed pinned action's 0.0.14 / staging result contract, then issues a consistent bounded directive. No personal user decision or new authority is required for this technical evidence review.
+
+---
+
+# Complete - controller-gated dirty_source attestation retention command (2026-09-30; lease 4a162d5d-2d3f-4242-9760-941891df7381)
+
+**Result:** `COMPLETE_FRAMEWORK_COMMAND_ADDED_COMMITTED_LOCAL`. Work ID `d4d83ef6-bb04-415d-b1d7-641a4c3ca1c0`. Agent: Claude (`claude-sonnet-5-5`, high). Usage readings unavailable per `AGENTS.md`.
+
+- **Existing command check:** none existed. `review-provenance-reconcile` only reads the attestation, and the monitor writes `dirty_source` only when it creates a new handoff record for a completed work (`monitor.py`). Nothing could retain one onto an existing record, so a command was added.
+- Framework worktree `/Users/eengert/.codex/worktrees/ai-supervisor-provenance-reconcile/ai-supervisor`, branch `codex/provenance-reconcile`: new commit **`c0f8382`** on top of reviewed `a7155df` (6 files; README, `cli.py`, `controller_broker.py`, `provenance_reconcile.py`, and two test files). No reconciler check was changed; the only edit to existing code is the `parse_iso` import.
+- New CLI command `retain-dirty-source-attestation` (in the controller-mutation set, so it needs `--controller-id/--controller-token`) and broker op `retain_dirty_source_attestation`. Core: `provenance_reconcile.retain_dirty_source_attestation(checkpoints_dir, attestation)`.
+  - Exact key set `work_id, agent, mode, branch, base_head, snapshot, captured_at` (extra or missing keys refused); canonical lowercase UUID; agent `codex|claude`; mode `workspace-write`; safe-charset branch; full lowercase 40-hex base; lowercase 64-hex snapshot; timezone-aware ISO `captured_at`. Only these validated values can be stored, so no free-form or secret content.
+  - The record must be the single `handoff-*` checkpoint whose `work.id` is the named work, completed, `workspace-write`, same agent, same branch, dirty workspace, and whose short git head is a prefix of `base_head`.
+  - Create-only for the `dirty_source` key: identical attestation is an idempotent no-op (`already_retained`, file untouched), a different one is refused, and no other field changes. Write is atomic (same-directory temp, fsync, `os.replace`, mode 0600) after re-checking the record digest just before replacement. Symlinked or ambiguous evidence fails closed.
+  - `captured_at` is required input, not defaulted, so nothing is fabricated; the controller supplies its real attestation time.
+- Tests (scratch fixtures only): 7 new in `tests/test_provenance_reconcile.py` (`RetainDirtySourceAttestationTests`) and 1 broker test (`test_retain_dirty_source_attestation_is_controller_gated_and_idempotent`, which also checks the CLI is controller-gated and that an unauthenticated broker call changes nothing). Results: `tests.test_provenance_reconcile` **32/32**; `tests.test_controller_broker` plus `tests.test_review_checkpoint_flow` with the new tests **55/55** (this run also covered the new class). The ~9 minute full focused suite was not run. `compileall` and `git diff --check`: passed.
+- Not done: nothing was run against the Build Manager repository or the real supervisor `.ai/checkpoints` (the real record was only read to confirm its shape: work `930ce877…`, complete, `workspace-write`, branch `agent/supervised-codex`, head `c8b7635`, 7 modified, no `dirty_source`). No host action, network, Test.app, Kodi, profile or device access; `bm023a-actions` worktree untouched.
+
+## Controller deployment steps (in this order; the command exists only from `c0f8382`)
+1. Deploy reviewed framework commit `c0f8382` (branch `codex/provenance-reconcile`) to the running ai-supervisor and restart as usual so the CLI and broker include the new command.
+2. Attest, with controller authority and the controller's real time:
+   `ai-supervisor retain-dirty-source-attestation --work-id 930ce877-b902-4c0f-92bf-5380acfac610 --agent codex --mode workspace-write --branch agent/supervised-codex --base-head c8b7635ac1cf212a2bbd111af5014df8062e18f3 --snapshot d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd --captured-at <now, ISO-8601 with offset>`
+   (or broker op `retain_dirty_source_attestation` with the same seven fields). Expect `status: retained`; re-running the same values reports `already_retained`.
+3. Run reconciliation: `ai-supervisor review-provenance-reconcile --repository <configured supervised workspace> --old-substantive bdfb916976a8b141b8925a328ef8b1af21da1fef --old-tracking 733ddbf911e1120e5e359cc2482eb714ca26d195 --source-work-id 930ce877-b902-4c0f-92bf-5380acfac610`. Its earlier fail-closed refusal for a missing attestation should no longer occur; any other refusal is real and should be reviewed, not bypassed.
+4. Review the new `review-provenance-<id>.json` record and `refs/ai-supervisor/review-provenance/<id>`, then update and commit the `ai-supervisor-bm023a-actions` validator diff (optionally with the recommended `dirty_source` hardening in `_validate_reconciliation_evidence` noted in the previous entry), re-pin the validator to the corrected source/tracking commits, and only then consider any separately authorized staging action.
+- No user input is required.
+
+---
+
+# Complete - provenance reconciler corrected for the four review defects (2026-09-30; lease f9d3ff50-2468-4e84-a463-48f32b7911e3)
+
+**Result:** `COMPLETE_FRAMEWORK_CORRECTED_COMMITTED_FAIL_CLOSED_ON_PRODUCTION_EVIDENCE`. Work ID `a7ad79ce-d615-4900-80be-b708d300a52f`. Agent: Claude (`claude-sonnet-5-5`, high). Usage readings unavailable per `AGENTS.md`.
+
+- Framework worktree `/Users/eengert/.codex/worktrees/ai-supervisor-provenance-reconcile/ai-supervisor`, branch `codex/provenance-reconcile`, base `3d5fdb2`: the dirty snapshot is now committed as **`a7155df`** (11 files; Git metadata was writable this run, so the earlier limitation did not recur). Only the four review findings were changed; existing work was preserved.
+- (1) Evidence binding: the source-work record must carry a `dirty_source` attestation (work, agent, `workspace-write`, branch, full base, snapshot) that matches the pair; the snapshot must be reproducible from the original tracking tree over the base (scratch shared clone); evidence path counts must equal the pair's changed paths; a read-only record claiming the snapshot is rejected. The monitor now writes `dirty_source` into a work's handoff checkpoint when the captured record matches that work. (2) Every Git call uses `--no-replace-objects`, `GIT_NO_REPLACE_OBJECTS=1`, no hooks, and scrubbed location variables. (3) Retry/re-verification now checks the canonical record, that the ref points directly at a commit, the audit commit's exact tree entry (mode/blob), parent, identity and message, and the corrected commits' tree, parent, author, committer and exact message (only the source-work trailer may differ). (4) `assert_stable` (HEAD, symbolic ref, pair, evidence, ref state) runs after the last authority callback and immediately before `update-ref`, and again right after publication; late drift deletes only our own ref by compare-and-delete and writes no record. New optional `after_ref_update` test hook.
+- Tests (scratch fixtures only): `tests/test_provenance_reconcile.py` now 25 tests, including missing/foreign attestations, fabricated fingerprint, count mismatch, replace-ref attacks on originals and on published commits, forged republished chains (author, prose, committer, audit message/tree/parent, annotated tag), pre- and post-publication evidence and HEAD drift. Removing the replace-ref protection makes the replace tests fail. Focused `tests.test_review_checkpoint tests.test_review_checkpoint_flow tests.test_autonomy tests.test_controller_broker tests.test_provenance_reconcile`: **123/123 passed** (about 9 minutes; git subprocess overhead). `compileall` and `git diff --check`: passed. The full suite was not run (not requested). No sandbox-caused failures occurred. The monitor's `dirty_source` write has no dedicated test (compile-checked and regression-covered only).
+- Read-only feasibility probe (not a reconciliation): the snapshot reproduction over the real pair (`c8b7635…` base, `733ddbf` tracking tree) yields exactly `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`, and the real evidence counts (7 modified, 0 untracked) equal the 7 changed paths. No ref, record or commit was created in the Build Manager repository.
+- Validator contract (`ai-supervisor-bm023a-actions`, untouched): the record schema, reconciliation ID, evidence entry shape, audit message and committer identity are unchanged, so no validator change is required for compatibility. I did not run the validator against a reconciler-produced record. Recommended (not required) validator hardening, otherwise the new guarantees are enforced only at creation: in `_validate_reconciliation_evidence`, also load the source evidence file and require its `dirty_source` block with exactly keys `work_id, agent, mode, branch, base_head, snapshot, captured_at` equal to (`_PINNED_SOURCE_WORK`, agent, `workspace-write`, `_PINNED_SOURCE_BRANCH`, the original base, `_PINNED_SNAPSHOT`); the file digest already in the record then binds it.
+- Not done: no reconciliation against the Build Manager repository, no host action, staging, network, Test.app, Kodi, profile or device access. A blocked combined command attempted a `touch` under the framework's shared `.git/worktrees` directory as a writability probe; it was denied and did not run.
+- **Smallest controller-side deployment prerequisite:** the real source-work record `handoff-2026-09-29T170002-0400.json` (work `930ce877…`) has no `dirty_source`, so production reconciliation now fails closed by design. The controller, which has the authority, must retain a content-level attestation for that work (`work_id 930ce877-b902-4c0f-92bf-5380acfac610`, agent `codex`, mode `workspace-write`, branch `agent/supervised-codex`, base `c8b7635ac1cf212a2bbd111af5014df8062e18f3`, snapshot `d1ee22d7…0edcd`) as its `dirty_source`, and only then deploy this reviewed commit and run reconciliation. The snapshot-to-pair link is independently proven; the work-to-snapshot link is an authority statement that cannot be derived from retained data. No user input is required.
+
+---
+
+# Complete - BM-023A staging validator checks immutable provenance reconciliation (2026-09-30; lease 50ad8d3a-4976-43c3-b78f-416e082f214c)
+
+**Result:** `COMPLETE_OFFLINE_VALIDATOR_AND_TESTS`. Work ID `25bc27a1-c3e1-4fe3-8778-9b7cf90dc4cf`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Updated only the existing dirty validator and test files in the authorized action checkout: `ai_supervisor/bm023a_adapter_upgrade.py` and `tests/test_bm023a_adapter_upgrade.py`. Existing work was preserved and extended in place; nothing was staged or committed.
+- The validator pins the original source/tracking/base commits, original misattributed source ID, corrected implementation source ID, review ID, snapshot, repository, and branch. It accepts the corrected substantive commit only when the canonical reconciliation file matches its create-only `refs/ai-supervisor/review-provenance/<id>` target, the audit commit has the exact tree/parent/message, corrected commits preserve original trees/authors/ancestry with only the source-work trailer corrected, and all three retained evidence files match their recorded SHA-256 and work/snapshot semantics. The ref is re-read after verification.
+- Added synthetic Git-record coverage for successful acceptance and fail-closed missing record/ref, mismatched original/corrected identity or snapshot, altered record, and altered evidence cases. Focused offline suite `python3 -m unittest tests.test_bm023a_adapter_upgrade`: **46/46 passed**. `git diff --check`: passed.
+- The actual reconciliation record and `refs/ai-supervisor/review-provenance/*` ref were absent from the supervised source checkout and supervisor `.ai/checkpoints` when inspected. The tested record is a synthetic fixture; the production validator remains fail-closed until the supervisor creates the exact record for this source pair. No host validation action was requested, no staging occurred, and Test.app was not accessed.
+- Smallest next step: supervisor creates the immutable reconciliation for the original pair using the retained source implementation/review evidence, then reviews the exact record-bound validator diff before any separately authorized host staging action. No user input is required.
+
+---
+
+# Review Required - BM-023A provenance reconciliation implementation complete (2026-09-30; lease 9114d27a-c828-46e3-80a7-b817156f0347)
+
+**Result:** `REVIEW_REQUIRED_IMPLEMENTATION_COMPLETE_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `9fb0a2c8-c2df-402b-a6c5-27fb83c4ab41`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Completed the dirty prevention implementation and reconciliation API in the isolated framework worktree `/Users/eengert/.codex/worktrees/ai-supervisor-provenance-reconcile/ai-supervisor`, branch `codex/provenance-reconcile`, based on `3d5fdb269deb6e50219093d519bfdc9051a844e4`. Exact changed files: `README.md`; `ai_supervisor/autonomy.py`; `ai_supervisor/cli.py`; `ai_supervisor/controller_broker.py`; `ai_supervisor/monitor.py`; `ai_supervisor/provenance_reconcile.py`; `ai_supervisor/review_checkpoint.py`; `tests/test_autonomy.py`; `tests/test_controller_broker.py`; `tests/test_provenance_reconcile.py`; `tests/test_review_checkpoint_flow.py`.
+- Completion-signal handling now captures dirty workspace-write provenance, including `complete:<work-id>` worker signals. The source work ID and snapshot stay bound across autonomy replans and are revalidated before review interposition.
+- `review-provenance-reconcile` verifies the exact committed substantive/tracking pair, path split, trailers, source/review work evidence, base, and snapshot. It creates new corrected commits without rewriting old objects or moving the branch, publishes them with an atomic create-only `refs/ai-supervisor/review-provenance/<id>` transaction that verifies HEAD, and embeds a canonical reconciliation record in the referenced audit commit plus `.ai/checkpoints/`. The record keeps source implementation work separate from review work and includes evidence digests. CLI and broker paths require controller authority; CLI also restricts the repository to a configured workspace.
+- Focused command `python3 -m unittest tests.test_review_checkpoint tests.test_review_checkpoint_flow tests.test_autonomy tests.test_controller_broker tests.test_provenance_reconcile`: **107/107 passed**. Full command `python3 -m unittest discover -s tests`: **828 run, 1 failure, 45 errors**. The failure was `test_recover_reattaches_after_pid_identity_was_persisted` (process-start identity unavailable); errors included sandbox-denied loopback binds, one host-action recovery timeout, and synthetic worker executable identity lookup. These are outside the changed provenance paths.
+- `python3 -m compileall -q ai_supervisor tests`: passed. `git diff --check`: passed. The two new untracked Python files also passed a trailing-whitespace check.
+- No reconciliation was executed against the Build Manager source checkout. The trusted action checkout and Kodi/Test.app/devices were not modified or accessed; no host validation action, network operation, staging, or push occurred.
+- Git staging/commit was not attempted in this pass. The linked framework worktree's Git metadata/index resolves into `/Users/eengert/Documents/Kodi/tools/ai-supervisor/.git/worktrees/ai-supervisor4`, outside the granted writable root. The source diff remains intact and unstaged; this is the only remaining implementation workflow limitation.
+- Smallest next step: independent review the exact dirty framework snapshot, especially completion-signal source capture, pair/evidence fail-closed checks, atomic ref creation, and the record contract for the future action validator. Then resolve the external Git-metadata write scope before normal staging/commit. No user input is required.
+
+---
+
+# Review Required - Framework Git metadata outside the granted writable scope (2026-09-29; lease d00ccfe8-cab3-43da-afde-24ef4351b56a)
+
+**Result:** `REVIEW_REQUIRED_FRAMEWORK_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `8c5c755b-0155-4a0e-b356-dc4207c708a2`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Root cause identified: autonomy replanning attributes a dirty continuation to the immediate planner source. After an intermediate read-only review, that ID can be the reviewer rather than the workspace-write task that left the dirty snapshot.
+- Prevention implementation and regression tests are saved, uncommitted, in the granted framework worktree `codex/provenance-reconcile` at base `3d5fdb269deb6e50219093d519bfdc9051a844e4`. The change captures and fingerprints completed workspace-write dirt, carries its source work ID across planner replans, revalidates it before checkpoint interposition, and fails closed on snapshot drift. Initial CLI/controller-broker wiring is also present but unvalidated; the reconciliation engine and its tests have not been written.
+- Focused prevention tests passed **6/6**; `git diff --check` passed. The full suite and `compileall` were not run.
+- Staging and commit failed because the worktree Git metadata resolves to `/Users/eengert/Documents/Kodi/tools/ai-supervisor/.git/worktrees/ai-supervisor4/index.lock`, outside the writable grant and explicitly read-only in this sandbox. The framework branch and Build Manager product files were not changed by Git operations; framework source and wiring remain unstaged. No reconciliation was run against the Build Manager repository. No network, host action, Test.app, Kodi, profile, or device access occurred.
+- Smallest next step: supervisor review of the sandbox scope and restoration of a writable isolated Git metadata path for this branch, then resume this same bounded task to inspect/complete the wiring, commit the prevention fix, and implement/test the reconciliation primitive. No user input is required.
+
+---
+
+# Review Required - BM-023A source-work provenance cannot be reconciled from the current checkpoint state (2026-09-29; lease f13b58b9-880e-4393-849f-45bfbf577922)
+
+**Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_UNRECONCILED`. Work ID `ea679b54-87b6-4504-b78f-ffe00c35fc73`. Agent: Codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- The deployed framework semantics make the attribution material. `README.md`'s reviewed-worker-checkpoint procedure says `source_work_id` identifies the work whose dirty snapshot is reviewed; `review_checkpoint.py` stores `source_work_id` separately from `review_work_id` and writes those values to separate trailers. Retained worker evidence identifies `930ce877-b902-4c0f-92bf-5380acfac610` as the adapter implementation and `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce` as a read-only review with no repository changes. Therefore `bd30d7e0` is not a valid source-work attribution for this implementation snapshot.
+- The existing source pair is otherwise exact: substantive `bdfb916976a8b141b8925a328ef8b1af21da1fef`, adjacent tracking `733ddbf911e1120e5e359cc2482eb714ca26d195`, checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`, expected three source paths, adapter 0.0.14. The supervised branch is clean at `e75cccdbc2687c9e882238cb6a6fd1779489ea5b`; the trusted action branch is `action/bm023a-trusted` at `5e80f900f9f16f3578f6418b4f2cc393ca4f2859` with only the prepared adapter-upgrade module and test modified.
+- A corrected pair cannot be produced safely from this lease's current state: the source worktree is already clean and supervisor state has no armed `review_checkpoint` or queued review. The framework checkpoint path commits only the currently reviewed dirty paths. Rewriting the existing trailers or creating a hand-authored replacement would violate the history/provenance rules. The action diff is intentionally preserved and uncommitted.
+- Validation: focused action source-binding tests **39/39 passed** in 131.754 seconds; `git diff --check` passed in both worktrees. No staging action, Test.app, Kodi/profile/device access, network operation, or host validation action occurred.
+- Smallest next step: the supervisor/control plane must add or issue an immutable, framework-generated provenance reconciliation keyed to the exact source commit, tracking child, checkpoint, and snapshot. It must bind source work `930ce877-b902-4c0f-92bf-5380acfac610` separately from reviewer `01825057-69fc-45ac-8ddc-910ee126d3a6`, cite the retained implementation/review evidence, and preserve the old commits. The action validator can then bind to that reconciliation and unchanged source pair before its diff is committed. No user input is required.
+
+---
+
+# Review Required - BM-023A staging-action source-work attribution (2026-09-29; lease e9495433-93ab-48b2-89cf-68a89a323a6b)
+
+**Result:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`. Agent: codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- Independently reviewed the intentional two-file diff in the authorized action checkout (`action/bm023a-trusted`, HEAD `5e80f900`). Its pin resolves source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef` and immediate tracking child `733ddbf911e1120e5e359cc2482eb714ca26d195`. Both Git messages carry review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6` and snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`; the source commit changes exactly the three adapter/test paths and the tracking commit only changes `.agent/**`. The adapter version is 0.0.14.
+- **Attribution does not pass review.** The pair's `AI-Supervisor-Source-Work` trailer is `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`. The retained supervisor checkpoint identifies `bd30d7e0` as a read-only review work item whose handoff explicitly says no repository files were changed. The adapter implementation is attributed in `.agent/USAGE_HISTORY.md` and its handoff to `930ce877-b902-4c0f-92bf-5380acfac610`. Thus the commit pair and action pin are exact to each other, but the source-work identity does not identify the implementation task.
+- Focused upgrade/source-binding tests passed **39/39**. The full action suite ran **436** tests: **3 failures, 41 errors**. Forty errors are `PermissionError` in network/loopback policy tests under the offline sandbox; one is an orphaned-process recovery timeout. The three failures are process identity recovery, the configured Codex binary path check, and a synthetic soak cascade after recovery fails. These are outside the two modified adapter-upgrade files. `git diff --check` passed.
+- The prepared action diff remains uncommitted and unchanged. No staging action, Test.app, Kodi/profile/device access, network operation, or host validation action occurred.
+- Smallest next step: have the supervisor reissue or correct the reviewed checkpoint so its source-work ID is the implementation work (`930ce877…`) or provide an auditable reconciliation. Corrected trailers require new source/tracking commit IDs and corresponding action pin/test updates. Then commit the verified two-file action diff through normal Git history to restore a trusted clean action workspace. No user input is required.
+
+---
+
+# Current Handoff - BM-023A stage action pinned to reviewed adapter 0.0.14 (2026-09-29; lease dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe)
+
+**Result:** `PINNED_TO_EXACT_REVIEWED_0_0_14_SOURCE; OFFLINE_TESTED; STAGING_NOT_RUN`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`. Agent: Codex (`GPT-6` runtime label; effort unavailable). Usage readings unavailable per `AGENTS.md`.
+
+- In the authorized `ai-supervisor-bm023a-actions` checkout, the fixed `bm023a-stage-adapter` action now builds only from source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`. It verifies the adjacent tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`, review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`, exact three-file source diff, and adapter version 0.0.14. It archives the full pinned SHA, disables Git replace refs during source reads, and isolates `tools` module imports so a cached module cannot redirect the builder.
+- The source-work trailer on the reviewed Git pair says `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, differing from the prior adapter task ID `930ce877-b902-4c0f-92bf-5380acfac610`. The action binds to the exact source/tracking commit pair and matching review/snapshot trailers in Git; it does not infer source from branch HEAD. This attribution difference is recorded for supervisor review.
+- Checks: focused upgrade tests **39/39**; seven pin-specific cases **7/7**; read-only validation against the supervised checkout resolved the pinned commit and loaded builder version 0.0.14; `git diff --check` passed. Full action suite ran **436** tests with **3 failures and 41 errors**, in unrelated process-recovery/soak/configured-Codex-path checks and loopback tests denied by the offline sandbox. No failure was in the changed action module.
+- Not done: no staging action, Test.app, Kodi/profile/device access, host validation action, network operation, or product-source edit. The action diff remains uncommitted in the authorized secondary root.
+- Smallest next step: supervisor review of the action diff and source-work attribution, then a separate directive before staging. No user input is required.
+
+---
+
+# Review Required - BM-023A 0.0.14 checkpoint source mismatch (2026-09-29; lease 907ebfdf-a332-48da-aaa0-acc7f329ce3d)
+
+**Result:** `REVIEW_REQUIRED_CHECKPOINT_NOT_ARMED_FOR_930CE877`. Work ID `d9944558-57b0-4ea2-b87f-e2ca0a11d6e4`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage start snapshot: 5h 87% and 7d 66% remaining from supervisor app-server state; end reading unavailable.
+
+- Independently reviewed the committed 0.0.14 diff at `bdfb916` and confirmed the checkout was clean before this handoff. The only product files in that snapshot are `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`. The retry exception maps to the fixed `retry_invocation_failed` category with exception chaining suppressed; the regression test checks sentinel/path redaction and preserves the held transaction and activation hold. Version markers are 0.0.14.
+- The source handoff records focused tests **80/80**, full offline suite **1927/1927**, and `git diff --check` passing. I did not rerun them. No adapter staging, Test.app, Kodi/profile/device access, network, retry, or product change occurred.
+- Checkpoint handling is internally inconsistent: HEAD's existing `AI-Supervisor-Source-Work` trailer names `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, while this directive names `930ce877-b902-4c0f-92bf-5380acfac610`. The current supervisor state has no `review_checkpoint`, an empty queue, and `armed_checkpoint=null`. I did not fabricate or commit a checkpoint for the mismatched source work.
+- Smallest next step: supervisor should arm/reissue the reviewed-work checkpoint bound to source work `930ce877-b902-4c0f-92bf-5380acfac610` (or correct the source-work attribution). No user input is required.
+
+---
+
+# Current Handoff - BM-023A retry exception diagnostics (2026-09-29; lease ea05f10f-26bc-437b-b1b3-45160154cd47)
+
+**Result:** `OFFLINE_RETRY_DIAGNOSTIC_ADDED_TESTED; REVIEW_REQUIRED_BEFORE_STAGING`. Work ID `930ce877-b902-4c0f-92bf-5380acfac610`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- Offline source review found a plausible historical explanation for the earlier `INVOKE_RETRY` failure: a cached production module could retain a retry method from stale source. The failed run retained no module-cache state or traceback, so that explanation cannot be confirmed. Adapter 0.0.13 now guards module cache and installed source identity before import; its retry call arguments match the current method signature. The product retry method converts expected recovery failures into structured results, while an exception escaping the invocation remains source-unexplained.
+- The retry invocation catch now emits the fixed allowlisted category `retry_invocation_failed`. No exception text, path, credential, or private value is added. Adapter source and package template are versioned 0.0.14. The regression test injects a private sentinel exception, confirms it is absent from serialized diagnostics, and verifies exactly one call with the original held transaction and unreleased activation hold unchanged.
+- Checks: focused `tests.test_bm023a_adapter` **80/80**; full offline suite **1927/1927**; `git diff --check` clean. Changes are limited to `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py` plus tracking metadata.
+- Not done: no staging, Test.app, Kodi/profile/device access, retry, network, or commit. Staged Test.app adapter remains 0.0.13; 0.0.14 is only an offline candidate.
+- Smallest next step: independent review of the exact diff, then a separate directive for any staging or retry. No user input is required.
+
+---
+
+# Current Handoff - BM-023A retained artifact set validated (2026-09-29; lease 1ee2482c-8fb5-40a0-8a7e-037cf45879a1)
+
+**Result:** `ARTIFACT_SET_COMPLETE_NO_REACQUISITION_REQUIRED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- The retained manifest parses with fingerprint `8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`. Its retained artifact store contained all 30 declared ZIPs when inspected. All 30 passed exact SHA-256 and size checks, `validate_addon_zip` ID/version validation, and stored metadata identity checks. This includes the four artifacts identified in the earlier scan; none were modified.
+- No download or import was needed. The earlier handoff recorded the store as empty; this run observed the exact artifact set already present. No recovery/retry, Test.app, Kodi profile, or device was accessed.
+- Full offline suite: **1926/1926 passed**. No code or tests changed. No product commit.
+- Smallest next step: supervisor may issue a separate directive for the supported held-quiescence retry, if still needed. No user input required.
+
+---
+
+# Review Required - BM-023A retained-artifact repopulation: no route inside the authorized envelope (2026-09-29; lease 64a5f73e-857a-4885-be47-951355af7e40)
+
+**Result:** `REVIEW_REQUIRED_NO_ARTIFACT_BYTE_SOURCE`. Work ID `11eaf317-8480-4c8a-9218-d28fc1de446e`. Agent: claude. Usage readings unavailable. No code, test or product file was changed; only this note.
+
+## What exists
+- The retained manifest survives at `/private/tmp/bm022v-familyroom.ygB0t5/candidate-FrozenManifest-v1.json`. `FrozenBuildManifest.from_json` parses it, and `fingerprint()` starts `8ce7d2daf131`, so it matches the frozen manifest. It declares 37 nodes, 30 of them non-system nodes with an exact artifact (sha256 + size).
+- The retained artifact store at `/private/tmp/bm022v-familyroom.ygB0t5/artifact-store/artifacts` exists but is **empty**. `packages/`, `repository-candidates/` and every `source/<addon>/` directory in that tree are empty too (purged by macOS temp cleanup on 2026-09-27).
+
+## What is missing (exactly)
+- **The bytes of 26 of the 30 declared artifacts.** A read-only scan for any regular file whose size and SHA-256 match a declared artifact covered `~/Documents` (including all of `~/Documents/Kodi` and its worktrees), `~/Downloads`, `~/Desktop` and `/private/tmp`, and excluded Test.app, Kodi.app and the normal profile. It matched only 4 of 30:
+  `repository.eengert` 1.0.0, `script.backup.pro` 0.9.36, `service.af3.topupaction` 1.3.7 and `service.skinsettings.backup` 1.0.16 (from `~/Documents/Kodi/repository.eengert/omega/zips/`, which is not a dedicated retained store).
+  The other 26 (including Red Light 2.6.8, the AF3 skin and their module closure) exist nowhere reachable.
+- No "BM-017F asset copy" exists at any recorded or discoverable path. The `.bm023a-test-runtime/evidence/portable_data.pre_retry/` copy that `docs/BM023A_MACOS_TEST_RUNTIME.md` mentions is not present in any worktree.
+- **A fixed named action mode that can carry a source.** The adapter's `install`, `retry` and `recover` modes only read `ARTIFACT_ROOT`. The generated `adapter_config.py` has exactly six keys (`CONFIG_KEYS`) and no key for a byte-source location. Reading artifacts from anywhere would therefore need a new adapter config key or a new action, and the directive forbids new actions or capabilities.
+
+## Why nothing was implemented
+The only remaining ways to obtain the 26 ZIPs are forbidden here: the network (repository or CDN download), reading Test.app or Kodi.app or the normal profile (`packages`, `portable_data`, installed add-ons), and zipping installed add-on directories. A repopulate step written now would have no input to run on and could not be exercised end to end. I did not build a tool that has to stay unused, and I did not weaken any check.
+
+## Smallest next step (needs supervisor authority, no user input)
+Supply one of these under a separate directive, then re-issue this one:
+1. An authorized, verified byte source for the 26 missing ZIPs, for example a directory of ZIPs or an `ArtifactStore` layout that lives inside a granted root. This can come from a networked run that downloads them from the recorded repository sources and checks each against the manifest's sha256 and size, or from an existing read-only copy that the supervisor can name.
+2. Authority for one fixed way to reach that source from an existing named action. The smallest fit is a new allowlisted `adapter_config.py` key (for example `ARTIFACT_SOURCE_ROOT`) read in `retry`/`install` before `require_retained_inputs`. It would verify sha256 and size against the manifest for all 30 artifacts before the first write, then use `ArtifactStore.import_zip` only, fail closed on any mismatch, and emit counts and booleans only. That needs the builder's `CONFIG_KEYS`, `--reuse-config-from` and the stage action's file-set checks updated, and re-staging, so it is a capability change.
+
+The `install`/`retry` retained-input check (`retained_artifacts_missing`) still fails closed correctly in the meantime. Transaction, hold, lock, `frozen_install.py` and `FrozenInstallCoordinator.abandon`/held-rejection behavior are untouched.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.13 staged and verified (2026-09-29)
+
+**Result:** `STAGE_ADAPTER_0_0_13_VERIFIED`. Work ID `d08b9420-195f-4d73-9fbc-81dc9dc97fd3`. Agent: claude. Usage readings unavailable.
+
+- Preflight `--expected-version 0.0.13` at HEAD `7982471`: `ok:true`, stage source `e2f9327b1137`.
+- `bm023a-stage-adapter` run once: `ok:true`, `already_current:true`, `files_verified:5`, version_before = version_after = 0.0.13.
+- Read-only `test-app-kodi` `Addons.GetAddonDetails`: `script.build.manager.bm023a_driver` version 0.0.13, enabled.
+- No other action, no commits. Next step: separate directive for the supported held-retry route (retained inputs must be repaired first). No user input required.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.13 offline preflight PASSED; stage-source OK (2026-09-29; lease 37d67c36-92ba-4ad2-a0f3-b45b90bb45fd)
+
+**Result:** `ADAPTER_0_0_13_PREFLIGHT_OK`. Work ID `c849bcea-fe50-4ed7-ae20-37f09f855750`. Agent: claude. Usage readings unavailable.
+
+- State: the 0.0.13 snapshot (identity binding `00a9412` + held needs_attention regression test `e2f9327`) was already checkpointed as reviewed commits; worktree clean, no product change made by this worker. `FrozenInstallCoordinator.abandon` untouched.
+- Checks: `tests.test_bm023a_adapter` 79/79; `tests.test_frozen_install` 36/36; full offline suite **1926/1926**; compileall OK; 7 tracked JSON files parse; `git diff --check` clean.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.13` at HEAD `7982471` -> exit 0, `ok:true`, stage_source `e2f9327b11371dc1bc9dc4ce4f23d7ead88f8e0b`, tree `409fb3ea97a8b988ae35e800d6e375fdbab06141`, adapter_version 0.0.13, `product_changes_to_head []`.
+- Not done: no staging, Test.app, Kodi, network, or commit. Smallest next step: separate directive to stage 0.0.13, then the supported held-retry route. No user input required.
+
+---
+
+# Review Required - BM-023A held needs_attention transaction has no supported abandon path (2026-09-29; lease 594c6bf3-1af5-4144-8c02-64edc829180e)
+
+**Result:** `REVIEW_REQUIRED_HELD_TRANSACTION_CANNOT_BE_ABANDONED_SAFELY`. Work ID `1311b839-8d10-4354-ace5-8d38cadf14cc`. Agent: claude. Usage readings unavailable. No product or adapter behavior was changed; adapter stays 0.0.13 with identity binding intact.
+
+## Analysis (read-only, offline)
+- **What rejected the state:** not `FrozenInstallStore.inspect` (`frozen_install.py:644`). It only reads and parses the durable transaction, and the live transaction parsed fine. The adapter's own precondition in `recover_frozen_install` (`tools/bm023a_adapter_support.py:310`) raises `unsupported_recovery_state` when `activation_hold_ids` is non-empty and `activation_hold_released` is false. `FrozenInstallStore.inspect` is only the reported label for that guard (all `CHECK_RECOVERY_PRECONDITIONS` failures use it). It runs after the phase check and the 0.0.13 identity check, so the identity binding passed.
+- **Why it rejects held transactions:** it mirrors the product. `FrozenInstallCoordinator.abandon` (`frozen_install.py:2937`) returns `needs_attention` / `HELD_LIFECYCLE_CANNOT_BE_ABANDONED` ("the activation hold remains authoritative until private verification and final activation") for any transaction with an unreleased hold, before touching updater policy or the store. Without the adapter guard, `abandon` would make the same refusal (zero mutation) and the adapter would report `operation_failed`. The guard just fails earlier with a sharper category.
+- **The hold has no separate representation.** `active_activation_hold_ids` (`frozen_install.py:824`) derives holds solely from the durable transaction: none if the transaction is absent or `activation_hold_released`. The only code that sets `activation_hold_released=True` is `_finalize` (`~3197-3211`), and only after `lifecycle_stage is PRIVATE_VERIFIED` (private resource verification). So clearing a held transaction (what `abandon` does after restoring policy) would silently release the Red Light activation hold without private verification, which is the exact guarantee the hold exists for. A hold-release-on-abandon change to product code, or an adapter path that pre-releases the hold, would weaken fail-closed safety. Per the directive, I did not implement either.
+- **What the product does define for this exact state:** `_is_held_quiescence_retry_snapshot` (`frozen_install.py:487`) plus `FrozenInstallCoordinator.retry_held_quiescence` / `FrozenInstallStore.rearm_held_quiescence` is the only supported transition out of `needs_attention` + `quiescence_awaiting_restart` + unreleased hold (Red Light owner, restart count 1, updater guard required, original policy AUTOMATIC). It re-arms to `awaiting_restart` and resumes toward private verification and final activation, which releases the hold and restores updater policy normally. `test_held_retry_rejects_same_session_and_preserves_generic_abandon_rejection` (`tests/test_frozen_install.py:1562`) pins that generic `abandon` must keep rejecting held transactions. D-010 forbids manual deletion; no doc in this repo defines D-010 beyond the directive text.
+
+## Change made
+- Only `tests/test_bm023a_adapter.py`: added `test_held_redlight_quiescence_needs_attention_is_rejected_without_abandon`. It uses the live shape (Red Light hold, `quiescence_awaiting_restart`, restart count 1, guard required, matching identity) and asserts `unsupported_recovery_state` at `CHECK_RECOVERY_PRECONDITIONS`, zero `abandon` calls, unchanged transaction, policy and restart record, and a sanitized failure payload. Existing tests already cover matching identity -> exactly one `abandon(acknowledge_restore_failure=False)`, each identity mismatch/absent field/malformed or unsupported state -> zero calls, and sanitized identity diagnostics.
+- Checks: `tests.test_bm023a_adapter` **79/79**; `tests.test_frozen_install` **36/36**; full offline suite **1926/1926**; `python3 -m compileall -q resources tools tests` OK; all **7** tracked JSON files parse; `git diff --check` clean. Change left uncommitted for the reviewed-checkpoint process.
+- Not done: no Test.app, Kodi, profile, named action, network, transaction/hold/lock edit, or commit.
+
+## Decision for review (no user input needed to start)
+Recovery of the live transaction should use the supported held-retry route (`retry_held_quiescence`; the adapter has a retry mode that calls it), not abandon. The retry needs the retained manifest/artifact inputs repaired first (see the 0.0.12 follow-up (b) below). If the supervisor instead wants held transactions to be abandonable, that is a product-semantics change (define a safe hold-release/quarantine rule, with tests) and needs an explicit design decision. Do not weaken `abandon`'s held rejection otherwise.
+
+---
+
+# Current Handoff - BM-023A recovery identity binding (2026-09-29; lease 8c01966e-7ce0-4657-820a-0f96d5ac7ea1)
+
+**Result:** `RECOVERY_IDENTITY_BOUND; OFFLINE_VALIDATION_PASSED`. Work ID `7f3b6bfc-8763-4098-ab3c-2e303b1305da`. Agent: codex (`gpt-6-luna`, `max`). Usage readings unavailable per `AGENTS.md`.
+
+- The checkout already contained intentional edits in `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/default.py.in`, `tools/bm023a_adapter/addon.xml.in`, and `tests/test_bm023a_adapter.py`; they were preserved. The support module now shares the retry identity helper with recovery. Recover mode loads the retained manifest and compares the durable transaction's manifest path, build ID, manifest fingerprint, configuration manifest path, device profile ID, and private overlay ID to reviewed manifest data and adapter constants before `abandon`. The mismatch category is fixed and sanitized. The temporary adapter is 0.0.13; package member-set coverage remains in place.
+- Adapter tests cover a valid foreign transaction ID with mismatched durable identity, each tuple-field mismatch, absent/malformed transactions, sanitized diagnostics, and the generated entrypoint. A matching identity records exactly one `abandon(acknowledge_restore_failure=False)`; mismatches record zero.
+- Validation: focused adapter tests **78/78**; frozen-install tests **36/36**; full offline suite **1,925/1,925**; `python3 -m compileall -q resources tools tests`; all **7** tracked JSON files parsed; `git diff --check` passed.
+- No commit, Test.app/Kodi/profile/device access, network, LAN, staging, or live recovery was performed. The four product files remain dirty for the separate reviewed-checkpoint process. No user input is required.
+
+Smallest next step: independent review of the exact dirty snapshot and its checkpoint handling.
+
+---
+
+# Current Handoff - BM-023A action retained-input result sanitization (2026-09-28; lease 0b2f87ed-5c45-4412-a1c6-e38d853de09a)
+
+**Result:** `ACTION_RETAINED_INPUTS_ALLOWLIST_UPDATED; FULL_SUITE_SANDBOX_LIMITED`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`. Agent: codex (`gpt-6-luna`, `xhigh`). Usage readings unavailable per `AGENTS.md`.
+
+- In `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` on `action/bm023a-trusted` at base `7142246`, changed only `ai_supervisor/kodi_action.py` and `tests/test_kodi_action.py`. Retry/install results now retain `retained_inputs` with its five documented keys; the action allowlists the adapter's static failure categories, including `retained_manifest_missing`, `retained_manifest_unreadable`, and `retained_artifacts_missing`. Unknown nested keys, malformed records, and unknown failure categories are dropped.
+- Checks: focused `python3 -m unittest tests.test_kodi_action` passed **15/15**; `git diff --check` passed. Full offline suite `python3 -m unittest discover -s tests` ran **428 tests: 3 failures, 41 errors**. The 41 errors include loopback HTTP server binds rejected by this offline sandbox (`PermissionError`) and a subprocess timeout; the three failures are in monitor-control recovery, portability's configured Codex binary check, and synthetic soak recovery. No failure was in the changed module. The initial `discover -s tests -t .` attempt stopped before collection because `tests` is not a package; the directory-based run above is the completed full-suite attempt.
+- Not done: no commit, named validation action, staging, Test.app, Kodi/profile/device access, or network operation.
+
+Smallest next step: supervisor review and checkpoint of the two action-worktree files. Any staging remains under a separate directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.12 independent review PASSED; stage-source preflight OK (2026-09-28; lease 47555dc3-833e-4c65-8266-969c112d9a18)
+
+**Result:** `ADAPTER_0_0_12_REVIEW_PASSED_PREFLIGHT_OK`. Work ID `a9306a57-eda3-4dc1-9fea-1127c13348c8`. Agent: claude. Usage readings unavailable.
+
+- State note: the directive called the diff uncommitted, but it was already checkpointed as a trailered pair before this worker started: substantive `b3a4e59` (`AI-Supervisor-Part: substantive`) and tracking `f96eb98` (same review `d7482260-...`, source work `7e891152-...`, snapshot `0aa896b3...`). `git diff 2af330e b3a4e59` is exactly the four named files. The worktree was clean and this worker created no commits before this note. This is not contradictory evidence.
+- Review confirmed (read-only): `resources/lib/frozen_install.py` and all of `resources/**` are untouched (`git diff 2af330e HEAD` lists only the four files plus `.agent/HANDOFF.md`). `inspect_retained_inputs` returns only 4 booleans and 1 int, with OS errors swallowed and no path or exception text. `require_retained_inputs` raises a fixed `AdapterBootstrapError` category. Recover mode has no diff hunk, and both new calls sit only in the retry and install `LOAD_FROZEN_MANIFEST` blocks. Allowlists are complete: `LOAD_FROZEN_MANIFEST` and `pathlib.Path` were already in `ADAPTER_STAGES` and `ADAPTER_CALLABLES`, and the 3 categories, `FileNotFoundError`, `PermissionError` and `RETAINED_INPUTS_KEYS` were added. `retained_inputs` is set before the raise, so it appears on both success and failure. `AdapterBootstrapError` maps to `Exception`, and other errors go through the `SAFE_ERROR_TYPES` filter.
+- Checks: `python3 -m unittest tests.test_bm023a_adapter` 75/75 OK; full `python3 -m unittest discover -s tests -t .` **1922/1922 OK**; `git diff --check 2af330e HEAD` clean.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.12` at HEAD `f96eb98` -> exit 0, `ok:true`, stage_source `b3a4e59451a6a53eb2c257b4e626f2d36e81f567`, tree `52ba92aca017fcc20f80afda64ddd2ef1430dba9`, `adapter_version 0.0.12`, `product_changes_to_head []`.
+- Not done: no named action, Test.app, Kodi.app, normal profile, network, push or staging.
+
+## Follow-ups (separate directives)
+- (a) The action worktree's `kodi_action.py` result-key allowlist needs `retained_inputs` (and its 5 sub-keys) plus the new failure categories `retained_manifest_missing`, `retained_manifest_unreadable` and `retained_artifacts_missing`, so the new diagnostics are not dropped.
+- (b) The retained manifest and artifact store must be repaired at the exact original path from the BM-017F asset copy (fingerprint `8ce7d2daf131`) before any retry or install. Otherwise the new check fails closed with `retained_manifest_missing` or `retained_artifacts_missing`.
+
+Smallest next step (supervisor): handle (a) and (b), then stage 0.0.12 under a separate directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A adapter 0.0.12 retained-input diagnostics (2026-09-28; lease 9efffb21-5020-43d9-b16c-59b7a1a7ec43)
+
+**Result:** `OFFLINE_ADAPTER_RETAINED_INPUT_DIAGNOSTICS_ADDED_UNCOMMITTED`. Work ID `7e891152-4216-4272-a891-722846df804e`. Agent: claude. Usage readings unavailable.
+
+- Root cause being diagnosed (work `ea97dd40`): `MANIFEST_PATH` under `/private/tmp` was purged by macOS temp cleanup, so `Path(MANIFEST_PATH).read_text` raised `FileNotFoundError` at `LOAD_FROZEN_MANIFEST` and the artifact store was empty.
+- `ADAPTER_VERSION` is now **0.0.12** (`tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`). Changes are uncommitted for the armed review checkpoint. `resources/lib/frozen_install.py` and all transaction, hold and lock semantics are untouched.
+- New in `tools/bm023a_adapter_support.py`: `inspect_retained_inputs(manifest_path, artifact_root)` returns only `manifest_present`, `manifest_readable`, `artifact_store_present`, `artifact_store_readable` (booleans) and `artifact_entry_count` (int, direct entries of `ARTIFACT_ROOT/artifacts`). `require_retained_inputs(record)` raises `AdapterBootstrapError` at stage `LOAD_FROZEN_MANIFEST` / callable `pathlib.Path` with a distinct category, in priority order: `retained_manifest_missing` (absent or not a regular file), `retained_manifest_unreadable` (exists but cannot be opened), `retained_artifacts_missing` (store directory absent or zero entries). The record keeps all facts even when an earlier category wins.
+- Allowlists: `FAILURE_CATEGORIES` gained the 3 categories; `SAFE_ERROR_TYPES` gained `FileNotFoundError` and `PermissionError`; new `RETAINED_INPUTS_KEYS` names the 5 record keys.
+- `default.py.in`: in **retry and install** modes only, both calls run immediately before `Path(MANIFEST_PATH).read_text`. Recover mode is unchanged and not checked. The result gains `retained_inputs: {...}` (the record above) whenever the check ran, on success and failure. No paths or exception text are emitted.
+- Behavior note: an empty artifact store now fails closed at `LOAD_FROZEN_MANIFEST` with `retained_artifacts_missing`. Previously a missing store in retry mode failed later at `CHECK_RETRY_PRECONDITIONS` with `path_missing_or_unreadable`; that subtest's expectation was updated. Test fixtures now place one placeholder entry in the artifact store.
+- Tests (`tests/test_bm023a_adapter.py`): version assertions moved to 0.0.12; new `TestBm023aRetainedInputsDiagnostics` (11 tests: present, missing, directory-as-manifest, unreadable, empty store, absent store, precedence, sanitized record, sanitized failure payload, `FileNotFoundError`/`PermissionError` safe types, allowlist completeness by scanning support and entrypoint sources for stages, callables and categories); the generated-entrypoint test gained subtests for missing manifest, unreadable manifest, empty store and absent store in retry and install modes, an unchanged-success check with the manifest present in both modes, and recover mode not checking. The unreadable-manifest cases skip if permissions are not enforced (root).
+- Checks: `python3 -m unittest tests.test_bm023a_adapter` 75/75 OK; full `python3 -m unittest discover -s tests -t .` **1922/1922 OK**; `git diff --check` clean.
+- Not done: no commit, push, network, named action, Test.app, Kodi.app or normal profile access. The staged Test.app adapter is still 0.0.10/0.0.11 until a separate staging directive.
+
+## Follow-ups outside this task
+- (a) The action worktree's `kodi_action.py` result-key allowlist (around lines 49-56) needs matching keys: `retained_inputs` (and its 5 sub-keys, plus the new failure categories) so the action does not drop the new diagnostics. Not touched here.
+- (b) Retained inputs need repairing at the exact original path from the BM-017F asset copy (fingerprint `8ce7d2daf131` verified) plus artifact repopulation, before retry or install can pass the new check.
+
+Smallest next step (supervisor): checkpoint this diff as a substantive/tracking pair, run `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.12`, then handle follow-ups (a) and (b) under separate directives. No user input required.
+
+---
+
+# Previous Handoff - BM-023A action tolerates untrailered .agent-only commits (2026-09-28; lease 50e6079c-028b-443e-b1a0-348e89bff178)
+
+**Result:** `ACTION_UNTRAILERED_AGENT_TOLERANCE_COMMITTED_LOCAL`. Work ID `d1cd48c5-53b4-49b2-9794-cde2de3e762e`. Agent: claude. Usage readings unavailable.
+
+- Action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` (`action/bm023a-trusted`) was clean at `ef9aa37`. New local-only commit: **`7142246d5c73ec56eb8e4edf069900d72023dfb2`**, touching `ai_supervisor/bm023a_adapter_upgrade.py` and `tests/test_bm023a_adapter_upgrade.py`.
+- Fix: in the bounded first-parent walk of `_latest_reviewed_source_commit`, a commit with NO `AI-Supervisor-*` line is tolerated only if it has exactly one parent and a non-empty path set that is entirely `.agent` or under `.agent/`. It neither sets nor resets `child_tracking_metadata`, and it counts toward the 64-commit bound. Anything with a partial, ambiguous or empty-valued trailer still goes through `_checkpoint_metadata` and fails closed as before. Merges/roots, untrailered commits with any other path, tracking commits with non-`.agent` paths, a missing or mismatched pair, and uncommitted product drift all still fail closed. `_checkpoint_metadata` gained an optional `message` argument and a `_commit_message` helper was extracted; there is no other behavior change.
+- Tests: the old `test_malformed_tracking_metadata_fails_closed` used an untrailered `.agent` commit as its bad case, which is now legitimately tolerated. It was replaced by `test_partial_tracking_metadata_fails_closed` (only `Part:` trailer). 11 new tests cover: a scratch-repo reproduction of `2af330e` atop a trailered pair (selects the substantive commit), stacked untrailered and tracking commits, and rejection of an untrailered product commit, a mixed `.agent`+product commit, an `.agentx` lookalike, nested `docs/.agent`, an empty-path commit, an untrailered commit as the only child of the substantive commit, an untrailered merge, exceeding the bound, and uncommitted product drift. Module: 33/33 OK. Full action suite: 424 tests, 2 failures (`partial_legacy_config`, `must_be_git_worktree`), the same 2 pre-existing unrelated ones. `git diff --check` clean.
+- Read-only check: `_latest_reviewed_source_commit` against this product worktree (HEAD `2af330e`) now returns `5220cf1782016c7206405d6661a7602a80d6ce1e`.
+- Design note for review: the product preflight `tools/check_bm023a_stage_source.py` resets `child_tracking` on an untrailered commit, so it requires the tracking commit to be the immediate child of the substantive one. Per this directive, the action does NOT reset. A layout of substantive <- untrailered `.agent` commit <- tracking commit is therefore accepted by the action but rejected by the (stricter) preflight. The two agree on the real `2af330e` layout. Supervisor may want the action to reset as well.
+- Not done: no named action invoked, no Test.app, network or push. The supervisor pin config still needs review/update to `7142246`. Restaging 0.0.11 is a later, separate step.
+- Smallest next step (supervisor): review `7142246`, update the pin config, then re-issue the 0.0.11 staging directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A stage action allowlist updated for bundled_frozen_install.py (2026-09-28; lease 26ef01d2-c72e-4ae2-9774-f801daf15178)
+
+**Result:** `ACTION_ALLOWLIST_UPDATED_COMMITTED_LOCAL`. Work ID `ee83fb40-f6f0-4e8c-bf8b-264c7fc3d0b0`. Agent: claude. Usage readings unavailable.
+
+- Action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` (branch `action/bm023a-trusted`) was clean at `ab05818`. `git grep` confirmed `bundled_frozen_install.py` was absent from the allowlist before editing.
+- New action commit: **`ef9aa378ac52cbf7b9fec52befe4287e5483499e`** (local only, not pushed). `ai_supervisor/bm023a_adapter_upgrade.py` `_EXPECTED_FILES` now lists the four prior files plus `bundled_frozen_install.py`. `_hashes` still requires an exact file-set match, so missing or extra files fail closed. Identity, clean-tree, checkpoint-pair, downgrade and rollback logic are unchanged.
+- `tests/test_bm023a_adapter_upgrade.py`: the fake builder now emits the bundle, and 9 tests were added (22 total, all pass). They cover the expected file set, installing 5 files, already-current, tampered installed bundle, generated package missing the bundle or another file, an extra file (all fail closed with the install untouched), `_hashes` missing/extra/hash change, and an installed-hash mismatch after swap that rolls back.
+- Checks: focused module 22/22 OK. The full offline action suite ran 413 tests with 2 failures (`test_portability...partial_legacy_config` and `test_workspaces...must_be_git_worktree`). Both fail identically on a clean clone of `ab05818` (404 tests, same 2 failures), so they are pre-existing and unrelated. `git diff --check` clean.
+- Not done: no named action invoked, no supervisor pin config change (the pin still needs updating to `ef9aa37`), no Test.app, network or push. The only product-worktree change is this note.
+- Smallest next step (supervisor): review `ef9aa37`, update the pin configuration, then re-issue the 0.0.11 staging directive. No user input required.
+
+---
+
+# Review Required - BM-023A 0.0.11 staging action failed (2026-09-28; lease f38ed84d-a534-4582-bc35-e40e58b0a0dd)
+
+**Result:** `REVIEW_REQUIRED_STAGE_ACTION_FAILED`. Work ID `29205f7f-4334-467b-8003-c54f77660004`. Agent: codex (`gpt-6-luna`, high). Usage readings recorded as unavailable per `AGENTS.md` Codex usage rules.
+
+- Read the prescribed `AGENTS.md`, handoff, and supervisor state. Worktree is on `agent/supervised-codex`; existing `.agent/HANDOFF.md` edits were preserved. HEAD is the reviewed pair `5220cf1` / `0b6f796`; no product changes to HEAD.
+- Pinned-source preflight passed: `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11` -> exit 0, source `5220cf1782016c7206405d6661a7602a80d6ce1e`, tree `4419f4c7a362f4c1255c898f033f3cb68a0c2570`, version `0.0.11`, `product_changes_to_head: []`.
+- Requested `bm023a-stage-adapter` once through the authorized supervisor validation-action command. The action failed with sanitized `ValidationActionFailed` / `AdapterUpgradeError`: `temporary adapter upgrade failed` (return code 1). Staging is not claimed. No second action was requested.
+- No tests, install, retry, recover, network, push, or Test.app action. No changes besides this handoff update.
+- Smallest next step: supervisor review of the staging action failure and its pinned-source/staging checks; any retry requires a new directive. No user input is required.
+
+---
+
+# Current Handoff - BM-023A 0.0.11 stage-source preflight PASSED at reviewed checkpoint (2026-09-28; lease c8d34987-dd94-4371-8d5a-f88d9b445e27)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_OK_0_0_11`. Work ID `b16c33b4-89c2-44ae-9cbd-94061b2bdea1`. Agent: claude. Usage readings unavailable.
+
+- The 0.0.11 change was already committed by the armed checkpoint as a trailered pair: substantive `5220cf1` and tracking `0b6f796` (review `af02835d-...`, source work `eff03242-...`). The worktree was clean; this worker created no commits before this note.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11` -> exit 0, `ok:true`, stage_source `5220cf1782016c7206405d6661a7602a80d6ce1e`, tree `4419f4c7a362f4c1255c898f033f3cb68a0c2570`, `adapter_version 0.0.11`, `product_changes_to_head []`.
+- `python3 -m unittest tests.test_bm023a_adapter`: 64/64 OK.
+- No stage, install, retry, recover, push, network, or Test.app action. Next step: separate directive to stage 0.0.11. No user input required.
+
+---
+
+# Current Handoff - BM-023A 0.0.11 adapter bundles pinned frozen_install.py and repairs a mismatched install (2026-09-28; lease 430725af-e77e-47c3-992c-0964fd57f678)
+
+**Result:** `OFFLINE_ADAPTER_REPAIR_ADDED_UNCOMMITTED`. Work ID `eff03242-8487-4e56-88f7-7ed00cda9295`. Agent: claude. Usage readings unavailable.
+
+- `ADAPTER_VERSION` is now **0.0.11** (`tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/addon.xml.in`). Changes are uncommitted for the armed review checkpoint; no `resources/**` change.
+- `tools/build_bm023a_adapter.py` now writes and zips `bundled_frozen_install.py`, a byte copy of `resources/lib/frozen_install.py`. Its SHA-256 is the existing `EXPECTED_FROZEN_INSTALL_SHA256` pin.
+- New `repair_frozen_install_source(addon_root, pin, backup_dir, bundled_path=None)` in `tools/bm023a_adapter_support.py`, called from `default.py.in` after `verify_build_manager_source` and before `verify_frozen_install_source` and any `resources.lib.frozen_install` import:
+  - Hash matches the pin: untouched, with no bundle read and no backup.
+  - Hash differs: the bundled bytes must hash to the pin (`bundled_source_mismatch`). The addon root must be absolute, free of `..`, unchanged by resolution and named `script.build.manager`. The target must be a regular non-symlink file that resolves to exactly `<addon>/resources/lib/frozen_install.py` (`source_target_invalid`). The original is backed up to `<profile>/addon_data/script.build.manager.bm023a_driver/frozen_install_backups/frozen_install.<hash16>.py.bak` (never the Build Manager `addon_data`). Then a same-directory temp file is fsynced and `os.replace`d over that one file, and the hash is re-verified. Failures use `source_replace_failed` (original untouched) or `source_reverify_failed` (original restored best-effort). Error text is never included.
+  - The result gains `frozen_install_source: {sha256_before, sha256_after, replaced}`. It carries hashes only and is present whenever the repair step ran, including later failures.
+- `verify_frozen_install_source` is unchanged and still runs after the repair, so the mismatch/missing/unreadable behavior is otherwise identical. It is exercised by a regression test.
+- Four new failure categories were added to the allowlist. No transaction, lock, hold, settings or private file is read or written, and no Kodi.app or normal profile path is involved.
+- Tests (`tests/test_bm023a_adapter.py`): new `TestBm023aFrozenInstallRepair` (12 tests covering mismatch->replaced with backup, match->untouched, bundled hash mismatch and missing bundle->fail closed, symlinked file/directory/root, traversal, wrong add-on name, replace failure->original preserved, reverify failure->restored, only sanitized hash keys, invalid pin, and `verify_frozen_install_source` unchanged). The builder test now expects the bundle and 0.0.11. The generated-entrypoint mismatch subtest now expects repair success with recorded hashes (previously fail closed), plus a match subtest that expects no replacement.
+- Checks: focused `tests.test_bm023a_adapter` 64/64 OK; full `python3 -m unittest discover -s tests -t .` **1911/1911 OK**; `git diff --check` clean.
+- Not done: no stage, install, retry, recover, commit, push, network, Test.app or action-worktree change. The staged Test.app adapter is still 0.0.10 until a separate directive stages the new reviewed source.
+- Next step (supervisor): review and checkpoint this diff as a substantive/tracking pair, run `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.11`, then stage under a separate directive. No user input required.
+
+---
+
+# Current Handoff - BM-023A 0.0.10 adapter stage action (2026-09-28; lease 90f0bd81-4f4b-4ccb-9d45-33c2152cf7dc)
+
+**Result:** `STAGE_ADAPTER_VERIFIED_ALREADY_CURRENT`. Work ID `1292f688-574b-48ce-b350-e6897e4234a4`. Agent: claude. Usage readings unavailable.
+
+- Preflight (`--expected-version 0.0.10`) at HEAD `b332847`: exit 0, `ok:true`, stage source `d4bf04e7`, adapter_version 0.0.10, no product changes to HEAD.
+- `bm023a-stage-adapter` action: `ok:true`, `already_current:true`, `files_verified:4`, `reviewed_source d4bf04e7fe97`, `version_before` = `version_after` = 0.0.10.
+- Read-only `test-app-kodi`: Ping-equivalent `Application.GetProperties` OK (Kodi 21.3); `Addons.GetAddonDetails script.build.manager.bm023a_driver` = version 0.0.10, enabled.
+- Process check: `/Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi -p` is running (portable mode).
+- No install/retry/recover, no Kodi.app or normal profile access, no push, no commits. Next step: separate directive for any further Test.app action. No user input required.
+
+---
+
+# Current Handoff - stage-source preflight PASSED at reviewed checkpoint (2026-09-28; lease bdc97fb8-a0d2-4581-919d-9027b3cf37ac)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_OK`. Work ID `00ce97af-b91b-4adf-a68a-f25f2d980822`. Agent: claude. Usage readings unavailable.
+
+- HEAD `b3328476e8c8cfd291cb29f11020576300d47c9a` is a trailered tracking commit (review checkpoint `74086c8d-...`) paired with substantive `d4bf04e`. Worktree was clean; no commits created by this worker before this note.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10` -> exit 0, `ok:true`, stage_source commit `d4bf04e7fe97925770b2699ec7147ce9aceaaf65`, tree `14144c9caf3b344078806983a9a28feec5c921dc`, `adapter_version 0.0.10`, `product_changes_to_head []`. Preflight was not narrowed.
+- Note: the stage source is now `d4bf04e`, not the older pin `72e327e`. Adapter inputs are unchanged, so the version remains 0.0.10.
+- No push, network, Test.app, or action-worktree change. Next step: a separate directive for staging. No user input required.
+
+---
+
+# Current Handoff - stage-source preflight regression tests for the untrailered-.agent tolerance (2026-09-28; lease 6aa0c474-7e24-4267-8c79-f52ae42028ea)
+
+**Result:** `OFFLINE_REGRESSION_TESTS_ADDED_UNCOMMITTED`. Work ID `cf9d111f-9ccb-4d85-875b-c84537b7d074`. Agent: claude. Usage readings unavailable.
+
+- Changed only `tests/test_check_bm023a_stage_source.py` (uncommitted, for the armed review checkpoint). `tools/check_bm023a_stage_source.py` is unchanged; acceptance semantics are not narrowed or weakened.
+- Added 2 tests: `test_untrailered_commit_tolerance_rejects_non_agent_only_changes` (untrailered commits that mix `.agent` and product paths, product-only, `.agentx/` lookalike, and nested `docs/.agent/` are all rejected as `untrailered_product_commit`, with `main` exit 1) and `test_untrailered_empty_commit_is_rejected` (an untrailered commit with no paths is rejected).
+- Checks: focused module 18/18 OK; full `python3 -m unittest discover -s tests -t .` **1898/1898 OK**; `git diff --check` clean.
+- No commit, push, network, Test.app, or action-worktree change.
+- Next step (supervisor): let the armed checkpoint trailer this diff as a substantive/tracking pair, then rerun `python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10`. Note that `76b0c3c` itself remains an untrailered committed product commit and this pair does not retro-review it; the earlier review-required note below still applies. No user input required.
+
+---
+
+# Review Required - 76b0c3c review PASSED, but the armed checkpoint cannot produce a substantive/tracking pair (2026-09-28; lease 193a69d6-255f-4a50-946b-a72c831d058c)
+
+**Result:** `REVIEW_REQUIRED_CHECKPOINT_MECHANISM_CANNOT_PAIR_COMMITTED_SOURCE`. Work ID `80ef275a-d2bb-4303-ad5e-170e29ff7995`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. No commit was created and the preflight was NOT narrowed.
+
+## Step 1 - independent read-only review of 76b0c3c..897a9fc: PASS
+- `tools/check_bm023a_stage_source.py` fails closed on: untrailered product commits (`untrailered_product_commit`), partial trailers (`checkpoint_metadata_incomplete`), merges/roots (`lineage_ambiguous`), missing pair (`tracking_pair_missing`/`head_not_tracking`), mismatched pair trailers, committed drift after the source (`product_changes_after_source`), uncommitted non-`.agent` changes including untracked (`uncommitted_product_changes`), version mismatch, and missing version. The `.agent`-only tolerance requires every changed path to be `.agent` or `.agent/**`; a commit with no paths or any other path is rejected, and a tolerated untrailered commit resets the tracking-child slot so it can never serve as the tracking half of a pair.
+- Only `tools/check_bm023a_stage_source.py`, `tests/test_check_bm023a_stage_source.py` and `.agent/HANDOFF.md` differ across 1c8e89b..897a9fc.
+- Focused module 16/16 OK; full suite `python3 -m unittest discover -s tests -t .` **1896/1896 OK**; `git diff --check` clean.
+
+## Step 2 - blocked (contradiction)
+- `ai_supervisor/review_checkpoint.py` `apply_review_checkpoint` creates a substantive commit only `if captured_substantive:`, i.e. from paths that are dirty in the worktree when the review launches. Here the only dirty path is `.agent/HANDOFF.md` (pre-launch). `76b0c3c` and `897a9fc` are already committed, so the mechanism would create just ONE trailered `tracking` commit and no substantive partner. The mechanism cannot retro-review already-committed commits.
+- Simulated in a scratch clone (removed): `897a9fc` + one trailered tracking commit of the handoff, then the preflight: still `ok:false`, `untrailered_product_commit` (76b0c3c is untrailered product source, nearest substantive `72e327e`). So the directive's expected end state (`ok:true`, `0.0.10`) cannot be reached by letting the armed checkpoint run.
+- Also, the checkpoint snapshot fingerprint includes the `.agent/HANDOFF.md` diff; this note edits it, so the armed checkpoint would fail with "reviewed worktree changed after the independent review began" if the review had been allowed to complete. Yielding `review-required` (not `complete`) avoids committing anything.
+
+## Step 3 - preflight output (not ok; no checkpoint occurred)
+`PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py --expected-version 0.0.10` at HEAD `897a9fc903a44693d4a2ca555032b75335948bde` -> exit 1, `ok:false`, `category: untrailered_product_commit`; `nearest_substantive` = `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `adapter_version 0.0.10`, `product_changes_to_head` = the two preflight files.
+
+## Not done
+No commit, push, network, Test.app, or action-worktree change. Only change: this note (uncommitted).
+
+## Smallest next step (supervisor, no user input)
+Make `76b0c3c` a reviewed substantive commit in a way the mechanism supports: e.g. `git reset --mixed 1c8e89b` (keeps files, drops the two local unpushed commits) so `tools/check_bm023a_stage_source.py` and `tests/test_check_bm023a_stage_source.py` are dirty product paths, then run the armed read-only review (this review's PASS applies to that exact content) so the framework makes the trailered substantive + tracking pair; or extend the mechanism to trailer already-committed reviewed ranges. Either needs supervisor authority; I did not rewrite history. Then rerun the preflight and expect `ok:true` / `0.0.10`.
+
+---
+
+# Review Required - re-verified: 76b0c3c needs an independent reviewed checkpoint; preflight NOT narrowed (2026-09-28; lease 57f6bedf-4fa6-44f9-b7de-467a05021462)
+
+**Result:** `REVIEW_REQUIRED_PREFLIGHT_HARNESS_IS_STAGED_SOURCE`. Work ID `dd2855a5-2e40-4c3d-855d-a3107ff5b03a`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. This is the same directive as `4668b7ad` below, and the result is the same: branch (b).
+
+- I re-checked the evidence read-only at product HEAD `897a9fc903a44693d4a2ca555032b75335948bde` and action HEAD `ab058180039c6fc7c110603be366c32bf11168bd`. In the action, `_extract_reviewed_source` runs `git archive --format=tar <reviewed_commit>`, which extracts the whole tracked tree. `git ls-tree 72e327e` lists `tools/check_bm023a_stage_source.py` (blob `34d8750…`) and `tests/test_check_bm023a_stage_source.py` (blob `78f3d63…`). Both files are therefore staged product source. They are not adapter build inputs.
+- `76b0c3c` and `897a9fc` both have no `AI-Supervisor-*` trailers; each carries only `Co-Authored-By`. The action's lineage walk calls `_checkpoint_metadata` on every commit, so the live action would also fail closed at this HEAD.
+- Live preflight (`--expected-version 0.0.10`, exit 1): `ok:false`, `untrailered_product_commit`. `nearest_substantive` is `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, version `0.0.10`, with `product_changes_to_head` = the two preflight files.
+- No code or test changes were made, no tests ran, and nothing was committed. The action worktree was not modified. No push, network, Test.app, or host action occurred.
+- **Next step (supervisor):** checkpoint `76b0c3c` as an independent reviewed substantive/tracking pair. Make HEAD end on a trailered tracking commit that includes these `.agent` handoff edits. Then rerun the preflight and expect `ok:true` / `0.0.10`. No user input is required.
+
+---
+
+# Review Required - 76b0c3c needs an independent reviewed checkpoint; preflight NOT narrowed (2026-09-28; lease f64ebde7-420a-4e13-a59c-81d19f09c25a)
+
+**Result:** `REVIEW_REQUIRED_PREFLIGHT_HARNESS_IS_STAGED_SOURCE`. Work ID `4668b7ad-3732-4182-9e9c-e4f52a7df146`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable. Branch (b) of the directive applies: the evidence does not prove that the two preflight paths are outside the staged source, so the guard was not weakened.
+
+## Evidence (read-only; product HEAD `897a9fc903a44693d4a2ca555032b75335948bde`, action HEAD `ab05818`)
+
+- **The staged source is the whole reviewed tree.** `ai_supervisor/bm023a_adapter_upgrade.py` (`_extract_reviewed_source`) runs `git archive --format=tar <reviewed_commit>` and extracts every tracked path. It then imports `tools.build_bm023a_adapter` and `tools.bm023a_adapter_support` from that extracted tree. Both `tools/check_bm023a_stage_source.py` (blob `34d8750…`) and `tests/test_check_bm023a_stage_source.py` (blob `78f3d63…`) are tracked in the reviewed tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` of `72e327e`. They are therefore part of the staged product source, even though they are not adapter build inputs.
+- **Narrow build inputs, for reference only.** `build_adapter` reads `tools/build_bm023a_adapter.py`, `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/{default.py.in,addon.xml.in}`, and `resources/lib/frozen_install.py`. Nothing in the builder imports or references the preflight; the only reference is from its own test.
+- **The live action selector fails closed at this HEAD anyway.** Running `_latest_reviewed_source_commit(_PRODUCT_ROOT)` read-only from the action worktree gives `reviewed source checkpoint metadata is incomplete`. Both `897a9fc` (`.agent/HANDOFF.md` only) and `76b0c3c` (the two preflight files) have 0 `AI-Supervisor-*` trailers. If the preflight tolerated these commits, it would report `ok:true` while the action it predicts fails, defeating the preflight's purpose.
+- **Self-certification.** `76b0c3c` rewrote the preflight's own acceptance logic. Exempting the preflight's own files from review would let an unreviewed commit certify itself.
+- Live preflight output (`--expected-version 0.0.10`, exit 1): `ok:false`, `category: untrailered_product_commit`, head `897a9fc…`. `nearest_substantive`: commit `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91e…`, `adapter_version 0.0.10`, `product_changes_to_head` = `[tests/test_check_bm023a_stage_source.py, tools/check_bm023a_stage_source.py]`.
+
+## Not done
+
+No code, test, or preflight changes were made and no commit was created; the only change is this handoff note, left uncommitted. No tests ran because no code changed. The action worktree was not modified (read and import only; `PYTHONDONTWRITEBYTECODE=1`). No push, Test.app, network, or host action occurred.
+
+## Smallest next step (supervisor)
+
+`76b0c3c` needs its own independent reviewed checkpoint: a substantive/tracking trailer pair through the reviewed-checkpoint mechanism, with HEAD ending on a trailered tracking commit. `897a9fc` and this note are untrailered `.agent` commits, which the live action `ab05818` also rejects. Fold them into the tracking half, or make sure no untrailered commit sits above the pair. After that, the preflight and the action should both report a new stage source whose adapter inputs are identical to `72e327e`, with version `0.0.10`. If staging must be pinned to exactly `72e327e`, that requires an explicit action-side authorization (see option 2 in the older note below). No user input is required.
+
+---
+
+# Current Handoff - BM-023A stage-source preflight tolerates untrailered .agent-only commits (2026-09-28; lease 200fce84-070d-4a29-a97d-7fc91e49638b)
+
+**Result:** `STAGE_SOURCE_PREFLIGHT_FIX_COMMITTED_PENDING_REVIEW_CHECKPOINT`. Work ID `13b10f3d-f8c6-4f37-a646-e49f9d2889a8`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable.
+
+## Evidence (verified before changes)
+
+- First-parent `72e327e..1c8e89b` has 6 commits and no merges, and every commit has one parent. `1c8e89b` has no `AI-Supervisor-*` trailers and changes only `.agent/HANDOFF.md`. `619a591`, `0d40d3c`, `9e2a057`, `4a8d8c7`, and `7b37576` are trailered `tracking` commits that change only `.agent/{AGENT_STATUS.json,CURRENT_TASK.md,HANDOFF.md,USAGE_HISTORY.md}`. `7b37576` pair-matches substantive `72e327e` (review `89da59a2-…`, source `50118de2-…`, snapshot `b3325efe…`). No untrailered commit touches non-`.agent` paths.
+- The uncommitted change was the prior worker's review-required note at the top of `.agent/HANDOFF.md` (24 added lines, `.agent` only). It is kept below.
+
+## Done
+
+- Commit `76b0c3c6f6af82ef308f74c5dbde254be71990b3` on `agent/supervised-codex` (local only, not pushed):
+  - `tools/check_bm023a_stage_source.py`: replaced the HEAD/HEAD^ pair check with the live action's (`ab05818`) bounded (64) first-parent lineage walk. The walk passes trailered tracking commits and, in addition, **untrailered commits whose changes are all under `.agent/**`**. An untrailered commit never serves as the tracking half of a pair. The nearest substantive commit must have a matching immediate tracking child. The report now includes the staged `tree`, and `--expected-version` was added.
+  - New fail-closed categories: `uncommitted_product_changes` (dirty non-`.agent`), `untrailered_product_commit`, `checkpoint_metadata_incomplete` (partial trailers), `checkpoint_part_invalid`, `lineage_ambiguous` (merge or root), `tracking_pair_missing`, `substantive_unavailable`, and `adapter_version_mismatch`. `pair_metadata_mismatch`, `head_not_tracking`, `product_changes_after_source`, and `adapter_version_unavailable` are kept. The categories `head_metadata_incomplete`, `parent_*`, and `parent_not_substantive` are gone.
+  - `tests/test_check_bm023a_stage_source.py` now has 16 tests (previously 9). Tolerated cases: stacked tracking plus untrailered `.agent` commits, including dirty `.agent`. Rejected cases: untrailered product commit, an untrailered commit as the only child of a substantive commit, uncommitted product or adapter file, version mismatch, partial trailers, merge in lineage, and tracking-commit product drift.
+- Checks: focused 16/16 OK; full `python3 -m unittest discover -s tests -t .` **1896/1896 OK**; `git diff --check` clean.
+- Preflight on a temporary clone detached at the reviewed HEAD `1c8e89b` (script from `76b0c3c`, `--expected-version 0.0.10`): `ok: true`, stage_source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `adapter_version 0.0.10`, `product_changes_to_head []`, exit 0.
+- Preflight on the live worktree at HEAD `76b0c3c`: `ok: false`, `untrailered_product_commit`. `nearest_substantive` is `72e327e`/`0.0.10`, and product changes to HEAD are exactly this fix's two files. **This is the intended fail-closed behavior:** the fix is itself an unreviewed substantive commit.
+
+## Not done
+
+The action worktree was not touched. No push, Test.app, network, or host action occurred. The live action `ab05818` still rejects untrailered `.agent` commits; this change affects only the product preflight.
+
+## Smallest next step (supervisor)
+
+Review `76b0c3c` and checkpoint it through the reviewed-checkpoint mechanism as a substantive/tracking pair. The live preflight should then report `ok:true` with a new stage source. That source contains no adapter changes, so the version stays `0.0.10`, but it will not be `72e327e`. If staging must stay pinned to exactly `72e327e`, decide how that interacts with this reviewed tooling commit before the adapter update. No user input is required.
+
+---
+
+# Review Required - BM-023A 0.0.10 stage-adapter update not started: source preflight fails (2026-09-28; lease 8e94fc10-5624-4531-9d42-5f77c93df450)
+
+**Result:** `REVIEW_REQUIRED_STAGE_SOURCE_PREFLIGHT`. Work ID `3fb0e2c7-f147-4691-9537-f0b201cc9297`. Agent: claude (`claude-opus-5-5`). Usage readings unavailable.
+
+## Verified live state (read-only)
+
+- The action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted`. Its HEAD is **`ab058180039c6fc7c110603be366c32bf11168bd`**, matching live config; the stale `68d05ae` is superseded. The worktree is writable in this lease.
+- The product worktree is clean on `agent/supervised-codex`, HEAD `1c8e89bbce893e916508ceb5c8dc88b9e4f95a6e` (`docs: checkpoint worker tracking before BM-023A 0.0.10 stage-adapter work`). It changes only `.agent/HANDOFF.md` and has **no `AI-Supervisor-*` trailers**.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py` → `ok: false`, `category: head_metadata_incomplete`. The diagnostic-only `nearest_substantive` field reports `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` (tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6`, `ADAPTER_VERSION = "0.0.10"`, no product changes to HEAD).
+- The first-parent chain is: `1c8e89b` (no trailers) → `619a591`, `0d40d3c`, `9e2a057`, `4a8d8c7`, `7b37576` (tracking checkpoints, `.agent/**` only) → `72e327e` (substantive; review `89da59a2-…`, source `50118de2-…`, pair-matched by `7b37576`).
+- The identity evidence is consistent, with no contradiction. The directive's precondition fails, however: the preflight must report `ok:true`/`0.0.10`. The live action at `ab05818` would also fail closed on this HEAD, because `_latest_reviewed_source_commit` calls `_checkpoint_metadata` on every lineage commit, and `1c8e89b` lacks trailers.
+
+## Not done
+
+No action code or tests were changed. No action tests ran. No commits were made in the action or product worktree. No host action, Test.app, network, or snapshot access (0.0.9 or 0.0.10) occurred. The only change is this handoff note, left uncommitted.
+
+## Smallest next step (supervisor)
+
+Choose one of these. Neither needs user input.
+1. Checkpoint the product worktree through the reviewed-checkpoint mechanism, so that HEAD is a trailer-bearing tracking commit. Then rerun the preflight (expect `ok:true`, `0.0.10`) and reissue this directive.
+2. Explicitly authorize pinning `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2` / tree `8a15b91e…` in the action, with the lineage from HEAD to the pin restricted to `.agent/**`-only commits whether or not they carry trailers. Update the preflight to match.
+
+---
+
+# Review Required - tracking checkpoint 8cde87c9 not performed (2026-09-28; lease d102c43b-c40d-4bc8-b3bd-c8756cd00401)
+
+- Directive expected HEAD `0d40d3c` with pending `.agent/**` edits. Observed: branch `agent/supervised-codex`, HEAD `619a5912c8c8fd6bd44eb1e4f80c1823592cfeb3` (`docs: record reviewed checkpoint b111553a-669`, touches only `.agent/**`), worktree clean before this note.
+- The expected tracking changes appear to be already committed in `619a591`. Per the directive's HEAD-mismatch rule, no commit was created. This handoff note is the only change, and it is uncommitted.
+- Next step: the supervisor should confirm that `619a591` is the intended checkpoint and then reissue the directive.
+
+# Current Handoff - ai-supervisor secondary writable-root control-plane maintenance (2026-09-28; lease 9208502b-4cfb-4b8b-b2b5-b749cec0c993)
+
+**Result:** `CONTROL_PLANE_CHANGE_READY_FOR_REVIEW` (work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`). Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
+
+## Done
+
+- Established an isolated, offline clone of the framework at `/private/tmp/ai-supervisor-codex-1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`, based on clean `main` `6e369bf`. Work is on `codex/secondary-writable-roots`, commit `dd8b0ed`; the clone has no remote and is clean.
+- Added an empty-by-default trusted `secondary_writable_roots` config allowlist and a separate per-work `writable_roots` selection exposed through `dispatch` and `queue-add` as repeated `--writable-root` options. Unselected roots and autonomy-planner requests are not passed through.
+- Added canonical path and Git-root checks; rejects untrusted, broad, protected, detached/protected-branch, dirty-new-work, symlinked, and symlink-escaping roots. Codex receives only selected roots through `--add-dir`; such launches start fresh because the installed `codex exec resume` help does not accept `--add-dir`. Claude receives the same selected roots through sandbox `allowWrite`. Read-only work rejects root selections, and Codex `extra_args` cannot inject `--add-dir`.
+- Read-only resolver validation of `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` passed at its canonical path on clean branch `action/bm023a-trusted`, with no symlink escape found. The reviewed snapshot was explicitly protected during that check and remains untouched.
+- Focused offline tests passed **64/64** across the new regression tests, workflow, and policy controls. `dispatch --help`, `queue-add --help`, and `git diff --check` passed.
+
+## Not done and limits
+
+- Full suite run: **643 tests; 597 passed, 2 failed, 44 errors**. Most errors came from loopback test servers whose `bind()` was denied by the sandbox; a synthetic subprocess recovery test timed out, and the two failures were process-identity/soak recovery checks. Focused tests pass after the final launch adjustment. No listener or network request succeeded.
+- The active supervisor config and work state were not changed: `work.writable_roots` is null and the default allowlist remains empty. The framework change is not deployed, and no worker was given the secondary root in this task.
+- The original framework checkout, dedicated action checkout, and reviewed snapshot were not modified. No Test.app, Kodi, LAN, network, or host validation action occurred.
+
+## Smallest next step
+
+Supervisor review the isolated branch/commit `dd8b0ed` and integrate it through the authorized framework route. After deployment, configure only the exact action checkout in trusted `secondary_writable_roots` and dispatch the BM-023A action update with `--writable-root /Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`. Keep `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.9` read-only and do not repoint validation actions to framework main. No user input is required.
+
+---
+
+# Previous Handoff - BM-023A fixed staging action update (2026-09-28; lease c2301cf6-fb94-42b0-8179-bb7bfe38de98)
+
+**Result:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE`.
+Work ID: `5ba09aea-b318-4a27-bd49-9267648dd2d2`. Agent: codex (`gpt-6-luna`, `max`; observed in supervisor state). Usage readings are unavailable per `AGENTS.md`.
+
+## Verified
+
+- Product worktree is clean on `agent/supervised-codex` at `4a8d8c78ee0179bbf5fa77bcf7f2d5ef3e1873d2`; the latest commit changes only `.agent` tracking files.
+- Read-only `PYTHONDONTWRITEBYTECODE=1 python3 tools/check_bm023a_stage_source.py` fails closed with `parent_not_substantive`: HEAD `4a8d8c7` is a tracking commit stacked on another tracking commit. Its diagnostic identifies reviewed source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, and no product drift. That source resolves to tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` in both the product checkout and the dedicated snapshot.
+- Fixed action checkout is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its latest change requires a current matching tracking/substantive pair; it does not stage the reviewed Build Manager add-on with the adapter. The reviewed snapshot is clean but HEAD remains stale at `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`); the exact reviewed `72e327e` commit is present in it.
+- The action checkout and canonical framework checkout exist but are not writable in this lease. Supervisor state has no `work.writable_roots`, `work.actions` is empty, and `handoff_requested=false`; the only configured writable root is this product worktree (plus temporary roots). The reviewed-source snapshot remains read-only as directed.
+- The current directive explicitly says no host validation action is authorized for this work item. No Test.app action, Kodi action, network access, or device action occurred.
+
+## Not done
+
+No action implementation or regression tests were changed, and no action tests or full suite were run. Independent review/pinning, Test.app staging/verification, and `bm023a-recover` were not performed. The action write route is absent; the source preflight also currently rejects the stacked tracking pair. No product files outside `.agent` were changed.
+
+## Smallest next step
+
+Internal review should issue a new offline workspace-write lease with an exact writable root for `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, leaving the reviewed-source snapshot read-only. Then make the fixed action stage the exact reviewed add-on together with the adapter, preserve fail-closed identity checks, add regression coverage, and independently review/pin the exact action change. Keep all Test.app activity stopped under this work item's explicit no-host-validation restriction; recovery must remain conditional on a later authorized validation directive and passing source identity checks.
+
+**Human input:** None. This is an internal scope/tooling blocker.
+
+---
+
+# Previous Handoff - BM-023A staging-precondition preflight (2026-09-28; lease 276211ae-e0ca-4d25-baae-5af012153d67)
+
+**Result:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (uncommitted, for the reviewed-checkpoint mechanism).
+Work ID: `50118de2-ef3e-4b81-be18-269326b62e57`. Agent: claude (`claude-opus-5-5`).
+
+## Done
+
+- Added `tools/check_bm023a_stage_source.py`: read-only git preflight replicating the trusted adapter's (`ai_supervisor/bm023a_adapter_upgrade.py` at `68d05ae`) HEAD/HEAD^ checkpoint-pair selection. Prints JSON with the would-be-staged commit, its literal `ADAPTER_VERSION` (parsed via `ast`, not imported), and non-`.agent/` paths changed between it and HEAD. Exits 1 with a sanitized `category` (`head_unavailable`, `head_metadata_incomplete`, `head_not_tracking`, `parent_unavailable`, `parent_metadata_incomplete`, `parent_not_substantive`, `pair_metadata_mismatch`, `adapter_version_unavailable`, `product_changes_after_source`, `git_unavailable`). On pair failure it also reports `nearest_substantive` from a first-parent walk capped at 64 commits (diagnostic only; the trusted adapter never uses it).
+- Added `tests/test_check_bm023a_stage_source.py` (9 tests, temporary git repos): valid pair, tracking-over-tracking, mismatched review/source/snapshot trailers, missing HEAD/parent trailers, HEAD substantive, tracking-commit product drift, missing adapter version, non-repository.
+- Checks: new tests 9/9; adapter tests `tests.test_bm023a_adapter` 51/51; full offline suite **1,889/1,889**; `git diff --check` clean (new untracked files also checked with `--no-index --check`).
+- Live read-only run on this worktree: HEAD `7f05566` (tracking) -> `parent_not_substantive`; nearest substantive `fae686b` declares `0.0.10` with no non-`.agent` product changes to HEAD. This confirms that staging fails today only because tracking commits are stacked, not because of product drift.
+- Not modified: `tools/bm023a_adapter/**`, `tools/build_bm023a_adapter.py`, `tools/bm023a_adapter_support.py`, `resources/**`. No commit, rebase, network, LAN, Test.app, host, or device action.
+- Note: the directive cited HEAD `d4f61f5`; actual HEAD was `7f05566` (another tracking checkpoint for work `10761739`), with a clean tree and no pending `.agent` diffs. Same failure mode, so not contradictory.
+
+## Smallest next step
+
+Supervisor review and checkpoint of this diff. That checkpoint makes a new substantive/tracking pair at HEAD, so staging becomes valid again. Staging that new pair still needs its own directive. Before staging, run `python3 tools/check_bm023a_stage_source.py`: it should print `ok: true` and version `0.0.10`. No user input required.
+
+---
+
+# Current Handoff - ai-supervisor Codex writable-root propagation (2026-09-27; lease 261bc5cf-43a7-4a49-9a4a-b87b134477bb)
+
+**Result:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE`.
+Work ID: `edad8d24-aee6-466f-ada1-f6f8f50594c0`.
+
+## Verified state
+
+- The product workspace is clean on `agent/supervised-codex` at `d4f61f5`. The framework checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `08b7689`, but `os.access(..., W_OK)` is false; it is outside this lease's writable roots.
+- Active supervisor state reports work ID `edad8d24-aee6-466f-ada1-f6f8f50594c0`, mode `workspace-write`, and network `offline`. Neither the active `lease` nor `work` object contains an approved writable-root field. Their key sets were inspected; `lease.ipc_workspace` identifies only the worker workspace.
+- `ai_supervisor/lease.py` constructs lease records with owner/ID/timing/process/output fields, `ipc_workspace`, and `launch_token`; it has no exact extra-root field. `ai_supervisor/launcher.py` launches Codex with the selected sandbox mode and disables sandbox network access; it adds no approved-root `--add-dir` arguments. Repository search found no approved writable-root source. Prompt text is not an authority source.
+- The exact-root source prerequisite is absent. Per directive, implementation and regressions were not started and focused framework tests were not run. No source files changed.
+- No network, LAN, host validation, adapter staging, Test.app, or device action occurred. Observed Codex model/effort: `gpt-6-luna` / `max`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Supervisor review must establish a trusted, explicit root-list field in the work/lease contract and grant this worker's sandbox write access to the framework checkout if it is an approved target. Then implement canonicalization and protected/symlink-escape rejection, pass only those roots to Codex (workspace alone when the list is empty), add offline regressions, and run focused tests. No user decision is required by this blocker.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 2adabd6b-9169-4295-aa2b-c87ea48ead1c)
+
+**Result:** `REVIEW_REQUIRED_INTERNAL_WRITE_ROUTE`.
+Work ID: `44100602-496e-46ba-9561-e13143fe20d7`.
+
+## Verified state
+
+- Product checkout is `agent/supervised-codex` at `895069324bdf6de32baebfe96a32277e3e9c8871`. Reviewed commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` is a commit object in the dedicated snapshot and resolves to expected tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`; its reviewed metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. The adapter template and support declare `0.0.10`.
+- The named action worktree `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` is clean on `action/bm023a-trusted` at `68d05aead64dba1eeb8782946becd0be8fb29d21`. Its current implementation selects a review checkpoint dynamically and derives the adapter version; it does not consume the dedicated snapshot or enforce the requested exact source, clean snapshot, and fixed `0.0.10` guards.
+- The dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`). The reviewed commit's identity and tree match the directive; no mismatch was found.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`. The existing tests do not cover the requested exact-source, clean-snapshot, or fixed-version guards.
+- Despite the directive naming both external targets as this lease's writable scope, `test -w` reports both paths non-writable in the actual worker sandbox. No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed.
+- Observed Codex model/effort: `gpt-6-luna` / `max`. Remaining-usage readings are recorded as unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Internal review to restore the worker's write route for the named action worktree and dedicated snapshot. Then advance the clean snapshot to `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, implement exact-source / clean-snapshot / fixed-`0.0.10` guards with offline regressions, and rerun the focused action tests. No user decision is needed.
+
+## Human input
+
+None. This is an internal writable-scope/tooling blocker.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease d90e46c9-98c8-4ac4-9c83-6d68d1994326)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- The reviewed source checkpoint is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`; its reviewed metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. The checkpoint declares adapter version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. Existing changes are confined to `.agent` tracking files; this lease made no product implementation changes.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Current tests still cover dynamically selected reviewed checkpoints and deriving version from source; the requested exact source pin, dedicated snapshot clean-tree requirement, and fixed `0.0.10` enforcement remain absent.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The action checkout and snapshot are outside this lease's writable root, which is limited to the supervised product checkout and temporary roots. This is an internal writable-scope review blocker; checkpoint and workspace identities are unambiguous.
+- No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed. Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical trusted action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, enforce version `0.0.10`, add fail-closed offline regression coverage, and rerun the action tests. Do not stage an adapter or interact with Test.app in this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease a866c424-46f1-479f-9deb-9d341938f287)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- Reviewed source checkpoint identity remains exact: `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`; metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. Its adapter template is version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; this lease changed only `.agent` tracking files.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Relevant commit `09f5a1a95d84cef125b1138e6ac67504a3e22146` changed selection to the current reviewed tracking/substantive pair and removed the product clean-tree gate. Current code still does not pin the exact source HEAD, require the dedicated snapshot to be clean, or enforce version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`.
+- Focused action tests were rerun: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. Both external worktrees stayed clean. No action or snapshot files changed; no adapter was staged and Test.app, host validation, and network were not accessed.
+- The action checkout and snapshot are outside this lease's writable root, limited to this supervised product checkout and temporary roots. This is an internal writable-scope review blocker; the checkpoint and workspace identities are unambiguous.
+- Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical trusted action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, enforce version `0.0.10`, add fail-closed offline regression coverage, and rerun the action tests. Do not stage an adapter or interact with Test.app in this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease ed537aa2-f108-464f-8378-52842a8a0b42)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- Reviewed source commit `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` has tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`, and reviewed-checkpoint metadata for review `74da9559-1b2f-4466-866f-de3106a7005c` and source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`. Its adapter template declares `0.0.10`.
+- Product checkout remains `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; only the existing `.agent` tracking files are modified. No product implementation files changed.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d`. Commit `09f5a1a` removed the fixed source HEAD and clean-tree checks and made source selection dynamic; the current action derives the version rather than pinning `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Both required targets are outside this lease's writable root, which is limited to this supervised product checkout and temporary roots. Their identities are unambiguous, so this is an internal write-scope review blocker.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The trusted action remained clean on `main` and the dedicated snapshot remained clean at stale `b0a56f6`. No action or snapshot files changed. No adapter was staged; Test.app, host validation, and network were not accessed.
+- Observed Codex model/effort: `gpt-6-luna` / `xhigh`. Usage readings are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant this worker writable scope to the canonical action checkout and dedicated snapshot. Then pin exact source HEAD `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, require the dedicated snapshot to be clean, and enforce version `0.0.10` with fail-closed offline regressions. Do not stage an adapter or interact with Test.app under this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+---
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (2026-09-27; lease 1c00cd61-c3ba-4e84-bdf1-532d65953650)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`.
+
+## Verified state
+
+- The reviewed source commit is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`. Its reviewed-checkpoint metadata identifies review `74da9559-1b2f-4466-866f-de3106a7005c`, source work `2d09e1df-1cbc-4f8e-96bc-a4c3c26af415`, and product adapter version `0.0.10`.
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; its only changes are the existing `.agent` handoff metadata files.
+- Canonical trusted action checkout `/Users/eengert/Documents/Kodi/tools/ai-supervisor` is clean on `main` at `107ca9869c05abc9acc01143b34d3dcf9571115d` (tree `85931ec309f57f7c5ddcd1ea2a7c37279a872ee3`), aligned with `origin/main`. Commit `09f5a1a` changed staging to select the current review checkpoint dynamically and removed the dirty-product-tree gate. The action derives version from source; it does not pin this reviewed HEAD, require a clean dedicated snapshot, or enforce version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` is clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`), not the reviewed source.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at action HEAD `107ca986`. The action checkout remained clean after the run. No action or snapshot files changed; no adapter was staged, and Test.app, host validation, and network were not accessed.
+- Both requested write targets are outside this worker's writable root, which is limited to the supervised product checkout and temporary roots. The source and canonical action workspace identities are clear; this is an internal writable-scope review blocker, not a user decision. Observed Codex model/effort: `gpt-6-luna` / `xhigh`; usage readings for this lease are unavailable per `AGENTS.md`.
+
+## Smallest next step
+
+Grant writable scope to the canonical action checkout and dedicated snapshot. Then pin the exact reviewed source HEAD and fixed `0.0.10` version, enforce a clean dedicated snapshot and fail-closed regression coverage, and rerun the focused offline action tests. Do not stage an adapter or interact with Test.app under this work item.
+
+## Human input
+
+None. Internal writable-scope review is required.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease 18761afb-d8aa-487a-85e7-568dfdcdaee3)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; adapter implementation and snapshot update were not started.
+Work ID: `7f7985ce-0e9f-4dc4-9e4e-25e156064382`; supervisor lease: `18761afb-d8aa-487a-85e7-568dfdcdaee3`.
+
+## Verified identities and validation
+
+- Product checkout is `agent/supervised-codex` at `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`; the exact reviewed source commit is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`, parent `873e82530933e25dcae3ab9e83665dc35d127281`. The checkpoint driver declares version `0.0.10`.
+- The documented trusted action checkout is `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `ca4515f` and aligned with `origin/main`. The single commit since the previous handoff HEAD `a581472` changes portability files only; the BM-023A action and test files are unchanged. Focused offline action tests `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** at `ca4515f`. Existing coverage still selects reviewed checkpoints dynamically and derives the version from source; it does not pin this exact source HEAD, require the dedicated product snapshot to be clean, or fix version `0.0.10`.
+- Dedicated snapshot `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10` remains clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`), not `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`.
+- The trusted action checkout and dedicated snapshot are outside this worker's writable root, which is the supervised product checkout; both were confirmed non-writable. The action remained clean after testing. No action or snapshot files changed. No adapter was staged; Test.app, host validation, network, Kodi profile, and device actions were not used. Supervisor state identified the active Codex model/effort as `gpt-6-luna` / `xhigh`; usage readings are recorded as unavailable per `AGENTS.md`.
+
+## Blocker and next step
+
+This is an internal writable-scope review gate; no user decision is needed. The checkpoint and canonical action checkout identities are established, and the focused offline baseline is current and passing, but the requested action and snapshot changes cannot be written from this worker's permitted scope.
+
+**Smallest next step:** grant writable scope to the trusted action checkout and dedicated snapshot, then pin source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda`, enforce exact HEAD, clean-snapshot, and fixed `0.0.10` checks fail-closed with regression coverage, and rerun the focused offline action tests. Do not stage an adapter or interact with Test.app under this work item.
+
+**Human input:** none; this requires internal scope review.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease e04bcc32-d02d-4369-80e5-3c7f93e53708)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; `IMPLEMENTATION_NOT_STARTED`.
+Prior lease: `e04bcc32-d02d-4369-80e5-3c7f93e53708`.
+
+## Verified identities and validation
+
+- Product checkout: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-supervised-codex`, branch `agent/supervised-codex`, HEAD `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. The exact reviewed source is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`), parent `873e82530933e25dcae3ab9e83665dc35d127281`; its driver `addon.xml.in` declares version `0.0.10`.
+- Handoff-designated trusted action checkout: `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `039a8d4b141c069230843990e117d06142a40878` (71 commits ahead of `origin/main`). A separate action branch worktree exists at `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, branch `action/bm023a-trusted`, HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`; it remains unselected and untouched.
+- Dedicated snapshot: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10`, clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Action offline tests: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** against action commit `039a8d4`; the action checkout remained clean after the test. Its current implementation still selects a reviewed checkpoint dynamically and derives the version from source; coverage for exact source HEAD, a clean dedicated snapshot, and a fixed `0.0.10` version is not present.
+- The trusted action and snapshot are outside this work item's writable roots. No implementation or test file was changed. This lease changed only `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`; no commit was created. No adapter was staged, and no Test.app, host validation, network, device, or profile action occurred. Usage readings for this lease are unavailable per `AGENTS.md`; observed model/effort in supervisor state: `gpt-6-luna` / `xhigh`.
+
+## Blocker and next step
+
+The checkpoint and action workspace identities are established and unambiguous. The internal blocker is write scope: this worker can write only the supervised product checkout and permitted temporary roots, while the trusted action and dedicated snapshot are elsewhere. The baseline tests passed, but the requested action pin, snapshot update, and regression coverage remain unimplemented.
+
+**Smallest next step:** provide writable scope for the trusted action checkout and dedicated snapshot, then pin the action to reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` with fail-closed exact-HEAD, clean-worktree, and fixed-`0.0.10` checks and regression coverage. Rerun the action's offline tests. Do not stage an adapter or use Test.app under this work item.
+
+**Human input:** none; writable-scope review is the remaining internal gate.
+
+# Previous Handoff - BM-023A dedicated 0.0.10 staging snapshot pin (lease 5686e37f-a619-4d85-9ffc-b52ad2d6b365)
+
+**Result:** `REVIEW_REQUIRED_WRITE_SCOPE`; `IMPLEMENTATION_NOT_STARTED`.
+Lease: `5686e37f-a619-4d85-9ffc-b52ad2d6b365`.
+
+## Verified identities and validation
+
+- Product checkout: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-supervised-codex`, branch `agent/supervised-codex`, HEAD `8685fd1eb0433088ea08f9f5c4e35ded0a1c7658`. The exact reviewed source is `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` (tree `1fff8d902d9e490ddd1ef73f4d4cc3eaab288542`), parent `873e82530933e25dcae3ab9e83665dc35d127281`; it is the parent of the tracking HEAD.
+- Handoff-designated trusted action checkout: `/Users/eengert/Documents/Kodi/tools/ai-supervisor`, clean on `main` at `039a8d4b141c069230843990e117d06142a40878` (71 commits ahead of `origin/main`). A separate action branch worktree exists at `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`, branch `action/bm023a-trusted`, HEAD `68d05aead64dba1eeb8782946becd0be8fb29d21`; it was not selected because the current handoff identifies the canonical `tools/ai-supervisor` checkout as the trusted target, and it was left untouched. The designated checkout selects reviewed checkpoints dynamically and lacks the requested exact source HEAD, clean-worktree, and fixed `0.0.10` gates; its tests permit product-tree drift and derive version from source.
+- Dedicated snapshot: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-bm023a-reviewed-0.0.10`, clean and detached at stale commit `b0a56f67f0f6092836f2237b21fbdd55b13124bc` (tree `bbd68a0fdd4322af498661c3e59de79335f4f4aa`).
+- Action offline tests: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_bm023a_adapter_upgrade -v` passed **6/6** in this lease against designated action commit `039a8d4`. The action checkout remained clean after the test. These current tests do not cover exact-source-HEAD, clean-worktree, or fixed-`0.0.10` gates; the implementation still selects a reviewed checkpoint dynamically and derives its version from source.
+- The trusted action checkout and dedicated snapshot are outside this work item's writable roots. No implementation or test file was changed. This lease updated only `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`; prior tracking changes were preserved and no commit was created. No adapter was staged, and no Test.app, host validation, network, device, or profile action occurred. Codex model/effort in supervisor state: `gpt-6-luna` / `xhigh`. App-server usage snapshots were 5h 93% / 7d 90% remaining at 15:46:46 and unchanged at 15:49:00; delta 0 percentage points in both windows.
+
+## Blocker and next step
+
+The checkpoint and handoff-designated action workspace identities are established. The internal blocker is write scope: this worker can write only the supervised product checkout and permitted temporary roots, while the trusted action and snapshot are elsewhere. Per the directive, this is review-required rather than a user-input gate. The action tests establish the current baseline only; the requested pin and regression coverage remain unimplemented. Only the action's focused offline tests were run; no full repository suite was run because no implementation change was possible and the directive limited validation to the action tests.
+
+**Smallest next step:** provide writable scope for the trusted action checkout and dedicated snapshot, then pin the action to reviewed source `fae686b9c4bb84fa862232f6c388e9d00c4f9fda` with fail-closed exact-HEAD, clean-worktree, and fixed `0.0.10` checks and regression coverage. Rerun the action's offline tests. Do not stage an adapter or use Test.app under this work item.
+
+**Human input:** none; writable-scope review is the remaining internal gate.
+
+# Prior Handoff - BM-023A source mismatch observability (2026-09-27)
+
+**Result:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`;
+`RECOVERY_NOT_INVOKED`.
+
+## What changed
+
+- `tools/bm023a_adapter_support.py` now carries the expected and observed
+  SHA-256 values on a source fingerprint mismatch. The safe failure serializer
+  includes those two values only for `VERIFY_BUILD_MANAGER_SOURCE` /
+  `module_source_mismatch`, and only when both are distinct lowercase
+  64-character digests.
+- Missing and unreadable source now produce separate fixed categories,
+  `module_source_missing` and `module_source_unreadable`. Neither category
+  includes digest metadata.
+- `tests/test_bm023a_adapter.py` covers matching, mismatching, missing, and
+  unreadable source, as well as the generated JSON result shape and the
+  no-recovery fail-closed path.
+
+## Validation and boundaries
+
+- Focused BM-023A adapter tests: **51/51 passed**.
+- Full offline suite: **1,880/1,880 passed**.
+- `git diff --check`: passed.
+- No Test.app, Kodi profile, device, network, staging, or recovery action was
+  accessed or invoked. Validation was offline unit testing.
+- Product changes are limited to `tools/bm023a_adapter_support.py` and
+  `tests/test_bm023a_adapter.py`. No commit was created.
+- The supervisor state provided a task-start usage snapshot
+  (`gpt-6-luna`, `max`; five-hour 96% and seven-day 94% remaining). No
+  end snapshot was available; the usage row records this without estimating.
+
+**Smallest next step:** independent read-only review of this exact offline
+diff. Any staging or Test.app action requires its own directive.
+
+**Human input:** none is required for this completed directive. The historical
+staging-action input blocker is retained below for context.
+
+---
+
+## Historical Needs User Input - prior staging action pin (2026-09-26 state)
+
+At that prior inspection, the requested staging action and its offline tests were in
+`/Users/eengert/Documents/Kodi/tools/ai-supervisor`, outside this task's
+writable root (`script.build.manager-supervised-codex`). The action then pinned
+the 0.0.9 worktree and commit, and no 0.0.10 reviewed worktree existed. The
+current action/snapshot findings are recorded at the top of this handoff.
+
+The 0.0.10 source can be identified exactly: commit
+`b0a56f67f0f6092836f2237b21fbdd55b13124bc`, tree
+`bbd68a0fdd4322af498661c3e59de79335f4f4aa`, builder SHA-256
+`26c396dc2632549d1a40e58b313e8c814ad90666935a2f0e0453c403e190384f2`, and
+adapter support SHA-256
+`736c4faece50656539f2db80d2f0aa45520ba015640750cb358de5df09626bdd`. The
+staging action still needs a dedicated clean 0.0.10 snapshot workspace and
+its matching HEAD/version checks, plus offline action coverage.
+
+**Prior next step:** provide a work item/workspace that grants write access to
+`tools/ai-supervisor` and authorizes provisioning the dedicated 0.0.10 source
+snapshot, or move the action and tests into this writable repository.
+
+# Prior Handoff - BM-023A staging action 0.0.10 source pin (2026-09-26)
+
+**Result:** `BLOCKED_OUTSIDE_WRITABLE_WORKSPACE`; staging action unchanged.
+
+## Findings
+
+- The product tree was clean at inspection on HEAD
+  `e7043c59cfc1c432b1d8c75394e12f386faa90af`; only `.agent` tracking files
+  changed for this handoff.
+- The trusted staging implementation and coverage are
+  `tools/ai-supervisor/ai_supervisor/bm023a_adapter_upgrade.py` and
+  `tools/ai-supervisor/tests/test_bm023a_adapter_upgrade.py`.
+- The action currently pins worktree
+  `script.build.manager-bm023a-reviewed-0.0.9`, HEAD
+  `4791438dececcc84b3fe3aae5c3861e4d55c02da`, and version 0.0.9. Git confirms
+  that no dedicated 0.0.10 worktree exists.
+- The reviewed adapter source is exactly pin-able at commit
+  `b0a56f67f0f6092836f2237b21fbdd55b13124bc` and tree
+  `bbd68a0fdd4322af498661c3e59de79335f4f4aa`. Its builder and adapter-support
+  file hashes are recorded above.
+
+## Not done
+
+No staging-action implementation or tests were changed or run because their
+repository is outside the writable workspace. No host validation, staging,
+Kodi/Test.app access, device access, or network access occurred. The
+Build Manager product checkout remains unchanged; only `.agent` handoff and
+tracking files were updated.
+
+**Smallest next step:** grant the action repository as a writable workspace
+and provision a dedicated clean worktree at the exact reviewed 0.0.10 commit;
+then update the preserved workspace identity, clean-tree and HEAD checks,
+version gate, and offline tests.
+
+**Human input:** see “Needs User Input” above.
+
+---
+
+# Prior Handoff - BM-023A production module binding guard (2026-09-26)
+
+**Result:** `OFFLINE_MODULE_SOURCE_BINDING_CORRECTION_COMPLETE`;
+`LIVE_RETRY_NOT_RUN`.
+
+## Diagnosis
+
+- The 0.0.9 driver verified the installed `resources.lib` package file, then
+  imported `resources.lib.frozen_install` and checked only whether the retry
+  method was callable. `importlib.import_module` returns a cached child from
+  `sys.modules` without rereading the current source. A prior module object
+  retaining the retry method could therefore pass the callable guard while
+  the on-disk file lacks it; an exception from that call is sanitized as
+  `INVOKE_RETRY` / `operation_failed`.
+- This explains the reported result, but the failed invocation's module-cache
+  state was not retained, so the exact cached object's prior source cannot be
+  confirmed. The trusted staging action builds and replaces only the
+  temporary driver package; it does not update the installed Build Manager
+  production source.
+
+## What changed
+
+- Adapter version is now **0.0.10**. The builder pins the SHA-256 of the
+  reviewed `resources/lib/frozen_install.py` into the generated driver config.
+- Before importing production children, the driver rejects any required
+  child module already in `sys.modules`. It also verifies the root package
+  search path, the frozen-install source fingerprint, and each imported
+  child module's resolved file and loader origin beneath the installed add-on.
+  Mismatch and cache failures use fixed allowlisted diagnostics without
+  exception text.
+- The generated-entrypoint harness now simulates fresh imports and covers a
+  preloaded coordinator carrying the old callable plus an on-disk source
+  fingerprint mismatch. Production lifecycle code is unchanged.
+
+## Validation and boundaries
+
+- BM-023A adapter tests: **51/51 passed**.
+- Full offline suite: **1,880/1,880 passed**; compileall and
+  `git diff --check` passed.
+- No Test.app, Kodi, profile, device, network, staging action, or live retry
+  was accessed or used. No commit, push, or matrix integration was made.
+- Changes are uncommitted on `agent/supervised-codex` in
+  `tools/bm023a_adapter_support.py`, `tools/bm023a_adapter/default.py.in`,
+  `tools/bm023a_adapter/addon.xml.in`, `tools/build_bm023a_adapter.py`, and
+  `tests/test_bm023a_adapter.py`. No change was made to
+  `resources/lib/frozen_install.py`.
+
+**Smallest next step:** supervisor review, then update the trusted staging
+action's reviewed source/version pin to 0.0.10. Stage only under a separate
+directive. Before retry, the installed Build Manager source must match the
+fingerprint in the staged driver; otherwise it will fail closed at source
+verification.
+
+---
+
+# Prior Handoff - BM-023A authorized Test.app retry (2026-09-26)
+
+**Result:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
+
+## Public preflight
+
+- `test-app-kodi` returned `pong` from `JSONRPC.Ping`.
+- Red Light `plugin.video.redlight` was version `2.6.8`, disabled, and not
+  broken.
+- `general.addonupdates` was `2`; `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- All required retry preflight checks passed. The supervisor directive
+  accepted the prior restore revision gate; restore-config was not repeated.
+
+## Authorized retry and stop condition
+
+- Requested `bm023a-retry` exactly once. The final sanitized wrapper result
+  was `ok=true`, `cancelled=false`, `timed_out=false`, `return_code=0`.
+- The adapter result was `ok=false`, `adapter_mode=retry`,
+  `adapter_stage=INVOKE_RETRY`, `error_type=Exception`,
+  `failing_callable=FrozenInstallCoordinator.retry_held_quiescence`, and
+  `failure_category=operation_failed`.
+- The action did not return `complete`. Per the directive, no postflight,
+  second retry, install/recover action, or further Kodi call was made. No
+  product source was changed and no tests were run.
+- Tracking metadata updated: `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`,
+  `.agent/AGENT_STATUS.json`, and `.agent/USAGE_HISTORY.md`. No Git commit was
+  created; the worktree was clean before these metadata updates.
+- Codex usage snapshot at task start: `gpt-6-luna`, `max`, five-hour
+  remaining `98%`, seven-day remaining `100%`. The final snapshot was
+  unavailable in supervisor state at handoff.
+
+**Smallest next step:** supervisor review of the sanitized
+`INVOKE_RETRY`/`operation_failed` result and a separate directive if another
+Test.app action is warranted. This work item authorizes no further action.
+
+---
+
+# Current Handoff - BM-023A configuration restore gate (2026-09-25)
+
+**Result:** `RESTORE_RESULT_DID_NOT_MEET_EXACT_REVISION_GATE`; `RETRY_NOT_REQUESTED`.
+
+## Authorized preflight
+
+- `test-app-kodi` returned `pong` from `JSONRPC.Ping`.
+- Red Light was version `2.6.8`, disabled, and not broken.
+- `general.addonupdates` was `2`; `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- All required public preflight checks passed.
+
+## Restore result and stop condition
+
+- Requested `bm023a-restore-config` exactly once through the authorized
+  supervisor action. Final sanitized wrapper result: `ok=true`,
+  `cancelled=false`, `timed_out=false`, `return_code=0`.
+- The action result reported `ok=true`, `restored=true`, SHA-256
+  `924ab96558111c1a9050592da5296d07dfbfc35520c380a554beea73fed308c4`,
+  and `size=4995`. It reported `source_revision=d8ab24ba`; the directive
+  requires the exact value `d8ab24b`, so the restore gate was not accepted.
+- Per the strict gate, `bm023a-retry` was not requested. No postflight,
+  additional Test.app call, restart, or quit was performed. No product source
+  was modified and no tests were run. Only this handoff was updated.
+
+**Smallest next step:** supervisor review of the returned revision identifier
+and a fresh directive if that identifier is accepted. Do not continue the
+retry under this work item.
+
+---
+
+# Current Handoff - BM-023A Test.app 0.0.8 staging and held retry (2026-09-25)
+
+**Result:** `ADAPTER_STAGED_0.0.8`; `RETRY_STOPPED_AT_CHECK_RETRY_PRECONDITIONS`.
+
+## Authorized preflight
+
+- `test-app-kodi` responded to `JSONRPC.Ping`; Kodi reported version 21.3,
+  stable build.
+- Build Manager 0.1.0 was enabled and not broken. The temporary driver was
+  present, enabled, and not broken; its public add-on detail reported 0.0.4.
+- Red Light was exactly 2.6.8, disabled, and not broken. Arctic Fuse 3 was
+  3.3.1, enabled, and not broken.
+- `general.addonupdates` was 2 (`NEVER_CHECK`); `lookandfeel.skin` was
+  `skin.arctic.fuse.3`.
+- The stage action later reported `version_before=0.0.7`, which differs from
+  the preflight driver's public 0.0.4 detail. The mismatch was not resolved;
+  no public driver read was made after the retry stopped.
+
+## Authorized actions and result
+
+- Requested `bm023a-stage-adapter` exactly once. Final sanitized wrapper
+  result: `ok=true`, `cancelled=false`, `timed_out=false`, `return_code=0`.
+  Adapter result: `already_current=false`, `version_before=0.0.7`,
+  `version_after=0.0.8`, `files_verified=4`.
+- After stage success, requested `bm023a-retry` exactly once. The wrapper
+  completed with `ok=true`, `cancelled=false`, `timed_out=false`,
+  `return_code=0`; the adapter result was `ok=false`,
+  `adapter_mode=retry`, `adapter_stage=CHECK_RETRY_PRECONDITIONS`,
+  `error_type=Exception`, `failing_callable=pathlib.Path`, and
+  `failure_category=path_missing_or_unreadable`. No outcome was returned.
+- Per the directive, made no additional Test.app call after the retry result.
+  No postflight, second retry, install/recover action, restart, or quit was
+  performed. No tests or product-source changes were made; only task tracking
+  metadata was updated.
+
+**Smallest next step:** supervisor review of the sanitized retry precondition
+failure and the temporary driver's public-version/stage-version mismatch,
+then decide whether to authorize another Test.app action.
+
+---
+
+# Prior Handoff - BM-023A missing durable retry artifact directory (2026-09-25)
+
+**Result:** OFFLINE_PRECONDITION_CORRECTION_COMPLETE; LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+- The generated retry entrypoint still requires the durable profile root and
+  retained source `artifacts` directory to exist. It no longer requires the
+  profile-local `frozen-artifacts/artifacts` directory to pre-exist;
+  `ArtifactStore` initializes that child directory.
+- The temporary adapter version is now **0.0.8**, so a later authorized stage
+  can carry this correction over the already staged 0.0.7 package. No adapter
+  package was staged in this work item.
+- The generated-entrypoint regression builds and runs the package in the
+  legacy state: durable root present, durable artifacts directory absent. It
+  uses the production `ArtifactStore` constructor and verifies initialization.
+  Missing durable root and missing retained source store cases still fail
+  closed at `CHECK_RETRY_PRECONDITIONS`.
+
+## Validation
+
+- Generated-entrypoint regression: **1/1 passed**.
+- Focused adapter, frozen-install, transaction, and restart-coordinator suites:
+  **136/136 passed**.
+- Full offline suite: **1,876/1,876 passed**.
+- `git diff --check`: passed.
+- The first generated-entrypoint run exposed a test assertion made after its
+  temporary directory had been removed. The assertion now records directory
+  initialization before fixture cleanup; the rerun and all suites passed.
+
+No Test.app, Kodi profile, device, network, or host action was accessed or
+used. No live retry/recovery was attempted. The work remains uncommitted on
+`agent/supervised-codex`; no push or matrix integration occurred. Smallest
+next step: supervisor review, followed by a separately authorized 0.0.8 stage
+before any live retry.
+
+---
+
+# Prior Handoff - BM-023A live staging and held retry (2026-09-25)
+
+**Result:** ADAPTER_STAGED_0.0.7; HELD_RETRY_FAILED_PRECONDITIONS.
+
+## Authorized actions
+
+- Re-read supervisor state under the current lease before each action;
+  `handoff_requested` was false.
+- Requested `bm023a-stage-adapter` exactly once through supervisor
+  validation-action IPC. Final sanitized response: `ok=true`,
+  `cancelled=false`, `timed_out=false`, `return_code=0`; adapter result
+  `already_current=false`, `version_before=0.0.4`, `version_after=0.0.7`,
+  `files_verified=4`.
+- After the required staging evidence succeeded, requested `bm023a-retry`
+  exactly once. The action wrapper returned `ok=true`, `cancelled=false`,
+  `timed_out=false`, `return_code=0`; its adapter result returned `ok=false`,
+  `adapter_mode=retry`, `adapter_stage=CHECK_RETRY_PRECONDITIONS`,
+  `error_type=Exception`, `failing_callable=pathlib.Path`, and
+  `failure_category=path_missing_or_unreadable`. No completion, restart, or
+  held-state recovery evidence was returned.
+- No further host action was requested. `bm023a-install` and
+  `bm023a-recover` were not requested; Test.app was not restarted or quit.
+  No tests or product-code changes were made; this handoff is the only
+  repository file changed for this work item.
+- Smallest next step: supervisor review of the held-retry precondition result
+  and a fresh directive before any further host action. No user input was
+  requested by this bounded work item.
+
+---
+
+## Prior Handoff - BM-023A live staging gate (2026-09-25)
+
+**Result:** STAGING_BLOCKED_BY_VALIDATION_WORKSPACE_COMMIT_MISMATCH;
+RETRY_NOT_REQUESTED.
+
+## Authorized action
+
+- Re-read supervisor state under the current lease; `handoff_requested` was
+  false.
+- Requested `bm023a-stage-adapter` exactly once through supervisor
+  validation-action IPC after the App Management permission grant.
+- Final sanitized response: `ok=false`, `error_type=ValidationActionError`,
+  error `trusted validation workspace HEAD does not match configured commit`.
+  The required success evidence (`ok=true`, `version_after=0.0.7`,
+  `files_verified=4`) was not returned.
+- Per the directive, did not request `bm023a-retry` or any other host action.
+  No tests or product-code changes were made; this handoff is the only
+  repository file changed for this work item.
+- Smallest next step: supervisor review of the validation-workspace commit
+  mismatch and a fresh directive before any further host action. No user input
+  was requested by this bounded work item.
+
+---
+
+## Prior Handoff - BM-023A live staging attempt before App Management grant
+
+**Result:** STAGING_FAILED; RETRY_NOT_REQUESTED.
+
+The earlier one-shot staging request returned `ok=false`,
+`error_type=AdapterUpgradeError`, error `temporary adapter upgrade failed`,
+`cancelled=false`, `timed_out=false`, and `return_code=1`. It did not provide
+the required success evidence (`ok=true`, `version_after=0.0.7`,
+`files_verified=4`). The retry was not requested under that earlier directive.
+
+---
+
+# Prior Handoff - BM-023A generated-entrypoint dispatch coverage (2026-09-25)
+
+**Result:** OFFLINE_COVERAGE_COMPLETE; INDEPENDENT_REVIEW_READY;
+LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+Added one executable offline test in `tests/test_bm023a_adapter.py`. It builds
+the adapter package and runs its generated `default.py` for `install`,
+`recover`, and `retry` with temporary paths and stubbed Kodi/production
+modules. Each invocation proves the selected branch is the only dispatch:
+install calls only `coordinator.install`, recover calls only the recovery
+helper, and retry calls the packaged retry helper and
+`retry_held_quiescence` once.
+
+The retry fixture uses the actual packaged `retry_held_frozen_install` checks.
+Its stub coordinator invokes the configuration callback at runtime; assertions
+prove the callback reaches the stub `RestartCoordinator.reconcile` with the
+same manager, BM-020 store, request, and scoped `transaction_access`. No
+product code change was needed. The test uses no source slicing.
+
+## Validation
+
+- Generated-entrypoint dispatcher test: **1/1 passed**.
+- Focused adapter, frozen-install, transaction, and restart-coordinator suites:
+  **136/136 passed**.
+- Full offline suite: **1,876/1,876 passed**. The first run had one
+  readiness-timeout failure in the unrelated transaction child-process test;
+  that test passed alone and the full rerun passed.
+- `python3 -m compileall -q resources tools tests`: passed.
+- All **7** tracked JSON files parsed; `git diff --check` passed.
+
+Only `tests/test_bm023a_adapter.py` has product-tree changes. Tracking is
+updated in `.agent/CURRENT_TASK.md`, `.agent/AGENT_STATUS.json`,
+`.agent/USAGE_HISTORY.md`, and this handoff. Work is uncommitted on
+`agent/supervised-codex` at `bb5460e`; no push or matrix integration occurred.
+
+No Kodi/Test.app was launched or accessed; no profile, device, network, LAN,
+private value, host action, adapter install, or live retry/recovery was used.
+All checks were offline. Smallest next step: independent review of the dirty
+coverage snapshot. Live retry remains outside this work item.
+
+---
+
+# Current Handoff - BM-023A held-transaction retry implementation (2026-09-24)
+
+**Result:** OFFLINE_IMPLEMENTATION_COMPLETE; LIVE_RETRY_NOT_RUN.
+
+## What changed
+
+- `FrozenInstallStore.rearm_held_quiescence` only accepts the reviewed held
+  failure predicate and compares the complete immutable transaction snapshot
+  under the store lock. It preserves the transaction, manifest, plan,
+  configuration, overlay, original session, restart count, updater guard, and
+  unreleased activation hold; it clears only the old safe failure diagnostic.
+- `FrozenInstallCoordinator.retry_held_quiescence` requires the caller's
+  reviewed transaction snapshot and accepts only `needs_attention`,
+  `FROZEN_MANIFEST_INVALID`, `quiescence_awaiting_restart`, restart count 1,
+  the sole `plugin.video.redlight` hold, unreleased hold, required updater
+  guard, and original `AUTOMATIC` policy. It requires a post-restart session
+  matching the live session provider.
+- The coordinator reasserts and reads back `NEVER_CHECK`, stages each declared
+  exact artifact idempotently through `ArtifactStore`, revalidates manifest,
+  plan, Red Light activation graph, private overlay identity, exact healthy
+  disabled Red Light version, and absence of a BM-020 restart transaction. It
+  re-reads the transaction and owner state before the locked full-snapshot CAS,
+  then calls the existing resume continuation once.
+- Generic `abandon()` remains unchanged and still rejects unreleased holds.
+  The normal resume/finalization path remains responsible for configuration,
+  private verification, final validation, activation release, desired enabled
+  states, updater restoration, and transaction clearance.
+
+## Validation
+
+- Focused frozen lifecycle tests: **34/34 passed**.
+- Full offline suite: **1,862/1,862 passed**.
+- `python3 -m compileall -q resources tools tests`: passed.
+- `git diff --check`: passed.
+- Added coverage for accepted re-arm and artifact staging, all supported-state
+  predicate near misses, session matching, generic abandon rejection, BM-020
+  conflicts, exact owner version and disabled state, manifest/plan/overlay and
+  artifact mismatch failures, guard/readback ordering, and full-snapshot CAS
+  conflicts.
+
+## Boundaries and next step
+
+No Kodi or Test.app was launched or accessed. No profile, device, network,
+restart, adapter install/invocation, or host action was used. The live held
+transaction was not inspected or changed. The new coordinator entry point is
+not wired into an adapter or supervisor action; a separately named, explicitly
+authorized one-shot action and its preflight/postcondition review remain a
+separate step. The BM repository still has no known host-action catalog entry.
+
+The implementation and tests are uncommitted workspace changes on
+`agent/supervised-codex`; protected matrix is unchanged. Codex usage values are
+recorded as unavailable per `AGENTS.md`; the supervisor state showed model
+`gpt-6-luna` and effort `max`. Smallest next step: supervisor review of this
+production API, then separately authorize any action wiring or live retry.
+
+---
+
+# Prior Handoff - BM-023A durable restart-artifact correction (2026-09-24)
+
+**Result:** offline adapter correction complete and validated. The live Test.app
+transaction remains intentionally untouched in needs_attention after the
+post-quiescence restart.
+
+### Live evidence that motivated this correction
+
+The single authorized 0.0.4 install invocation reached
+QUIESCENCE_RESTART_REQUIRED with Red Light held and updater quarantine active.
+After the manually authorized full Test.app restart, startup resume failed
+closed with FROZEN_MANIFEST_INVALID. Read-only reproduction proved the
+retained manifest fingerprint still matched but the profile-local
+frozen-artifacts store was empty, so exact artifact validation failed for the
+captured package set. The temporary adapter had used the external retained
+artifact store for the initial coordinator while production startup correctly
+reconstructed the durable profile-local store.
+
+The live transaction currently remains at needs_attention, lifecycle stage
+quiescence_awaiting_restart, restart count 1, with the Red Light activation
+hold unreleased and the updater guard still required. No retry or recovery was
+performed after this diagnosis.
+
+### Offline correction
+
+Implementation commit: ee31e3eb3810bd167a7185694631b705c3692b5e.
+
+Temporary adapter 0.0.5 now:
+- stages every declared non-system exact artifact from the retained source
+  store into the profile-local frozen-artifacts store through existing
+  ArtifactStore.read_bytes / import_zip validation;
+- verifies the imported SHA-256 and size against the frozen manifest;
+- leaves artifact=None and system nodes unstaged so existing YouTube
+  skip/repository resolution semantics remain unchanged;
+- constructs the install coordinator with the durable profile-local store;
+- keeps recovery dispatch separate and preserves safe, allowlisted failure
+  diagnostics without paths or raw exception text.
+
+Production resources/lib/frozen_install.py was not changed.
+
+### Validation
+
+- BM-023A adapter: **39/39** passed.
+- Related artifact/frozen lifecycle modules: **86/86** passed.
+- Full offline suite: **1,855/1,855** passed.
+- compileall passed for resources, tools, and tests.
+- All **7** tracked JSON files parsed.
+- git diff --check passed.
+
+### Status / next step
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
+- tvOS: NOT VALIDATED.
+- Protected matrix was not changed.
+- No Kodi/Test.app mutation, recovery, install invocation, real-device access,
+  normal-profile access, or private-value inspection occurred during the
+  offline correction.
+
+The existing generic bm023a-recover path must **not** be invoked blindly:
+its current preconditions reject an unreleased activation hold. The next step is
+a supervisor-reviewed recovery path for this specific held needs_attention
+state, followed by a separately authorized adapter 0.0.5 live retry.
+
+---
+
+# Current Handoff — BM-023A offline CONFIGURE correction (2026-09-24)
+
+Result: offline implementation and regression validation complete. The live
+transaction remains untouched and macOS BM-023A is
+BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+
+### What changed
+
+- resources/lib/build_manager.py: tags public and private CONFIGURE
+  exceptions with a validated scope; existing safe resource/import fields stay
+  available.
+- resources/lib/frozen_install.py: unwraps only typed configuration results
+  and persists safe nested fields. When already validated overlay metadata is
+  present, the failed transaction retains its ID, fingerprint, and required
+  flag.
+- resources/builds/examples/eric-main.example.json: declares Red Light's
+  required structured resource with configure_before_activation=true.
+- Added regressions for public/private failure scope, empty CONFIGURE add-on
+  identity, typed stage/cause retention, redaction, overlay identity with
+  required=false, Red Light holds across restart and failed configuration,
+  and unchanged unrelated resolution behavior.
+- Updated .agent task tracking; prior history remains below.
+
+### Validation
+
+- Focused related suites: 686 tests passed.
+- Full offline suite: 1,851 tests passed.
+- Compileall passed for resources, tools, and tests.
+- All 7 tracked JSON/schema files parsed.
+- git diff --check passed.
 
 ### Not done
 
-No recovery, adapter invocation, BM-023A retry, or tests were performed. Codex
-did not launch Kodi or automate GUI installation. Verification read only the
-three authorized installed files and the Red Light declaration in the
-authorized portable add-on path. No normal Kodi profile, real device, or
-private overlay values were accessed. No product source/version or matrix
-changes were made.
+No Kodi was launched. No recovery, retry, updater/skin/profile mutation,
+real-device access, or private overlay value inspection occurred. The historical
+CONFIGURE sub-action is still unknown; online recovery and the single retry
+remain separate supervisor-gated work.
 
 ### Smallest next step
 
-Wait for separate supervisor authorization before invoking adapter 0.0.4
-recovery or attempting the single BM-023A install retry.
+Await supervisor direction before recovering the preserved needs_attention
+transaction or starting the single diagnostic retry.
 
 ### Status
 
 - BM-017F: COMPLETE.
-- macOS BM-023A: installed runtime verified; awaiting supervisor authorization
-  for the still-pending recovery and single retry.
+- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
 - tvOS: NOT VALIDATED.
-- Worker branch/SHA: `agent/codex` /
-  `d8ab24ba3678302505c157501adbb216ba3935a6`.
-- Usage end snapshot: 5h 6% used / weekly 80% used; task start was not captured.
-  Runtime label GPT-6; user-reported Luna-6/Max was not independently
-  observable, and no model/effort switch was made.
+- Worker branch: agent/codex; protected matrix was not changed.
+- Implementation commit: 6ce2947; task tracking is kept in separate metadata
+  commits on the same worker branch.
+- Matrix SHA: 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
+- Usage snapshot: start 5h 0% used / weekly 79% used; end 5h 3% used /
+  weekly 80% used; observed delta 5h +3 pp / weekly +1 pp. Runtime label GPT-6;
+  user-requested Luna-6/Max was not independently observable, and no
+  model/effort switch was made.
 
 ---
 

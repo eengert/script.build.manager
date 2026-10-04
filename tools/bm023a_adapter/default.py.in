@@ -13,21 +13,35 @@ from adapter_config import (
     ARTIFACT_ROOT,
     CONFIGURATION_PATH,
     DEVICE_PROFILE_ID,
+    EXPECTED_FROZEN_INSTALL_SHA256,
     EXPECTED_OVERLAY_ID,
     MANIFEST_PATH,
     OVERLAY_SOURCE,
 )
 from adapter_support import (
+    DRIVER_ADDON_ID,
     AdapterBootstrapError,
+    choose_missing_artifact_resolution,
     identify_adapter_result,
+    inspect_retained_inputs,
     parse_adapter_mode,
     recover_frozen_install,
+    retry_held_frozen_install,
     safe_failure_payload,
+    read_adapter_status,
+    reject_cached_production_modules,
+    repair_frozen_install_source,
+    require_retained_inputs,
+    stage_manifest_artifacts,
     verify_build_manager_source,
+    verify_frozen_install_source,
+    verify_production_module_sources,
 )
 
 
 RESULT_PATH = None
+FROZEN_INSTALL_SOURCE_RECORD = None
+RETAINED_INPUTS_RECORD = None
 STAGE = "LOCATE_BUILD_MANAGER"
 FAILING_CALLABLE = "xbmcvfs.translatePath"
 
@@ -87,7 +101,8 @@ def _write_result(payload):
 
 
 def main():
-    global STAGE, FAILING_CALLABLE, RESULT_PATH
+    global STAGE, FAILING_CALLABLE, RESULT_PATH, FROZEN_INSTALL_SOURCE_RECORD
+    global RETAINED_INPUTS_RECORD
     payload = {"ok": False, "error_type": "not_started"}
     mode = "unselected"
     try:
@@ -116,6 +131,33 @@ def main():
         mode = parse_adapter_mode(sys.argv[1:])
 
         sys.path.insert(0, str(addon_root))
+        if mode == "status":
+            production_module_names = [
+                "resources.lib.frozen_install",
+                "resources.lib.transaction",
+            ]
+        else:
+            production_module_names = [
+                "resources.lib.artifacts",
+                "resources.lib.frozen_install",
+                "resources.lib.restart_coordinator",
+                "resources.lib.update_guard",
+            ]
+        if mode in ("recover", "retry"):
+            production_module_names.append("resources.lib.frozen")
+        if mode == "retry":
+            production_module_names.append("resources.lib.build_manager")
+        elif mode == "install":
+            production_module_names.extend((
+                "resources.lib.build_manager",
+                "resources.lib.frozen",
+                "resources.lib.private_overlay",
+            ))
+
+        STAGE = "IMPORT_PRODUCTION_MODULES"
+        FAILING_CALLABLE = "importlib.import_module"
+        reject_cached_production_modules(production_module_names)
+
         STAGE = "IMPORT_RESOURCES"
         FAILING_CALLABLE = "importlib.import_module"
         resources_lib = importlib.import_module("resources.lib")
@@ -123,15 +165,67 @@ def main():
         STAGE = "VERIFY_BUILD_MANAGER_SOURCE"
         FAILING_CALLABLE = "pathlib.Path"
         verify_build_manager_source(addons_root, addon_root, resources_lib)
+        if mode != "status":
+            FROZEN_INSTALL_SOURCE_RECORD = repair_frozen_install_source(
+                addon_root,
+                EXPECTED_FROZEN_INSTALL_SHA256,
+                profile_root / "addon_data" / DRIVER_ADDON_ID / "frozen_install_backups",
+            )
+        verify_frozen_install_source(
+            addon_root, EXPECTED_FROZEN_INSTALL_SHA256
+        )
 
         STAGE = "IMPORT_PRODUCTION_MODULES"
         FAILING_CALLABLE = "importlib.import_module"
-        artifacts_module = importlib.import_module("resources.lib.artifacts")
-        frozen_install_module = importlib.import_module("resources.lib.frozen_install")
-        restart_module = importlib.import_module("resources.lib.restart_coordinator")
-        update_guard_module = importlib.import_module("resources.lib.update_guard")
+        if mode == "status":
+            frozen_install_module = importlib.import_module("resources.lib.frozen_install")
+            transaction_module = importlib.import_module("resources.lib.transaction")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.frozen_install": frozen_install_module,
+                "resources.lib.transaction": transaction_module,
+            })
 
-        if mode == "recover":
+            STAGE = "READ_STATUS"
+            FAILING_CALLABLE = "read_adapter_status"
+            frozen_root = frozen_install_module.default_frozen_install_root()
+            restart_store = transaction_module.TransactionStore()
+            status = read_adapter_status(
+                frozen_root / frozen_install_module._TRANSACTION_FILENAME,
+                frozen_root / frozen_install_module._LOCK_FILENAME,
+                restart_store.transaction_path,
+                restart_store.lock_path,
+                frozen_install_module.FrozenInstallTransaction.from_dict,
+                transaction_module.RestartTransaction.from_dict,
+            )
+            payload = {"ok": True, "status": status}
+        else:
+            artifacts_module = importlib.import_module("resources.lib.artifacts")
+            frozen_install_module = importlib.import_module("resources.lib.frozen_install")
+            restart_module = importlib.import_module("resources.lib.restart_coordinator")
+            update_guard_module = importlib.import_module("resources.lib.update_guard")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.artifacts": artifacts_module,
+                "resources.lib.frozen_install": frozen_install_module,
+                "resources.lib.restart_coordinator": restart_module,
+                "resources.lib.update_guard": update_guard_module,
+            })
+
+        if mode == "status":
+            pass
+        elif mode == "recover":
+            frozen_module = importlib.import_module("resources.lib.frozen")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.frozen": frozen_module,
+            })
+
+            STAGE = "LOAD_FROZEN_MANIFEST"
+            FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD, require_artifacts=False)
+            manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
+            FAILING_CALLABLE = "FrozenBuildManifest.from_json"
+            manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+
             STAGE = "CHECK_RECOVERY_PRECONDITIONS"
             FAILING_CALLABLE = "pathlib.Path"
             frozen_root = frozen_install_module.default_frozen_install_root()
@@ -157,19 +251,125 @@ def main():
                 policy_backend,
                 installer,
                 Path(restart_module.TransactionStore().transaction_path),
+                manifest=manifest,
+                manifest_path=MANIFEST_PATH,
+                configuration_manifest_path=CONFIGURATION_PATH,
+                device_profile_id=DEVICE_PROFILE_ID,
+                expected_overlay_id=EXPECTED_OVERLAY_ID,
                 needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
                 update_policy_type=update_guard_module.AddonUpdatePolicy,
+            )
+        elif mode == "retry":
+            build_manager_module = importlib.import_module("resources.lib.build_manager")
+            frozen_module = importlib.import_module("resources.lib.frozen")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.build_manager": build_manager_module,
+                "resources.lib.frozen": frozen_module,
+            })
+
+            STAGE = "LOAD_FROZEN_MANIFEST"
+            FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD)
+            manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
+            FAILING_CALLABLE = "FrozenBuildManifest.from_json"
+            manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+            FAILING_CALLABLE = "pathlib.Path"
+            if not Path(CONFIGURATION_PATH).is_file():
+                raise AdapterBootstrapError(
+                    "CHECK_RETRY_PRECONDITIONS", "pathlib.Path", "path_missing_or_unreadable"
+                )
+
+            STAGE = "CHECK_RETRY_PRECONDITIONS"
+            if not (Path(ARTIFACT_ROOT) / "artifacts").is_dir():
+                raise AdapterBootstrapError(
+                    STAGE, "pathlib.Path", "path_missing_or_unreadable"
+                )
+            FAILING_CALLABLE = "default_frozen_install_root"
+            durable_root = frozen_install_module.default_frozen_install_root()
+            if not durable_root.is_dir():
+                raise AdapterBootstrapError(
+                    STAGE, "pathlib.Path", "path_missing_or_unreadable"
+                )
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            source_store = artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT))
+            FAILING_CALLABLE = "FrozenInstallStore"
+            frozen_store = frozen_install_module.FrozenInstallStore(root=durable_root)
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            durable_store = artifacts_module.ArtifactStore(
+                durable_root / "frozen-artifacts"
+            )
+
+            policy_backend = update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc)
+            installer = frozen_install_module.KodiRuntimeFrozenArtifactBackend()
+            FAILING_CALLABLE = "TransactionStore"
+            restart_store = restart_module.TransactionStore()
+            FAILING_CALLABLE = "BuildManager"
+            manager = build_manager_module.BuildManager()
+
+            def run_held_retry_configuration(request, *, transaction_access=None):
+                return restart_module.RestartCoordinator(
+                    manager, store=restart_store
+                ).reconcile(request, transaction_access=transaction_access)
+
+            STAGE = "BUILD_COORDINATOR"
+            FAILING_CALLABLE = "FrozenInstallCoordinator"
+            coordinator = frozen_install_module.FrozenInstallCoordinator(
+                store=frozen_store,
+                artifact_store=durable_store,
+                policy_backend=policy_backend,
+                installer=installer,
+                configuration_runner=run_held_retry_configuration,
+            )
+
+            STAGE = "CHECK_RETRY_PRECONDITIONS"
+            FAILING_CALLABLE = "FrozenInstallStore.inspect"
+            payload = retry_held_frozen_install(
+                coordinator,
+                frozen_store,
+                source_store,
+                restart_store,
+                manifest=manifest,
+                manifest_path=MANIFEST_PATH,
+                configuration_manifest_path=CONFIGURATION_PATH,
+                device_profile_id=DEVICE_PROFILE_ID,
+                expected_overlay_id=EXPECTED_OVERLAY_ID,
+                transaction_type=frozen_install_module.FrozenInstallTransaction,
+                needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
+                quiescence_awaiting_restart_stage=(
+                    frozen_install_module.FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART
+                ),
+                automatic_update_policy=update_guard_module.AddonUpdatePolicy.AUTOMATIC,
             )
         else:
             build_manager_module = importlib.import_module("resources.lib.build_manager")
             frozen_module = importlib.import_module("resources.lib.frozen")
             private_overlay_module = importlib.import_module("resources.lib.private_overlay")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.build_manager": build_manager_module,
+                "resources.lib.frozen": frozen_module,
+                "resources.lib.private_overlay": private_overlay_module,
+            })
 
             STAGE = "LOAD_FROZEN_MANIFEST"
             FAILING_CALLABLE = "pathlib.Path"
+            RETAINED_INPUTS_RECORD = inspect_retained_inputs(MANIFEST_PATH, ARTIFACT_ROOT)
+            require_retained_inputs(RETAINED_INPUTS_RECORD)
             manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
             FAILING_CALLABLE = "FrozenBuildManifest.from_json"
             manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+
+            STAGE = "STAGE_RETAINED_ARTIFACTS"
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            source_store = artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT))
+            FAILING_CALLABLE = "default_frozen_install_root"
+            durable_root = frozen_install_module.default_frozen_install_root()
+            FAILING_CALLABLE = "ArtifactStore.__init__"
+            durable_store = artifacts_module.ArtifactStore(
+                durable_root / "frozen-artifacts"
+            )
+            FAILING_CALLABLE = "ArtifactStore.read_bytes"
+            stage_manifest_artifacts(manifest, source_store, durable_store)
 
             STAGE = "LOAD_CONFIGURATION"
             FAILING_CALLABLE = "pathlib.Path"
@@ -187,18 +387,23 @@ def main():
             manager = build_manager_module.BuildManager()
 
             def resolve_missing_artifact(prompt):
-                if prompt.addon_id == "plugin.video.youtube" and prompt.skip_allowed:
-                    return frozen_install_module.ResolutionChoice.SKIP
-                return frozen_install_module.ResolutionChoice.CANCEL
+                return choose_missing_artifact_resolution(
+                    prompt, frozen_install_module.ResolutionChoice
+                )
+
+            def run_configuration(request, *, transaction_access=None):
+                return restart_module.RestartCoordinator(manager).reconcile(
+                    request, transaction_access=transaction_access
+                )
 
             STAGE = "BUILD_COORDINATOR"
             FAILING_CALLABLE = "FrozenInstallCoordinator"
             coordinator = frozen_install_module.FrozenInstallCoordinator(
                 store=frozen_install_module.FrozenInstallStore(),
-                artifact_store=artifacts_module.ArtifactStore(Path(ARTIFACT_ROOT)),
+                artifact_store=durable_store,
                 policy_backend=update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc),
                 installer=frozen_install_module.KodiRuntimeFrozenArtifactBackend(),
-                configuration_runner=lambda request: restart_module.RestartCoordinator(manager).reconcile(request),
+                configuration_runner=run_configuration,
                 resolution_decider=resolve_missing_artifact,
             )
             STAGE = "INVOKE_INSTALL"
@@ -239,6 +444,10 @@ def main():
     except Exception as exc:
         payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
     payload = identify_adapter_result(payload, mode)
+    if FROZEN_INSTALL_SOURCE_RECORD is not None:
+        payload["frozen_install_source"] = dict(FROZEN_INSTALL_SOURCE_RECORD)
+    if RETAINED_INPUTS_RECORD is not None:
+        payload["retained_inputs"] = dict(RETAINED_INPUTS_RECORD)
     _write_result(payload)
 
 

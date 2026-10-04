@@ -19,8 +19,10 @@ from resources.lib.session import get_current_kodi_session_id
 from resources.lib.transaction import (
     RestartTransaction,
     TransactionError,
+    TransactionLockUnavailable,
     TransactionPhase,
     TransactionStore,
+    TransactionStoreAccess,
     prepare_restart_transaction,
 )
 
@@ -159,22 +161,31 @@ class RestartCoordinator:
         self._session_id_provider = session_id_provider or get_current_kodi_session_id
         self._store = store or TransactionStore()
 
-    def reconcile(self, request: ReconcileRequest) -> RestartCoordinatorResult:
+    def reconcile(
+        self,
+        request: ReconcileRequest,
+        *,
+        transaction_access: Optional[TransactionStoreAccess] = None,
+    ) -> RestartCoordinatorResult:
         """Run normal reconciliation, then apply the restart handoff contract."""
-        pending = self._pending_before_reconcile(request)
+        pending = self._pending_before_reconcile(request, transaction_access)
         if pending is not None:
             return pending
         result = self._build_manager.reconcile(request)
-        return self.handle_result(request, result)
+        return self.handle_result(
+            request, result, transaction_access=transaction_access
+        )
 
     def _pending_before_reconcile(
-        self, request: ReconcileRequest
+        self,
+        request: ReconcileRequest,
+        transaction_access: Optional[TransactionStoreAccess] = None,
     ) -> Optional[RestartCoordinatorResult]:
         """Keep an active handoff from re-entering normal reconciliation."""
         if not isinstance(request, ReconcileRequest):
             return None
         try:
-            transaction = self._store.inspect()
+            transaction = self._inspect_transaction(transaction_access)
         except TransactionError as exc:
             return self._failed(
                 request,
@@ -217,8 +228,12 @@ class RestartCoordinator:
         )
         if current_session == transaction.originating_kodi_session_id:
             if capability is RestartCapability.AUTOMATIC_APP_RESTART:
-                return self.handle_result(request, pending_result)
-            return self._prepare_manual(request, pending_result, capability)
+                return self.handle_result(
+                    request, pending_result, transaction_access=transaction_access
+                )
+            return self._prepare_manual(
+                request, pending_result, capability, transaction_access
+            )
         return self._failed(
             request,
             pending_result,
@@ -228,7 +243,11 @@ class RestartCoordinator:
         )
 
     def handle_result(
-        self, request: ReconcileRequest, reconcile_result: ReconcileResult
+        self,
+        request: ReconcileRequest,
+        reconcile_result: ReconcileResult,
+        *,
+        transaction_access: Optional[TransactionStoreAccess] = None,
     ) -> RestartCoordinatorResult:
         """Handle a typed result without duplicating Build Manager execution."""
         if not isinstance(request, ReconcileRequest):
@@ -303,7 +322,24 @@ class RestartCoordinator:
                 message="automatic restart capability is not implemented",
             )
 
-        return self._prepare_manual(request, reconcile_result, capability)
+        return self._prepare_manual(
+            request, reconcile_result, capability, transaction_access
+        )
+
+    def _inspect_transaction(
+        self, transaction_access: Optional[TransactionStoreAccess]
+    ) -> Optional[RestartTransaction]:
+        if transaction_access is None:
+            return self._store.inspect()
+        if not isinstance(transaction_access, TransactionStoreAccess):
+            raise TransactionLockUnavailable(
+                "coordinated transaction access is invalid"
+            )
+        if not transaction_access.matches(self._store):
+            raise TransactionLockUnavailable(
+                "coordinated transaction access protects a different profile"
+            )
+        return transaction_access.inspect()
 
     def _resolve_capability(self) -> RestartCapability:
         resolver = self._capability_resolver
@@ -322,10 +358,11 @@ class RestartCoordinator:
         request: ReconcileRequest,
         reconcile_result: ReconcileResult,
         capability: RestartCapability,
+        transaction_access: Optional[TransactionStoreAccess] = None,
     ) -> RestartCoordinatorResult:
         try:
             session_id = self._session_id_provider()
-            existing = self._store.inspect()
+            existing = self._inspect_transaction(transaction_access)
             if existing is not None:
                 if (
                     existing.phase is TransactionPhase.AWAITING_RESTART
@@ -350,6 +387,7 @@ class RestartCoordinator:
                     reconcile_result,
                     session_id,
                     store=self._store,
+                    transaction_access=transaction_access,
                 )
                 if not prepared.succeeded or prepared.transaction is None:
                     failure = prepared.failure
@@ -364,7 +402,7 @@ class RestartCoordinator:
 
             # Explicit read-back makes the manual caller contract independent
             # of the preparation helper's implementation details.
-            read_back = self._store.inspect()
+            read_back = self._inspect_transaction(transaction_access)
             if (
                 read_back is None
                 or read_back.transaction_id != transaction.transaction_id

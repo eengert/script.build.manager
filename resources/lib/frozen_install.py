@@ -131,6 +131,8 @@ _MAX_MESSAGE = 512
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _SAFE_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
+_HELD_RETRY_OWNER_ID = "plugin.video.redlight"
+_HELD_RETRY_FAILURE_CODE = "FROZEN_MANIFEST_INVALID"
 
 
 def _utc_now() -> str:
@@ -482,6 +484,30 @@ class FrozenInstallTransaction:
         )
 
 
+def _is_held_quiescence_retry_snapshot(
+    transaction: object,
+) -> bool:
+    """Return whether a durable snapshot is the one supported held retry."""
+    return bool(
+        isinstance(transaction, FrozenInstallTransaction)
+        and transaction.phase is FrozenInstallPhase.NEEDS_ATTENTION
+        and transaction.status_code == _HELD_RETRY_FAILURE_CODE
+        and transaction.lifecycle_stage
+        is FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART
+        and transaction.lifecycle_restart_count == 1
+        and transaction.activation_hold_ids == (_HELD_RETRY_OWNER_ID,)
+        and not transaction.activation_hold_released
+        and transaction.updater_guard_required
+        and transaction.original_update_policy is AddonUpdatePolicy.AUTOMATIC
+        and bool(transaction.manifest_fingerprint)
+        and bool(transaction.install_plan_fingerprint)
+        and bool(transaction.resolution_fingerprint)
+        and bool(transaction.configuration_manifest_path)
+        and bool(transaction.private_overlay_id)
+        and bool(transaction.private_overlay_fingerprint)
+    )
+
+
 class FrozenInstallLock:
     def __init__(self, path: Path):
         self.path = path
@@ -677,6 +703,36 @@ class FrozenInstallStore:
                 activation_hold_ids=activation_hold_ids,
                 activation_hold_released=activation_hold_released,
                 lifecycle_restart_count=lifecycle_restart_count,
+            )
+            self._write_unlocked(updated)
+            return updated
+
+    def rearm_held_quiescence(
+        self, expected: FrozenInstallTransaction
+    ) -> FrozenInstallTransaction:
+        """CAS the exact supported held failure back to normal resume.
+
+        The complete immutable transaction snapshot is compared under the
+        profile-local lock. Only phase, safe failure diagnostics, and update
+        time change; transaction, manifest, plan, configuration, overlay, and
+        activation-hold identities remain byte-for-byte equivalent.
+        """
+        if not _is_held_quiescence_retry_snapshot(expected):
+            raise FrozenInstallStateConflict(
+                "held retry snapshot does not match the supported predicate"
+            )
+        with self.locked():
+            current = self._read_unlocked()
+            if current != expected:
+                raise FrozenInstallStateConflict(
+                    "frozen transaction snapshot changed before held retry"
+                )
+            updated = replace(
+                current,
+                phase=FrozenInstallPhase.AWAITING_RESTART,
+                status_code="",
+                status_message="",
+                updated_at=_utc_now(),
             )
             self._write_unlocked(updated)
             return updated
@@ -1735,6 +1791,7 @@ class FrozenInstallCoordinator:
         configuration_manifest_path: str = "",
         install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
         interactive: bool = True,
+        transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
         try:
             desired_profile = self._configuration_profile(
@@ -2227,7 +2284,7 @@ class FrozenInstallCoordinator:
             )
             if self.configuration_runner is not None:
                 request_path = configuration_manifest_path or manifest_path
-                result = self.configuration_runner(ReconcileRequest(
+                request = ReconcileRequest(
                     request_path,
                     device_profile_id,
                     install_resolutions=tuple(sorted(
@@ -2235,7 +2292,13 @@ class FrozenInstallCoordinator:
                     )),
                     source_software_fingerprint=manifest.fingerprint(),
                     frozen_transaction_id=(transaction.transaction_id if hold_ids else ""),
-                ))
+                )
+                if transaction_access is None:
+                    result = self.configuration_runner(request)
+                else:
+                    result = self.configuration_runner(
+                        request, transaction_access=transaction_access
+                    )
                 transaction, awaiting = self._handle_configuration_result(transaction, result)
                 if awaiting is not None:
                     return replace(awaiting, recoverability=plan.summary, resolution_manifest=resolution_manifest)
@@ -2408,11 +2471,331 @@ class FrozenInstallCoordinator:
             getattr(item, "succeeded", False) for item in collected
         )
 
+    def retry_held_quiescence(
+        self,
+        *,
+        expected_transaction: FrozenInstallTransaction,
+        current_session_id: Optional[str] = None,
+        artifact_source_store: Optional[ArtifactStore] = None,
+        restart_store=None,
+    ) -> FrozenInstallResult:
+        """Re-arm only the reviewed held quiescence failure and resume once.
+
+        The caller must supply the complete snapshot it reviewed. Exact ZIPs
+        are re-imported through ArtifactStore's validation path, and a locked
+        full-snapshot CAS clears only the prior failure diagnostic before the
+        existing post-restart continuation runs.
+        """
+        try:
+            current = self.store.inspect()
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=expected_transaction,
+                code="FROZEN_TRANSACTION_INSPECTION_FAILED",
+                message="held frozen transaction could not be reloaded for retry",
+            )
+        if current is None:
+            return FrozenInstallResult(
+                "needs_attention",
+                code="FROZEN_TRANSACTION_MISSING",
+                message="held frozen transaction is unavailable for retry",
+            )
+        if current != expected_transaction or not _is_held_quiescence_retry_snapshot(current):
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="FROZEN_HELD_RETRY_NOT_ELIGIBLE",
+                message="held frozen transaction does not match the reviewed retry state",
+            )
+
+        try:
+            provider_session = _valid_uuid(
+                self.session_id_provider(), "current_session_id"
+            )
+            session = _valid_uuid(
+                provider_session if current_session_id is None else current_session_id,
+                "current_session_id",
+            )
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="FROZEN_HELD_RETRY_SESSION_INVALID",
+                message="current Kodi session identity could not be validated",
+            )
+        if session != provider_session:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="FROZEN_HELD_RETRY_SESSION_MISMATCH",
+                message="retry session does not match the current Kodi session",
+            )
+        if session == current.originating_kodi_session_id:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="FROZEN_SAME_SESSION",
+                message="held frozen retry requires a new Kodi session",
+            )
+
+        try:
+            if restart_store is None:
+                from resources.lib.transaction import TransactionStore
+                restart_store = TransactionStore()
+            if (
+                os.path.realpath(restart_store.directory)
+                != os.path.realpath(str(self.store.root))
+            ):
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_PROFILE_MISMATCH",
+                    message="BM-020 and frozen transactions do not share a profile store",
+                )
+            if not callable(getattr(restart_store, "locked_access", None)):
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_SERIALIZATION_UNAVAILABLE",
+                    message="BM-020 transactions cannot be serialized with held retry",
+                )
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="BM020_TRANSACTION_PROFILE_UNAVAILABLE",
+                message="the shared BM-020 and frozen transaction store is unavailable",
+            )
+
+        try:
+            AddonUpdateGuard(self.policy_backend).reassert_required()
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="UPDATER_REASSERT_FAILED",
+                message="NEVER_CHECK could not be reasserted for held retry",
+            )
+
+        try:
+            manifest = self.manifest_loader(current.manifest_path)
+            if (
+                manifest.build_id != current.build_id
+                or manifest.fingerprint() != current.manifest_fingerprint
+            ):
+                raise FrozenInstallValidationError(
+                    "held retry manifest identity changed"
+                )
+
+            source_store = artifact_source_store or self.artifact_store
+            for node in manifest.addons:
+                if node.system or node.is_absent_optional_dependency or node.artifact is None:
+                    continue
+                data = source_store.read_bytes(node.artifact.sha256)
+                metadata = self.artifact_store.import_zip(
+                    data,
+                    expected_addon_id=node.addon_id,
+                    expected_version=node.version,
+                    source="held-quiescence-retry",
+                )
+                if (
+                    metadata.sha256 != node.artifact.sha256
+                    or metadata.size != node.artifact.size
+                ):
+                    raise FrozenInstallValidationError(
+                        "held retry artifact identity changed"
+                    )
+
+            plan, records, _resolution_manifest = self._restore_resolution(
+                manifest, current, allow_uninstalled=True
+            )
+            if (
+                not current.configuration_manifest_path
+                or plan.install_plan_fingerprint != current.install_plan_fingerprint
+            ):
+                raise FrozenInstallValidationError(
+                    "held retry configuration or plan identity changed"
+                )
+            desired_profile = self._configuration_profile(
+                current.configuration_manifest_path,
+                current.device_profile_id,
+            )
+            if desired_profile is None:
+                raise FrozenInstallValidationError(
+                    "held retry configuration profile is unavailable"
+                )
+            self._check_private_ownership_compatibility(desired_profile, records)
+            held_ids = self._activation_hold_ids(plan, desired_profile)
+            readiness_ids = self._registry_readiness_ids(desired_profile)
+            if (
+                held_ids != (_HELD_RETRY_OWNER_ID,)
+                or readiness_ids != (_HELD_RETRY_OWNER_ID,)
+                or not set(readiness_ids).issubset(held_ids)
+            ):
+                raise FrozenInstallValidationError(
+                    "held retry activation graph changed"
+                )
+            overlay_identity = self._private_overlay_metadata(
+                desired_profile, manifest.fingerprint()
+            )
+            if overlay_identity != (
+                current.private_overlay_id,
+                current.private_overlay_fingerprint,
+                current.private_overlay_required,
+            ):
+                raise FrozenInstallValidationError(
+                    "held retry private overlay identity changed"
+                )
+
+            owner_node = plan.nodes.get(_HELD_RETRY_OWNER_ID)
+            owner_record = next(
+                (item for item in records if item.addon_id == _HELD_RETRY_OWNER_ID),
+                None,
+            )
+            if (
+                owner_node is None
+                or owner_node.artifact is None
+                or owner_record is None
+                or owner_record.resolution is not InstallResolution.EXACT
+                or owner_record.captured_version != owner_node.version
+                or owner_record.resolved_version != owner_node.version
+                or owner_record.artifact_sha256 != owner_node.artifact.sha256
+                or owner_record.artifact_size != owner_node.artifact.size
+            ):
+                raise FrozenInstallValidationError(
+                    "held retry owner is not backed by its exact captured artifact"
+                )
+            expected_owner_version = owner_node.version
+
+            if restart_store.inspect() is not None:
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_PRESENT",
+                    message="a BM-020 restart transaction conflicts with held retry",
+                )
+        except Exception:
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=current,
+                code="FROZEN_HELD_RETRY_VALIDATION_FAILED",
+                message="held retry manifest, plan, artifacts, or overlay failed validation",
+            )
+
+        def owner_is_healthy_and_disabled() -> bool:
+            try:
+                owner = self.installer.get_addon_details(_HELD_RETRY_OWNER_ID)
+            except Exception:
+                return False
+            return bool(
+                owner is not None
+                and owner.addon_id == _HELD_RETRY_OWNER_ID
+                and owner.version == expected_owner_version
+                and not owner.broken
+                and not owner.enabled
+            )
+
+        try:
+            latest = self.store.inspect()
+        except Exception:
+            latest = None
+        if (
+            latest != current
+            or not _is_held_quiescence_retry_snapshot(latest)
+            or not owner_is_healthy_and_disabled()
+        ):
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=latest or current,
+                code="FROZEN_HELD_RETRY_STATE_CHANGED",
+                message="held transaction or disabled owner changed before retry",
+            )
+        try:
+            # Keep the BM-020 store lock from the decisive absence check
+            # through the continuation. Every BM-020 writer acquires this same
+            # profile-local OS lock, so a restart transaction cannot appear
+            # after this check and race the held retry.
+            if restart_store.inspect() is not None:
+                return FrozenInstallResult(
+                    "needs_attention",
+                    transaction=current,
+                    code="BM020_TRANSACTION_PRESENT",
+                    message="a BM-020 restart transaction conflicts with held retry",
+                )
+            with restart_store.locked_access() as transaction_access:
+                restart_transaction = transaction_access.inspect()
+                if restart_transaction is not None:
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=current,
+                        code="BM020_TRANSACTION_PRESENT",
+                        message="a BM-020 restart transaction conflicts with held retry",
+                    )
+
+                try:
+                    latest = self.store.inspect()
+                except Exception:
+                    latest = None
+                if (
+                    latest != current
+                    or not _is_held_quiescence_retry_snapshot(latest)
+                    or not owner_is_healthy_and_disabled()
+                ):
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=latest or current,
+                        code="FROZEN_HELD_RETRY_STATE_CHANGED",
+                        message="held transaction or disabled owner changed before retry",
+                    )
+
+                try:
+                    rearmed = self.store.rearm_held_quiescence(current)
+                except Exception:
+                    return FrozenInstallResult(
+                        "needs_attention",
+                        transaction=self._safe_inspect() or current,
+                        code="FROZEN_HELD_RETRY_CAS_FAILED",
+                        message="held frozen transaction changed before retry could be armed",
+                    )
+
+                # The normal continuation owns software/configuration work and
+                # all final private verification, activation release, updater
+                # restore, and clear ordering. If interrupted here, startup
+                # sees AWAITING_RESTART. The BM-020 lock remains held until it
+                # returns or records a safe failure.
+                try:
+                    return self.resume_after_restart(
+                        current_session_id=session,
+                        transaction_access=transaction_access,
+                    )
+                except Exception:
+                    return self._attention(
+                        rearmed,
+                        "FROZEN_HELD_RETRY_CONTINUATION_FAILED",
+                        "held frozen retry continuation failed and requires attention",
+                    )
+        except Exception as exc:
+            busy = getattr(exc, "code", "") == "TRANSACTION_LOCK_BUSY"
+            return FrozenInstallResult(
+                "needs_attention",
+                transaction=self._safe_inspect() or current,
+                code=(
+                    "BM020_TRANSACTION_LOCK_BUSY"
+                    if busy else "BM020_TRANSACTION_INSPECTION_FAILED"
+                ),
+                message=(
+                    "BM-020 restart state is being changed and held retry was not continued"
+                    if busy else "BM-020 restart state could not be serialized with held retry"
+                ),
+            )
+
     def resume_after_restart(
         self,
         *,
         current_session_id: Optional[str] = None,
         bm020_result: object = None,
+        transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
         transaction = self._safe_inspect()
         if transaction is None:
@@ -2486,6 +2869,7 @@ class FrozenInstallCoordinator:
                     configuration_manifest_path=transaction.configuration_manifest_path,
                     install_policies=transaction.policies,
                     interactive=False,
+                    transaction_access=transaction_access,
                 )
             if transaction.lifecycle_stage is FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART:
                 if not self._private_resource_results_verified(bm020_result):

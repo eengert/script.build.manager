@@ -13,6 +13,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -278,6 +279,7 @@ class TransactionLock:
         self.path = path
         self._handle = None
         self._fcntl = None
+        self._held_file_identity = None
 
     def acquire(self) -> None:
         try:
@@ -292,6 +294,8 @@ class TransactionLock:
             fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
             self._handle = os.fdopen(fd, "a+")
             fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            opened_file = os.fstat(self._handle.fileno())
+            self._held_file_identity = (opened_file.st_dev, opened_file.st_ino)
         except BlockingIOError as exc:
             self._close_handle()
             raise TransactionLockBusy("another transaction operation is active") from exc
@@ -315,6 +319,7 @@ class TransactionLock:
                 self._handle.close()
             finally:
                 self._handle = None
+                self._held_file_identity = None
 
     def __enter__(self) -> "TransactionLock":
         self.acquire()
@@ -376,16 +381,46 @@ class TransactionStore:
         with self.locked():
             return self._read_unlocked()
 
+    @contextmanager
+    def locked_access(self) -> Iterator["TransactionStoreAccess"]:
+        """Hold the profile lock and yield narrow access for nested BM-020 work.
+
+        Ordinary store methods still acquire the nonblocking OS lock. The
+        yielded capability is the only supported way for a coordinated caller
+        to inspect or create a transaction while this lock remains held.
+        """
+        with self.locked() as lock:
+            access = _issue_transaction_store_access(self, lock)
+            try:
+                yield access
+            finally:
+                access._invalidate()
+
+    @contextmanager
+    def locked_inspection(self) -> Iterator[Optional[RestartTransaction]]:
+        """Yield a transaction snapshot while retaining the profile lock.
+
+        Callers can use the snapshot to serialize a follow-on operation with
+        every BM-020 transaction writer, which uses this same lock.
+        """
+        with self.locked():
+            yield self._read_unlocked()
+
     def create(self, transaction: RestartTransaction) -> RestartTransaction:
         if not isinstance(transaction, RestartTransaction):
             raise TransactionPersistenceError("transaction has an invalid type")
         with self.locked():
-            if os.path.exists(self.transaction_path):
-                raise TransactionPersistenceError(
-                    "an active transaction already exists"
-                )
-            self._write_unlocked(transaction, previous_bytes=None)
-            return transaction
+            return self._create_unlocked(transaction)
+
+    def _create_unlocked(self, transaction: RestartTransaction) -> RestartTransaction:
+        if not isinstance(transaction, RestartTransaction):
+            raise TransactionPersistenceError("transaction has an invalid type")
+        if os.path.exists(self.transaction_path):
+            raise TransactionPersistenceError(
+                "an active transaction already exists"
+            )
+        self._write_unlocked(transaction, previous_bytes=None)
+        return transaction
 
     def update_phase(self, phase: TransactionPhase) -> RestartTransaction:
         if not isinstance(phase, TransactionPhase):
@@ -578,6 +613,92 @@ class TransactionStore:
                     pass
 
 
+_TRANSACTION_STORE_ACCESS_ISSUER = object()
+
+
+def _held_lock_matches_store(lock: TransactionLock, store: TransactionStore) -> bool:
+    """Prove the held descriptor is still the store's current lock file."""
+    if not isinstance(lock, TransactionLock) or not isinstance(store, TransactionStore):
+        return False
+    if lock._handle is None or lock._held_file_identity is None:
+        return False
+    try:
+        opened = os.fstat(lock._handle.fileno())
+        opened_identity = (opened.st_dev, opened.st_ino)
+        if opened_identity != lock._held_file_identity:
+            return False
+
+        expected_path = os.path.realpath(store.lock_path)
+        held_path = os.path.realpath(lock.path)
+        if held_path != expected_path:
+            return False
+        current = os.stat(expected_path)
+        return (current.st_dev, current.st_ino) == opened_identity
+    except (OSError, TypeError, ValueError, TransactionError):
+        return False
+
+
+class TransactionStoreAccess:
+    """Short-lived inspect/create access backed by a held profile-local lock."""
+
+    def __init__(
+        self,
+        store: TransactionStore,
+        lock: TransactionLock,
+        *,
+        _issuer: object = None,
+    ):
+        if _issuer is not _TRANSACTION_STORE_ACCESS_ISSUER:
+            raise TransactionLockUnavailable(
+                "coordinated transaction access is issued only by locked_access"
+            )
+        if not _held_lock_matches_store(lock, store):
+            raise TransactionLockUnavailable(
+                "held transaction lock does not protect the bound store"
+            )
+        self._store = store
+        self._lock = lock
+        self._owner_thread_id = threading.get_ident()
+        self._active = True
+
+    def _assert_active(self) -> None:
+        if (
+            not self._active
+            or threading.get_ident() != self._owner_thread_id
+            or not _held_lock_matches_store(self._lock, self._store)
+        ):
+            raise TransactionLockUnavailable(
+                "coordinated transaction access is outside its bound lock scope"
+            )
+
+    def matches(self, store: TransactionStore) -> bool:
+        """Return whether this capability protects the store's lock file."""
+        self._assert_active()
+        if not isinstance(store, TransactionStore):
+            return False
+        return _held_lock_matches_store(self._lock, store)
+
+    def inspect(self) -> Optional[RestartTransaction]:
+        self._assert_active()
+        return self._store._read_unlocked()
+
+    def create(self, transaction: RestartTransaction) -> RestartTransaction:
+        self._assert_active()
+        return self._store._create_unlocked(transaction)
+
+    def _invalidate(self) -> None:
+        self._active = False
+
+
+def _issue_transaction_store_access(
+    store: TransactionStore, lock: TransactionLock
+) -> TransactionStoreAccess:
+    """Internal issuance point used only by TransactionStore.locked_access."""
+    return TransactionStoreAccess(
+        store, lock, _issuer=_TRANSACTION_STORE_ACCESS_ISSUER
+    )
+
+
 @dataclass(frozen=True)
 class TransactionFailure:
     code: str
@@ -601,6 +722,7 @@ def prepare_restart_transaction(
     current_session_id: str,
     *,
     store: Optional[TransactionStore] = None,
+    transaction_access: Optional[TransactionStoreAccess] = None,
 ) -> PrepareTransactionResult:
     """Prepare durable state only after a successful restart-requiring run."""
     try:
@@ -640,7 +762,19 @@ def prepare_restart_transaction(
                 if reconcile_result.private_overlay else False
             ),
         )
-        (store or TransactionStore()).create(transaction)
+        target_store = store or TransactionStore()
+        if transaction_access is None:
+            target_store.create(transaction)
+        else:
+            if not isinstance(transaction_access, TransactionStoreAccess):
+                raise TransactionLockUnavailable(
+                    "coordinated transaction access is invalid"
+                )
+            if not transaction_access.matches(target_store):
+                raise TransactionLockUnavailable(
+                    "coordinated transaction access protects a different profile"
+                )
+            transaction_access.create(transaction)
         return PrepareTransactionResult(created=True, transaction=transaction)
     except (TransactionError, TypeError, ValueError) as exc:
         code = getattr(exc, "code", "INVALID_RESTART_TRANSACTION")

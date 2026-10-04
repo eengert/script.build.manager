@@ -1,40 +1,362 @@
+# Current Task - retrospective secondary checkpoint correction
+
+**Status:** `REVIEW_REQUIRED_SECONDARY_FRAMEWORK_BASELINE_RECONCILIATION`. Work `24f77347-f206-473c-bb80-da8b3bc02be9`; lease `fc95c3a8-9a8d-4901-b0ee-6811575b4338`.
+
+Required a004294 framework baseline is clean but lacks production native secondary capture/apply, trusted Git guards, and workspace-bound snapshot identity. Production cb32c8e has them; branches diverge at 3d5fdb2. No implementation changes or tests were made. Exact historical bridge security PASS and unchanged four hashes verified from retained reviewer transcript; product and action candidates preserved.
+
+Next: controller reconciles the framework source baseline and exact launch grant before reassigning this bounded correction. No personal user input required. Prior evidence and full details are in HANDOFF.md.
+
+---
+
+# Current Task - BM-023A trusted status bridge
+
+**Status:** `COMPLETE_OFFLINE_BRIDGE_AWAITING_INDEPENDENT_SECURITY_REVIEW`. Work `371ccdcd-d98f-4047-a84d-a23552cdddb9`; lease `b25a4ac1-79c7-495d-9a0d-55a93d299d48`.
+
+Four secondary source/test paths changed, uncommitted on `action/bm023a-trusted` at unchanged `9950ca5`. Fixed read-only status mapping/sanitizer and expected adapter 0.0.15. Final focused 35/35; all 144 relevant tests pass within full check. Full framework 547 run: 503 passed, 41 errors, 3 failures, no skips; all 44 nonpassing reports exactly match clean baseline after disposable-path normalization. Product unchanged; prior 110/1971 evidence preserved. No live qualification, stageability, milestone completion, deployment, named action or secondary Git mutation.
+
+Next: independent exact-delta security review, then host-side snapshot checkpoint. Historical source/reconciliation pins unchanged; future 0.0.15 staging binding needs separate scope. No user input required. See HANDOFF.md for exact evidence, limits and hashes.
+
+---
+
+# Current Task - BM-023A source-lineage recovery (2026-10-03)
+
+**Status:** `COMPLETE_OFFLINE_CANDIDATE_AWAITING_SEPARATE_REVIEW`. Work ID `c3dfd26d-a136-4c45-8108-59537611b139`; lease `6b09ed20-4208-4f80-8015-a0d177393145`.
+
+Reproduced exactly the four authorized product changes from the preserved read-only checkout at base `3f8f89024b033cca23f5c3e692bf062a36d1e25c`; corrected only finite status-code sanitization and nonblocking regular-record reads. Focused tests 110/110; full offline suite 1971/1971; diff check passed. Candidate remains uncommitted on `agent/beta-recovery`; no review/stageability claim or live validation.
+
+Next: separately armed independent exact-snapshot review of this new source work. No human input required. See HANDOFF.md for lineage, hashes and limitations.
+
+---
+
 # Current Task
 
-## BM-023A installed runtime verification — 2026-09-24
+## BM-023A staging version contradiction - 2026-09-30
 
-**Status:** INSTALLED_RUNTIME_VERIFIED; AWAITING_SEPARATE_SUPERVISOR_AUTHORIZATION.
+**Status:** `REVIEW_REQUIRED_DIRECTIVE_VERSION_MISMATCH`. Work ID `2ca0f0a4-c52c-4a18-b26e-3323226fb30d`; lease `85bd8af6-4a07-4479-8e73-dc0c151891d4`.
 
-Eric confirmed manual installation of
-`dist/script.build.manager-0.1.0-d8ab24b.zip` into the authorized Kodi Build
-Manager Test.app. Read-only byte comparisons at
-`/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data/addons/script.build.manager`
-confirmed these installed files match worker
-`d8ab24ba3678302505c157501adbb216ba3935a6`:
+Bound live action health passed with clean pinned HEAD 0584f4c and launch_binding. Directive requests driver 0.0.9 and adapter_mode=stage; configured pinned action stages 0.0.14 and reports action/version_after. No LAN/device access or action invocation occurred. Controller must reconcile the technical contract before staging. No user input required.
 
-- `resources/lib/build_manager.py`
-- `resources/lib/frozen_install.py`
-- `resources/builds/examples/eric-main.example.json`
+---
 
-The installed Red Light declaration has
-`configure_before_activation=true`; installed runtime contains
-`PUBLIC_CONFIGURATION_OPERATION_FAILED`. Product version remains 0.1.0 and
-matrix remains at `66b0fd8a123ef778b23ba42703937b07eefc4e6f`.
+## BM-023A staging validator provenance reconciliation gate - 2026-09-30
 
-No adapter recovery, BM-023A retry, tests, or Kodi launch were performed by
-Codex. No GUI automation, normal-profile or real-device access, or private
-overlay value inspection occurred. No product source/version or matrix changes
-were made.
+**Status:** `COMPLETE_OFFLINE_VALIDATOR_AND_TESTS`; real source reconciliation remains absent. Work ID `25bc27a1-c3e1-4fe3-8778-9b7cf90dc4cf`; lease `50ad8d3a-4976-43c3-b78f-416e082f214c`.
+
+The trusted action validator and its tests now bind adapter source selection to the exact canonical reconciliation record, immutable audit ref, original/corrected commit pairs, source/review IDs, snapshot, and retained evidence digests. Existing action-checkout changes were preserved. Focused offline tests passed **46/46** and `git diff --check` passed. A synthetic reconciliation fixture was used because no real `.ai/checkpoints` record/ref existed when inspected; production continues to fail closed until the supervisor creates it. No action staging or Test.app access occurred.
+
+Smallest next step: supervisor creates the exact immutable reconciliation record and reviews this action change before any separately authorized host validation.
+
+---
+
+## AI-Supervisor BM-023A provenance reconciliation implementation - 2026-09-30
+
+**Status:** `REVIEW_REQUIRED_IMPLEMENTATION_COMPLETE_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `9fb0a2c8-c2df-402b-a6c5-27fb83c4ab41`; lease `9114d27a-c828-46e3-80a7-b817156f0347`.
+
+Finished the provenance-source prevention path, immutable checkpoint-pair reconciliation engine, controller-gated CLI/broker support, documentation, and regression coverage in the granted isolated framework worktree. Focused suites passed **107/107**; full suite ran **828 tests, 1 failure, 45 errors** from process/network/environment restrictions. `compileall` and `git diff --check` passed. Framework changes are intentionally unstaged because the linked worktree index is under the external, read-only common Git directory `/Users/eengert/Documents/Kodi/tools/ai-supervisor/.git/worktrees/ai-supervisor4`.
+
+Smallest next step: independent review the completed dirty framework snapshot, then restore a writable Git metadata path before normal staging/commit. No user input is required.
+
+---
+
+## AI-Supervisor BM-023A provenance attribution and reconciliation - 2026-09-29
+
+**Status:** `REVIEW_REQUIRED_FRAMEWORK_GIT_METADATA_OUTSIDE_WRITABLE_SCOPE`. Work ID `8c5c755b-0155-4a0e-b356-dc4207c708a2`; lease `d00ccfe8-cab3-43da-afde-24ef4351b56a`.
+
+Implemented and tested the prevention fix in the isolated framework worktree, but could not commit because Git metadata points to a read-only common `.git` directory outside the granted writable root. The fix preserves the originating workspace-write ID and fingerprint across replans, then verifies the exact dirty snapshot before automatic checkpoint interposition. Initial CLI/controller-broker wiring is present but unvalidated; the reconciliation engine and tests are absent. Focused tests passed **6/6** and `git diff --check` passed. Full validation was not run.
+
+Smallest next step: supervisor review the writable-scope mismatch, then resume this same task with writable isolated Git metadata so the prevention fix can be committed and reconciliation work can continue. No user input is required.
+
+---
+
+## BM-023A staging-action exact source review - 2026-09-29
+
+**Status:** `REVIEW_REQUIRED_SOURCE_WORK_ATTRIBUTION_MISMATCH`. Work ID `81fae3a2-f7aa-425e-98b2-b834f93647d5`; lease `e9495433-93ab-48b2-89cf-68a89a323a6b`.
+
+The prepared action diff exactly pins source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`, adjacent tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`, review checkpoint `01825057-69fc-45ac-8ddc-910ee126d3a6`, and snapshot `d1ee22d79e13e12495a85f931a1c95483e414addaddae74e6c349444e650edcd`. The exact source/tracking path sets and adapter version 0.0.14 match. However, Git attributes the pair to source work `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, which supervisor records identify as a read-only review that made no repository changes; the implementation work is `930ce877-b902-4c0f-92bf-5380acfac610`.
+
+Focused source-binding tests passed 39/39. The offline action suite ran 436 tests with 3 failures and 41 errors; 40 network/loopback errors were sandbox `PermissionError`s, one process recovery timed out, and the failures were process identity recovery, configured Codex binary path, and recovery soak. These are unrelated to the two modified adapter-upgrade files. The action diff remains intentionally uncommitted; no staging, Test.app, network, or host action occurred. Smallest next step: supervisor corrects/reissues source-work attribution, then refresh the action pin from the new reviewed commit pair and commit the verified action diff normally. Usage readings unavailable per AGENTS.md.
+
+---
+
+## BM-023A fixed staging action pinned to adapter 0.0.14 - 2026-09-29
+
+**Status:** `OFFLINE_REVISION_READY_FOR_REVIEW`. Work ID `53dba719-2837-4874-8412-3f8f1e3fa55b`; lease `dd9d527e-38c4-44ac-99e2-7ee53e3fd5fe`.
+
+The fixed action in the authorized `ai-supervisor-bm023a-actions` checkout now validates and archives only source commit `bdfb916976a8b141b8925a328ef8b1af21da1fef`, paired with tracking commit `733ddbf911e1120e5e359cc2482eb714ca26d195`. It verifies their matching review checkpoint and snapshot trailers, exact source-path set, and adapter version `0.0.14`; Git replace refs are disabled and builder imports are isolated from preloaded `tools` modules. The result reports the full source SHA.
+
+Focused upgrade tests passed **39/39**, including seven new pin/source-failure cases. Read-only validation on the real supervised checkout resolved the pinned commit and loaded its 0.0.14 builder. Full suite: 436 run, 3 failures and 41 errors from unrelated process recovery/soak, local binary availability, and sandbox-denied loopback tests. `git diff --check` passed. No staging action, Test.app, network, or host action ran. No product files changed in this checkout; action code/tests are uncommitted in the authorized secondary root.
+
+The Git review pair records source work `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, while the prior adapter implementation task was `930ce877-b902-4c0f-92bf-5380acfac610`. The fixed action uses the actual commit-paired review evidence and leaves this attribution difference visible for supervisor review.
+
+Smallest next step: supervisor reviews the exact action diff and attribution, then issues a separate staging directive if appropriate. Usage readings unavailable per `AGENTS.md`.
+
+---
+
+## BM-023A 0.0.14 independent review - 2026-09-29
+
+**Status:** `REVIEW_REQUIRED_CHECKPOINT_NOT_ARMED_FOR_930CE877`. Work ID `d9944558-57b0-4ea2-b87f-e2ca0a11d6e4`; lease `907ebfdf-a332-48da-aaa0-acc7f329ce3d`.
+
+The committed 0.0.14 adapter snapshot was reviewed and matches the recorded source diff. The handoff records focused tests 80/80 and full suite 1927/1927; these checks were not rerun. The checkpoint commit at HEAD identifies source work `bd30d7e0-8a56-4839-bb2e-cf9cc228e6ce`, not requested source work `930ce877-b902-4c0f-92bf-5380acfac610`. Supervisor state has no armed review checkpoint for this work. No product changes, staging, or Test.app actions were made. Smallest next step: re-arm or correct the checkpoint source-work binding. Usage start was 5h 87% / 7d 66% remaining; end reading unavailable.
+
+---
+
+## BM-023A 0.0.13 retry call-path audit - 2026-09-29
+
+**Status:** `COMPLETE_OFFLINE_DIAGNOSTIC_REVIEW_REQUIRED`. Work ID `930ce877-b902-4c0f-92bf-5380acfac610`; lease `ea05f10f-26bc-437b-b1b3-45160154cd47`.
+
+The historical `INVOKE_RETRY` exception remains unexplained by retained source evidence. A stale cached module is a plausible prior cause, but its state was not captured; 0.0.13 now rejects preloaded modules and verifies the installed source binding. Added the static allowlisted `retry_invocation_failed` category at the retry-call exception boundary and versioned the offline adapter candidate to 0.0.14. No exception details are serialized; retry eligibility, transaction, and activation-hold behavior are unchanged.
+
+Focused adapter tests passed **80/80**; full offline suite passed **1927/1927**; `git diff --check` passed. No staging, Test.app, Kodi/profile/device access, network, retry, or commit. Changes are uncommitted for review. Smallest next step: independent diff review; any staging or retry needs a separate directive. Usage readings unavailable per `AGENTS.md`.
+
+---
+
+## BM-023A retained artifact validation - 2026-09-29
+
+**Status:** `COMPLETE_ARTIFACT_SET_PRESENT_AND_VALIDATED`. Work ID `4fb39036-682f-4427-80d5-bdcbe9b1db52`; lease `1ee2482c-8fb5-40a0-8a7e-037cf45879a1`.
+
+The retained manifest fingerprint matched `8ce7d2daf131f6c1bbcdf152c02c15745f9bc52eac34480ee43e9f7af093e035`. All 30 declared artifacts were already present in the retained store and passed exact SHA-256/size checks, `validate_addon_zip` add-on ID/version validation, and stored metadata identity checks. No download or import was required; the four previously identified exact artifacts were preserved.
+
+Full offline suite passed **1926/1926**. No product code, tests, binaries, Kodi profile, Test.app, or device were changed/accessed. No recovery or retry ran. Smallest next step: separate supervisor direction if the supported held-quiescence retry is still required. Usage readings unavailable per `AGENTS.md`.
+
+---
+
+## BM-023A recovery identity binding - 2026-09-29
+
+**Status:** `COMPLETE_UNCOMMITTED_REVIEW_REQUIRED`. Work ID `7f3b6bfc-8763-4098-ab3c-2e303b1305da`; lease `8c01966e-7ce0-4657-820a-0f96d5ac7ea1`.
+
+Bound the temporary adapter's recovery path to the reviewed six-field durable identity tuple using the helper shared with retry. Recovery reads the retained manifest, compares identity before abandon, and reports only the fixed `recovery_identity_mismatch` category. Adapter version is 0.0.13. Existing changes in four product files were preserved.
+
+Focused adapter tests passed 78/78; frozen-install tests passed 36/36; full offline suite passed 1,925/1,925. Compileall, parsing of 7 tracked JSON files, and `git diff --check` passed. No commit or host/network action. Smallest next step: independent review and reviewed-checkpoint handling. No user input required.
+
+---
+
+## Previous task: BM-023A action retained-input result sanitization - 2026-09-28
+
+**Status:** `COMPLETE_WITH_FULL_SUITE_SANDBOX_FAILURES`. Work ID `84b5e3b3-e76e-466b-b741-fb4c0f3e4e38`; lease `0b2f87ed-5c45-4412-a1c6-e38d853de09a`.
+
+Updated the pinned action worktree's sanitized result handling for adapter 0.0.12. Only `ai_supervisor/kodi_action.py` and `tests/test_kodi_action.py` changed in `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`; changes remain uncommitted on `action/bm023a-trusted`. Retry/install results preserve the five-key `retained_inputs` record and the three new fixed failure categories. Focused module passed 15/15. The full suite ran 428 tests with 3 failures and 41 errors, primarily sandbox-denied loopback server binds plus unrelated process/environment-dependent cases. `git diff --check` passed.
+
+No named validation action, staging, Test.app, device/profile access, or network operation occurred. No user input is required.
+
+Smallest next step: supervisor review and checkpoint the two action-worktree files; any stage action requires a separate directive.
+
+---
+
+## Previous task: ai-supervisor secondary writable-root control-plane maintenance - 2026-09-28
+
+**Status:** `IMPLEMENTED_IN_ISOLATED_BRANCH`; supervisor review/integration pending. Work ID `1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`; lease `9208502b-4cfb-4b8b-b2b5-b749cec0c993`.
+
+Framework branch `/private/tmp/ai-supervisor-codex-1a20bf4b-8a3c-4f3b-9a8e-6cf6b493841d`, `codex/secondary-writable-roots`, commit `dd8b0ed`, is clean and has no remote. Trusted-config allowlisting, per-work `--writable-root` selection, canonical/protected/symlink checks, Codex/Claude sandbox propagation, and offline regressions are implemented. The exact BM-023A action checkout passed read-only resolver validation. Focused tests passed 64/64. Full suite result was 597 pass, 2 fail, 44 errors from sandbox-limited loopback/process tests.
+
+The running supervisor config/state remains unchanged and grants no root. The original framework/action checkouts and reviewed snapshot remain untouched. No host, Test.app, Kodi, LAN, or network action occurred.
+
+Smallest next step: review and integrate commit `dd8b0ed`; then configure only `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions` in trusted config and explicitly select it for the bounded BM-023A action work item. Keep the reviewed snapshot read-only. No user input is required.
+
+---
+
+## Previous task: BM-023A fixed staging action update - 2026-09-28
+
+**Status:** `REVIEW_REQUIRED_ACTION_WRITE_ROUTE` (work ID `5ba09aea-b318-4a27-bd49-9267648dd2d2`; lease `c2301cf6-fb94-42b0-8179-bb7bfe38de98`).
+
+The product checkout is clean at `4a8d8c78ee0179bbf5fa77bcf7f2d5ef3e1873d2`. Read-only source preflight fails with `parent_not_substantive` because HEAD is tracking-over-tracking; its diagnostic identifies reviewed source `72e327eb9af2c32d443b3a69fb3cd8237fa14fd2`, adapter `0.0.10`, no product drift, and matching tree `8a15b91ecd15c966faa6ef9ab3658bafae2dcfd6` in the read-only snapshot. The fixed action remains clean at `68d05aead64dba1eeb8782946becd0be8fb29d21`; it does not stage the reviewed add-on alongside the adapter.
+
+The action checkout is not writable in this lease; supervisor state has no writable-root grant and `work.actions` is empty. The reviewed snapshot remains read-only. No action code/tests changed, no action tests/full suite ran, and no Test.app or recovery action occurred. This directive explicitly authorizes no host validation action.
+
+Smallest next step: internal review must provide an exact offline writable root for the fixed action checkout while keeping the reviewed snapshot read-only. Then update/test and independently review/pin the exact action change. Keep Test.app and recovery stopped until a later directive authorizes them after source-identity checks pass.
+
+---
+
+## BM-023A staging-precondition preflight - 2026-09-28
+
+**Status:** `OFFLINE_STAGE_SOURCE_PREFLIGHT_COMPLETE` (work ID `50118de2-ef3e-4b81-be18-269326b62e57`; lease `276211ae-e0ca-4d25-baae-5af012153d67`).
+
+Added read-only `tools/check_bm023a_stage_source.py` plus 9 offline tests. It replicates the trusted adapter's HEAD/HEAD^ checkpoint-pair selection and reports the staged commit, adapter version, and non-`.agent` drift. The live run shows current HEAD `7f05566` fails as `parent_not_substantive`, with nearest substantive `fae686b` (0.0.10, no drift). Full suite 1,889/1,889. Changes left uncommitted.
+
+Smallest next step: supervisor review and checkpoint, then a separate staging directive.
+
+---
+
+## ai-supervisor Codex writable-root propagation - 2026-09-27
+
+**Status:** `REVIEW_REQUIRED_INTERNAL_ROOT_SOURCE_AND_WRITE_ROUTE` (work ID `edad8d24-aee6-466f-ada1-f6f8f50594c0`; lease `261bc5cf-43a7-4a49-9a4a-b87b134477bb`).
+
+The active lease/work state contains no explicit approved writable-root list. The framework lease schema records only `ipc_workspace` as a workspace path, and its Codex launcher does not pass approved `--add-dir` roots. The framework checkout is outside this worker's writable sandbox. Per the fail-closed directive, no code or tests were changed or run.
+
+Smallest next step: supervisor review to establish the trusted exact-root source and an approved write route to the framework checkout. No user decision is required.
+
+---
+
+## Prior task: BM-023A source mismatch observability - 2026-09-27
+
+**Status:** `OFFLINE_SOURCE_MISMATCH_OBSERVABILITY_COMPLETE`.
+
+The adapter reports expected and observed SHA-256 values for a readable
+installed-source fingerprint mismatch, with strict digest validation at the
+safe result serializer. Missing and unreadable source have distinct fixed
+failure categories. Exception text, paths, source contents, transaction data,
+configuration, and private values remain outside the result.
+
+Focused adapter tests passed **51/51**; the full offline suite passed
+**1,880/1,880**; `git diff --check` passed. No Test.app, Kodi profile,
+device, network, staging, or recovery action was used.
+
+Smallest next step: independent read-only review of the exact diff. Any
+staging or Test.app action requires its own directive.
+
+---
+
+## Prior task: BM-023A dedicated staging action source pin - 2026-09-26
+
+**Status:** `NEEDS_USER_INPUT`; staging action unchanged.
+
+At that prior inspection, the staging implementation and offline tests were in the separate
+`/Users/eengert/Documents/Kodi/tools/ai-supervisor` repository, outside this
+work item's writable root. The action then pinned the 0.0.9 source worktree
+and commit, and no dedicated reviewed 0.0.10 worktree existed. See the current
+task above for the latest checkpoint and snapshot identity.
+
+The 0.0.10 adapter source is exactly identified by commit
+`b0a56f67f0f6092836f2237b21fbdd55b13124bc` and tree
+`bbd68a0fdd4322af498661c3e59de79335f4f4aa`; builder/support file hashes are
+recorded in `.agent/HANDOFF.md`. The action workspace, clean-tree, and HEAD
+guards must be preserved when pinning this source.
+
+No action code or offline coverage was changed or run because that repository
+is not writable in this task. No host validation or staging action occurred.
+
+Smallest next step: grant write access to `tools/ai-supervisor` and authorize
+provisioning the dedicated clean 0.0.10 snapshot worktree, or move the action
+and tests into this writable repository. See the top of `.agent/HANDOFF.md`.
+
+---
+
+## Prior task: BM-023A authorized Test.app retry - 2026-09-26
+
+**Status:** `RETRY_ACTION_FAILED`; `STOPPED_WITHOUT_POSTFLIGHT`.
+
+Public preflight passed: Test.app responded to `JSONRPC.Ping`; Red Light
+`plugin.video.redlight` was 2.6.8, disabled, and not broken; updater policy was
+2; and Arctic Fuse 3 was active. The prior restore revision gate was accepted
+by the supervisor directive, so restore-config was not repeated.
+
+Requested `bm023a-retry` once. The wrapper completed with `ok=true`,
+`cancelled=false`, `timed_out=false`, and `return_code=0`; the adapter returned
+`ok=false` at `INVOKE_RETRY` with `Exception` from
+`FrozenInstallCoordinator.retry_held_quiescence` and
+`failure_category=operation_failed`. No postflight or further Kodi action was
+performed. No product source changes or tests.
+
+Smallest next step: supervisor review of the sanitized retry result and a
+separate directive if another Test.app action is warranted.
+
+---
+
+## Prior task: BM-023A missing durable retry artifact directory - 2026-09-25
+
+**Status:** OFFLINE_PRECONDITION_CORRECTION_COMPLETE;
+LIVE_RETRY_NOT_RUN.
+
+The retry entrypoint retains fail-closed checks for the profile-local durable
+root and retained source artifact directory. It no longer rejects the legacy
+0.0.4 state solely because `frozen-artifacts/artifacts` is absent; the
+production `ArtifactStore` constructor initializes that directory. The
+generated-entrypoint regression verifies successful initialization and
+fail-closed behavior when either required root is absent. The temporary
+adapter version is bumped from 0.0.7 to 0.0.8 for any later authorized stage;
+no package was staged here.
+
+Generated-entrypoint regression: **1/1 passed**. Focused adapter,
+frozen-install, transaction, and restart-coordinator suites: **136/136 passed**.
+Full offline suite: **1,876/1,876 passed**. `git diff --check` passed.
+
+Changes are uncommitted on `agent/supervised-codex`. No Test.app, Kodi profile,
+device, network, private value, host action, adapter installation, or live
+retry/recovery was accessed or run. No push or matrix integration occurred.
+
+Smallest next step: supervisor review, then a separately authorized 0.0.8
+stage before any live retry. This work item does not authorize either host
+action.
+
+---
+
+## Prior checkpoint: BM-023A durable restart-artifact correction - 2026-09-24
+
+**Status:** OFFLINE_CORRECTION_COMPLETE; BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
+
+Post-restart read-only diagnosis proved the temporary 0.0.4 adapter installed
+from the retained external artifact store while startup resume correctly
+validated against the profile-local durable frozen-artifacts store. That
+durable store was empty, producing FROZEN_MANIFEST_INVALID after the
+quiescence restart even though the retained manifest fingerprint matched.
+
+Commit ee31e3eb3810bd167a7185694631b705c3692b5e updates only the temporary
+BM-023A adapter/support/tests. Adapter 0.0.5 stages manifest-declared exact
+artifacts into the durable profile-local store with existing validated
+content-addressed APIs, explicitly checks SHA-256/size identity, preserves
+artifactless skip/repository behavior, and gives the install coordinator the
+durable store. Production frozen lifecycle code is unchanged.
+
+Validation: adapter 39/39; related artifact/frozen modules 86/86; full suite
+1,855/1,855; compileall; all 7 tracked JSON files; git diff --check.
+
+The live Test.app transaction remains needs_attention at
+quiescence_awaiting_restart, restart count 1, with the Red Light hold
+unreleased and updater guard still required. Do not invoke the existing generic
+recovery path until its unreleased-hold limitation is reviewed. No live retry
+was performed by this offline task.
 
 - BM-017F: COMPLETE.
-- macOS BM-023A: installed runtime verified; still awaiting authorization for
-  the previously described recovery and single retry.
+- macOS BM-023A: BLOCKED_PENDING_HELD_TRANSACTION_RECOVERY_AND_0.0.5_LIVE_RETRY.
 - tvOS: NOT VALIDATED.
 
-Smallest next step: wait for separate supervisor authorization before invoking
-adapter 0.0.4 recovery or the BM-023A install retry. Usage start was not
-captured; end snapshot was 5h 6% used / weekly 80% used. Runtime label GPT-6;
-user-reported Luna-6/Max was not independently observable, and no
-model/effort switch was made.
+Smallest next step: design/review a bounded recovery for the held transaction,
+then separately authorize adapter 0.0.5 installation and one fresh live retry.
+
+---
+
+
+## BM-023A offline CONFIGURE diagnostics and Red Light hold correction — 2026-09-24
+
+**Status:** OFFLINE_IMPLEMENTATION_COMPLETE; BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+
+The CONFIGURE failure path now records a safe configuration_scope and unwraps
+typed public/private apply results into allowlisted owner, resource, cause, and
+initialization/import-stage fields. The intentionally empty planner CONFIGURE
+add-on ID remains empty. Raw messages, exception text, paths, operation keys,
+and private values are not copied into durable diagnostics.
+
+A validated, present PrivateOverlayMetadata now carries its ID, fingerprint,
+and independent required flag into the failed frozen transaction. An optional
+imported overlay can therefore remain identified with required=false; absent
+or unvalidated metadata is not presented as imported.
+
+The authoritative Red Light declaration in
+resources/builds/examples/eric-main.example.json now sets
+configure_before_activation=true. The existing generalized lifecycle
+establishes the owner hold, crosses the quiescence restart, runs configuration
+while held, verifies the private resource, and releases only on success.
+Failure coverage confirms the hold remains unreleased and the owner disabled.
+
+Validation: focused related suites passed 686 tests; full
+python3 -m unittest discover tests passed 1,851 tests. Compileall passed for
+resources, tools, and tests; all 7 tracked JSON/schema files parsed;
+git diff --check passed.
+
+Implementation commit: 6ce2947 on agent/codex. The live transaction remains
+untouched; protected matrix remains at 66b0fd8a123ef778b23ba42703937b07eefc4e6f.
+
+No Kodi launch, recovery, BM-023A retry, updater/skin/profile mutation, real
+device access, or private overlay value inspection occurred. The historical
+CONFIGURE sub-action remains unknown until the separately authorized recovery
+and single diagnostic retry.
+
+- BM-017F: COMPLETE.
+- macOS BM-023A: BLOCKED_PENDING_RECOVERY_AND_SINGLE_RETRY.
+- tvOS: NOT VALIDATED.
+
+Smallest next step: wait for supervisor direction before recovering the
+existing needs_attention transaction or attempting the single diagnostic
+retry.
 
 ---
 
