@@ -11,16 +11,21 @@ Status: idle. No task is assigned.
 - Content: the current Build Manager candidate `agent/beta-recovery`
   e57a5b6d47a7ed53d3f8bd526de300960d9f7e32 (BM 0.0.15 product state), merged by commit
   764929f into the historical `agent/claude` tip 98750fc (first parent). Outside `.agent/**`
-  the tree is identical to e57a5b6; the restoration changed no product source.
+  the product tree is identical to e57a5b6; the restoration changed no product source.
+- Guidance sync: commit 59ef609 copied the nine manual-mode guidance files listed below from
+  local `matrix` cee9d0b7a2cc4a2ce2fa657c6a46d28dbc899fe3 (a path-level copy, not a merge of
+  `matrix`). It changed documentation only.
 - Not pushed: `origin/agent/claude` is still 98750fc.
 
 ## Read before starting work
 
-- Manual-mode guidance (`.orchestrator/BOOTSTRAP.md`, `PROJECT.md`, `WORKFLOW.md`,
-  `DECISIONS.md`, `HANDOFF.md`) exists only on local `matrix` in
-  `/Users/eengert/Documents/Kodi/script.build.manager`; it is not on this branch. This
-  branch's `AGENTS.md` and `CLAUDE.md` are the older ai-supervisor-era versions. Where they
-  disagree, the `.orchestrator` guidance and the exact task prompt win.
+- The manual-mode repository guidance on this branch is the `matrix` cee9d0b copy of
+  `.orchestrator/{BOOTSTRAP,CHATGPT_PROJECT_INSTRUCTIONS_MANUAL,DECISIONS,HANDOFF,PROJECT,WORKFLOW}.md`,
+  `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md`. Start from
+  `.orchestrator/BOOTSTRAP.md`. Local `matrix` in `/Users/eengert/Documents/Kodi/script.build.manager`
+  remains the canonical copy: later `matrix` changes are not propagated automatically, and the
+  `.orchestrator/HANDOFF.md` here is a snapshot as of cee9d0b. `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`
+  and older `.agent/**` records are historical, not current instructions.
 - The `.agent/**` records that were here described ai-supervisor-era work and were replaced
   by this note. They remain in history: 98750fc (previous Claude endpoint) and e57a5b6
   (candidate, second parent of 764929f). Uncommitted shutdown notes about the same era remain
