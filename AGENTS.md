@@ -22,8 +22,10 @@ evidence.
 
 ## Branch Policy
 
-- The task prompt names the exact branch/worktree you may use. Do not assume a
-  fixed `agent/codex` / `agent/claude` branch.
+- The task prompt names the exact branch/worktree you may use. The normal
+  manual working worktrees are the Agent Handoff Codex and Claude endpoints
+  (`agent/codex`, `agent/claude`; see `.orchestrator/PROJECT.md`), but do not
+  infer which one to use: work only in the one the prompt names.
 - Normal implementation never happens directly on `matrix`.
 - The `matrix` branch is protected. Do not push or merge to it unless the
   task explicitly authorizes an integration operation.
@@ -126,9 +128,11 @@ Raw rows go in `.agent/USAGE_HISTORY.md` — one append-only table, one row per
 task. Keep it compact.
 
 Do **not** put raw usage telemetry in `BUILD_MANAGER_PROJECT_PLAN.md` or
-`BUILD_MANAGER_SUPERVISOR_HANDOFF.md`. The supervisor handoff carries only
-short summarized observations (e.g. "<model> <effort> completed <task>
-efficiently" / "showed higher burn than expected on a comparable task").
+`.orchestrator/HANDOFF.md`. The project handoff (`.orchestrator/HANDOFF.md`,
+maintained by ChatGPT in the manual workflow) carries only short summarized
+observations (e.g. "<model> <effort> completed <task> efficiently" / "showed
+higher burn than expected on a comparable task"). The historical
+`BUILD_MANAGER_SUPERVISOR_HANDOFF.md` is no longer updated.
 
 ### Known constraint
 

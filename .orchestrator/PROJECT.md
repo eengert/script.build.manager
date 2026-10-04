@@ -33,11 +33,16 @@ The active milestone is **Build Manager macOS Beta Qualification**. Its authorit
 
 ## Manual worktrees
 
-Build Manager now uses a manual ChatGPT -> Codex/Claude workflow.
+Build Manager uses a manual ChatGPT -> Codex/Claude workflow. The retained Agent Handoff tool (`/Users/eengert/Documents/Kodi/agent-handoff`, installed as `Agent Handoff.app`) maintains exactly two manual endpoints for this project:
 
-There are no permanently designated "production supervisor" or provider-owned worker worktrees. Every manual task prompt must name the exact worktree/branch it is allowed to use.
+- Codex: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`
+- Claude: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude`, branch `agent/claude`
 
-The current resumable product worktree and exact candidate state are recorded in `.orchestrator/HANDOFF.md`. Old `script.build.manager-supervised-*`, `script.build.manager-supervisor`, and other historical agent worktrees are not active merely because they still exist on disk or in Git metadata.
+These are manual Agent Handoff endpoints, not autonomous supervisor workers: nothing runs in them unless Eric launches Codex or Claude with a bounded prompt. Their product trees outside `.agent/**` are meant to stay identical, and Agent Handoff records one active worker. Current status (active worker, candidate state) is in `.orchestrator/HANDOFF.md`; live Git and a read-only Agent Handoff status check win over any snapshot. Antigravity is retired from the Build Manager Agent Handoff configuration and must not be recreated.
+
+Having two endpoints does not remove the per-task rule: every manual task prompt must name the exact worktree/branch it is allowed to use, and an agent works only in that one.
+
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-beta-recovery` (branch `agent/beta-recovery`) is retained as a historical/safety reference for the candidate the endpoints were restored from. It is not a normal working endpoint. Old `script.build.manager-supervised-*`, `script.build.manager-supervisor`, and other historical agent worktrees are retired or inactive; their branches and archived evidence may still exist in Git metadata and under `/Users/eengert/Documents/Kodi/archives/`, but they are not active merely because they exist.
 
 Do not disturb or delete an old worktree if it contains uncommitted/review evidence unless its state has first been reconciled and intentionally archived.
 
@@ -87,13 +92,13 @@ That prohibition includes read, write, `ls`, `stat`, `test -e`, grep, and metada
 
 Family Room Apple TV is historical source-of-truth for the captured desired state and must remain read-only unless a new explicit work item authorizes a specific mutation through an appropriate safe capability.
 
-Named ai-supervisor Kodi aliases include:
+The retired ai-supervisor framework used these Kodi device aliases (they no longer exist as callable aliases; the names remain useful only as device identifiers):
 
 - `family-room-kodi`
 - `bonus-room-kodi`
 - `shield-pro-kodi`
 
-Alias existence is not authorization. A work item must explicitly grant the target.
+Naming a device is not authorization. A work item must explicitly grant the target.
 
 ## Frozen software model
 

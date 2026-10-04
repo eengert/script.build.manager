@@ -22,17 +22,17 @@ Each criterion requires durable evidence tied to the exact candidate and authori
 
 ### Critical-path admission
 
-Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, or represent a demonstrated control-plane blocker to one of those outcomes.
+Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, or represent a demonstrated blocker in the manual workflow or its safe host-side helpers (not retired ai-supervisor infrastructure) to one of those outcomes.
 
-### Framework freeze and validation tools
+### Validation tools and retired framework work
 
-Nonessential ai-supervisor feature development is frozen for this beta push. Do not reopen generalized provenance, provider architecture, Operator Controls, dashboard/UI polish, notifications, portability, generalized diagnostics, or unrelated observability unless the framework-work admission rule is met or a safety-critical defect creates real risk.
+Historical note: earlier in this milestone a nonessential-feature freeze applied to the ai-supervisor framework (generalized provenance, provider architecture, Operator Controls, dashboard/UI polish, notifications, portability, generalized diagnostics, unrelated observability), with a framework-work admission rule for exceptions. ai-supervisor was retired to cold storage on 2026-10-03 (D-025 in `.orchestrator/DECISIONS.md`), so no framework work is active, admitted, or required for beta. Do not resume any of it under this milestone; it returns only if Eric explicitly resurrects ai-supervisor as a separate project.
 
 Treat BM-023A adapter `0.0.15` as validation infrastructure. Do not create `0.0.16+` for diagnostics, observability, cleanup, ergonomics, theory, or nicer status. A new adapter version is justified only when bounded live beta qualification demonstrates a real blocker the current adapter cannot diagnose or correct.
 
-The known non-blocking Operator Controls follow-ups are post-beta: stale README wording about evaluation failure/user pause; overstated prerequisite wording in `OPERATOR_CONTROLS.md`; optional negative controller/restart-hold tests; and the one-shot `replan` behavior that skips the dirty-checkpoint decision inside `consume_reconcile`. Reopen one only if it becomes a reproduced beta blocker or a safety-critical defect.
+The known non-blocking ai-supervisor Operator Controls follow-ups (stale README wording about evaluation failure/user pause; overstated prerequisite wording in `OPERATOR_CONTROLS.md`; optional negative controller/restart-hold tests; the one-shot `replan` behavior that skips the dirty-checkpoint decision inside `consume_reconcile`) were post-beta framework items. They survive only in the ai-supervisor cold-storage archive and are not Build Manager work.
 
-Apply Outcome-Driven Supervision throughout this milestone: define the expected product/evidence change before dispatch, use one bounded outcome-level runway for foreseeable steps, suppress duplicate work on unchanged blockers, require independent review according to risk, and run full product suites at meaningful candidate/qualification/release boundaries. Preserve valid full-suite evidence when candidate source is unchanged. Never weaken controller, sandbox, provider/quota, trusted-action, exact-identity, protected-branch, provenance, private-data, device/production, restart/recovery, or truthful-reporting safeguards.
+Current execution is manual relay (D-025; `.orchestrator/BOOTSTRAP.md` and `.orchestrator/WORKFLOW.md`): ChatGPT plans and supervises, Eric runs bounded Codex or Claude prompts in the Agent Handoff endpoints, and reports return to ChatGPT. Apply the outcome-driven task-selection principle (D-023; its supervisor mechanisms are superseded by D-025) throughout this milestone: define the expected product/evidence change before dispatching a prompt, suppress duplicate work on unchanged blockers, require independent review according to risk, and run full product suites at meaningful candidate/qualification/release boundaries. Preserve valid full-suite evidence when candidate source is unchanged. Never weaken exact-identity, protected-branch, private-data, credential-isolation, device/production, restart/recovery, or truthful-reporting safeguards. The controller, sandbox, provider/quota, trusted-action, and provenance safeguards formerly listed here were ai-supervisor mechanisms; they are retired with it and are not current requirements.
 
 ## 1. Project Identity
 
@@ -1373,7 +1373,7 @@ Testing status
 Agent/model usage observations
 ```
 
-This is the primary file used when starting a new supervisor chat.
+This describes the original design. As of 2026-10-03 (D-025) a new ChatGPT supervisor chat starts from `.orchestrator/BOOTSTRAP.md`, living project state is kept in `.orchestrator/HANDOFF.md`, and this file is historical evidence rather than a current instruction source.
 
 ## `AGENTS.md`
 
