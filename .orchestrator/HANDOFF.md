@@ -37,19 +37,19 @@ Before any new implementation, re-run read-only Git status/identity checks on th
 
 ## Agent Handoff endpoints (restored 2026-10-04)
 
-Agent Handoff is retained as the mechanism for maintaining the two manual agent worktrees. Its source is `/Users/eengert/Documents/Kodi/agent-handoff`; the installed `Agent Handoff.app` matches that source and includes the macOS `USAGE_HISTORY` union fix.
+The endpoint architecture is recorded as decision D-026 in `.orchestrator/DECISIONS.md`. Agent Handoff is retained as the mechanism for maintaining the two manual agent worktrees and switching ownership between them. Its source is `/Users/eengert/Documents/Kodi/agent-handoff`; the installed `Agent Handoff.app` matches that source and includes the macOS `USAGE_HISTORY` union fix.
 
 - Codex endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`
 - Claude endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude`, branch `agent/claude`
 - Only these two endpoints are configured for Build Manager. Antigravity is retired from the Build Manager Agent Handoff configuration and must not be recreated.
-- Active worker at this refresh: Codex. Agent Handoff records the active worker; it changes only through a real handoff or the supported `set-active-agent` recovery command.
+- Which agent is current is determined live, not assumed: Agent Handoff records the active worker, and it changes only through a real handoff or the supported `set-active-agent` recovery command. At the 2026-10-04 refresh it was Codex.
 - At this refresh Agent Handoff `status` reported Codex as the current agent with both endpoints clean and containing `origin/matrix`. Re-verify live before relying on it:
 
   `AGENT_HANDOFF_PROJECT=build-manager "/Applications/Agent Handoff.app/Contents/Resources/agent_handoff_controller.sh" status`
 
   This is read-only apart from a bounded fetch of `origin/matrix`.
-- A real handoff (`continue <agent>`) merges the outgoing endpoint into the incoming one and pushes the incoming branch to `origin`. Do not run one without Eric's explicit authorization. As of this refresh neither endpoint has been pushed since restoration.
-- Each endpoint's `.agent/**` is endpoint-specific; do not copy `matrix` `.agent/**`. The `.orchestrator/**`, `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` copies on the endpoints are path-level snapshots of `matrix`; after changing them here, re-sync them with an explicit-path history-preserving copy (see `.orchestrator/WORKFLOW.md`), never a wholesale merge.
+- A real handoff (`continue <agent>`) merges the outgoing endpoint into the incoming one and pushes the incoming branch to `origin`. Run one only when Eric has explicitly asked the Supervisor to switch agents; that request carries the narrow standing publication authorization in D-026 (that one push only: no other push, no `matrix` push, no release, no force-push, no history rewrite). As of this refresh neither endpoint has been pushed since restoration.
+- Each endpoint's `.agent/**` is endpoint-specific; do not copy `matrix` `.agent/**`. The `.orchestrator/**`, `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` copies on the endpoints are path-level snapshots of `matrix`; after changing them here, re-sync them with an explicit-path history-preserving copy (see `.orchestrator/WORKFLOW.md`), never a wholesale merge. `matrix` remains the canonical guidance and protected integration lane.
 
 ## Product evidence already established
 
@@ -127,7 +127,7 @@ The uncommitted state of the retired `supervised-codex` and `supervised-claude` 
 - Authorized macOS runtime target is only `/Applications/Kodi Build Manager Test.app` in portable `-p` mode.
 - Real Apple TV / Shield / Fire TV mutation requires Eric's explicit named-device/named-action authorization.
 - Do not expose credentials, private overlay values, tokens, or secrets.
-- No push, release, force-push, destructive history rewrite, or evidence-destroying cleanup without Eric's explicit authorization.
+- No push, release, force-push, destructive history rewrite, or evidence-destroying cleanup without Eric's explicit authorization (the only standing exception is the agent-switch publication push in D-026).
 
 ## Manual Test.app work
 

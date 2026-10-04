@@ -53,6 +53,8 @@ Manual work must use the exact branch/worktree named in the task prompt. The nor
 
 When repository guidance on `matrix` changes, bring it to the endpoints with an explicit-path, history-preserving copy (for example `git restore --source=<matrix SHA> --staged --worktree -- <paths>` in each endpoint, then a local commit). A guidance update does not merge `matrix` wholesale into an endpoint and does not copy `matrix` `.agent/**`; product source, tests, and assets change only through a deliberate product decision, not through a guidance sync.
 
+Switching the working agent between the two endpoints uses Agent Handoff only, never ad hoc branch moves, and only when Eric explicitly asks the Supervisor to switch. Agent Handoff requires both endpoints clean, merges the outgoing endpoint into the incoming one, and publishes the incoming branch to `origin`. Eric's explicit switch request authorizes that one publication push and nothing else (D-026). Check the live status before and after a switch (command in `.orchestrator/HANDOFF.md`).
+
 Normal implementation should not occur directly on `matrix`. Integration to `matrix` happens only after ChatGPT has reconciled accepted review/validation evidence and Eric's current instructions permit it.
 
 Do not:
@@ -61,7 +63,7 @@ Do not:
 - reset/rebase shared history destructively;
 - discard another agent's commits or dirty candidate;
 - run `git clean` / destructive reset on evidence-bearing worktrees;
-- push or release without Eric's explicit authorization.
+- push or release without Eric's explicit authorization (the only standing exception is the agent-switch publication push in D-026).
 
 ## Implementation and review lifecycle
 
