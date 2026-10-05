@@ -265,6 +265,8 @@ class ResumeTestCase(unittest.TestCase):
             FrozenInstallPhase,
             FrozenInstallStore,
             FrozenInstallTransaction,
+            FrozenLifecycleStage,
+            active_activation_hold_ids,
             ensure_frozen_install_guard,
         )
         from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
@@ -282,9 +284,13 @@ class ResumeTestCase(unittest.TestCase):
                 self.value = policy
 
         bm020_before = self.store.inspect()
-        for value in (AddonUpdatePolicy.AUTOMATIC, AddonUpdatePolicy.NOTIFY_ONLY):
-            with self.subTest(policy=value):
-                frozen_store = FrozenInstallStore(Path(self.tmp.name) / f"frozen-{value.name}")
+        for label, value, code in (
+            ("automatic", AddonUpdatePolicy.AUTOMATIC, "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("notify_only", AddonUpdatePolicy.NOTIFY_ONLY, "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("fractional_never_check", 2.9, "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+        ):
+            with self.subTest(policy=label):
+                frozen_store = FrozenInstallStore(Path(self.tmp.name) / f"frozen-{label}")
                 frozen = FrozenInstallTransaction(
                     transaction_id="44444444-4444-4444-8444-444444444444",
                     build_id="bm022-fixture",
@@ -296,6 +302,10 @@ class ResumeTestCase(unittest.TestCase):
                     original_update_policy=AddonUpdatePolicy.AUTOMATIC,
                     created_at="2026-09-21T00:00:00Z",
                     updated_at="2026-09-21T00:00:00Z",
+                    lifecycle_stage=FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+                    activation_hold_ids=("plugin.video.redlight",),
+                    activation_hold_released=False,
+                    lifecycle_restart_count=1,
                 )
                 frozen_store.create(frozen)
                 policy = Policy(value)
@@ -309,12 +319,84 @@ class ResumeTestCase(unittest.TestCase):
                         ),
                     )
                 self.assertEqual(status.classification, StartupClassification.NEEDS_ATTENTION)
-                self.assertEqual(status.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+                self.assertEqual(status.code, code)
                 self.assertEqual(coordinator.calls, [])  # BM-020 never resumed
                 self.assertEqual(policy.writes, [])  # and nothing changed the setting
                 self.assertEqual(policy.value, value)
                 self.assertEqual(self.store.inspect(), bm020_before)  # BM-020 state untouched
                 self.assertEqual(frozen_store.inspect().phase, FrozenInstallPhase.NEEDS_ATTENTION)
+                held = frozen_store.inspect()
+                self.assertEqual(held.transaction_id, frozen.transaction_id)
+                self.assertEqual(held.lifecycle_stage, frozen.lifecycle_stage)
+                self.assertFalse(held.activation_hold_released)
+                self.assertEqual(
+                    active_activation_hold_ids(frozen_store),
+                    frozenset({"plugin.video.redlight"}),
+                )
+
+    def test_exact_integer_never_check_allows_startup_resume_without_a_write(self):
+        from resources.lib.frozen_install import (
+            FrozenInstallPhase,
+            FrozenInstallStore,
+            FrozenInstallTransaction,
+            FrozenLifecycleStage,
+            active_activation_hold_ids,
+            ensure_frozen_install_guard,
+        )
+        from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
+
+        class Policy(UpdatePolicyBackend):
+            def __init__(self, value):
+                self.value = value
+                self.writes = []
+
+            def get_policy(self):
+                return self.value
+
+            def set_policy(self, policy):
+                self.writes.append(policy)
+                self.value = policy
+
+        frozen_store = FrozenInstallStore(Path(self.tmp.name) / "frozen-exact-integer")
+        frozen = FrozenInstallTransaction(
+            transaction_id="44444444-4444-4444-8444-444444444444",
+            build_id="bm022-fixture",
+            manifest_path="/fixture.json",
+            device_profile_id="test",
+            manifest_fingerprint="a" * 64,
+            phase=FrozenInstallPhase.AWAITING_RESTART,
+            originating_kodi_session_id=SESSION_A,
+            original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+            created_at="2026-09-21T00:00:00Z",
+            updated_at="2026-09-21T00:00:00Z",
+            lifecycle_stage=FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            activation_hold_ids=("plugin.video.redlight",),
+            activation_hold_released=False,
+            lifecycle_restart_count=1,
+        )
+        frozen_store.create(frozen)
+        policy = Policy(2)
+        coordinator = _StartupResume()
+        with patch("resources.lib.startup.get_current_kodi_session_id", return_value=SESSION_B):
+            status = run_startup(
+                store=self.store,
+                resume_coordinator=coordinator,
+                frozen_precondition=lambda: ensure_frozen_install_guard(
+                    store=frozen_store, policy_backend=policy
+                ),
+            )
+
+        self.assertEqual(status.classification, StartupClassification.NO_TRANSACTION)
+        self.assertEqual(status.code, "RESUME_COMPLETE")
+        self.assertEqual(len(coordinator.calls), 1)
+        self.assertEqual(coordinator.calls[0][1], SESSION_B)
+        self.assertEqual(policy.writes, [])
+        self.assertEqual(policy.value, 2)
+        self.assertEqual(frozen_store.inspect(), frozen)
+        self.assertEqual(
+            active_activation_hold_ids(frozen_store),
+            frozenset({"plugin.video.redlight"}),
+        )
 
     def test_resuming_transaction_is_not_retried_on_startup(self):
         self.store.update_phase(TransactionPhase.RESUMING)

@@ -1984,7 +1984,7 @@ class FrozenInstallTest(unittest.TestCase):
         class MalformedPolicy(FakePolicy):
             def get_policy(inner_self):
                 super(MalformedPolicy, inner_self).get_policy()
-                return "automatic"
+                return 2.9
 
         class UnreadablePolicy(FakePolicy):
             def get_policy(inner_self):
@@ -2076,7 +2076,7 @@ class FrozenInstallTest(unittest.TestCase):
         class MalformedPolicy(FakePolicy):
             def get_policy(inner_self):
                 super(MalformedPolicy, inner_self).get_policy()
-                return None
+                return 2.9
 
         class UnreadablePolicy(FakePolicy):
             def get_policy(inner_self):

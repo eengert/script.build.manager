@@ -199,9 +199,23 @@ class TestVerifyQuarantined(unittest.TestCase):
             ({"value": 2}, None),
             ({"value": 0}, UpdaterNotQuarantinedError),
             ({"value": 1}, UpdaterNotQuarantinedError),
+            ({"value": 2.9}, UpdaterStateUnavailableError),
+            ({"value": 2.01}, UpdaterStateUnavailableError),
+            ({"value": 0.9}, UpdaterStateUnavailableError),
+            ({"value": 1.9}, UpdaterStateUnavailableError),
+            ({"value": 2.0}, UpdaterStateUnavailableError),
+            ({"value": "2"}, UpdaterStateUnavailableError),
+            ({"value": b"2"}, UpdaterStateUnavailableError),
+            ({"value": False}, UpdaterStateUnavailableError),
+            ({"value": float("nan")}, UpdaterStateUnavailableError),
+            ({"value": float("inf")}, UpdaterStateUnavailableError),
+            ({"value": float("-inf")}, UpdaterStateUnavailableError),
             ({"value": "x"}, UpdaterStateUnavailableError),
             ({"value": None}, UpdaterStateUnavailableError),
             ({"value": True}, UpdaterStateUnavailableError),
+            ({"value": []}, UpdaterStateUnavailableError),
+            ({"value": {}}, UpdaterStateUnavailableError),
+            ({"value": object()}, UpdaterStateUnavailableError),
             ({}, UpdaterStateUnavailableError),
             ("garbage", UpdaterStateUnavailableError),
             (None, UpdaterStateUnavailableError),
@@ -217,9 +231,18 @@ class TestVerifyQuarantined(unittest.TestCase):
                 if expected is None:
                     guard.verify_quarantined()
                 else:
-                    with self.assertRaises(expected):
+                    with self.assertRaises(expected) as raised:
                         guard.verify_quarantined()
+                    if expected is UpdaterNotQuarantinedError:
+                        self.assertEqual(
+                            "FROZEN_UPDATER_NOT_QUARANTINED", raised.exception.code
+                        )
+                    else:
+                        self.assertEqual(
+                            "FROZEN_UPDATER_STATE_UNAVAILABLE", raised.exception.code
+                        )
                 self.assertEqual(["Settings.GetSettingValue"], calls)
+                self.assertNotIn("Settings.SetSettingValue", calls)
 
     def test_a_raising_rpc_transport_is_unavailable_not_a_write(self):
         calls = []

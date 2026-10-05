@@ -173,10 +173,12 @@ class AddonUpdateGuard:
 
 
 def _coerce_policy(value: object) -> AddonUpdatePolicy:
-    if isinstance(value, bool):
-        raise UpdateGuardError("updater policy must be an integer enum")
+    if type(value) is AddonUpdatePolicy:
+        return value
+    if type(value) is not int:
+        raise UpdateGuardError("updater policy must be an exact integer enum value")
     try:
-        return AddonUpdatePolicy(int(value))
+        return AddonUpdatePolicy(value)
     except (TypeError, ValueError) as exc:
         raise UpdateGuardError("unknown updater policy") from exc
 
