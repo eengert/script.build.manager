@@ -1,32 +1,31 @@
-# Test.app helper B3 cleanup correction — 2026-10-04
+# BM updater-policy malformed verification correction — 2026-10-05
 
-Status: correction complete offline; independent review pending. Do not self-approve.
+Status: correction complete offline; narrow independent review pending. Do not
+self-approve.
 
 ## Identity and scope
 
 - Worktree: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`.
-- Branch: `agent/codex`; task-start HEAD: `a420a17ca7e7245a2558c9a5b27589b52ee926a6` (clean).
-- Prior B1-B5 correction: `53454069a033fcdfc52dc96aa38e050eb13a7ee7`.
-- Substantive B3 correction: `f47dc15cf9e43dd2e4612f38bbb97cacdb4d0323` (`tools/bm_test_app.py`, `tests/test_bm_test_app.py` only).
-- Scope: preserve relocated staging state when pre-swap validation rejects an ancestor symlink. No Test.app preflight.
+- Branch: `agent/codex`; task-start HEAD `f27270039d668d727cc2c54869bbc0bfd4c584c5` (clean).
+- Reviewed candidate before correction: `8ad6aaeb878b0cefc8198c6124107b93e9865c88`.
+- Correction commit: `4a02b833178f5cb29e2b596985f1a8641ed3fa25` (`resources/lib/update_guard.py`, `tests/test_update_guard.py`, `tests/test_frozen_install.py`, and `tests/test_resume.py`).
+- Scope: reject malformed updater-policy representations before they can authorize post-restart continuation.
 
-## Root cause and correction
+## Reproduction and correction
 
-- `_swap_in` rejected a replaced `Contents/Resources` ancestor with `bundle_path_symlink`, but `_remove_stage_area` checked only `.bm-stage` with `lstat_real_dir`. `rmtree` followed the ancestor symlink and deleted the relocated stage area.
-- Cleanup now validates the full path chain before inspection and rechecks it immediately before `rmtree`. Unsafe or ambiguous chains return `False`; no symlink resolution is used, and the original stage error propagates.
+- Before the fix, the actual `KodiJsonRpcUpdatePolicyBackend` plus `AddonUpdateGuard.verify_quarantined()` accepted `2.9`, `2.01`, `2.0`, `"2"`, and `b"2"` as `NEVER_CHECK`. The `run_startup` regression showed `2.9` invoking BM-020 resume and returning `RESUME_COMPLETE`.
+- `_coerce_policy` now accepts only the existing `AddonUpdatePolicy` enum object or an exact built-in integer, then validates the enum value. Other representations raise updater-state-unavailable through verification. No setter path was added or changed.
+- Coverage includes exact integers 0/1/2; fractional values, numeric string/bytes, booleans, `None`, NaN/infinities, containers, and arbitrary objects; no malformed API response calls the setter. Startup tests verify `2.9` blocks resume, marks the frozen transaction for attention while preserving its activation hold, leaves BM-020 untouched, and makes zero setter calls. Exact integer `2` still permits the verify-only startup continuation.
+- The pre-fix regressions failed as expected. An in-memory mutation restoring `int(value)` caused the new JSON-RPC and startup regressions to fail again.
 
-## Reproduction and validation
+## Validation
 
-- The disposable fake-bundle regression reproduced the old defect: immediately before swap, `Resources` was moved to a decoy, replaced with a symlink, and a sentinel was placed inside the relocated `.bm-stage`. The pre-swap rejection followed by legacy cleanup deleted the sentinel. The same test passes with the correction.
-- After repairing the fake bundle path, a subsequent stage is blocked by retained `.bm-stage` with `stage_area_exists`; the sentinel remains intact.
-- B3 regression: 1/1 pass. A targeted in-memory mutation restoring the old final-node-only cleanup caused the regression to fail on the deleted sentinel, as expected.
-- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tests.test_bm_test_app`: 311/311 pass in permitted offline execution. The initial sandbox run could not bind disposable loopback servers or inspect test processes; no test isolation changes were made.
-- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tests.test_bm023a_adapter`: 110/110 pass.
-- `python3 -m py_compile tools/bm_test_app.py` and `git diff --check`: pass.
-- Existing B1/B2/B4/B5 coverage passed in the helper suite. Accepted product files (`addon.xml`, `default.py`, `service.py`, `resources/`) match `8789329054b77815c6f9548fd4ce9beacbe1d348`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tests.test_update_guard tests.test_frozen_install tests.test_resume`: 84/84 passed.
+- Initial full-suite run under the restricted sandbox had 8 failures and 11 errors from blocked process listing and loopback binds in unrelated helper tests. The same unchanged offline suite was rerun with permitted process/loopback access: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -q`, 2405/2405 passed.
+- `python3 -m py_compile resources/lib/update_guard.py tests/test_update_guard.py tests/test_frozen_install.py tests/test_resume.py`: passed.
+- `git diff --check`: passed. Product correction commit contains only the four scoped source/test files.
 
 ## Boundaries and next step
 
-- No real `/Applications/Kodi Build Manager Test.app`, normal Kodi, normal profile, or household device was accessed. No push, matrix integration, release, rebase, or reset.
-- Next: independent review of only commit `f47dc15cf9e43dd2e4612f38bbb97cacdb4d0323` against task-start HEAD `a420a17ca7e7245a2558c9a5b27589b52ee926a6`. Eric must relay that review; no further implementation or live action is authorized by this task.
-- No additional human input is needed before the independent review.
+- No Test.app, Kodi runtime, normal profile, or device was accessed or mutated. No updater setting was changed. No adapter/version, helper, graceful-quit, terminal restore, or recovery behavior was changed. No push, release, or integration was performed.
+- Next: independent review of only `f27270039d668d727cc2c54869bbc0bfd4c584c5..4a02b833178f5cb29e2b596985f1a8641ed3fa25`. Eric should relay that review before further work. No human input is needed before that review.
