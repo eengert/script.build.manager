@@ -166,6 +166,35 @@ carry the requested `adapter_mode`. Only allowlisted fields survive; unknown
 keys and invalid values are withheld and counted. The installed trees are
 verified again after the run.
 
+## Credentials for `run`
+
+`run` needs a password only if Kodi's web interface answers `401`. Two entry
+points supply it through the same reviewed `Services.password_prompt` seam; every
+other protection (Test.app identity, portable `-p`, exact listener PID, loopback
+validation, Git binding, installed-tree verification, result freshness, the
+secret registry and the output leak guard) stays inside `bm_test_app.py`.
+
+- `tools/bm_test_app.py` (direct): a hidden prompt on the controlling terminal
+  (`/dev/tty`, never stdin). Use it when the password is entered by hand.
+- `tools/bm_test_app_keychain.py`: same arguments, JSON output and exit codes,
+  but the password comes from one fixed macOS Keychain item read inside the local
+  process (service `ai-supervisor.test-app-kodi`, account `kodi`), so an agent
+  that runs it never receives the password. The lookup is exactly
+  `/usr/bin/security find-generic-password -a kodi -s ai-supervisor.test-app-kodi -w`:
+  argv list, no shell, stdin closed, stderr discarded, fixed minimal environment,
+  15 s timeout, strict validation of the item. The item identity is a constant of
+  that file; it cannot come from the command line, environment, config or stdin.
+
+No password belongs in a config file, argument, environment variable or stdin;
+neither entry point accepts one. The Keychain wrapper **fails closed and never
+falls back to the interactive prompt**, so an unattended run cannot hang waiting
+for a person: an unusable item is `credential_missing`, a lookup that could not
+run (missing binary, timeout, OS error) is `credential_prompt_unavailable`, and
+neither carries `security` output. A stale password is not masked: Kodi rejecting
+it still ends as `rpc_auth_failed`. The wrapper is host-side qualification
+tooling; it is never staged into Kodi and is not part of the Build Manager
+product.
+
 ## `snapshot`
 
 Reads only: add-on `addon.xml` files, the newest `Addons*.db` (read-only,
