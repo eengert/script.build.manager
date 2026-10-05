@@ -30,7 +30,10 @@ live use and needs independent review before it touches the real Test.app.
   must agree with the kernel path. Portable `-p` must precede any unknown or
   value-taking option; only known boolean launch flags may precede it. Embedded
   text and `--datadir "-p"` are refused; use the documented `--args -p` launch.
-  Unreadable process identity fails closed.
+  Unreadable process identity fails closed. The one exception is a PID that
+  exited after the `ps` snapshot: only when that same `proc_pidpath` call fails
+  with `ESRCH` is the stale PID omitted from the census. Any other failure
+  (`EPERM`, `EACCES`, errno zero, a malformed result) is `process_listing_failed`.
 - Candidate bytes come from Git objects of an explicit full commit id, never
   from working-tree files.
 - No password in argv, environment, config, logs, output or evidence.

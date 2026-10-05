@@ -12,6 +12,7 @@ import base64
 import builtins
 import contextlib
 import copy
+import ctypes
 import errno
 import hashlib
 import http.server
@@ -1312,6 +1313,187 @@ class TestPsAndLsofParsing(TripwireTestCase):
 
         with self.assertRaises(bm.HelperError):
             bm.lsof_listener_pids(1, raising)
+
+
+class FakeLibProc:
+    """libSystem stand-in reproducing proc_pidpath's return value and errno.
+
+    outcomes maps pid -> (result, errno or None, path bytes). None leaves errno
+    untouched; the real call also leaves it alone on success.
+    """
+
+    def __init__(self, outcomes):
+        self.outcomes = outcomes
+        self.calls = []
+
+    def proc_pidpath(self, pid, buffer, size):
+        self.calls.append(pid)
+        result, err, path = self.outcomes[pid]
+        if path:
+            ctypes.memmove(buffer, path + b"\0", len(path) + 1)
+        if err is not None:
+            ctypes.set_errno(err)
+        return result
+
+
+def ok_path(path):
+    return (len(path), None, path.encode())
+
+
+def failed(err, result=0):
+    return (result, err, b"")
+
+
+def mac_reader(outcomes):
+    """The real MacProcessReader logic over a fake libSystem."""
+    reader = bm.MacProcessReader.__new__(bm.MacProcessReader)
+    reader.lib = FakeLibProc(outcomes)
+    return reader
+
+
+class TestProcessCensusRace(TripwireTestCase):
+    """Only a pid the kernel proved gone (ESRCH) may leave the ps census."""
+
+    def setUp(self):
+        super().setUp()
+        self.target = make_fake_app(self.tmp)
+
+    def lister(self, native, *pids):
+        listing = "".join(f"{pid} /stale/ps/comm/{pid}\n" for pid in pids)
+        return bm.PsProcessLister(fake_runner({("/bin/ps",): (0, listing.encode())}), native=native)
+
+    def test_esrch_pid_is_omitted_and_the_census_succeeds(self):
+        native = mac_reader({
+            7: ok_path("/sbin/launchd"),
+            8: failed(errno.ESRCH),
+            9: ok_path("/usr/bin/python3"),
+        })
+        lister = self.lister(native, 7, 8, 9)
+        self.assertEqual(lister.list_all(),
+                         [bm.ProcessInfo(7, "/sbin/launchd"), bm.ProcessInfo(9, "/usr/bin/python3")])
+        self.assertEqual(native.lib.calls, [7, 8, 9])
+        services = make_services(self.target, process_lister=lister)
+        self.assertEqual(bm.identify(services).state, "not_running")
+
+    def test_every_pid_vanishing_is_an_empty_census_not_an_error(self):
+        lister = self.lister(mac_reader({4: failed(errno.ESRCH), 5: failed(errno.ESRCH)}), 4, 5)
+        self.assertEqual(lister.list_all(), [])
+
+    def test_any_other_native_failure_still_fails_closed(self):
+        cases = (
+            ("EPERM", failed(errno.EPERM)),
+            ("EACCES", failed(errno.EACCES)),
+            ("EIO", failed(errno.EIO)),
+            ("EINVAL", failed(errno.EINVAL)),
+            ("ENOENT", failed(errno.ENOENT)),
+            ("errno zero", failed(0)),
+            ("negative result with ESRCH", failed(errno.ESRCH, result=-1)),
+            ("oversized result with ESRCH", failed(errno.ESRCH, result=4096)),
+        )
+        for label, outcome in cases:
+            with self.subTest(label=label):
+                lister = self.lister(mac_reader({7: ok_path("/sbin/launchd"), 8: outcome}), 7, 8)
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister.list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.identify(make_services(self.target, process_lister=lister))
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def test_stale_errno_is_never_mistaken_for_esrch(self):
+        # The fake fails without touching errno, as a failure with no errno of
+        # its own would: a leftover ESRCH must not make the pid look vanished.
+        lister = self.lister(mac_reader({8: failed(None)}), 8)
+        ctypes.set_errno(errno.ESRCH)
+        self.assertIsNone(lister.native.executable(8))
+        ctypes.set_errno(errno.ESRCH)
+        with self.assertRaises(bm.HelperError) as raised:
+            lister.list_all()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def test_a_vanished_pid_cannot_excuse_an_unreadable_one(self):
+        lister = self.lister(mac_reader({8: failed(errno.ESRCH), 9: failed(errno.EPERM)}), 8, 9)
+        with self.assertRaises(bm.HelperError) as raised:
+            lister.list_all()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def test_native_reader_reports_each_outcome_distinctly(self):
+        native = mac_reader({
+            1: ok_path("/real/exe"), 2: failed(errno.ESRCH), 3: failed(errno.EPERM), 4: failed(0),
+        })
+        self.assertEqual(native.executable(1), "/real/exe")
+        with self.assertRaises(bm.ProcessVanished):
+            native.executable(2)
+        self.assertIsNone(native.executable(3))
+        self.assertIsNone(native.executable(4))
+
+    def native_by_pid(self, paths):
+        """Per-pid executable fake; a value of None means the pid vanished."""
+        def executable(pid):
+            if paths[pid] is None:
+                raise bm.ProcessVanished()
+            return paths[pid]
+        return SimpleNamespace(executable=executable, argv=lambda pid: (paths[pid], "-p"))
+
+    def test_classification_is_unchanged_next_to_a_vanished_pid(self):
+        exe = os.fspath(self.target.macos_dir / "Kodi")
+        scenarios = (
+            ("test app", {1: "/sbin/launchd", 8: None, 4242: exe}, None),
+            ("foreign kodi", {1: "/sbin/launchd", 8: None, 777: "/Applications/Kodi.app/Contents/MacOS/Kodi"},
+             "foreign_kodi_process_present"),
+            ("inside bundle", {8: None, 5: os.fspath(self.target.root / "Contents" / "MacOS" / "Helper")},
+             "test_app_process_mismatch"),
+            ("two test apps", {8: None, 10: exe, 11: exe}, "multiple_test_app_processes"),
+        )
+        for label, paths, expected_error in scenarios:
+            with self.subTest(label=label):
+                lister = self.lister(self.native_by_pid(paths), *paths)
+                services = make_services(self.target, process_lister=lister)
+                if expected_error:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        bm.identify(services)
+                    self.assertEqual(raised.exception.code, expected_error)
+                else:
+                    identity = bm.identify(services)
+                    self.assertEqual((identity.state, identity.pid, identity.test_app_process_count),
+                                     ("running_portable", 4242, 1))
+
+    def test_target_vanishing_after_the_census_is_ambiguous_not_trusted(self):
+        exe = os.fspath(self.target.macos_dir / "Kodi")
+        lookups = []
+
+        def executable(pid):
+            lookups.append(pid)
+            if len(lookups) > 1:
+                raise bm.ProcessVanished()
+            return exe
+
+        native = SimpleNamespace(executable=executable, argv=lambda pid: (exe, "-p"))
+        lister = self.lister(native, 4242)
+        self.assertIsNone(lister.command_line(4242))
+        lookups.clear()
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual(raised.exception.code, "test_app_process_ambiguous")
+
+
+@unittest.skipUnless(sys.platform == "darwin", "proc_pidpath is macOS only")
+class TestRealVanishedProcess(TripwireTestCase):
+    """A real disposable process that has exited; no Kodi process is involved."""
+
+    def test_real_exited_pid_is_recognized_as_vanished(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        child.wait()  # reaped: the pid is gone, no zombie is left behind
+        reader = bm.MacProcessReader()
+        with self.assertRaises(bm.ProcessVanished):
+            reader.executable(child.pid)
+        lister = bm.PsProcessLister(native=reader)
+        stale = [bm.ProcessInfo(child.pid, "stale"), bm.ProcessInfo(os.getpid(), "stale")]
+        census = lister.kernel_processes(stale)
+        self.assertEqual([process.pid for process in census], [os.getpid()])
+        self.assertTrue(census[0].exe.startswith("/"))
+        self.assertIsNone(lister.command_line(child.pid))
 
 
 @unittest.skipUnless(os.path.exists("/bin/ps") and os.path.exists("/usr/sbin/lsof"), "needs ps and lsof")
@@ -5207,7 +5389,7 @@ class TestStaticSafety(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
         allowed = {
-            "__future__", "argparse", "ast", "base64", "ctypes", "getpass", "hashlib", "http", "io", "ipaddress", "json",
+            "__future__", "argparse", "ast", "base64", "ctypes", "errno", "getpass", "hashlib", "http", "io", "ipaddress", "json",
             "os", "plistlib", "re", "secrets", "shutil", "sqlite3", "stat", "subprocess", "sys", "tempfile",
             "time", "unicodedata", "urllib", "warnings", "xml", "dataclasses", "datetime", "pathlib", "types",
             "typing", "tools",

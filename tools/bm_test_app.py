@@ -30,6 +30,7 @@ import argparse
 import ast
 import base64
 import ctypes
+import errno
 import getpass
 import hashlib
 import http.client
@@ -799,6 +800,14 @@ class ProcessInfo:
     exe: str
 
 
+class ProcessVanished(Exception):
+    """The kernel reported ESRCH for a pid: it exited after the ps snapshot.
+
+    Internal marker only. It carries no text, is never part of helper output,
+    and every caller either skips the stale pid or fails closed.
+    """
+
+
 def parse_ps_listing(text: str) -> List[ProcessInfo]:
     """Parse ``ps -o pid=,comm=`` output; the path may contain spaces."""
     found: List[ProcessInfo] = []
@@ -829,8 +838,20 @@ class MacProcessReader:
         self.lib.sysctl.restype = ctypes.c_int
 
     def executable(self, pid: int) -> Optional[str]:
+        """Kernel executable path, None if unreadable, ProcessVanished on ESRCH.
+
+        Only a failed proc_pidpath call whose own errno is exactly ESRCH proves
+        the pid exited. errno is cleared first and read straight after (ctypes
+        keeps a private copy because the library is opened with use_errno), so
+        a stale value can never pass for ESRCH. Every other failure, including
+        an errno of zero, an unexpected errno or a malformed length, stays an
+        unreadable identity.
+        """
         buffer = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+        ctypes.set_errno(0)
         count = self.lib.proc_pidpath(pid, buffer, len(buffer))
+        if count == 0 and ctypes.get_errno() == errno.ESRCH:
+            raise ProcessVanished()
         if count <= 0 or count >= len(buffer):
             return None
         return os.fsdecode(buffer.value)
@@ -884,7 +905,10 @@ class PsProcessLister:
     def kernel_processes(self, listed: Iterable[ProcessInfo]) -> List[ProcessInfo]:
         found = []
         for process in listed:
-            exe = self.native.executable(process.pid)
+            try:
+                exe = self.native.executable(process.pid)
+            except ProcessVanished:
+                continue  # exited after the ps snapshot; the kernel said so
             if not exe:
                 raise HelperError("process_listing_failed")
             found.append(ProcessInfo(process.pid, exe))
@@ -912,9 +936,12 @@ class PsProcessLister:
         return self.kernel_processes(parse_ps_listing(text))
 
     def command_line(self, pid: int) -> Optional[Tuple[str, ...]]:
-        before = self.native.executable(pid)
-        argv = self.native.argv(pid)
-        after = self.native.executable(pid)
+        try:
+            before = self.native.executable(pid)
+            argv = self.native.argv(pid)
+            after = self.native.executable(pid)
+        except ProcessVanished:
+            return None  # the target exited mid-read: no identity, as before
         if not before or before != after or not argv:
             return None
         # Preserve the two sanctioned Data-volume spellings without accepting
