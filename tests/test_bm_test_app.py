@@ -5467,6 +5467,333 @@ class TestStaticSafety(unittest.TestCase):
 
 
 
+class TestSanctionedAuxiliaryProcess(TripwireTestCase):
+    """Exactly one kernel-identified XBMCHelper at its exact path is a sanctioned
+    auxiliary; nothing broader is. Fake process listings only: no live Kodi."""
+
+    MAIN_PID = 4242
+    AUX_PID = 5151
+    LOOKALIKES = (
+        "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper2",
+        "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper-copy",
+        "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper ",
+        "Contents/Resources/Kodi/tools/darwin/runtime/xbmchelper",
+        "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper/XBMCHelper",
+        "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper.app/Contents/MacOS/XBMCHelper",
+        "Contents/Resources/Kodi/tools/darwin/runtime/../runtime/XBMCHelper",
+        "Contents/Resources/Kodi/tools/darwin/runtime//XBMCHelper",
+        "Contents/Resources/Kodi/tools/darwin/XBMCHelper",
+        "Contents/Resources/Kodi/tools/darwin/other/XBMCHelper",
+        "Contents/Resources/Kodi/tools/XBMCHelper",
+        "Contents/MacOS/XBMCHelper",
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.target = make_fake_app(self.tmp)
+        self.aux = os.fspath(self.target.auxiliary_executable)
+        self.aux_alias = bm._DATA_VOLUME_ALIAS + self.aux
+        self.lister = FakeProcessLister([
+            bm.ProcessInfo(1, "/sbin/launchd"),
+            bm.ProcessInfo(2, "/usr/bin/python3"),
+        ])
+        self.services = make_services(self.target, process_lister=self.lister)
+
+    def inside(self, relative):
+        # String concatenation on purpose: pathlib would normalize some lookalikes.
+        return f"{os.fspath(self.target.root)}/{relative}"
+
+    def lister_with(self, *processes, main=True, flags=" -p"):
+        lister = FakeProcessLister()
+        if main:
+            lister.run_test_app(self.target, pid=self.MAIN_PID, flags=flags)
+        lister.processes.extend(processes)
+        return lister
+
+    def refusal(self, lister, **kwargs):
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.identify(make_services(self.target, process_lister=lister), **kwargs)
+        return raised.exception
+
+    # -- the exact sanctioned identity ---------------------------------------
+
+    def test_the_sanctioned_path_is_exact_and_derived_from_the_bundle_root(self):
+        authorized = bm.TestAppTarget.authorized()
+        expected = (
+            "/Applications/Kodi Build Manager Test.app"
+            "/Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper"
+        )
+        self.assertEqual(os.fspath(authorized.auxiliary_executable), expected)
+        self.assertEqual(
+            authorized.auxiliary_aliases(), (expected, "/System/Volumes/Data" + expected)
+        )
+        self.assertEqual(
+            self.aux,
+            os.fspath(self.target.root / "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper"),
+        )
+        self.assertEqual(self.target.auxiliary_aliases(), (self.aux, self.aux_alias))
+
+    def test_classification_puts_only_the_exact_path_in_the_auxiliary_bucket(self):
+        main = bm.ProcessInfo(1, os.fspath(self.target.macos_dir / "Kodi"))
+        exact = [bm.ProcessInfo(2, self.aux), bm.ProcessInfo(3, self.aux_alias)]
+        lookalikes = [bm.ProcessInfo(10 + i, self.inside(rel)) for i, rel in enumerate(self.LOOKALIKES)]
+        outside = [
+            bm.ProcessInfo(40, "/usr/local/bin/XBMCHelper"),
+            bm.ProcessInfo(41, os.fspath(self.tmp / "Kodi Build Manager Test.app.bak"
+                                         / "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper")),
+        ]
+        view = bm.classify_processes([main, *exact, *lookalikes, *outside], self.target, "Kodi")
+        self.assertEqual([p.pid for p in view.test_app], [1])
+        self.assertEqual([p.pid for p in view.auxiliary], [2, 3])
+        self.assertEqual([p.pid for p in view.inside_bundle_other], [p.pid for p in lookalikes])
+        self.assertEqual([p.pid for p in view.foreign], [40, 41])
+
+    # -- required cases -------------------------------------------------------
+
+    def test_1_one_main_portable_process_without_auxiliary_passes_unchanged(self):
+        lister = self.lister_with()
+        identity = bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual(
+            (identity.state, identity.pid, identity.test_app_process_count,
+             identity.auxiliary_process_count),
+            ("running_portable", self.MAIN_PID, 1, 0),
+        )
+        self.assertEqual(identity.report()["process"], {
+            "pid": self.MAIN_PID, "portable_flag": True, "state": "running_portable",
+            "test_app_process_count": 1,
+        })
+
+    def test_2_one_main_plus_exactly_one_exact_xbmchelper_passes_and_is_auditable(self):
+        lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux))
+        lister.commands[self.AUX_PID] = "garbage that must never be consulted"
+        identity = bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual((identity.state, identity.pid), ("running_portable", self.MAIN_PID))
+        self.assertEqual((identity.test_app_process_count, identity.auxiliary_process_count), (1, 1))
+        self.assertEqual(lister.command_calls, [self.MAIN_PID])  # no argv for the auxiliary
+        process = identity.report()["process"]
+        self.assertEqual(process, {
+            "pid": self.MAIN_PID, "portable_flag": True, "state": "running_portable",
+            "test_app_process_count": 1, "auxiliary": "XBMCHelper", "auxiliary_process_count": 1,
+        })
+        self.assertNotIn(self.AUX_PID, process.values())
+        self.assertNotIn(self.aux, bm.canonical_json(identity.report()))
+
+    def test_2b_listing_order_does_not_matter(self):
+        lister = FakeProcessLister([bm.ProcessInfo(self.AUX_PID, self.aux)])
+        lister.run_test_app(self.target, pid=self.MAIN_PID)
+        self.assertEqual(bm.identify(make_services(self.target, process_lister=lister)).pid, self.MAIN_PID)
+
+    def test_3_data_volume_alias_of_the_exact_xbmchelper_passes(self):
+        lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux_alias))
+        identity = bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual((identity.state, identity.auxiliary_process_count), ("running_portable", 1))
+        main_alias = bm._DATA_VOLUME_ALIAS + os.fspath(self.target.macos_dir / "Kodi")
+        lister = FakeProcessLister(
+            [bm.ProcessInfo(33, main_alias), bm.ProcessInfo(34, self.aux_alias)], {33: main_alias + " -p"}
+        )
+        identity = bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual((identity.pid, identity.auxiliary_process_count), (33, 1))
+        self.assertEqual(lister.command_calls, [33])
+
+    def test_4_xbmchelper_alone_fails_closed_for_both_spellings(self):
+        for label, path in (("plain", self.aux), ("alias", self.aux_alias)):
+            with self.subTest(label=label):
+                lister = FakeProcessLister([bm.ProcessInfo(self.AUX_PID, path)])
+                error = self.refusal(lister)
+                self.assertEqual(error.code, "test_app_process_mismatch")
+                self.assertEqual(error.detail, {
+                    "auxiliary_process_count": 1, "process_count": 1, "test_app_process_count": 0,
+                })
+                self.assertEqual(lister.command_calls, [])  # never reads the auxiliary's argv
+
+    def test_5_more_than_one_xbmchelper_fails_closed(self):
+        for label, paths in (
+            ("two exact", (self.aux, self.aux)),
+            ("exact and alias", (self.aux, self.aux_alias)),
+            ("two aliases", (self.aux_alias, self.aux_alias)),
+        ):
+            with self.subTest(label=label):
+                lister = self.lister_with(
+                    bm.ProcessInfo(self.AUX_PID, paths[0]), bm.ProcessInfo(self.AUX_PID + 1, paths[1])
+                )
+                error = self.refusal(lister)
+                self.assertEqual(error.code, "test_app_process_mismatch")
+                self.assertEqual(error.detail, {
+                    "auxiliary_process_count": 2, "process_count": 2, "test_app_process_count": 1,
+                })
+
+    def test_6_main_plus_exact_xbmchelper_plus_any_other_in_bundle_executable_fails_closed(self):
+        for relative in (
+            "Contents/MacOS/Helper",
+            "Contents/Resources/Kodi/tools/darwin/runtime/OtherTool",
+            "Contents/Frameworks/Thing",
+        ):
+            with self.subTest(relative=relative):
+                lister = self.lister_with(
+                    bm.ProcessInfo(self.AUX_PID, self.aux), bm.ProcessInfo(6, self.inside(relative))
+                )
+                error = self.refusal(lister)
+                self.assertEqual(error.code, "test_app_process_mismatch")
+                self.assertEqual(error.detail, {"process_count": 1})  # the existing mismatch policy
+
+    def test_7_lookalike_paths_inside_the_bundle_are_not_the_sanctioned_auxiliary(self):
+        for relative in self.LOOKALIKES:
+            for with_main in (True, False):
+                with self.subTest(relative=relative, with_main=with_main):
+                    lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, self.inside(relative)), main=with_main)
+                    error = self.refusal(lister)
+                    self.assertEqual(error.code, "test_app_process_mismatch")
+                    self.assertEqual(error.detail, {"process_count": 1})
+
+    def test_8_basename_only_xbmchelper_outside_the_exact_path_is_never_sanctioned(self):
+        outside = (
+            "/usr/local/bin/XBMCHelper",
+            "/private/tmp/XBMCHelper",
+            os.fspath(self.tmp / "Kodi Build Manager Test.app.bak"
+                      / "Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper"),
+            "/private/var/folders/xx/AppTranslocation/yy/d/Kodi Build Manager Test.app"
+            "/Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper",
+            self.aux.casefold(),
+        )
+        for exe in outside:
+            for with_main in (True, False):
+                with self.subTest(exe=exe[-40:], with_main=with_main):
+                    lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, exe), main=with_main)
+                    error = self.refusal(lister)
+                    self.assertEqual(error.code, "foreign_kodi_process_present")
+                    self.assertEqual(error.detail, {"foreign_kodi_process_count": 1})
+
+    def test_9_multiple_main_processes_remain_rejected_with_or_without_an_auxiliary(self):
+        for auxiliaries in ((), (bm.ProcessInfo(self.AUX_PID, self.aux),)):
+            with self.subTest(auxiliaries=len(auxiliaries)):
+                lister = self.lister_with(*auxiliaries)
+                lister.run_test_app(self.target, pid=self.MAIN_PID + 1)
+                error = self.refusal(lister)
+                self.assertEqual(error.code, "multiple_test_app_processes")
+                self.assertEqual(error.detail["process_count"], 2)
+
+    def test_10_foreign_kodi_remains_rejected_next_to_a_valid_pair_or_a_lone_auxiliary(self):
+        foreign = bm.ProcessInfo(778, "/Applications/Kodi.app/Contents/MacOS/Kodi")
+        for label, lister in (
+            ("valid pair", self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux), foreign)),
+            ("lone auxiliary", self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux), foreign, main=False)),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(self.refusal(lister).code, "foreign_kodi_process_present")
+                self.assertEqual(lister.command_calls, [])  # not even the main command line is read
+
+    def test_11_main_without_valid_standalone_p_is_refused_even_with_an_auxiliary(self):
+        for flags in ("", " --portable", " -pp", " --standalone", " -fs --debug", " --data=-p"):
+            with self.subTest(flags=flags):
+                lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux), flags=flags)
+                self.assertEqual(self.refusal(lister).code, "test_app_not_portable")
+                self.assertEqual(lister.command_calls, [self.MAIN_PID])
+        exe = os.fspath(self.target.macos_dir / "Kodi")
+        for label, command in (
+            ("missing argv", None),
+            ("different argv0", "/somewhere/else/Kodi -p"),
+            ("prefix only", exe + "x -p"),
+            ("relative argv0", "Kodi -p"),
+        ):
+            with self.subTest(label=label):
+                lister = self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux))
+                lister.commands[self.MAIN_PID] = command
+                self.assertEqual(self.refusal(lister).code, "test_app_process_ambiguous")
+                self.assertEqual(lister.command_calls, [self.MAIN_PID])
+
+    def test_12_require_not_running_fails_while_a_detached_xbmchelper_remains(self):
+        for path in (self.aux, self.aux_alias):
+            for require in ("not_running", "running", None):
+                with self.subTest(path=path[:12], require=require):
+                    lister = FakeProcessLister([bm.ProcessInfo(self.AUX_PID, path)])
+                    error = self.refusal(lister, require=require)
+                    self.assertEqual(error.code, "test_app_process_mismatch")
+
+    def test_13_require_not_running_succeeds_only_when_every_bundle_process_is_absent(self):
+        helper = bm.ProcessInfo(6, self.inside("Contents/MacOS/Helper"))
+        aux = bm.ProcessInfo(self.AUX_PID, self.aux)
+        scenarios = (
+            ("main", dict(main=True), (), "test_app_running"),
+            ("main + auxiliary", dict(main=True), (aux,), "test_app_running"),
+            ("auxiliary only", dict(main=False), (aux,), "test_app_process_mismatch"),
+            ("other in-bundle only", dict(main=False), (helper,), "test_app_process_mismatch"),
+            ("main + auxiliary + other", dict(main=True), (aux, helper), "test_app_process_mismatch"),
+        )
+        for label, options, extras, code in scenarios:
+            with self.subTest(label=label):
+                lister = self.lister_with(*extras, main=options["main"])
+                self.assertEqual(self.refusal(lister, require="not_running").code, code)
+        clean = make_services(self.target, process_lister=FakeProcessLister([
+            bm.ProcessInfo(1, "/sbin/launchd"), bm.ProcessInfo(2, "/usr/bin/python3"),
+        ]))
+        identity = bm.identify(clean, require="not_running")
+        self.assertEqual((identity.state, identity.pid, identity.auxiliary_process_count),
+                         ("not_running", None, 0))
+        paired = make_services(self.target, process_lister=self.lister_with(aux))
+        self.assertEqual(bm.identify(paired, require="running").pid, self.MAIN_PID)
+
+    # -- the consumers of identify -----------------------------------------------
+
+    def test_cli_identify_reports_the_auxiliary_by_fixed_name_and_count_only(self):
+        services = make_services(self.target, process_lister=self.lister_with(bm.ProcessInfo(self.AUX_PID, self.aux)))
+        code, payload, text = run_cli(services, "identify")
+        self.assertEqual(code, bm.EXIT_OK)
+        self.assertEqual(text, bm.canonical_json(json.loads(text)))
+        self.assertEqual(payload["process"]["auxiliary"], "XBMCHelper")
+        self.assertEqual(payload["process"]["auxiliary_process_count"], 1)
+        self.assertNotIn("runtime/XBMCHelper", text)
+        self.assertNotIn(self.aux, text)
+        self.assertNotIn("test_app_process_mismatch", text)
+
+    def test_cli_identify_refuses_a_detached_auxiliary_with_a_stable_code(self):
+        services = make_services(self.target, process_lister=FakeProcessLister([bm.ProcessInfo(self.AUX_PID, self.aux)]))
+        code, payload, text = run_cli(services, "identify")
+        self.assertEqual((code, payload["ok"], payload["error"]["code"]), (bm.EXIT_FAILED, False, "test_app_process_mismatch"))
+        self.assertEqual(payload["error"]["detail"], {
+            "auxiliary_process_count": 1, "process_count": 1, "test_app_process_count": 0,
+        })
+        self.assertNotIn(self.aux, text)
+
+
+class TestStageRefusesWhileAuxiliaryRemains(StageTestCase):
+    def test_a_detached_xbmchelper_blocks_staging_without_touching_anything(self):
+        install_old(self.target)
+        self.lister.processes.append(bm.ProcessInfo(15, os.fspath(self.target.auxiliary_executable)))
+        before = fingerprint(self.target.root)
+        with self.assertRaises(bm.HelperError) as raised:
+            self.stage()
+        self.assertEqual(raised.exception.code, "test_app_process_mismatch")
+        self.assertEqual(fingerprint(self.target.root), before)
+        self.assertEqual(self.run_dirs(), [])
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_a_running_main_with_its_auxiliary_is_still_not_cleanly_stopped(self):
+        install_old(self.target)
+        self.lister.run_test_app(self.target, pid=16)
+        self.lister.processes.append(bm.ProcessInfo(17, os.fspath(self.target.auxiliary_executable)))
+        before = fingerprint(self.target.root)
+        with self.assertRaises(bm.HelperError) as raised:
+            self.stage()
+        self.assertEqual(raised.exception.code, "test_app_running")
+        self.assertEqual(fingerprint(self.target.root), before)
+        self.assertEqual(self.run_dirs(), [])
+
+
+class TestSnapshotWithAuxiliary(SnapshotTestCase):
+    def test_snapshot_reports_the_sanctioned_auxiliary_beside_the_main_process(self):
+        self.lister.run_test_app(self.target, pid=321)
+        self.lister.processes.append(bm.ProcessInfo(322, os.fspath(self.target.auxiliary_executable)))
+        process = self.snapshot()["identity"]["process"]
+        self.assertEqual((process["state"], process["pid"]), ("running_portable", 321))
+        self.assertEqual((process["auxiliary"], process["auxiliary_process_count"]), ("XBMCHelper", 1))
+
+    def test_snapshot_refuses_a_detached_auxiliary(self):
+        self.lister.processes.append(bm.ProcessInfo(322, os.fspath(self.target.auxiliary_executable)))
+        with self.assertRaises(bm.HelperError) as raised:
+            self.snapshot()
+        self.assertEqual(raised.exception.code, "test_app_process_mismatch")
+
+
 # --- END OF TESTS MARKER (new test classes are inserted above this line) ---
 
 if __name__ == "__main__":

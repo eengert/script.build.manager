@@ -91,6 +91,11 @@ ADAPTER_MODES = ("install", "retry", "recover", "status")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
+# The one auxiliary executable a normal portable launch starts beside the main
+# Kodi executable. It is recognized only by its full kernel executable path.
+AUXILIARY_NAME = "XBMCHelper"
+AUXILIARY_RELATIVE_PARTS = ("Resources", "Kodi", "tools", "darwin", "runtime", AUXILIARY_NAME)
+
 ADAPTER_CONFIG_KEYS = (
     "MANIFEST_PATH",
     "ARTIFACT_ROOT",
@@ -689,6 +694,16 @@ class TestAppTarget:
         main = os.fspath(self.macos_dir / executable)
         return (main, _DATA_VOLUME_ALIAS + main)
 
+    @property
+    def auxiliary_executable(self) -> Path:
+        """The exact sanctioned auxiliary executable (a path, never a pattern)."""
+        return self.contents_dir.joinpath(*AUXILIARY_RELATIVE_PARTS)
+
+    def auxiliary_aliases(self) -> Tuple[str, ...]:
+        """Lexical spellings under which the sanctioned auxiliary may be reported."""
+        auxiliary = os.fspath(self.auxiliary_executable)
+        return (auxiliary, _DATA_VOLUME_ALIAS + auxiliary)
+
     def require_chain(self, path: Path) -> None:
         """Every component from / down to path must be a real, non-symlink node."""
         if not self.contains(path):
@@ -992,25 +1007,34 @@ class ProcessView:
     test_app: Tuple[ProcessInfo, ...]
     inside_bundle_other: Tuple[ProcessInfo, ...]
     foreign: Tuple[ProcessInfo, ...]
+    # Exact sanctioned auxiliary executables only (see AUXILIARY_RELATIVE_PARTS).
+    auxiliary: Tuple[ProcessInfo, ...] = ()
 
 
 def classify_processes(
     processes: Iterable[ProcessInfo], target: TestAppTarget, executable: str
 ) -> ProcessView:
     aliases = set(target.exe_aliases(executable))
+    auxiliary_aliases = set(target.auxiliary_aliases())
     root = os.fspath(target.root)
     inside_prefixes = (root + "/", _DATA_VOLUME_ALIAS + root + "/")
     main: List[ProcessInfo] = []
+    auxiliary: List[ProcessInfo] = []
     other: List[ProcessInfo] = []
     foreign: List[ProcessInfo] = []
     for process in processes:
         if process.exe in aliases:
             main.append(process)
+        elif process.exe in auxiliary_aliases:
+            # Exact kernel-path equality only: never a basename, suffix, prefix,
+            # name, argv or parent-pid match. Anything else inside the bundle
+            # falls through to ``other`` and is refused.
+            auxiliary.append(process)
         elif process.exe.startswith(inside_prefixes):
             other.append(process)
         elif _kodi_like(process.exe):
             foreign.append(process)
-    return ProcessView(tuple(main), tuple(other), tuple(foreign))
+    return ProcessView(tuple(main), tuple(other), tuple(foreign), tuple(auxiliary))
 
 
 @dataclass(frozen=True)
@@ -1019,9 +1043,20 @@ class Identity:
     state: str  # "not_running" | "running_portable"
     pid: Optional[int]
     test_app_process_count: int
+    auxiliary_process_count: int = 0
 
     def report(self) -> Dict[str, Any]:
         bundle = self.bundle
+        process: Dict[str, Any] = {
+            "pid": self.pid,
+            "portable_flag": True if self.state == "running_portable" else None,
+            "state": self.state,
+            "test_app_process_count": self.test_app_process_count,
+        }
+        if self.auxiliary_process_count:
+            # Audit trail only: a fixed name and a bounded count, never a path.
+            process["auxiliary"] = AUXILIARY_NAME
+            process["auxiliary_process_count"] = self.auxiliary_process_count
         return {
             "bundle": {
                 "build_version": bundle.build_version,
@@ -1036,20 +1071,16 @@ class Identity:
                 "portable_data_present": bundle.portable_data_present,
                 "userdata_dir_present": bundle.userdata_dir_present,
             },
-            "process": {
-                "pid": self.pid,
-                "portable_flag": True if self.state == "running_portable" else None,
-                "state": self.state,
-                "test_app_process_count": self.test_app_process_count,
-            },
+            "process": process,
         }
 
 
 def identify(services: "Services", require: Optional[str] = None) -> Identity:
     """Prove which Test.app this is and whether exactly one portable instance runs.
 
-    require="not_running" or "running" additionally enforces that process state.
-    Any ambiguity fails closed.
+    require="not_running" or "running" additionally enforces that process state;
+    "not_running" holds only when no main process, no sanctioned auxiliary and
+    no other in-bundle process exists. Any ambiguity fails closed.
     """
     bundle = inspect_bundle(services.target)
     try:
@@ -1065,6 +1096,17 @@ def identify(services: "Services", require: Optional[str] = None) -> Identity:
         raise HelperError("test_app_process_mismatch", process_count=len(view.inside_bundle_other))
     if len(view.test_app) > 1:
         raise HelperError("multiple_test_app_processes", process_count=len(view.test_app))
+    # The sanctioned auxiliary is accepted only beside exactly one main process
+    # that passes every check below. Several are ambiguous, and one on its own
+    # is a detached helper that outlived Kodi: the bundle is not quiescent, so
+    # it must never read as "not_running" (staging relies on that proof).
+    if len(view.auxiliary) > 1 or (view.auxiliary and not view.test_app):
+        raise HelperError(
+            "test_app_process_mismatch",
+            process_count=len(view.auxiliary),
+            auxiliary_process_count=len(view.auxiliary),
+            test_app_process_count=len(view.test_app),
+        )
     if not view.test_app:
         identity = Identity(bundle, "not_running", None, 0)
     else:
@@ -1090,7 +1132,7 @@ def identify(services: "Services", require: Optional[str] = None) -> Identity:
                 break
         if not portable:
             raise HelperError("test_app_not_portable", pid=process.pid)
-        identity = Identity(bundle, "running_portable", process.pid, 1)
+        identity = Identity(bundle, "running_portable", process.pid, 1, len(view.auxiliary))
     if require == "not_running" and identity.state != "not_running":
         raise HelperError("test_app_running", pid=identity.pid)
     if require == "running" and identity.state == "not_running":

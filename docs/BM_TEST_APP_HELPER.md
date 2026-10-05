@@ -25,7 +25,8 @@ live use and needs independent review before it touches the real Test.app.
   opened. Any Kodi-like process outside the authorized bundle is refused too.
 - Every command starts with `identify`: Info.plist identity, no symlink in the
   bundle and portable-data ancestor paths, and either no process or exactly one
-  process of the authorized executable. macOS `proc_pidpath` supplies executable
+  process of the authorized executable (optionally accompanied by the one
+  sanctioned auxiliary described below). macOS `proc_pidpath` supplies executable
   identity; `sysctl(KERN_PROCARGS2)` supplies actual argv boundaries. `argv[0]`
   must agree with the kernel path. Portable `-p` must precede any unknown or
   value-taking option; only known boolean launch flags may precede it. Embedded
@@ -34,6 +35,24 @@ live use and needs independent review before it touches the real Test.app.
   exited after the `ps` snapshot: only when that same `proc_pidpath` call fails
   with `ESRCH` is the stale PID omitted from the census. Any other failure
   (`EPERM`, `EACCES`, errno zero, a malformed result) is `process_listing_failed`.
+- **Sanctioned auxiliary process.** A normal portable launch of the Test.app
+  starts, besides the main executable, exactly one `XBMCHelper` (observed on
+  both an existing and a completely fresh profile). `identify` recognizes only
+  the exact kernel executable path
+  `Contents/Resources/Kodi/tools/darwin/runtime/XBMCHelper` under the authorized
+  bundle (or its already-sanctioned `/System/Volumes/Data` spelling) as that
+  auxiliary. It is never matched by basename, substring, suffix, process name,
+  argv or parent PID. While one main portable process is present, exactly one
+  such auxiliary is accepted; the main process must still pass every check above
+  on its own, because the auxiliary proves nothing about it. Everything else
+  stays refused with `test_app_process_mismatch`: any other executable inside the
+  bundle (with or without the auxiliary), lookalike paths, and more than one
+  auxiliary. A detached `XBMCHelper` without a main Kodi process is **not** a
+  quiescent `not_running` state: `identify` refuses it, so `require="not_running"`
+  (used by `stage`) succeeds only when there is no main process, no sanctioned
+  auxiliary and no other in-bundle process. A recognized auxiliary is reported
+  as `process.auxiliary: "XBMCHelper"` and `process.auxiliary_process_count: 1`
+  (both omitted when there is none); no path, pid or argv of it is emitted.
 - Candidate bytes come from Git objects of an explicit full commit id, never
   from working-tree files.
 - No password in argv, environment, config, logs, output or evidence.
@@ -129,7 +148,8 @@ Evidence per run: `stage_manifest.json`, `stage_result.json`, `replaced/`.
 
 ## `run`
 
-Checks, in order: identity (running, one portable process), installed trees ==
+Checks, in order: identity (running, one portable main process, optionally with
+the sanctioned `XBMCHelper` auxiliary), installed trees ==
 manifest, result path safe, then for every request the listener on the RPC port
 must be exactly the authorized PID. Kodi's own view of the driver and Build
 Manager (`Addons.GetAddonDetails`) must be enabled with the staged versions;
