@@ -2174,18 +2174,26 @@ def _has_entries(path: Path) -> bool:
 
 
 def _remove_stage_area(target: TestAppTarget, *, discard_old: bool) -> bool:
-    """Remove the helper-owned staging area; never follows a symlink.
+    """Remove the helper-owned staging area only while its full path is safe.
 
     Unless discard_old is set (only after every replaced tree has a verified
     evidence copy), an area whose old/ directory still holds anything is kept.
+    Validate the complete bundle-to-area chain before cleanup: lstat of only
+    the final node does not detect an ancestor symlink and rmtree would then
+    follow it to a relocated stage area.
     """
     area = target.stage_area
     try:
+        target.require_chain(area)
         lstat_real_dir(area)
         if not discard_old and _exists(area / "old") and _has_entries(area / "old"):
             return False
+        # Recheck immediately before the destructive traversal in case the
+        # chain changed while the retained-old check was running.
+        target.require_chain(area)
+        lstat_real_dir(area)
         shutil.rmtree(area)
-    except (FsProblem, OSError):
+    except (FsProblem, HelperError, OSError):
         return False
     return True
 

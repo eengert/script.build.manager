@@ -2753,6 +2753,45 @@ class TestStage(StageTestCase):
                 self.assertFalse((decoy / "portable_data/.bm-stage").exists())
                 self.assertEqual(self.run_dirs(), [])
 
+    def test_pre_swap_rejected_ancestor_is_preserved_during_failure_cleanup(self):
+        target = self.target
+        resources = target.contents_dir / "Resources"
+        decoy = self.tmp / "relocated-resources"
+        original_swap = bm._swap_in
+        injected_state = []
+
+        def inject_ancestor_symlink(target, area, addon_ids):
+            resources.rename(decoy)
+            resources.symlink_to(decoy, target_is_directory=True)
+            relocated_area = decoy / "Kodi" / "portable_data" / ".bm-stage"
+            sentinel = relocated_area / "review-sentinel.txt"
+            sentinel.write_text("preserve me")
+            injected_state.append((relocated_area.is_dir(), sentinel.exists()))
+            return original_swap(target, area, addon_ids)
+
+        with mock.patch.object(bm, "_swap_in", side_effect=inject_ancestor_symlink), \
+                mock.patch.object(bm, "_remove_stage_area", wraps=bm._remove_stage_area) as cleanup:
+            with self.assertRaises(bm.HelperError) as raised:
+                self.stage()
+
+        self.assertEqual(raised.exception.code, "bundle_path_symlink")
+        cleanup.assert_called_once_with(target, discard_old=False)
+        relocated_area = decoy / "Kodi" / "portable_data" / ".bm-stage"
+        sentinel = relocated_area / "review-sentinel.txt"
+        self.assertEqual(injected_state, [(True, True)])
+        self.assertTrue(resources.is_symlink())
+        self.assertTrue(sentinel.exists(), "failure cleanup deleted the relocated stage sentinel")
+        self.assertTrue(relocated_area.is_dir())
+        self.assertEqual(sentinel.read_text(), "preserve me")
+
+        resources.unlink()
+        decoy.rename(resources)
+        self.services.clock.now_ns += 10 * 10 ** 9
+        with self.assertRaises(bm.HelperError) as raised:
+            self.stage()
+        self.assertEqual(raised.exception.code, "stage_area_exists")
+        self.assertEqual((target.stage_area / "review-sentinel.txt").read_text(), "preserve me")
+
     def test_backup_swap_race_preserves_unrecorded_old_bytes_and_blocks_next_stage(self):
         for existed in (True, False):
             with self.subTest(existed=existed):
