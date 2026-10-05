@@ -5794,6 +5794,255 @@ class TestSnapshotWithAuxiliary(SnapshotTestCase):
         self.assertEqual(raised.exception.code, "test_app_process_mismatch")
 
 
+# ---------------------------------------------------------------------------
+# Install result projection: the adapter's "" spelling of an absent optional string
+# ---------------------------------------------------------------------------
+
+def adapter_record(addon_id="plugin.video.fake", **overrides):
+    """A resolution record shaped like the adapter's _safe_transaction output.
+
+    The adapter copies the product dataclass attributes, so an absent optional
+    string is "" and never null: an exact-artifact record has no repository and
+    a skipped record has neither a repository nor a resolved version.
+    """
+    record = {
+        "addon_id": addon_id, "resolution": "exact", "state": "installed",
+        "resolved_version": "1.2.3", "desired_enabled": True, "repository_id": "",
+    }
+    record.update(overrides)
+    return record
+
+
+def skipped_adapter_record(addon_id="plugin.video.fake", **overrides):
+    return adapter_record(addon_id, **dict(
+        {"resolution": "skipped", "state": "skipped", "resolved_version": ""}, **overrides))
+
+
+def fallback_adapter_record(addon_id="plugin.video.fake", **overrides):
+    """A repository-fallback record with every optional string present.
+
+    Valid with or without the "" rule, so a test that corrupts one field of it
+    fails because of that field alone.
+    """
+    return adapter_record(addon_id, **dict(
+        {"resolution": "repository_current", "repository_id": "repository.fake", "resolved_version": "2.0.0"},
+        **overrides))
+
+
+class TestInstallResolutionRecordProjection(unittest.TestCase):
+    def project(self, records, **transaction):
+        payload = adapter_payload(
+            "install", transaction=dict(INSTALL_TRANSACTION, resolution_records=records, **transaction))
+        return bm.project_adapter_result("install", payload)
+
+    def assert_transaction_withheld(self, records, **transaction):
+        projected, withheld = self.project(records, **transaction)
+        self.assertNotIn("transaction", projected)
+        self.assertEqual(withheld["invalid_known_keys"], ["transaction"])
+        return projected, withheld
+
+    def test_empty_optional_strings_project_successfully(self):
+        projected, _ = self.project([adapter_record(), skipped_adapter_record("plugin.video.fake2")])
+        self.assertIn("transaction", projected)
+        records = projected["transaction"]["resolution_records"]
+        self.assertEqual([record["addon_id"] for record in records], ["plugin.video.fake", "plugin.video.fake2"])
+        self.assertEqual(
+            [(record["resolution"], record["state"], record["desired_enabled"]) for record in records],
+            [("exact", "installed", True), ("skipped", "skipped", True)],
+        )
+
+    def test_empty_optional_strings_project_as_null_not_as_empty_strings(self):
+        projected, _ = self.project([adapter_record(), skipped_adapter_record("plugin.video.fake2")])
+        self.assertIn("transaction", projected)
+        exact, skipped = projected["transaction"]["resolution_records"]
+        self.assertIsNone(exact["repository_id"])
+        self.assertIsNone(skipped["repository_id"])
+        self.assertIsNone(skipped["resolved_version"])
+        for record in (exact, skipped):
+            self.assertNotIn("", record.values())
+
+    def test_adapter_shaped_transaction_is_not_an_invalid_known_key(self):
+        _, withheld = self.project([adapter_record(), skipped_adapter_record("plugin.video.fake2")])
+        self.assertNotIn("transaction", withheld["invalid_known_keys"])
+        self.assertEqual(withheld, {"invalid_known_keys": [], "unknown_key_count": 0, "unknown_key_names": []})
+
+    def test_null_spelling_is_still_accepted(self):
+        projected, withheld = self.project([
+            adapter_record(repository_id=None),
+            skipped_adapter_record("plugin.video.fake2", repository_id=None, resolved_version=None),
+        ])
+        self.assertEqual(withheld["invalid_known_keys"], [])
+        exact, skipped = projected["transaction"]["resolution_records"]
+        self.assertEqual((exact["repository_id"], exact["resolved_version"]), (None, "1.2.3"))
+        self.assertEqual((skipped["repository_id"], skipped["resolved_version"]), (None, None))
+
+    def test_projection_is_idempotent_on_the_canonical_null_form(self):
+        projected, _ = self.project([adapter_record(), skipped_adapter_record("plugin.video.fake2")])
+        self.assertIn("transaction", projected)
+        again, withheld = bm.project_adapter_result("install", projected)
+        self.assertEqual(again, projected)
+        self.assertEqual(withheld["invalid_known_keys"], [])
+
+    def test_nonempty_repository_id_is_unchanged(self):
+        for repository_id in ("repository.fake", "repo-1_x.y", "a", "R" * 128):
+            for version in ("2.0.0", ""):  # a selected-only fallback record has no resolved version yet
+                with self.subTest(repository_id=repository_id, resolved_version=version):
+                    projected, withheld = self.project(
+                        [fallback_adapter_record(repository_id=repository_id, resolved_version=version)])
+                    self.assertEqual(withheld["invalid_known_keys"], [])
+                    self.assertIn("transaction", projected)
+                    self.assertEqual(projected["transaction"]["resolution_records"][0]["repository_id"], repository_id)
+
+    def test_nonempty_resolved_version_is_unchanged(self):
+        versions = ("1.0.0", "0.0.6+matrix.1", "999.6.1+matrix.1", "7.4.4+unofficial.2", "2024.1~rc1", "1" * 64)
+        for version in versions:
+            for make in (adapter_record, fallback_adapter_record):  # exact (no repository) and fallback records
+                with self.subTest(resolved_version=version, record=make.__name__):
+                    projected, withheld = self.project([make(resolved_version=version)])
+                    self.assertEqual(withheld["invalid_known_keys"], [])
+                    self.assertIn("transaction", projected)
+                    self.assertEqual(projected["transaction"]["resolution_records"][0]["resolved_version"], version)
+
+    def test_every_adapter_combination_of_present_and_absent_fields_projects(self):
+        cases = (  # (repository_id, resolved_version) as the adapter writes them -> as projected
+            (("", "1.2.3"), (None, "1.2.3")),  # exact artifact
+            (("", ""), (None, None)),  # skipped
+            (("repository.fake", ""), ("repository.fake", None)),  # repository fallback, selected only
+            (("repository.fake", "2.0.0"), ("repository.fake", "2.0.0")),  # repository fallback, resolved
+        )
+        for (repository_id, version), expected in cases:
+            with self.subTest(repository_id=repository_id, resolved_version=version):
+                projected, withheld = self.project(
+                    [adapter_record(repository_id=repository_id, resolved_version=version)])
+                self.assertEqual(withheld["invalid_known_keys"], [])
+                self.assertIn("transaction", projected)
+                record = projected["transaction"]["resolution_records"][0]
+                self.assertEqual((record["repository_id"], record["resolved_version"]), expected)
+
+    def test_whitespace_is_not_treated_as_absent(self):
+        for field in ("repository_id", "resolved_version"):
+            for blank in (" ", "  ", "\t", "\n", "\u00a0", " \t "):
+                with self.subTest(field=field, blank=blank):
+                    self.assert_transaction_withheld([fallback_adapter_record(**{field: blank})])
+
+    def test_invalid_repository_ids_stay_invalid(self):
+        invalid = ("bad id", "-leading", ".leading", "a/b", "x" * 129, "repo\n", "INJECTED-SECRET id", "r\u00e9po",
+                   0, False, 5, 1.5, [], {}, ["repository.fake"])
+        for value in invalid:
+            with self.subTest(repository_id=value):
+                projected, withheld = self.assert_transaction_withheld(
+                    [fallback_adapter_record(repository_id=value)])
+                self.assertNotIn("INJECTED", json.dumps([projected, withheld]))
+
+    def test_invalid_versions_stay_invalid(self):
+        invalid = ("bad version", "+leading", "~1", "1.0 0", "v" * 65, "1.0\n", "INJECTED-SECRET ver", "1.0/x",
+                   "1.0\u00e9", 0, False, 5, 1.5, [], {}, ["1.0.0"])
+        for value in invalid:
+            with self.subTest(resolved_version=value):
+                projected, withheld = self.assert_transaction_withheld(
+                    [fallback_adapter_record(resolved_version=value)])
+                self.assertNotIn("INJECTED", json.dumps([projected, withheld]))
+
+    def test_one_invalid_record_still_withholds_the_whole_transaction(self):
+        self.assert_transaction_withheld([adapter_record(), skipped_adapter_record("plugin.video.fake2"),
+                                          fallback_adapter_record("plugin.video.fake3", repository_id="bad id")])
+
+    def test_empty_strings_in_other_fields_are_still_rejected(self):
+        projected, withheld = self.project([fallback_adapter_record()])  # the baseline the cases below corrupt
+        self.assertIn("transaction", projected)
+        for field in ("addon_id", "resolution", "state", "desired_enabled"):
+            with self.subTest(record_field=field):
+                self.assert_transaction_withheld([fallback_adapter_record(**{field: ""})])
+        for field in ("phase", "lifecycle_stage", "lifecycle_restart_count", "original_update_policy",
+                      "activation_hold_released", "private_overlay_required", "updater_guard_required"):
+            with self.subTest(transaction_field=field):
+                self.assert_transaction_withheld([fallback_adapter_record()], **{field: ""})
+        with self.subTest(transaction_field="activation_hold_ids"):
+            self.assert_transaction_withheld([fallback_adapter_record()], activation_hold_ids=[""])
+        elsewhere = {
+            "installed": {"plugin.video.fake": {"version": "", "enabled": True, "broken": False}},
+            "updater_policy": "", "frozen_manifest_fingerprint": "", "overlay_imported": "",
+            "retained_inputs": {"artifact_entry_count": ""}, "frozen_install_source": {"sha256_before": ""},
+        }
+        for key, value in elsewhere.items():
+            with self.subTest(install_field=key):
+                projected, withheld = bm.project_adapter_result("install", adapter_payload("install", **{key: value}))
+                self.assertNotIn(key, projected)
+                self.assertEqual(withheld["invalid_known_keys"], [key])
+        with self.subTest(status_field="adapter_version"):
+            projected, withheld = bm.project_adapter_result(
+                "status", adapter_payload("status", status=dict(STATUS_VALUES, adapter_version="")))
+            self.assertNotIn("status", projected)
+            self.assertEqual(withheld["invalid_known_keys"], ["status"])
+
+    def test_generic_optional_validator_still_rejects_the_empty_string(self):
+        optional_version = bm._opt(bm._v_match(bm._VERSION_RE))
+        with self.assertRaises(ValueError):
+            optional_version("")
+        self.assertIsNone(optional_version(None))
+        self.assertEqual(optional_version("1.0.0"), "1.0.0")
+
+    def test_youtube_style_skipped_record_projects_safely(self):
+        projected, withheld = self.project([skipped_adapter_record("plugin.video.youtube")])
+        self.assertEqual(withheld["invalid_known_keys"], [])
+        self.assertIn("transaction", projected)
+        self.assertEqual(projected["transaction"]["resolution_records"], [{
+            "addon_id": "plugin.video.youtube", "resolution": "skipped", "state": "skipped",
+            "repository_id": None, "resolved_version": None, "desired_enabled": True,
+        }])
+
+    def test_exact_artifact_record_with_empty_repository_metadata_projects_correctly(self):
+        projected, withheld = self.project([adapter_record("plugin.video.fake", resolved_version="6.09.04")])
+        self.assertEqual(withheld["invalid_known_keys"], [])
+        self.assertIn("transaction", projected)
+        self.assertEqual(projected["transaction"]["resolution_records"], [{
+            "addon_id": "plugin.video.fake", "resolution": "exact", "state": "installed",
+            "repository_id": None, "resolved_version": "6.09.04", "desired_enabled": True,
+        }])
+
+    def test_unknown_key_withholding_is_unchanged(self):
+        for absent in ("", None):
+            with self.subTest(absent=absent):
+                record = adapter_record(repository_id=absent, injected_record_key="INJECTED-RECORD")
+                payload = adapter_payload(
+                    "install", password="INJECTED-SECRET-123", **{"overlay values": "INJECTED-OVERLAY"},
+                    transaction=dict(INSTALL_TRANSACTION, resolution_records=[record], private_note="INJECTED-NESTED"))
+                projected, withheld = bm.project_adapter_result("install", payload)
+                self.assertIn("transaction", projected)
+                self.assertEqual(withheld["invalid_known_keys"], [])
+                self.assertEqual(withheld["unknown_key_count"], 2)
+                self.assertEqual(withheld["unknown_key_names"], ["password"])  # unsafe names are only counted
+                self.assertNotIn("private_note", projected["transaction"])
+                self.assertNotIn("injected_record_key", projected["transaction"]["resolution_records"][0])
+                text = json.dumps([projected, withheld])
+                for injected in ("INJECTED-SECRET-123", "INJECTED-OVERLAY", "INJECTED-NESTED", "INJECTED-RECORD"):
+                    self.assertNotIn(injected, text)
+
+
+class TestSnapshotProjectsAdapterShapedInstallResult(SnapshotTestCase):
+    def test_install_result_with_empty_optional_strings_keeps_its_transaction(self):
+        transaction = dict(
+            INSTALL_TRANSACTION, phase="awaiting_restart", lifecycle_stage="quiescence_awaiting_restart",
+            lifecycle_restart_count=1, activation_hold_ids=["plugin.video.redlight"], activation_hold_released=False,
+            status_code="QUIESCENCE_RESTART_REQUIRED",
+            resolution_records=[adapter_record("plugin.video.fake"), skipped_adapter_record("plugin.video.youtube")],
+        )
+        self.target.result_path.write_text(json.dumps(adapter_payload(
+            "install", outcome="awaiting_restart", code="QUIESCENCE_RESTART_REQUIRED", transaction=transaction)))
+        report = self.snapshot()["adapter_result_file"]
+        self.assertEqual(report["withheld"]["invalid_known_keys"], [])
+        self.assertIn("transaction", report["projection"])
+        projected = report["projection"]["transaction"]
+        self.assertEqual(projected["phase"], "awaiting_restart")
+        self.assertEqual(projected["activation_hold_ids"], ["plugin.video.redlight"])
+        self.assertEqual(projected["resolution_records"], [
+            {"addon_id": "plugin.video.fake", "resolution": "exact", "state": "installed",
+             "repository_id": None, "resolved_version": "1.2.3", "desired_enabled": True},
+            {"addon_id": "plugin.video.youtube", "resolution": "skipped", "state": "skipped",
+             "repository_id": None, "resolved_version": None, "desired_enabled": True},
+        ])
+
+
 # --- END OF TESTS MARKER (new test classes are inserted above this line) ---
 
 if __name__ == "__main__":

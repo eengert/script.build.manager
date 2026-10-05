@@ -2553,6 +2553,17 @@ def _opt(validator: Callable[[Any], Any]) -> Callable[[Any], Any]:
     return check
 
 
+def _opt_empty_is_absent(validator: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """Like _opt, but the adapter's "" also means absent and is projected as None.
+
+    The adapter writes an absent optional string of a resolution record as "".
+    Only those two fields use this; _opt and every other validator still reject "".
+    """
+    def check(value: Any) -> Any:
+        return None if value is None or (isinstance(value, str) and not value) else validator(value)
+    return check
+
+
 def _v_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -2645,9 +2656,9 @@ _INSTALL_TRANSACTION = _opt(_v_record({
     "resolution_records": _v_list(_v_record({
         "addon_id": _ADDON_ID_V,
         "desired_enabled": _opt(_v_bool),
-        "repository_id": _opt(_ADDON_ID_V),
+        "repository_id": _opt_empty_is_absent(_ADDON_ID_V),
         "resolution": _opt(_v_match(_TOKEN_RE)),
-        "resolved_version": _opt(_v_match(_VERSION_RE)),
+        "resolved_version": _opt_empty_is_absent(_v_match(_VERSION_RE)),
         "state": _opt(_v_match(_TOKEN_RE)),
     }), 500),
     "status_code": _lenient_enum(_FROZEN_CODES),
