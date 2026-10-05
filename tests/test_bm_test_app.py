@@ -91,7 +91,13 @@ class FilesystemTripwire:
             return
         if not text:
             return
-        folded = os.path.normpath(os.path.join(os.getcwd(), text)).casefold()
+        # Independent policy: reject opaque namespaces at any component, and
+        # collapse all leading separators before checking ordinary/Data aliases.
+        parts = text.casefold().split("/")
+        if any(part in (".vol", ".nofollow", ".resolve") for part in parts):
+            self.touched.append((api, text))
+            raise AssertionError("tripwire: opaque filesystem namespace")
+        folded = os.path.normpath("/" + os.path.abspath(text).lstrip("/")).casefold()
         if any(folded == prefix or folded.startswith(prefix + "/") for prefix in self.prefixes):
             self.touched.append((api, text))
             raise AssertionError(f"tripwire: {api} touched forbidden path {text!r}")
@@ -195,7 +201,17 @@ class FakeProcessLister:
 
     def command_line(self, pid):
         self.command_calls.append(pid)
-        return self.commands.get(pid)
+        command = self.commands.get(pid)
+        if command is None or isinstance(command, tuple):
+            return command
+        # Legacy fixture strings represent simple argv only. Adversarial tests
+        # supply tuples explicitly so embedded spaces preserve real boundaries.
+        exe = next((p.exe for p in self.processes if p.pid == pid), "")
+        ordinary = exe.removeprefix(bm._DATA_VOLUME_ALIAS)
+        for alias in (bm._DATA_VOLUME_ALIAS + ordinary, ordinary):
+            if command == alias or command.startswith(alias + " "):
+                return (alias, *command[len(alias):].split())
+        return (command,)
 
     def run_test_app(self, target, *, pid=4242, executable="Kodi", flags=" -p"):
         exe = os.fspath(target.macos_dir / executable)
@@ -558,6 +574,59 @@ class TestPathBoundary(TripwireTestCase):
         ):
             with self.subTest(variant=variant), self.assertRaises(bm.HelperError):
                 bm.TestAppTarget(Path(variant), production=True)
+
+    def test_aliases_are_refused_at_cli_and_config_entry_points_before_io(self):
+        services = make_services(make_fake_app(self.tmp))
+        spellings = ("//Applications/Kodi.app/x", "//Users/eengert/Library/Application Support/Kodi/x",
+                     "/.vol/1/2", "/.nofollow/Applications/Kodi.app/x",
+                     "/.resolve/Applications/Kodi.app/x",
+                     "/System/Volumes/Data/Applications/Kodi.app/x",
+                     "/System/Volumes/Data/Users/eengert/Library/Application Support/Kodi/x",
+                     "/.vol/../safe", "/.nofollow/../safe", "/.resolve/../safe")
+        for raw in spellings:
+            with self.subTest(raw=raw):
+                with mock.patch.object(bm.os, "lstat", side_effect=AssertionError("premature I/O")):
+                    with self.assertRaises(bm.HelperError):
+                        bm.check_cli_path(raw, services)
+                for key in bm.ADAPTER_PATH_KEYS:
+                    values = dict(ADAPTER_VALUES, **{key: raw})
+                    cfg = make_config(self.tmp)
+                    cfg.write_text(json.dumps({"schema": bm.CONFIG_SCHEMA, "adapter": values}))
+                    with self.assertRaises(bm.HelperError):
+                        bm.load_config(cfg, services)
+        # Same canonical identity for Test.app exclusion and ordinary decoys.
+        for prefix in ("/", "//", bm._DATA_VOLUME_ALIAS + "/"):
+            raw = prefix + str(services.target.root).lstrip("/") + "/x"
+            with mock.patch.object(bm.os, "lstat", side_effect=AssertionError("premature I/O")):
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.check_cli_path(raw, services)
+                self.assertEqual(raised.exception.code, "argument_path_inside_test_app")
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        self.assertEqual(bm.check_cli_path(bm._DATA_VOLUME_ALIAS + str(outside), services), outside)
+
+    def test_hostile_path_environment_cannot_redirect_git_discovery(self):
+        with mock.patch.dict(os.environ, PATH="//Applications/Kodi.app"):
+            self.assertEqual(bm.Services.production().git_exe, "/usr/bin/git")
+
+    def test_tripwire_independently_catches_aliases(self):
+        guard = FilesystemTripwire()
+        for raw in ("//Applications/Kodi.app/x", "/.vol/1/2", "/.nofollow/x", "/.resolve/x",
+                    "//System/Volumes/Data/Applications/Kodi.app/x"):
+            with self.subTest(raw=raw), self.assertRaises(AssertionError):
+                guard._check("probe", raw)  # pure string, never dispatch filesystem I/O
+
+    def test_config_path_symlink_is_refused_before_adapter_handoff(self):
+        services = make_services(make_fake_app(self.tmp))
+        link = self.tmp / "link"
+        link.symlink_to(self.tmp)
+        for key in bm.ADAPTER_PATH_KEYS:
+            values = dict(ADAPTER_VALUES, **{key: str(link / "input")})
+            cfg = make_config(self.tmp)
+            cfg.write_text(json.dumps({"schema": bm.CONFIG_SCHEMA, "adapter": values}))
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.load_config(cfg, services)
+            self.assertEqual(raised.exception.code, "argument_path_symlink")
 
     def test_pathlib_collapses_harmless_slash_spellings_to_the_exact_path(self):
         # These cannot be represented as a different Path, so they are the
@@ -1178,18 +1247,17 @@ class TestPsAndLsofParsing(TripwireTestCase):
             ("/bin/ps", "-axww"): (0, b"  7 /bin/x y\n"),
             ("/bin/ps", "-ww"): (0, b"/bin/x y -p\n"),
         })
-        lister = bm.PsProcessLister(runner)
+        lister = bm.PsProcessLister(runner, native=SimpleNamespace(executable=lambda pid: "/bin/x y", argv=lambda pid: ("/bin/x y", "-p")))
         self.assertEqual(lister.list_all(), [bm.ProcessInfo(7, "/bin/x y")])
-        self.assertEqual(lister.command_line(7), "/bin/x y -p")
-        listing, command = runner.calls
+        self.assertEqual(lister.command_line(7), ("/bin/x y", "-p"))
+        (listing,) = runner.calls
         self.assertEqual(listing[0], ["/bin/ps", "-axww", "-o", "pid=,comm="])
-        self.assertEqual(command[0], ["/bin/ps", "-ww", "-p", "7", "-o", "command="])
         for _, kwargs in runner.calls:
             self.assertIs(kwargs["shell"], False)
             self.assertEqual(set(kwargs["env"]), {"PATH", "LC_ALL"})
 
     def test_ps_failures_fail_closed(self):
-        lister = bm.PsProcessLister(fake_runner({("/bin/ps",): (1, b"")}))
+        lister = bm.PsProcessLister(fake_runner({("/bin/ps",): (1, b"")}), native=SimpleNamespace(executable=lambda pid: None, argv=lambda pid: None))
         with self.assertRaises(bm.HelperError) as raised:
             lister.list_all()
         self.assertEqual(raised.exception.code, "process_listing_failed")
@@ -1200,6 +1268,32 @@ class TestPsAndLsofParsing(TripwireTestCase):
 
         with self.assertRaises(bm.HelperError):
             bm.PsProcessLister(raising).list_all()
+
+    def test_kernel_argv_agreement_preserves_data_volume_aliases(self):
+        for kernel, argv0 in (("/fake/Kodi", bm._DATA_VOLUME_ALIAS + "/fake/Kodi"),
+                              (bm._DATA_VOLUME_ALIAS + "/fake/Kodi", "/fake/Kodi")):
+            native = SimpleNamespace(executable=lambda pid: kernel,
+                                     argv=lambda pid: (argv0, "-p"))
+            self.assertEqual(bm.PsProcessLister(native=native).command_line(7), (argv0, "-p"))
+
+    def test_native_argv_parser_preserves_boundaries_and_ignores_environment(self):
+        argv = ("/fake/Kodi", "-p", "--note=hello -p world", "")
+        raw = len(argv).to_bytes(4, sys.byteorder, signed=True)
+        raw += b"/fake/Kodi\0\0\0" + b"\0".join(a.encode() for a in argv) + b"\0"
+        raw += b"PRIVATE_VALUE=do-not-parse\0"
+        self.assertEqual(bm.MacProcessReader.parse_argv(raw), argv)
+        for malformed in (b"", b"\0" * 4, raw[:12], raw[:40]):
+            self.assertIsNone(bm.MacProcessReader.parse_argv(malformed))
+
+    def test_process_listing_uses_kernel_path_and_refuses_unreadable_identity(self):
+        runner = fake_runner({("/bin/ps",): (0, b"7 /spoofed/argv0\n")})
+        native = SimpleNamespace(executable=lambda pid: "/real/executable")
+        self.assertEqual(bm.PsProcessLister(runner, native=native).list_all(),
+                         [bm.ProcessInfo(7, "/real/executable")])
+        native.executable = lambda pid: None
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.PsProcessLister(runner, native=native).list_all()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
 
     def test_lsof_parser(self):
         run = fake_runner({("/usr/sbin/lsof",): (0, b"p100\nf3\np200\n")})
@@ -1231,8 +1325,15 @@ class TestRealPsAndLsof(TripwireTestCase):
         parsed = bm.parse_ps_listing(text)
         self.assertEqual([p.pid for p in parsed], [os.getpid()])
         self.assertTrue(parsed[0].exe.startswith("/"))
-        command = lister.command_line(os.getpid())
-        self.assertTrue(command.startswith(parsed[0].exe))
+        command = lister.native.argv(os.getpid())
+        self.assertIsInstance(command, tuple)
+        self.assertTrue(command[0].startswith("/"))
+        executable = lister.native.executable(os.getpid())
+        self.assertTrue(executable.startswith("/"))
+        # Python framework launchers may supply a different argv[0]. The
+        # target identity reader must refuse that disagreement, not rewrite it.
+        expected = command if command[0] == executable else None
+        self.assertEqual(lister.command_line(os.getpid()), expected)
         self.assertIsNone(lister.command_line(2 ** 22 + os.getpid()))
 
     def test_real_lsof_finds_this_process_as_the_listener(self):
@@ -1265,7 +1366,7 @@ class TestRealProcessIdentity(TripwireTestCase):
             if not self.pids:
                 return []
             code, text = self._ps(["-ww", "-p", ",".join(str(p) for p in self.pids), "-o", "pid=,comm="])
-            return bm.parse_ps_listing(text) if code == 0 else []
+            return self.kernel_processes(bm.parse_ps_listing(text)) if code == 0 else []
 
     def setUp(self):
         super().setUp()
@@ -1303,6 +1404,41 @@ class TestRealProcessIdentity(TripwireTestCase):
         child = self.spawn("-p")
         identity = bm.identify(self.services(), require="running")
         self.assertEqual((identity.state, identity.pid), ("running_portable", child.pid))
+
+    def test_real_embedded_portable_text_and_option_value_are_refused(self):
+        for flags in (("--portable",), ("--debug -p",), ("--note=hello -p world",),
+                      ("--log=/tmp/my -p dir/kodi.log",), ("--datadir", "-p")):
+            with self.subTest(flags=flags):
+                child = self.spawn(*flags)
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.identify(self.services(), require="running")
+                self.assertEqual(raised.exception.code, "test_app_not_portable")
+                child.kill()
+                child.wait()
+                self.children.remove(child)
+
+    def test_real_spoofed_argv0_cannot_supply_executable_identity(self):
+        other = self.tmp / "foreign-executable"
+        shutil.copyfile(self.target.macos_dir / "Kodi", other)
+        other.chmod(0o755)
+        child = subprocess.Popen([str(self.target.macos_dir / "Kodi"), "-p"],
+                                 executable=str(other), stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        self.children.append(child)
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.identify(self.services(), require="running")
+        self.assertEqual(raised.exception.code, "test_app_not_running")
+        # Also fail closed when the real target has a spoofed argv[0].
+        child.kill()
+        child.wait()
+        self.children.remove(child)
+        child = subprocess.Popen([str(other), "-p"],
+                                 executable=str(self.target.macos_dir / "Kodi"),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.children.append(child)
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.identify(self.services(), require="running")
+        self.assertEqual(raised.exception.code, "test_app_process_ambiguous")
 
     def test_real_process_without_p_is_refused(self):
         self.spawn()
@@ -2572,6 +2708,84 @@ class StageTestCase(TripwireTestCase):
 
 
 class TestStage(StageTestCase):
+    def test_hostile_tmpdir_cannot_redirect_workspace(self):
+        decoy = self.target.root / "hostile-temp"
+        decoy.mkdir()
+        self.services.tmp_root = None  # exercise the production fallback
+        original = bm.build_driver
+        roots = []
+        def observe(candidate, values, workspace, *args):
+            roots.append(workspace.parent)
+            return original(candidate, values, workspace, *args)
+        with mock.patch.dict(os.environ, TMPDIR=str(decoy)), mock.patch.object(tempfile, "tempdir", None), \
+                mock.patch.object(bm, "build_driver", side_effect=observe):
+            self.stage(dry_run=True)
+        self.assertEqual(roots, [Path("/private/tmp")])
+        self.assertEqual(list(decoy.iterdir()), [])
+
+    def test_workspace_root_must_pass_policy_before_creation(self):
+        for root in ("/.vol/1/2", "//Applications/Kodi.app/tmp", str(self.target.root)):
+            self.services.tmp_root = Path(root)
+            with mock.patch.object(bm.tempfile, "mkdtemp", side_effect=AssertionError("workspace I/O")):
+                with self.assertRaises(bm.HelperError):
+                    self.stage(dry_run=True)
+        link = self.tmp / "temp-link"
+        link.symlink_to(self.scratch)
+        self.services.tmp_root = link
+        with self.assertRaises(bm.HelperError) as raised:
+            self.stage(dry_run=True)
+        self.assertEqual(raised.exception.code, "argument_path_symlink")
+
+    def test_internal_bundle_symlink_ancestors_fail_before_stage_mutation(self):
+        for relative in ("Resources", "Resources/Kodi"):
+            with self.subTest(relative=relative):
+                target = make_fake_app(self.tmp / relative.replace("/", "-"))
+                victim = target.contents_dir / relative
+                decoy = self.tmp / (relative.replace("/", "-") + "-decoy")
+                victim.rename(decoy)
+                victim.symlink_to(decoy)
+                before = fingerprint(decoy)
+                self.services.target = target
+                with self.assertRaises(bm.HelperError) as raised:
+                    self.stage()
+                self.assertEqual(raised.exception.code, "bundle_path_symlink")
+                self.assertEqual(fingerprint(decoy), before)
+                self.assertFalse((decoy / "portable_data/.bm-stage").exists())
+                self.assertEqual(self.run_dirs(), [])
+
+    def test_backup_swap_race_preserves_unrecorded_old_bytes_and_blocks_next_stage(self):
+        for existed in (True, False):
+            with self.subTest(existed=existed):
+                # Separate fixture for an existing and newly appeared live tree.
+                target = make_fake_app(self.tmp / str(existed))
+                self.target = target
+                self.services.target = target
+                if existed:
+                    install_old(target)
+                original = bm._swap_in
+                def inject(target, area, ids):
+                    live = target.addon_dir(bm.BUILD_MANAGER_ID)
+                    live.mkdir(exist_ok=True)
+                    (live / "race.txt").write_bytes(b"unrecorded live bytes")
+                    return original(target, area, ids)
+                with mock.patch.object(bm, "_swap_in", side_effect=inject):
+                    with self.assertRaises(bm.HelperError) as raised:
+                        self.stage()
+                self.assertEqual(raised.exception.code, "stage_backup_failed")
+                old = self.stage_area() / "old" / bm.BUILD_MANAGER_ID
+                self.assertEqual((old / "race.txt").read_bytes(), b"unrecorded live bytes")
+                run_dir = self.run_dirs()[-1]
+                self.assertTrue((run_dir / "stage_manifest.json").is_file())
+                record = json.loads((run_dir / "stage_result.json").read_text())
+                self.assertFalse(record["ok"])
+                self.assertFalse(any((run_dir / "replaced").rglob("race.txt")))
+                self.services.clock.now_ns += 10 * 10 ** 9
+                with self.assertRaises(bm.HelperError) as raised:
+                    self.stage()
+                self.assertEqual(raised.exception.code, "stage_area_exists")
+                self.assertEqual((old / "race.txt").read_bytes(), b"unrecorded live bytes")
+                self.services.clock.now_ns += 10 * 10 ** 9
+
     def test_dry_run_builds_and_reports_but_changes_nothing(self):
         before = fingerprint(self.target.root)
         payload = self.stage(dry_run=True, evidence=None)
@@ -4954,7 +5168,7 @@ class TestStaticSafety(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
         allowed = {
-            "__future__", "argparse", "ast", "base64", "getpass", "hashlib", "http", "io", "ipaddress", "json",
+            "__future__", "argparse", "ast", "base64", "ctypes", "getpass", "hashlib", "http", "io", "ipaddress", "json",
             "os", "plistlib", "re", "secrets", "shutil", "sqlite3", "stat", "subprocess", "sys", "tempfile",
             "time", "unicodedata", "urllib", "warnings", "xml", "dataclasses", "datetime", "pathlib", "types",
             "typing", "tools",

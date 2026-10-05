@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import ctypes
 import getpass
 import hashlib
 import http.client
@@ -416,7 +417,7 @@ def lstat_real_dir(path: Any) -> os.stat_result:
 
 def reject_symlink_components(path: Any) -> None:
     """Reject any existing symlink component; targets are never dereferenced."""
-    normalized = os.path.abspath(os.fspath(path))
+    normalized = os.fspath(normalize_path(path))
     parts = Path(normalized).parts
     current = Path(parts[0])
     for part in parts[1:]:
@@ -540,45 +541,61 @@ def write_new_file_atomic(path: Any, data: bytes, mode: int = 0o644) -> None:
 # Forbidden surfaces and path hygiene (lexical; never touches the filesystem)
 # ---------------------------------------------------------------------------
 
+def _lexical_path(path: Any) -> str:
+    """Canonical macOS spelling without any filesystem lookup.
+
+    Opaque namespaces are refused before normpath can erase their components.
+    Data-volume spellings are mapped to the ordinary namespace for both policy
+    comparisons and subsequent I/O. No realpath/stat is used here.
+    """
+    text = os.fsdecode(path)
+    if not text or "\x00" in text:
+        raise HelperError("argument_path_invalid")
+    absolute = text if os.path.isabs(text) else os.path.join(os.getcwd(), text)
+    parts = unicodedata.normalize("NFD", absolute).casefold().split("/")
+    if any(part in (".vol", ".nofollow", ".resolve") for part in parts):
+        raise HelperError("argument_path_forbidden")
+    canonical = os.path.normpath("/" + absolute.lstrip("/"))
+    alias = _DATA_VOLUME_ALIAS.casefold()
+    folded = canonical.casefold()
+    if folded == alias or folded.startswith(alias + "/"):
+        canonical = canonical[len(_DATA_VOLUME_ALIAS):] or "/"
+    return canonical
+
+
+def _folded_abspath(path: Any) -> str:
+    return unicodedata.normalize("NFD", _lexical_path(path)).casefold()
+
+
 def _forbidden_prefixes() -> Tuple[str, ...]:
     bases = [_NORMAL_KODI_APP, _NORMAL_KODI_PROFILE_LITERAL]
     home = os.path.expanduser("~")
     if home and home != "~" and os.path.isabs(home):
         bases.append(os.path.join(home, "Library", "Application Support", "Kodi"))
-    prefixes: List[str] = []
-    for base in bases:
-        for candidate in (base, _DATA_VOLUME_ALIAS + base):
-            folded = os.path.normpath(candidate).casefold()
-            if folded not in prefixes:
-                prefixes.append(folded)
-    return tuple(prefixes)
-
-
-def _folded_abspath(path: Any) -> str:
-    return os.path.normpath(os.path.abspath(os.fspath(path))).casefold()
+    return tuple(_folded_abspath(base) for base in bases)
 
 
 def is_forbidden_path(path: Any) -> bool:
-    """True if path is, or lies inside, normal Kodi or its normal profile."""
-    candidate = _folded_abspath(path)
-    for prefix in _forbidden_prefixes():
-        if candidate == prefix or candidate.startswith(prefix + os.sep):
-            return True
-    return False
+    """True for forbidden nodes or opaque macOS namespace spellings."""
+    try:
+        candidate = _folded_abspath(path)
+    except HelperError:
+        return True
+    return any(candidate == prefix or candidate.startswith(prefix + "/")
+               for prefix in _forbidden_prefixes())
 
 
 def is_inside(path: Any, root: Any) -> bool:
-    """Lexical, case-insensitive containment (APFS is case-insensitive)."""
     candidate = _folded_abspath(path)
     anchor = _folded_abspath(root)
-    return candidate == anchor or candidate.startswith(anchor + os.sep)
+    return candidate == anchor or candidate.startswith(anchor + "/")
 
 
 def normalize_path(raw: Any) -> Path:
-    text = os.fspath(raw)
-    if not text or "\x00" in text:
-        raise HelperError("argument_path_invalid")
-    return Path(os.path.abspath(text))
+    path = Path(_lexical_path(raw))
+    if is_forbidden_path(path):
+        raise HelperError("argument_path_forbidden")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +743,7 @@ def _optional_dir(path: Path) -> bool:
 def inspect_bundle(target: TestAppTarget) -> BundleInfo:
     """Read-only identity of the bundle from its Info.plist and layout."""
     target.require_chain(target.root)
+    target.require_chain(target.macos_dir)
     for directory in (target.root, target.contents_dir, target.macos_dir):
         try:
             lstat_real_dir(directory)
@@ -756,7 +774,10 @@ def inspect_bundle(target: TestAppTarget) -> BundleInfo:
         raise HelperError("bundle_executable_invalid") from None
     if not stat.S_ISREG(executable_info.st_mode) or not executable_info.st_mode & 0o111:
         raise HelperError("bundle_executable_invalid")
+    target.require_chain(target.portable_data)
     portable = _optional_dir(target.portable_data)
+    target.require_chain(target.addons_dir)
+    target.require_chain(target.userdata_dir)
     addons = portable and _optional_dir(target.addons_dir)
     userdata = portable and _optional_dir(target.userdata_dir)
     return BundleInfo(
@@ -788,13 +809,86 @@ def parse_ps_listing(text: str) -> List[ProcessInfo]:
     return found
 
 
+class MacProcessReader:
+    """Kernel executable path and NUL-delimited argv, never ps command text.
+
+    proc_pidpath identifies the executable vnode independently of argv[0].
+    KERN_PROCARGS2 supplies argc, an exec path, padding, then argc argv strings.
+    Environment bytes returned by sysctl are never parsed or emitted.
+    """
+
+    def __init__(self) -> None:
+        if sys.platform != "darwin":
+            raise HelperError("process_listing_failed")
+        self.lib = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        self.lib.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        self.lib.proc_pidpath.restype = ctypes.c_int
+        self.lib.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+                                   ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                   ctypes.c_void_p, ctypes.c_size_t]
+        self.lib.sysctl.restype = ctypes.c_int
+
+    def executable(self, pid: int) -> Optional[str]:
+        buffer = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+        count = self.lib.proc_pidpath(pid, buffer, len(buffer))
+        if count <= 0 or count >= len(buffer):
+            return None
+        return os.fsdecode(buffer.value)
+
+    def argv(self, pid: int) -> Optional[Tuple[str, ...]]:
+        mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+        buffer = ctypes.create_string_buffer(262144)
+        size = ctypes.c_size_t(len(buffer))
+        if self.lib.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+            return None
+        return self.parse_argv(buffer.raw[:size.value])
+
+    @staticmethod
+    def parse_argv(raw: bytes) -> Optional[Tuple[str, ...]]:
+        if len(raw) < 5:
+            return None
+        argc = int.from_bytes(raw[:4], byteorder=sys.byteorder, signed=True)
+        if not 1 <= argc <= 20000:
+            return None
+        offset = raw.find(b"\0", 4)  # skip exec path, not argv[0]
+        if offset < 0:
+            return None
+        while offset < len(raw) and raw[offset] == 0:
+            offset += 1
+        arguments = []
+        for _ in range(argc):
+            end = raw.find(b"\0", offset)
+            if end < 0:
+                return None
+            arguments.append(os.fsdecode(raw[offset:end]))
+            offset = end + 1
+        return tuple(arguments)
+
+
 class PsProcessLister:
-    """Process table via ps(1). Command lines are read only for Test.app pids."""
+    """ps enumerates PIDs; kernel paths classify them; argv is target-only."""
 
     PS = "/bin/ps"
 
-    def __init__(self, runner: Callable[..., Any] = subprocess.run) -> None:
+    def __init__(self, runner: Callable[..., Any] = subprocess.run,
+                 native: Optional[Any] = None) -> None:
         self._run = runner
+        self._native = native
+
+    @property
+    def native(self) -> Any:
+        if self._native is None:
+            self._native = MacProcessReader()
+        return self._native
+
+    def kernel_processes(self, listed: Iterable[ProcessInfo]) -> List[ProcessInfo]:
+        found = []
+        for process in listed:
+            exe = self.native.executable(process.pid)
+            if not exe:
+                raise HelperError("process_listing_failed")
+            found.append(ProcessInfo(process.pid, exe))
+        return found
 
     def _ps(self, arguments: Sequence[str]) -> Tuple[int, str]:
         try:
@@ -815,14 +909,20 @@ class PsProcessLister:
         code, text = self._ps(["-axww", "-o", "pid=,comm="])
         if code != 0:
             raise HelperError("process_listing_failed")
-        return parse_ps_listing(text)
+        return self.kernel_processes(parse_ps_listing(text))
 
-    def command_line(self, pid: int) -> Optional[str]:
-        code, text = self._ps(["-ww", "-p", str(int(pid)), "-o", "command="])
-        if code != 0:
+    def command_line(self, pid: int) -> Optional[Tuple[str, ...]]:
+        before = self.native.executable(pid)
+        argv = self.native.argv(pid)
+        after = self.native.executable(pid)
+        if not before or before != after or not argv:
             return None
-        line = text.strip("\n")
-        return line.strip() or None
+        # Preserve the two sanctioned Data-volume spellings without accepting
+        # an unrelated argv[0] as evidence of executable identity.
+        if (argv[0] != before and argv[0] != _DATA_VOLUME_ALIAS + before
+                and before != _DATA_VOLUME_ALIAS + argv[0]):
+            return None
+        return argv
 
 
 def lsof_listener_pids(port: int, runner: Callable[..., Any] = subprocess.run) -> Set[int]:
@@ -948,16 +1048,20 @@ def identify(services: "Services", require: Optional[str] = None) -> Identity:
             raise
         except Exception:
             raise HelperError("test_app_process_ambiguous") from None
-        spelling = None
-        if command is not None:
-            spelling = next(
-                (alias for alias in services.target.exe_aliases(bundle.executable)
-                 if command == alias or command.startswith(alias + " ")),
-                None,
-            )
-        if spelling is None:
+        if (not isinstance(command, tuple) or not command
+                or command[0] not in services.target.exe_aliases(bundle.executable)):
             raise HelperError("test_app_process_ambiguous", pid=process.pid)
-        if "-p" not in command[len(spelling):].split():
+        # -p must be an option, not the value of an unknown/data-path option.
+        # Refuse ambiguous prefixes; the documented launch starts with -p.
+        portable = False
+        for argument in command[1:]:
+            if argument == "-p":
+                portable = True
+                break
+            if argument not in ("--debug", "-fs", "--fullscreen", "--standalone",
+                                "-q", "--quiet"):
+                break
+        if not portable:
             raise HelperError("test_app_not_portable", pid=process.pid)
         identity = Identity(bundle, "running_portable", process.pid, 1)
     if require == "not_running" and identity.state != "not_running":
@@ -977,7 +1081,7 @@ _ALLOWED_GIT_MODES = frozenset({"100644", "100755"})
 
 
 def find_git() -> Optional[str]:
-    return shutil.which("git")
+    return shutil.which("git", path="/usr/bin:/bin")
 
 
 def _git_environment(git_exe: str) -> Dict[str, str]:
@@ -1391,7 +1495,7 @@ def load_config(path: Path, services: "Services") -> Dict[str, Any]:
         raise HelperError("config_invalid", reason="keys")
     adapter_values: Optional[Dict[str, str]] = None
     if "adapter" in document:
-        adapter_values = _validate_adapter_values(document["adapter"])
+        adapter_values = _validate_adapter_values(document["adapter"], services)
     rpc = _validate_rpc_section(document.get("rpc", {}))
     # The machine-local paths must never be echoed by any output.
     for key in ADAPTER_PATH_KEYS:
@@ -1400,7 +1504,7 @@ def load_config(path: Path, services: "Services") -> Dict[str, Any]:
     return {"adapter": adapter_values, "rpc": rpc}
 
 
-def _validate_adapter_values(section: Any) -> Dict[str, str]:
+def _validate_adapter_values(section: Any, services: Optional["Services"] = None) -> Dict[str, str]:
     if not isinstance(section, dict) or set(section) != set(ADAPTER_CONFIG_KEYS):
         raise HelperError("config_invalid", reason="adapter_keys")
     values: Dict[str, str] = {}
@@ -1411,8 +1515,14 @@ def _validate_adapter_values(section: Any) -> Dict[str, str]:
         if key in ADAPTER_PATH_KEYS:
             if not os.path.isabs(value) or os.path.normpath(value) != value:
                 raise HelperError("config_invalid", reason="adapter_path", key=key)
-            if is_forbidden_path(value):
-                raise HelperError("argument_path_forbidden")
+            path = normalize_path(value)
+            if services is not None and services.target.contains(path):
+                raise HelperError("argument_path_inside_test_app")
+            try:
+                reject_symlink_components(path)
+            except FsProblem:
+                raise HelperError("argument_path_symlink") from None
+            value = os.fspath(path)
         elif not _CONFIG_ID_RE.fullmatch(value):
             raise HelperError("config_invalid", reason="adapter_id", key=key)
         values[key] = value
@@ -2086,6 +2196,8 @@ def _swap_in(target: TestAppTarget, area: Path, addon_ids: Sequence[str]) -> Lis
     Each step is recorded BEFORE its rename so an interruption in between is
     still rolled back (rollback skips steps that never took place).
     """
+    target.require_chain(target.addons_dir)
+    target.require_chain(area)
     done: List[Tuple[str, str]] = []
     try:
         for addon_id in addon_ids:
@@ -2131,16 +2243,26 @@ def run_stage(
     dry_run: bool,
 ) -> Dict[str, Any]:
     target = services.target
+    repo = check_cli_path(repo, services)
+    if evidence_dir is not None:
+        evidence_dir = check_cli_path(evidence_dir, services)
     adapter_values = config.get("adapter")
     if adapter_values is None:
         raise HelperError("config_missing_section", section="adapter")
+    adapter_values = _validate_adapter_values(adapter_values, services)
     identity_before = identify(services, require="not_running")
     if not (identity_before.bundle.portable_data_present and identity_before.bundle.addons_dir_present):
         raise HelperError("layout_missing")
     source = GitSource(repo, services.git_exe, services.git_runner)
     candidate = load_candidate(source, candidate_id)
     fingerprint = config_fingerprint(adapter_values)
-    workspace = Path(tempfile.mkdtemp(prefix="bm-test-app-", dir=services.tmp_root))
+    # Explicit placement: never let tempfile consult inherited TMPDIR.
+    workspace_root = check_cli_path(services.tmp_root or Path("/private/tmp"), services)
+    try:
+        lstat_real_dir(workspace_root)
+    except FsProblem:
+        raise HelperError("argument_path_invalid") from None
+    workspace = Path(tempfile.mkdtemp(prefix="bm-test-app-", dir=workspace_root))
     try:
         driver = build_driver(candidate, adapter_values, workspace, services.python_exe, services.build_runner)
     finally:
@@ -2271,6 +2393,22 @@ def _recheck_backups(replaced: Mapping[str, Any]) -> None:
             raise HelperError("stage_backup_failed", addon_id=addon_id)
 
 
+def _check_moved_old(target: TestAppTarget, replaced: Mapping[str, Any],
+                     addon_ids: Sequence[str]) -> None:
+    """No moved-aside live bytes may be discarded without matching evidence."""
+    for addon_id in addon_ids:
+        old = target.stage_area / "old" / addon_id
+        info = replaced[addon_id]
+        try:
+            present = _live_state(old) == "dir"
+            if present != info["existed"]:
+                raise HelperError("stage_backup_failed", addon_id=addon_id)
+            if present and fingerprint_tree(old)["digest"] != info["backup_tree_digest"]:
+                raise HelperError("stage_backup_failed", addon_id=addon_id)
+        except (FsProblem, OSError):
+            raise HelperError("stage_backup_failed", addon_id=addon_id) from None
+
+
 def _apply_stage(
     services: "Services",
     manifest: Mapping[str, Any],
@@ -2281,6 +2419,8 @@ def _apply_stage(
     """Mutate the portable add-ons directory; roll back on any failure."""
     target = services.target
     area = target.stage_area
+    target.require_chain(target.portable_data)
+    target.require_chain(target.addons_dir)
     try:
         os.mkdir(os.fspath(area), 0o700)  # exclusive: doubles as the stage lock
     except FileExistsError:
@@ -2314,6 +2454,7 @@ def _apply_stage(
             _rollback(target, area, done)
             raise HelperError("stage_post_verify_failed")
         _recheck_backups(replaced)
+        _check_moved_old(target, replaced, addon_ids)
     except BaseException:
         # Keeps the area whenever old/ may still be the only copy of anything.
         _remove_stage_area(target, discard_old=False)
@@ -3251,7 +3392,7 @@ class Services:
             git_runner=subprocess.run,
             build_runner=subprocess.run,
             python_exe=sys.executable,
-            tmp_root=None,
+            tmp_root=Path("/private/tmp"),
             repo_default=PROJECT,
             stdout=sys.stdout,
             secrets=SecretRegistry(),

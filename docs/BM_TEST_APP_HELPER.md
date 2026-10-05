@@ -17,11 +17,20 @@ live use and needs independent review before it touches the real Test.app.
   constant: there is no command-line or environment override. Internals take an
   injected target so tests use fake bundles.
 - Normal `/Applications/Kodi.app` and `~/Library/Application Support/Kodi` are
-  matched lexically and refused everywhere; they are never stat'ed, listed or
+  refused before filesystem traversal. Leading slashes are collapsed,
+  `/System/Volumes/Data` spellings share the ordinary path identity, and opaque
+  `.vol`, `.nofollow`, and `.resolve` namespaces fail closed. These rules also
+  apply to all four paths in the six-value adapter config; existing symlink
+  components are refused. Normal Kodi surfaces are never stat'ed, listed or
   opened. Any Kodi-like process outside the authorized bundle is refused too.
 - Every command starts with `identify`: Info.plist identity, no symlink in the
-  bundle path, and either no process or exactly one process of the authorized
-  executable launched with a standalone `-p` argument.
+  bundle and portable-data ancestor paths, and either no process or exactly one
+  process of the authorized executable. macOS `proc_pidpath` supplies executable
+  identity; `sysctl(KERN_PROCARGS2)` supplies actual argv boundaries. `argv[0]`
+  must agree with the kernel path. Portable `-p` must precede any unknown or
+  value-taking option; only known boolean launch flags may precede it. Embedded
+  text and `--datadir "-p"` are refused; use the documented `--args -p` launch.
+  Unreadable process identity fails closed.
 - Candidate bytes come from Git objects of an explicit full commit id, never
   from working-tree files.
 - No password in argv, environment, config, logs, output or evidence.
@@ -95,8 +104,11 @@ the values), and the helper's own SHA-256.
 
 ## Staging semantics
 
-1. Build in a private temp workspace (removed afterwards).
-2. Create `portable_data/.bm-stage` (exclusive; its existence is the lock and a
+1. Build in an exclusive private temp workspace under validated `/private/tmp`
+   (removed afterwards). Inherited `TMPDIR` never chooses workspace placement.
+2. Validate the entire bundle/portable-data component chain before staging,
+   and recheck the chain immediately before swapping. Create
+   `portable_data/.bm-stage` (exclusive; its existence is the lock and a
    stale one is never deleted) and write both new trees there, then verify them
    against the manifest. It must share a device with `addons/`.
 3. Copy every tree about to be replaced into the evidence directory
@@ -104,7 +116,10 @@ the values), and the helper's own SHA-256.
 4. Re-check that the Test.app is not running, then rename live to `old/` and new
    to live for both add-ons; verify the live trees; roll back on any failure
    (also on interrupt). If a rollback itself fails the area is kept untouched.
-5. Only after the evidence copy is re-verified is `.bm-stage` removed.
+5. Re-verify the evidence copy and fingerprint the actual moved-aside `old/`
+   trees against the backup digests. If presence or contents differ, fail closed
+   and retain `.bm-stage/old` and all evidence. A later stage refuses that retained
+   area. Only matching, verified old trees may be discarded with `.bm-stage`.
 
 Evidence per run: `stage_manifest.json`, `stage_result.json`, `replaced/`.
 `userdata` is never touched.
