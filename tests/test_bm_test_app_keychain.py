@@ -293,6 +293,53 @@ class TestWrapperMain(helper_tests.TripwireTestCase):
         self.assertEqual(payload["error"]["code"], "argument_invalid")
         self.assertEqual(runner.calls, [])
 
+    def test_quit_argv_passes_through_unchanged(self):
+        argv = ["quit", "--rpc-port", "8080", "--timeout", "30", "--output", "/x/quit.json"]
+        with mock.patch.object(kc.bm, "main", return_value=0) as helper_main:
+            self.assertEqual(kc.main(list(argv)), 0)
+        (passed,), kwargs = helper_main.call_args
+        self.assertEqual(list(passed), argv)
+        self.assertEqual(set(kwargs), {"services"})
+
+    def test_quit_authenticates_with_the_keychain_password_through_the_reviewed_helper(self):
+        world = helper_tests.QuitWorld(self)
+        world.transport.password = SENTINEL
+        runner = FakeRunner(stdout=item_bytes())
+        # The fake services keep their own recording prompt: only the wrapper's
+        # Keychain prompt can supply the password.
+        with mock.patch.object(kc.bm.Services, "production", return_value=world.services), \
+                mock.patch.object(bm, "interactive_password_prompt", side_effect=AssertionError("fallback")), \
+                helper_tests.no_signals_or_processes():
+            code = kc.main(["quit", "--rpc-port", "8080"], runner=runner)
+        text = world.services.stdout.getvalue()
+        payload = json.loads(text)
+        self.assertEqual((code, payload["ok"], payload["graceful"]), (bm.EXIT_OK, True, True), text[:300])
+        self.assertTrue(payload["invocation"]["authenticated"])
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(runner.calls[0][0], EXPECTED_ARGV)
+        self.assertEqual(world.prompts, [])  # the interactive prompt was never the source
+        sent = [r for r in world.transport.requests if r["body"]["method"] == "Application.Quit"]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(base64.b64decode(sent[0]["headers"]["Authorization"].split()[1]).decode(), f"kodi:{SENTINEL}")
+        self.assertNotIn(SENTINEL, text)  # the reviewed leak guard still covers the quit output
+        self.assertEqual(world.methods(), ["JSONRPC.Ping", "JSONRPC.Ping", "Application.Quit"])
+
+    def test_a_failed_keychain_lookup_never_sends_quit_and_leaves_kodi_running(self):
+        for label, (runner, expected_code) in failing_runners().items():
+            with self.subTest(label=label):
+                world = helper_tests.QuitWorld(self, "quit-" + label.replace(" ", "-").replace("(", "").replace(")", ""))
+                world.transport.password = SENTINEL
+                with mock.patch.object(kc.bm.Services, "production", return_value=world.services), \
+                        mock.patch.object(bm, "interactive_password_prompt", side_effect=AssertionError("fallback")), \
+                        helper_tests.no_signals_or_processes():
+                    code = kc.main(["quit", "--rpc-port", "8080"], runner=runner)
+                text = world.services.stdout.getvalue()
+                payload = json.loads(text)
+                self.assertEqual((code, payload["error"]["code"]), (bm.EXIT_FAILED, expected_code))
+                self.assertEqual(world.transport.quit_requests, [])
+                self.assertEqual([p.pid for p in world.lister.processes], [4242])
+                self.assertNotIn(SENTINEL, text)
+
     def test_the_script_entry_point_propagates_the_helper_exit_code(self):
         # An argument error exits inside the reviewed helper before any Keychain or
         # Kodi contact, so this is a true end-to-end run of the script itself.
@@ -401,6 +448,14 @@ class TestWrapperStaticSafety(unittest.TestCase):
                      "add-generic-password", "delete-generic-password", "find-internet-password", "list-keychains"):
             self.assertNotIn(text, WRAPPER_SOURCE)
         self.assertNotIn("-g", kc.LOOKUP_ARGV)
+
+    def test_the_wrapper_delegates_quit_and_contains_no_quit_or_shutdown_logic(self):
+        lowered = WRAPPER_SOURCE.lower()
+        for text in ("quit", "application.", "shutdown", "kill", "signal", "sleep", "monotonic", "identify", "process_lister"):
+            self.assertNotIn(text, lowered)
+        calls = [self.dotted(n.func) for n in ast.walk(WRAPPER_TREE) if isinstance(n, ast.Call)]
+        self.assertIn("bm.main", calls)
+        self.assertEqual(calls.count("bm.main"), 1)  # the single delegation point serves every command
 
     def test_constants_are_exact_literals_defined_once(self):
         self.assertEqual(WRAPPER_SOURCE.count('"/usr/bin/security"'), 1)

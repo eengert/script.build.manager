@@ -56,7 +56,7 @@ from resources.lib.frozen_install import (
     validate_frozen_manifest,
 )
 from resources.lib.startup import StartupClassification, StartupStatus
-from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
+from resources.lib.update_guard import AddonUpdateGuard, AddonUpdatePolicy, UpdatePolicyBackend
 from resources.lib.planner import CONFIGURE, PlanAction, SET_SKIN
 from resources.lib.skin import SkinFailureCode, SkinResult, SkinStatus
 
@@ -99,9 +99,11 @@ class FakePolicy(UpdatePolicyBackend):
     def __init__(self, policy=AddonUpdatePolicy.AUTOMATIC):
         self.policy = policy
         self.calls = []
+        self.reads = 0
         self.fail_after = None
 
     def get_policy(self):
+        self.reads += 1
         return self.policy
 
     def set_policy(self, policy):
@@ -829,7 +831,7 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertNotIn("/private/", transaction.status_message)
         self.assertNotIn("BM023A_FAILURE_TEXT", transaction.status_message)
 
-    def test_restart_boundary_reasserts_and_finalizes(self):
+    def test_restart_boundary_verifies_persisted_quarantine_and_finalizes(self):
         restart = SimpleNamespace(
             outcome="manual_restart_required",
             transaction=SimpleNamespace(
@@ -842,7 +844,9 @@ class FrozenInstallTest(unittest.TestCase):
             self._manifest(), manifest_path="/fixture.json", device_profile_id="test"
         )
         self.assertEqual(result.outcome, "awaiting_restart")
-        self.policy.policy = AddonUpdatePolicy.AUTOMATIC
+        # Kodi persisted the quarantine across the restart: NEVER_CHECK stands.
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+        self.assertEqual(self.policy.calls, [AddonUpdatePolicy.NEVER_CHECK])
         resumed = FrozenInstallCoordinator(
             store=self.store,
             artifact_store=self.artifacts,
@@ -854,6 +858,11 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertEqual(resumed.outcome, "complete", (resumed.code, resumed.message))
         self.assertIsNone(self.store.inspect())
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
+        # After the restart the only write is the terminal restore of the original.
+        self.assertEqual(
+            self.policy.calls,
+            [AddonUpdatePolicy.NEVER_CHECK, AddonUpdatePolicy.NOTIFY_ONLY],
+        )
 
     def test_preexisting_lifecycle_owner_stays_held_until_verified_resume(self):
         manifest = self._manifest()
@@ -1145,9 +1154,12 @@ class FrozenInstallTest(unittest.TestCase):
             )
 
         self.assertEqual(resumed.outcome, "complete", (resumed.code, resumed.message))
-        self.assertLess(events.index("set_updater_policy"), events.index("refresh_local_addons"))
         self.assertLess(events.index("read_updater_policy"), events.index("refresh_local_addons"))
         self.assertLess(events.index("refresh_local_addons"), events.index("configuration_private_apply"))
+        # The restart is verify-only: the single post-restart write is the terminal
+        # restore, which happens after the refresh and the private configuration.
+        self.assertEqual(events.count("set_updater_policy"), 1)
+        self.assertLess(events.index("configuration_private_apply"), events.index("set_updater_policy"))
         self.assertEqual(events.count("refresh_local_addons"), 1)
         self.assertIsNone(self.store.inspect())
         self.assertEqual(policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
@@ -1271,7 +1283,7 @@ class FrozenInstallTest(unittest.TestCase):
             tuple(sorted((owner_id, dependent_id))),
         )
 
-    def test_startup_reasserts_guard_before_resume(self):
+    def test_startup_verifies_persisted_quarantine_without_writing(self):
         transaction = FrozenInstallTransaction(
             transaction_id="33333333-3333-4333-8333-333333333333",
             build_id="bm022-fixture",
@@ -1285,11 +1297,14 @@ class FrozenInstallTest(unittest.TestCase):
             updated_at="2026-09-21T00:00:00Z",
         )
         self.store.create(transaction)
+        self.policy.policy = AddonUpdatePolicy.NEVER_CHECK  # as persisted by Kodi
         status = ensure_frozen_install_guard(
             store=self.store, policy_backend=self.policy
         )
         self.assertTrue(status.allowed)
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+        self.assertEqual(self.policy.calls, [])
+        self.assertEqual(self.store.inspect(), transaction)
 
     def test_activation_hold_persists_across_attention_until_explicit_release(self):
         transaction = FrozenInstallTransaction(
@@ -1523,6 +1538,12 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertFalse(owner.broken)
         self.assertTrue(owner.enabled)
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.AUTOMATIC)
+        # One quarantine write at the initial install, one terminal restore, and
+        # nothing in between: the retry and its continuation only verified.
+        self.assertEqual(
+            self.policy.calls,
+            [AddonUpdatePolicy.NEVER_CHECK, AddonUpdatePolicy.AUTOMATIC],
+        )
 
     def test_held_retry_rejects_predicate_near_misses_without_mutation(self):
         _manifest, _profile, source_store, coordinator, held = (
@@ -1802,7 +1823,7 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertEqual(self.store.inspect(), held)
         resume.assert_not_called()
 
-    def test_reassert_failure_transitions_attention(self):
+    def test_verification_failure_transitions_attention_without_a_write(self):
         transaction = FrozenInstallTransaction(
             transaction_id="33333333-3333-4333-8333-333333333333",
             build_id="bm022-fixture",
@@ -1816,12 +1837,432 @@ class FrozenInstallTest(unittest.TestCase):
             updated_at="2026-09-21T00:00:00Z",
         )
         self.store.create(transaction)
-        self.policy.fail_after = 0
         status = ensure_frozen_install_guard(
             store=self.store, policy_backend=self.policy
-        )
+        )  # the fixture policy is NOTIFY_ONLY: Kodi did not persist NEVER_CHECK
         self.assertFalse(status.allowed)
+        self.assertEqual(status.code, "FROZEN_UPDATER_NOT_QUARANTINED")
         self.assertEqual(self.store.inspect().phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertEqual(self.policy.calls, [])
+
+    # --- Beta updater-guard fix ------------------------------------------------
+    # The initial install is the only place that writes the quarantine. Every
+    # post-restart path only reads it, and anything but NEVER_CHECK fails closed.
+
+    def _awaiting_transaction(self, stage=FrozenLifecycleStage.NONE, **overrides):
+        held = stage in (
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART,
+        )
+        values = dict(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            build_id="bm022-fixture",
+            manifest_path="/fixture.json",
+            device_profile_id="test",
+            manifest_fingerprint="a" * 64,
+            phase=FrozenInstallPhase.AWAITING_RESTART,
+            originating_kodi_session_id=SESSION_A,
+            original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+            created_at="2026-09-21T00:00:00Z",
+            updated_at="2026-09-21T00:00:00Z",
+            configuration_manifest_path="/configuration.json",
+            lifecycle_stage=stage,
+            activation_hold_ids=("plugin.video.redlight",) if held else (),
+            activation_hold_released=False,
+            lifecycle_restart_count=1 if held else 0,
+        )
+        values.update(overrides)
+        return FrozenInstallTransaction(**values)
+
+    PRESERVED_FIELDS = (
+        "transaction_id", "build_id", "manifest_path", "device_profile_id",
+        "manifest_fingerprint", "originating_kodi_session_id",
+        "original_update_policy", "updater_guard_required",
+        "configuration_manifest_path", "lifecycle_stage", "activation_hold_ids",
+        "activation_hold_released", "lifecycle_restart_count",
+        "install_plan_fingerprint", "private_overlay_id",
+        "private_overlay_fingerprint", "private_overlay_required",
+    )
+
+    def _assert_failed_closed_and_preserved(self, original, code):
+        durable = self.store.inspect()
+        self.assertIsNotNone(durable, "the frozen transaction must not be cleared")
+        self.assertEqual(durable.phase, FrozenInstallPhase.NEEDS_ATTENTION)
+        self.assertEqual(durable.status_code, code)
+        for field in self.PRESERVED_FIELDS:
+            self.assertEqual(getattr(durable, field), getattr(original, field), field)
+        self.assertFalse(durable.activation_hold_released)
+        self.assertEqual(
+            active_activation_hold_ids(self.store), frozenset(original.activation_hold_ids)
+        )
+
+    def _tripwire_coordinator(self, tripped):
+        def trip(name):
+            def _trip(*_args, **_kwargs):
+                tripped.append(name)
+                raise AssertionError(f"{name} must not run after a failed verification")
+            return _trip
+
+        return FrozenInstallCoordinator(
+            store=self.store,
+            artifact_store=self.artifacts,
+            policy_backend=self.policy,
+            installer=self.backend,
+            manifest_loader=trip("manifest_loader"),
+            session_id_provider=lambda: SESSION_B,
+            configuration_runner=trip("configuration_runner"),
+            final_validator=trip("final_validator"),
+            registry_backend=InMemoryRegistryBackend(self.backend),
+        )
+
+    def test_initial_install_from_automatic_writes_the_quarantine_once_and_reads_it_back(self):
+        events = []
+        store = self.store
+
+        class OrderedPolicy(FakePolicy):
+            def get_policy(inner_self):
+                events.append("read")
+                return super(OrderedPolicy, inner_self).get_policy()
+
+            def set_policy(inner_self, policy):
+                durable = store.inspect()
+                events.append((
+                    "write", AddonUpdatePolicy(policy),
+                    durable.phase if durable else None,
+                    durable.original_update_policy if durable else None,
+                ))
+                return super(OrderedPolicy, inner_self).set_policy(policy)
+
+        self.policy = OrderedPolicy(AddonUpdatePolicy.AUTOMATIC)
+        restart = SimpleNamespace(
+            outcome="manual_restart_required",
+            transaction=SimpleNamespace(transaction_id="33333333-3333-4333-8333-333333333333"),
+        )
+        result = self._coordinator(configuration_runner=lambda _request: restart).install(
+            self._manifest(), manifest_path="/fixture.json", device_profile_id="test"
+        )
+        self.assertEqual(result.outcome, "awaiting_restart", (result.code, result.message))
+        # capture original -> ownership persisted -> one write -> read-back
+        self.assertEqual(events, [
+            "read",
+            ("write", AddonUpdatePolicy.NEVER_CHECK, FrozenInstallPhase.PREPARING, AddonUpdatePolicy.AUTOMATIC),
+            "read",
+        ])
+        self.assertEqual(self.policy.calls, [AddonUpdatePolicy.NEVER_CHECK])
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+        self.assertEqual(self.store.inspect().original_update_policy, AddonUpdatePolicy.AUTOMATIC)
+
+    def test_startup_without_a_frozen_transaction_touches_no_updater_policy(self):
+        status = ensure_frozen_install_guard(store=self.store, policy_backend=self.policy)
+        self.assertTrue(status.allowed)
+        self.assertIsNone(status.transaction)
+        self.assertIsNone(run_frozen_install_startup(
+            bm020_status=StartupStatus(StartupClassification.NO_TRANSACTION),
+            store=self.store,
+            policy_backend=self.policy,
+        ))
+        self.assertEqual((self.policy.reads, self.policy.calls), (0, []))
+
+    def test_startup_with_never_check_continues_with_zero_setter_calls(self):
+        for stage in (
+            FrozenLifecycleStage.NONE,
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART,
+        ):
+            with self.subTest(stage=stage):
+                self.store.clear()
+                self.policy = FakePolicy(AddonUpdatePolicy.NEVER_CHECK)
+                transaction = self._awaiting_transaction(stage)
+                self.store.create(transaction)
+                status = ensure_frozen_install_guard(store=self.store, policy_backend=self.policy)
+                self.assertTrue(status.allowed, (status.code, status.message))
+                self.assertEqual(self.policy.calls, [])
+                self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+                self.assertEqual(self.store.inspect(), transaction)  # untouched
+
+    def test_startup_verification_failure_fails_closed_and_preserves_the_held_transaction(self):
+        class MalformedPolicy(FakePolicy):
+            def get_policy(inner_self):
+                super(MalformedPolicy, inner_self).get_policy()
+                return "automatic"
+
+        class UnreadablePolicy(FakePolicy):
+            def get_policy(inner_self):
+                super(UnreadablePolicy, inner_self).get_policy()
+                raise RuntimeError("settings unavailable")
+
+        cases = (
+            ("automatic", lambda: FakePolicy(AddonUpdatePolicy.AUTOMATIC), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("notify only", lambda: FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("malformed", lambda: MalformedPolicy(AddonUpdatePolicy.NEVER_CHECK), "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+            ("unreadable", lambda: UnreadablePolicy(AddonUpdatePolicy.NEVER_CHECK), "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+        )
+        for stage in (
+            FrozenLifecycleStage.NONE,
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART,
+        ):
+            for label, make_policy, code in cases:
+                with self.subTest(stage=stage, policy=label):
+                    self.store.clear()
+                    self.policy = make_policy()
+                    before_value = self.policy.policy
+                    transaction = self._awaiting_transaction(stage)
+                    self.store.create(transaction)
+                    status = ensure_frozen_install_guard(store=self.store, policy_backend=self.policy)
+                    self.assertFalse(status.allowed)
+                    self.assertEqual(status.code, code)
+                    self.assertEqual(self.policy.calls, [])  # no changing write, ever
+                    self.assertEqual(self.policy.policy, before_value)
+                    self._assert_failed_closed_and_preserved(transaction, code)
+
+    def test_startup_verification_failure_keeps_an_existing_attention_diagnostic(self):
+        transaction = self._awaiting_transaction(
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART
+        )
+        self.store.create(transaction)
+        held = self.store.transition_expected(
+            transaction_id=transaction.transaction_id,
+            expected_phase=FrozenInstallPhase.AWAITING_RESTART,
+            new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            status_code="FROZEN_MANIFEST_INVALID",
+            status_message="outcome=failed; stage=frozen_manifest_validation",
+        )
+        self.policy = FakePolicy(AddonUpdatePolicy.AUTOMATIC)
+        status = ensure_frozen_install_guard(store=self.store, policy_backend=self.policy)
+        self.assertFalse(status.allowed)
+        self.assertEqual(status.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+        self.assertEqual(self.store.inspect(), held)  # nothing rewritten
+        self.assertEqual(self.policy.calls, [])
+
+    def test_startup_verification_failure_blocks_the_frozen_continuation(self):
+        for stage in (
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART,
+        ):
+            with self.subTest(stage=stage):
+                self.store.clear()
+                self.policy = FakePolicy(AddonUpdatePolicy.AUTOMATIC)
+                transaction = self._awaiting_transaction(stage)
+                self.store.create(transaction)
+                tripped = []
+
+                def trip(name):
+                    def _trip(*_args, **_kwargs):
+                        tripped.append(name)
+                        raise AssertionError(name)
+                    return _trip
+
+                with patch.object(AddonUpdateGuard, "restore_original", side_effect=trip("restore_original")), \
+                        patch.object(FrozenInstallCoordinator, "resume_after_restart", side_effect=trip("resume")), \
+                        patch.object(FrozenInstallStore, "clear_expected", side_effect=trip("clear_expected")), \
+                        patch.object(FrozenInstallStore, "clear", side_effect=trip("clear")):
+                    result = run_frozen_install_startup(
+                        bm020_status=StartupStatus(StartupClassification.NO_TRANSACTION),
+                        store=self.store,
+                        policy_backend=self.policy,
+                        installer=self.backend,
+                        manifest_loader=trip("manifest_loader"),
+                        session_id_provider=lambda: SESSION_B,
+                        configuration_runner=trip("configuration_runner"),
+                    )
+                self.assertEqual(tripped, [])
+                self.assertEqual(result.outcome, "needs_attention")
+                self.assertEqual(result.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+                self.assertEqual(self.policy.calls, [])
+                self._assert_failed_closed_and_preserved(transaction, "FROZEN_UPDATER_NOT_QUARANTINED")
+
+    def test_resume_after_restart_verification_failure_fails_closed_before_any_work(self):
+        class MalformedPolicy(FakePolicy):
+            def get_policy(inner_self):
+                super(MalformedPolicy, inner_self).get_policy()
+                return None
+
+        class UnreadablePolicy(FakePolicy):
+            def get_policy(inner_self):
+                super(UnreadablePolicy, inner_self).get_policy()
+                raise RuntimeError("settings unavailable")
+
+        cases = (
+            ("automatic", lambda: FakePolicy(AddonUpdatePolicy.AUTOMATIC), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("notify only", lambda: FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("malformed", lambda: MalformedPolicy(AddonUpdatePolicy.NEVER_CHECK), "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+            ("unreadable", lambda: UnreadablePolicy(AddonUpdatePolicy.NEVER_CHECK), "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+        )
+        for stage in (
+            FrozenLifecycleStage.NONE,
+            FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART,
+            FrozenLifecycleStage.CONFIGURATION_AWAITING_RESTART,
+        ):
+            for label, make_policy, code in cases:
+                with self.subTest(stage=stage, policy=label):
+                    self.store.clear()
+                    self.policy = make_policy()
+                    transaction = self._awaiting_transaction(stage)
+                    self.store.create(transaction)
+                    tripped = []
+                    coordinator = self._tripwire_coordinator(tripped)
+                    with patch.object(AddonUpdateGuard, "restore_original") as restore, \
+                            patch.object(FrozenInstallCoordinator, "_finalize") as finalize, \
+                            patch.object(FrozenInstallCoordinator, "install") as install, \
+                            patch.object(FrozenInstallStore, "clear_expected") as clear_expected, \
+                            patch.object(FrozenInstallStore, "clear") as clear:
+                        result = coordinator.resume_after_restart(
+                            bm020_result=SimpleNamespace()
+                        )
+                    self.assertEqual(result.outcome, "needs_attention")
+                    self.assertEqual(result.code, code)
+                    self.assertEqual(tripped, [])  # no manifest load, configuration, or validation
+                    for spy in (restore, finalize, install, clear_expected, clear):
+                        spy.assert_not_called()
+                    self.assertEqual(self.policy.calls, [])
+                    self._assert_failed_closed_and_preserved(transaction, code)
+
+    def test_resume_after_restart_with_never_check_continues_with_zero_setter_calls_until_restore(self):
+        self.policy = FakePolicy(AddonUpdatePolicy.NEVER_CHECK)
+        transaction = self._awaiting_transaction(original_update_policy=AddonUpdatePolicy.NOTIFY_ONLY)
+        self.store.create(transaction)
+        manifest = self._manifest()
+        # The fixture manifest is not this transaction's: it fails closed later, but
+        # only after verification passed, which is all this test needs to show.
+        calls_seen = []
+
+        def manifest_loader(path):
+            calls_seen.append(tuple(self.policy.calls))
+            return manifest
+
+        coordinator = FrozenInstallCoordinator(
+            store=self.store, artifact_store=self.artifacts, policy_backend=self.policy,
+            installer=self.backend, manifest_loader=manifest_loader,
+            session_id_provider=lambda: SESSION_B,
+        )
+        coordinator.resume_after_restart()
+        self.assertEqual(calls_seen, [()])  # the loader ran, so verification passed with no write
+        self.assertEqual(self.policy.calls, [])
+
+    def test_quiescence_continuation_verification_failure_is_read_only_and_keeps_the_hold(self):
+        manifest, profile, source_store, coordinator, held = self._held_redlight_retry_case()
+        for node in manifest.addons:  # the exact ZIPs are still in the store after a real restart
+            self.artifacts.import_zip(
+                source_store.read_bytes(node.artifact.sha256),
+                expected_addon_id=node.addon_id,
+                expected_version=node.version,
+                source="test",
+            )
+        rearmed = self.store.rearm_held_quiescence(held)  # AWAITING_RESTART, quiescence, hold intact
+        self.assertEqual(rearmed.phase, FrozenInstallPhase.AWAITING_RESTART)
+        writes_before_restart = tuple(self.policy.calls)
+        self.assertEqual(writes_before_restart, (AddonUpdatePolicy.NEVER_CHECK,))
+        self.policy.policy = AddonUpdatePolicy.AUTOMATIC  # Kodi did not persist the write
+        tripped = []
+
+        def trip(name):
+            def _trip(*_args, **_kwargs):
+                tripped.append(name)
+                raise AssertionError(name)
+            return _trip
+
+        coordinator.configuration_runner = trip("configuration_runner")
+        coordinator.final_validator = trip("final_validator")
+        with patch.object(
+            FrozenInstallCoordinator, "_configuration_profile", return_value=profile
+        ), patch.object(AddonUpdateGuard, "restore_original") as restore, \
+                patch.object(FrozenInstallCoordinator, "_finalize") as finalize, \
+                patch.object(FrozenInstallStore, "clear_expected") as clear_expected:
+            result = coordinator.install(
+                manifest,
+                manifest_path="/fixture-held-frozen.json",
+                configuration_manifest_path="/fixture-held-config.json",
+                device_profile_id="test",
+                interactive=False,
+            )
+        self.assertEqual(result.outcome, "needs_attention", (result.code, result.message))
+        self.assertEqual(result.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+        self.assertEqual(tripped, [])
+        for spy in (restore, finalize, clear_expected):
+            spy.assert_not_called()
+        self.assertEqual(tuple(self.policy.calls), writes_before_restart)  # no post-restart write
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.AUTOMATIC)
+        self._assert_failed_closed_and_preserved(rearmed, "FROZEN_UPDATER_NOT_QUARANTINED")
+        self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
+
+    def test_held_retry_verification_failure_leaves_the_reviewed_snapshot_untouched(self):
+        for label, break_policy, code in (
+            ("automatic", lambda p: setattr(p, "policy", AddonUpdatePolicy.AUTOMATIC), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("notify only", lambda p: setattr(p, "policy", AddonUpdatePolicy.NOTIFY_ONLY), "FROZEN_UPDATER_NOT_QUARANTINED"),
+            ("malformed", lambda p: setattr(p, "policy", "automatic"), "FROZEN_UPDATER_STATE_UNAVAILABLE"),
+        ):
+            with self.subTest(policy=label):
+                self.store.clear()
+                _manifest, _profile, source_store, coordinator, held = self._held_redlight_retry_case()
+                calls_before = tuple(self.policy.calls)
+                break_policy(self.policy)
+                with patch.object(coordinator, "resume_after_restart") as resume, \
+                        patch.object(self.store, "rearm_held_quiescence") as rearm:
+                    result = coordinator.retry_held_quiescence(
+                        expected_transaction=held,
+                        current_session_id=SESSION_B,
+                        artifact_source_store=source_store,
+                        restart_store=self._restart_store(),
+                    )
+                self.assertEqual((result.outcome, result.code), ("needs_attention", code))
+                self.assertEqual(self.store.inspect(), held)  # byte-identical: not re-armed, not rewritten
+                self.assertEqual(
+                    active_activation_hold_ids(self.store),
+                    frozenset({"plugin.video.redlight"}),
+                )
+                self.assertEqual(tuple(self.policy.calls), calls_before)  # zero writes
+                resume.assert_not_called()
+                rearm.assert_not_called()
+                self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
+
+    def test_same_session_and_repeat_resume_protection_survive_verify_only_startup(self):
+        self.policy = FakePolicy(AddonUpdatePolicy.NEVER_CHECK)
+        transaction = self._awaiting_transaction(FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART)
+        self.store.create(transaction)
+        coordinator = FrozenInstallCoordinator(
+            store=self.store, artifact_store=self.artifacts, policy_backend=self.policy,
+            installer=self.backend, session_id_provider=lambda: SESSION_A,
+        )
+        same = coordinator.resume_after_restart()
+        self.assertEqual((same.outcome, same.code), ("awaiting_restart", "SAME_SESSION"))
+        self.assertEqual(self.store.inspect(), transaction)
+        self.assertEqual((self.policy.reads, self.policy.calls), (0, []))  # session gate comes first
+        # A transaction that already failed closed is never resumed again by a later startup.
+        self.policy.policy = AddonUpdatePolicy.AUTOMATIC
+        coordinator.session_id_provider = lambda: SESSION_B
+        first = coordinator.resume_after_restart()
+        self.assertEqual(first.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+        failed = self.store.inspect()
+        reads_after_first = self.policy.reads
+        again = coordinator.resume_after_restart()
+        self.assertEqual((again.outcome, again.code), ("needs_attention", "FROZEN_TRANSACTION_NOT_AWAITING"))
+        self.assertEqual(self.store.inspect(), failed)
+        self.assertEqual((self.policy.reads, self.policy.calls), (reads_after_first, []))
+
+    def test_only_the_initial_install_writes_the_quarantine(self):
+        import ast
+        from resources.lib import frozen_install as module
+
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        calls = {}
+
+        def visit(node, owner):
+            for child in ast.iter_child_nodes(node):
+                current = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+                    calls.setdefault(child.func.attr, []).append(current)
+                visit(child, current)
+
+        visit(tree, "<module>")
+        for forbidden in ("reassert_required", "reassert", "engage", "set_policy"):
+            self.assertNotIn(forbidden, calls, forbidden)
+        self.assertEqual(calls.get("engage_with_original"), ["install"])
+        self.assertEqual(sorted(calls.get("restore_original", [])), ["_finalize", "abandon"])
+        self.assertEqual(
+            sorted(calls.get("verify_quarantined", [])),
+            ["ensure_frozen_install_guard", "install", "resume_after_restart", "retry_held_quiescence"],
+        )
 
     def test_explicit_abandon_restores_policy_without_rollback(self):
         restart = SimpleNamespace(

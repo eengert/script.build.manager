@@ -20,6 +20,7 @@ import io
 import json
 import os
 import plistlib
+import re
 import shutil
 import socket
 import sqlite3
@@ -5282,7 +5283,7 @@ class TestCli(TripwireTestCase):
             capture_output=True, text=True, cwd=str(self.tmp),
         )
         self.assertEqual(proc.returncode, 0)
-        for subcommand in ("identify", "stage", "verify", "run", "snapshot"):
+        for subcommand in ("identify", "stage", "verify", "run", "quit", "snapshot"):
             self.assertIn(subcommand, proc.stdout)
         self.assertNotIn("--app", proc.stdout)
 
@@ -5429,6 +5430,42 @@ class TestStaticSafety(unittest.TestCase):
             "os.link": {"write_new_file_atomic"},
             "os.symlink": {"copy_tree_exact"},
         })
+
+    def test_no_process_termination_or_external_control_behavior(self):
+        # The only signal-related call is the signal-0 existence probe; nothing can
+        # terminate, kill, signal or script another process, so ``quit`` cannot escalate.
+        for node in ast.walk(HELPER_TREE):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [alias.name for alias in node.names] + [getattr(node, "module", None) or ""]
+                self.assertFalse([n for n in names if n.split(".")[0] == "signal"], "signal must not be imported")
+        owners = enclosing_functions()
+        for node, owner in owners.items():
+            name = dotted(node.func)
+            last = name.rsplit(".", 1)[-1]
+            self.assertNotIn(last, {"killpg", "terminate", "send_signal", "abort", "kill_process"}, name)
+            self.assertFalse(name.startswith("signal."), name)
+            if name == "os.kill":
+                self.assertEqual(owner, "default_pid_alive")
+                self.assertEqual(len(node.args), 2)
+                self.assertIsInstance(node.args[1], ast.Constant)
+                self.assertEqual(node.args[1].value, 0)  # existence probe: no signal is delivered
+            if last == "kill":
+                self.assertEqual(name, "os.kill")
+        lowered = HELPER_SOURCE.lower()
+        for banned in ("pkill", "killall", "osascript", "sigterm", "sigkill", "sigint", "taskkill"):
+            self.assertNotIn(banned, lowered)
+        quit_calls = {dotted(node.func) for node, owner in owners.items() if owner == "run_quit"}
+        for name in quit_calls:
+            for banned in ("kill", "terminate", "signal", "subprocess", "system", "popen", "spawn", "exec", "osascript"):
+                self.assertNotIn(banned, name.lower())
+        methods = {
+            node.value for node in ast.walk(next(
+                n for n in HELPER_TREE.body if isinstance(n, ast.FunctionDef) and n.name == "run_quit"
+            ))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and re.fullmatch(r"[A-Z][A-Za-z]+\.[A-Z][A-Za-z]+", node.value)
+        }
+        self.assertEqual(methods, {"JSONRPC.Ping", "Application.Quit"})
 
     def test_only_the_production_wiring_constructs_the_authorized_target(self):
         owners = enclosing_functions()
@@ -6041,6 +6078,435 @@ class TestSnapshotProjectsAdapterShapedInstallResult(SnapshotTestCase):
             {"addon_id": "plugin.video.youtube", "resolution": "skipped", "state": "skipped",
              "repository_id": None, "resolved_version": None, "desired_enabled": True},
         ])
+
+
+class QuitTransport(FakeTransport):
+    """FakeTransport that also answers Application.Quit, honouring authentication."""
+
+    def __init__(self, handler=None):
+        super().__init__(handler)
+        self.quit_requests = []
+        self.quit_error = None
+        self.quit_result = "OK"
+        self.on_quit = lambda: None
+
+    def default_handler(self, request):
+        if request["body"]["method"] != "Application.Quit":
+            return super().default_handler(request)
+        if self.password is not None:
+            expected = "Basic " + base64.b64encode(f"{self.username}:{self.password}".encode()).decode()
+            if request["headers"].get("Authorization") != expected:
+                return 401, b""
+        self.quit_requests.append(request["body"])
+        if self.quit_error is not None:
+            return self.reply(error=self.quit_error)
+        self.on_quit()
+        return self.reply(self.quit_result)
+
+
+class QuitWorld:
+    """A fake running Test.app whose scripted Kodi accepts Application.Quit.
+
+    ``exit_after`` is the number of one-second waits before the process census
+    stops listing the Test.app (0: already gone at the first look, None: never).
+    """
+
+    def __init__(self, testcase, name="quit-world", pid=4242, exit_after=2):
+        base = testcase.tmp / name
+        base.mkdir()
+        self.pid = pid
+        self.target = make_fake_app(base)
+        self.lister = FakeProcessLister()
+        self.lister.run_test_app(self.target, pid=pid)
+        self.clock = FakeClock()
+        self.transport = QuitTransport()
+        self.events = []
+        self.prompts = []
+        self.listener_pids = {pid}
+        self.password_to_return = None
+        self.sleep_actions = {}
+        self.clock.on_sleep = lambda count: self.sleep_actions.get(count, lambda: None)()
+        real_list_all = self.lister.list_all
+
+        def logging_list_all():
+            self.events.append(("census", None))
+            return real_list_all()
+
+        self.lister.list_all = logging_list_all
+        real_post = self.transport.post
+
+        def logging_post(host, port, path, body, headers, timeout):
+            self.events.append(("request", json.loads(body)["method"]))
+            return real_post(host, port, path, body, headers, timeout)
+
+        self.transport.post = logging_post
+
+        def lookup(port):
+            self.events.append(("listener", port))
+            return set(self.listener_pids)
+
+        def prompt(text):
+            self.prompts.append(text)
+            return self.password_to_return
+
+        def on_quit():
+            if exit_after == 0:
+                self.stop()
+            elif exit_after is not None:
+                self.sleep_actions[exit_after] = self.stop
+
+        self.transport.on_quit = on_quit
+        self.services = make_services(
+            self.target, process_lister=self.lister, listener_lookup=lookup, clock=self.clock,
+            transport=self.transport, password_prompt=prompt,
+        )
+
+    def stop(self, *, keep_auxiliary=False):
+        keep = {os.fspath(self.target.auxiliary_executable)} if keep_auxiliary else set()
+        self.lister.processes[:] = [
+            process for process in self.lister.processes
+            if process.pid != self.pid and process.exe in keep
+        ]
+
+    def add_auxiliary(self, pid=5151):
+        self.lister.processes.append(bm.ProcessInfo(pid, os.fspath(self.target.auxiliary_executable)))
+
+    def methods(self):
+        return [name for kind, name in self.events if kind == "request"]
+
+
+@contextlib.contextmanager
+def no_signals_or_processes():
+    """Any signal, process-group signal or child process during the block fails the test."""
+    with mock.patch.object(os, "kill", side_effect=AssertionError("a signal was sent")), \
+            mock.patch.object(os, "killpg", side_effect=AssertionError("a signal was sent")), \
+            mock.patch.object(subprocess, "Popen", side_effect=AssertionError("a process was spawned")), \
+            mock.patch.object(subprocess, "run", side_effect=AssertionError("a process was spawned")):
+        yield
+
+
+class TestQuit(TripwireTestCase):
+    """The graceful ``quit`` command: Application.Quit, then proof of exit, nothing more."""
+
+    def world(self, name="quit-world", **kwargs):
+        return QuitWorld(self, name, **kwargs)
+
+    def quit(self, world, *, rpc=None, timeout=30):
+        with no_signals_or_processes():
+            return bm.run_quit(world.services, rpc={"port": 8080} if rpc is None else rpc, timeout=timeout)
+
+    def refused(self, world, **kwargs):
+        with self.assertRaises(bm.HelperError) as raised:
+            self.quit(world, **kwargs)
+        return raised.exception
+
+    # --- success -----------------------------------------------------------
+
+    def test_graceful_quit_sends_exactly_application_quit_and_proves_the_process_stopped(self):
+        world = self.world()
+        payload = self.quit(world)
+        self.assertTrue(payload["ok"])
+        self.assertIs(payload["graceful"], True)
+        self.assertEqual(payload["command"], "quit")
+        self.assertEqual(payload["shutdown"], {
+            "accepted": True, "exited": True, "forced_termination": False, "polls": 2,
+        })
+        self.assertEqual(world.methods(), ["JSONRPC.Ping", "Application.Quit"])
+        self.assertEqual(
+            world.transport.quit_requests,
+            [{"id": 1, "jsonrpc": "2.0", "method": "Application.Quit", "params": {}}],
+        )
+        self.assertEqual(payload["identity_before"]["process"]["state"], "running_portable")
+        self.assertIs(payload["identity_before"]["process"]["portable_flag"], True)
+        self.assertEqual(payload["identity_before"]["process"]["pid"], 4242)
+        self.assertEqual(payload["identity_after"]["process"]["state"], "not_running")
+        self.assertIsNone(payload["identity_after"]["process"]["pid"])
+        self.assertEqual(world.clock.sleeps, [1.0, 1.0])
+        self.assertEqual(payload["invocation"], {
+            "authenticated": False, "listener_pid_verified": True, "method": "Application.Quit",
+            "rpc_host": "127.0.0.1", "rpc_port": 8080, "rpc_requests": 2, "test_app_pid": 4242,
+        })
+
+    def test_running_target_is_validated_before_any_request_and_listener_before_each_one(self):
+        world = self.world()
+        self.quit(world)
+        self.assertEqual(world.events[0], ("census", None))
+        self.assertIn(4242, world.lister.command_calls)  # the portable -p argv was read
+        requests = [i for i, event in enumerate(world.events) if event[0] == "request"]
+        self.assertEqual(len(requests), 2)
+        for index in requests:
+            self.assertEqual(world.events[index - 1], ("listener", 8080), world.events)
+        self.assertLess(world.events.index(("census", None)), requests[0])
+        # After the quit is accepted only the census is consulted (no more RPC).
+        self.assertTrue(all(event == ("census", None) for event in world.events[requests[-1] + 1:]))
+
+    def test_an_already_exited_process_succeeds_without_waiting(self):
+        world = self.world(exit_after=0)
+        payload = self.quit(world)
+        self.assertEqual(payload["shutdown"]["polls"], 0)
+        self.assertEqual(world.clock.sleeps, [])
+
+    def test_quit_authenticates_through_the_reviewed_prompt_and_never_leaks_the_password(self):
+        world = self.world()
+        world.transport.password = SENTINEL_PASSWORD
+        world.password_to_return = SENTINEL_PASSWORD
+        payload = self.quit(world)
+        self.assertTrue(payload["invocation"]["authenticated"])
+        self.assertEqual(len(world.prompts), 1)
+        self.assertNotIn(SENTINEL_PASSWORD, world.prompts[0])
+        token = base64.b64encode(f"kodi:{SENTINEL_PASSWORD}".encode()).decode()
+        self.assertEqual(len(world.transport.quit_requests), 1)
+        sent = [r for r in world.transport.requests if r["body"]["method"] == "Application.Quit"]
+        self.assertEqual(sent[0]["headers"]["Authorization"], "Basic " + token)
+        text = bm.canonical_json(payload)
+        for leaked in (SENTINEL_PASSWORD, token, "Authorization", "Basic "):
+            self.assertNotIn(leaked, text)
+        self.assertFalse(world.services.secrets.leaks(text))
+        self.assertTrue(world.services.secrets.leaks(SENTINEL_PASSWORD))
+
+    # --- Kodi refuses ---------------------------------------------------------
+
+    def test_rejected_quit_is_reported_and_nothing_is_waited_for_or_signalled(self):
+        for label, configure in (
+            ("rpc error", lambda t: setattr(t, "quit_error", {"code": -32601, "message": "Method not found."})),
+            ("not OK", lambda t: setattr(t, "quit_result", "refused")),
+            ("null result", lambda t: setattr(t, "quit_result", None)),
+            ("false result", lambda t: setattr(t, "quit_result", False)),
+        ):
+            with self.subTest(case=label):
+                world = self.world("rejected-" + label.replace(" ", "-"))
+                configure(world.transport)
+                error = self.refused(world)
+                self.assertEqual(error.code, "kodi_quit_rejected")
+                self.assertEqual(world.methods(), ["JSONRPC.Ping", "Application.Quit"])
+                self.assertEqual(world.clock.sleeps, [])
+                self.assertEqual([p.pid for p in world.lister.processes], [4242])  # still running, untouched
+
+    def test_rejected_quit_exits_one_through_the_cli_with_the_fixed_code(self):
+        world = self.world()
+        world.transport.quit_error = {"code": -32601, "message": "Method not found."}
+        with no_signals_or_processes():
+            code, payload, text = run_cli(world.services, "quit", "--rpc-port", "8080")
+        self.assertEqual((code, payload["ok"], payload["error"]["code"]), (bm.EXIT_FAILED, False, "kodi_quit_rejected"))
+        self.assertEqual(payload["error"]["detail"], {"rpc_code": -32601})
+        self.assertNotIn("Method not found", text)
+
+    # --- Kodi does not exit -----------------------------------------------------
+
+    def test_a_process_that_never_exits_times_out_with_no_forced_termination(self):
+        world = self.world(exit_after=None)
+        error = self.refused(world, timeout=5)
+        self.assertEqual(error.code, "kodi_quit_timeout")
+        self.assertEqual(error.detail, {"last_observation": "test_app_running", "polls": 5})
+        self.assertEqual(world.clock.sleeps, [1.0] * 5)  # bounded by the deadline, then stop
+        self.assertEqual(world.methods(), ["JSONRPC.Ping", "Application.Quit"])  # asked once, never repeated
+        self.assertEqual([p.pid for p in world.lister.processes], [4242])
+
+    def test_a_lingering_auxiliary_after_the_main_exit_is_not_a_graceful_quit(self):
+        world = self.world(exit_after=None)
+        world.add_auxiliary()
+        world.sleep_actions[1] = lambda: world.stop(keep_auxiliary=True)
+        error = self.refused(world, timeout=4)
+        self.assertEqual(error.code, "kodi_quit_timeout")
+        self.assertEqual(error.detail["last_observation"], "test_app_process_mismatch")
+        self.assertEqual([p.pid for p in world.lister.processes], [5151])
+        world = self.world("aux-leaves", exit_after=None)
+        world.add_auxiliary()
+        world.sleep_actions[1] = lambda: world.stop(keep_auxiliary=True)
+        world.sleep_actions[3] = lambda: world.lister.processes.clear()
+        payload = self.quit(world, timeout=10)
+        self.assertEqual(payload["identity_after"]["process"]["state"], "not_running")
+        self.assertEqual(payload["shutdown"]["polls"], 3)
+
+    def test_a_process_that_exits_between_listing_and_identity_read_is_waited_out(self):
+        world = self.world(exit_after=None)
+
+        def lose_identity():
+            world.lister.commands[4242] = None  # listed, then gone before argv was read
+
+        world.sleep_actions[1] = lose_identity
+        world.sleep_actions[2] = world.stop
+        payload = self.quit(world)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["shutdown"]["polls"], 2)
+
+    def test_fatal_census_refusals_during_the_wait_are_never_waited_out(self):
+        for label, code in (
+            ("foreign kodi", "foreign_kodi_process_present"),
+            ("second main", "multiple_test_app_processes"),
+        ):
+            with self.subTest(case=label):
+                world = self.world("fatal-" + label.replace(" ", "-"), exit_after=None)
+                extra = (
+                    bm.ProcessInfo(9, "/Applications/Kodi.app/Contents/MacOS/Kodi")
+                    if label == "foreign kodi"
+                    else bm.ProcessInfo(10, os.fspath(world.target.macos_dir / "Kodi"))
+                )
+                world.sleep_actions[1] = lambda w=world, e=extra: w.lister.processes.append(e)
+                error = self.refused(world)
+                self.assertEqual(error.code, code)
+                self.assertEqual(world.clock.sleeps, [1.0])  # refused at the next census
+
+    # --- existing safety conditions still apply -----------------------------------
+
+    def test_unsafe_targets_are_refused_before_any_request_or_prompt(self):
+        def not_running(world):
+            world.lister.processes.clear()
+
+        def not_portable(world):
+            world.lister.commands[4242] = world.lister.processes[-1].exe
+
+        def foreign(world):
+            world.lister.processes.append(bm.ProcessInfo(5, "/Applications/Kodi.app/Contents/MacOS/Kodi"))
+
+        def two_main(world):
+            world.lister.processes.append(bm.ProcessInfo(6, os.fspath(world.target.macos_dir / "Kodi")))
+
+        def ambiguous(world):
+            world.lister.commands[4242] = None
+
+        def aux_only(world):
+            world.lister.processes.clear()
+            world.add_auxiliary()
+
+        for label, mutate, code in (
+            ("not running", not_running, "test_app_not_running"),
+            ("not portable", not_portable, "test_app_not_portable"),
+            ("foreign kodi", foreign, "foreign_kodi_process_present"),
+            ("two main", two_main, "multiple_test_app_processes"),
+            ("ambiguous", ambiguous, "test_app_process_ambiguous"),
+            ("auxiliary only", aux_only, "test_app_process_mismatch"),
+        ):
+            with self.subTest(case=label):
+                world = self.world("unsafe-" + label.replace(" ", "-"))
+                mutate(world)
+                error = self.refused(world)
+                self.assertEqual(error.code, code)
+                self.assertEqual(world.transport.requests, [])
+                self.assertEqual(world.prompts, [])
+                self.assertEqual(world.clock.sleeps, [])
+
+    def test_listener_mismatches_are_refused_before_quit_is_sent(self):
+        for label, pids, code in (
+            ("other pid", {9999}, "listener_pid_mismatch"),
+            ("shared port", {4242, 9999}, "listener_pid_mismatch"),
+            ("nobody", set(), "listener_not_found"),
+        ):
+            with self.subTest(case=label):
+                world = self.world("listener-" + label.replace(" ", "-"))
+                world.listener_pids = pids
+                self.assertEqual(self.refused(world).code, code)
+                self.assertEqual(world.transport.requests, [])
+
+    def test_a_listener_change_after_the_ping_stops_the_quit_from_being_sent(self):
+        world = self.world()
+        original = world.transport.default_handler
+
+        def swap_listener_after_ping(request):
+            if request["body"]["method"] == "JSONRPC.Ping":
+                world.listener_pids = {31337}
+            return original(request)
+
+        world.transport.handler = swap_listener_after_ping
+        self.assertEqual(self.refused(world).code, "listener_pid_mismatch")
+        self.assertEqual(world.methods(), ["JSONRPC.Ping"])
+        self.assertEqual(world.transport.quit_requests, [])
+        self.assertEqual([p.pid for p in world.lister.processes], [4242])
+
+    def test_authentication_failures_fail_closed_before_quit_is_sent(self):
+        world = self.world("wrong-password")
+        world.transport.password = "the-right-password"
+        world.password_to_return = SENTINEL_PASSWORD
+        error = self.refused(world)
+        self.assertEqual(error.code, "rpc_auth_failed")
+        self.assertNotIn(SENTINEL_PASSWORD, json.dumps(error.detail))
+        self.assertEqual(world.transport.quit_requests, [])
+        world = self.world("empty-password")
+        world.transport.password = "x" * 12
+        world.password_to_return = ""
+        self.assertEqual(self.refused(world).code, "credential_missing")
+        self.assertEqual(world.transport.quit_requests, [])
+        world = self.world("no-terminal")
+        world.transport.password = "x" * 12
+
+        def no_terminal(prompt):
+            raise bm.HelperError("credential_prompt_unavailable")
+
+        world.services.password_prompt = no_terminal
+        self.assertEqual(self.refused(world).code, "credential_prompt_unavailable")
+        self.assertEqual(world.transport.quit_requests, [])
+
+    def test_non_loopback_hosts_and_a_missing_port_never_connect(self):
+        for host in ("192.168.1.10", "example.com", "0.0.0.0", "::ffff:127.0.0.1"):
+            world = self.world("host-" + host.replace(":", "_").replace(".", "_"))
+            with self.subTest(host=host), mock.patch.object(socket, "getaddrinfo", side_effect=AssertionError("resolver used")):
+                self.assertEqual(self.refused(world, rpc={"host": host, "port": 8080}).code, "rpc_host_not_loopback")
+            self.assertEqual(world.transport.requests, [])
+        world = self.world("port")
+        for rpc in ({}, {"port": 0}, {"port": 70000}, {"port": "80"}):
+            with self.subTest(rpc=rpc):
+                self.assertEqual(self.refused(world, rpc=rpc).code, "rpc_port_invalid")
+        self.assertEqual(world.transport.requests, [])
+
+    # --- command line ---------------------------------------------------------------
+
+    def test_quit_through_the_cli_prints_one_deterministic_document(self):
+        world = self.world()
+        out = self.tmp / "quit-evidence.json"
+        with no_signals_or_processes():
+            code, payload, text = run_cli(world.services, "quit", "--rpc-port", "8080", "--output", str(out))
+        self.assertEqual((code, payload["ok"], payload["graceful"]), (bm.EXIT_OK, True, True))
+        self.assertEqual(payload["schema"], bm.OUTPUT_SCHEMA)
+        self.assertEqual(text, bm.canonical_json(json.loads(text)))
+        self.assertTrue(text.isascii())
+        self.assertEqual(out.read_text(), text)
+
+    def test_cli_timeout_is_bounded_and_a_missed_deadline_exits_one(self):
+        world = self.world(exit_after=None)
+        with no_signals_or_processes():
+            code, payload, _ = run_cli(world.services, "quit", "--rpc-port", "8080", "--timeout", "2")
+        self.assertEqual((code, payload["error"]["code"]), (bm.EXIT_FAILED, "kodi_quit_timeout"))
+        self.assertEqual(world.clock.sleeps, [1.0, 1.0])
+        for bad in ("0", "0.5", "301", "99999", "nan"):
+            with self.subTest(timeout=bad):
+                other = self.world("cli-timeout-" + bad.replace(".", "_"))
+                code, payload, _ = run_cli(other.services, "quit", "--rpc-port", "8080", "--timeout", bad)
+                self.assertEqual((code, payload["error"]["code"]), (bm.EXIT_USAGE, "argument_invalid"))
+                self.assertEqual(other.transport.requests, [])
+
+    def test_cli_reuses_the_config_and_rpc_argument_model(self):
+        config = make_config(self.tmp, adapter=False, rpc={"host": "127.0.0.1", "port": 9001, "username": "cfguser"})
+        world = self.world("cli-config")
+        world.transport.password = SENTINEL_PASSWORD
+        world.transport.username = "cfguser"
+        world.password_to_return = SENTINEL_PASSWORD
+        with no_signals_or_processes():
+            code, payload, text = run_cli(world.services, "quit", "--config", str(config))
+        self.assertEqual((code, payload["invocation"]["rpc_port"]), (bm.EXIT_OK, 9001))
+        self.assertIn("cfguser", world.prompts[0])
+        self.assertNotIn(SENTINEL_PASSWORD, text)
+        world = self.world("cli-override")
+        with no_signals_or_processes():
+            code, payload, _ = run_cli(world.services, "quit", "--config", str(config), "--rpc-port", "9002")
+        self.assertEqual((code, payload["invocation"]["rpc_port"]), (bm.EXIT_OK, 9002))  # the command line wins
+        for extra, expected in (
+            (["--rpc-host", "10.1.2.3"], "rpc_host_not_loopback"), (["--rpc-port", "0"], "rpc_port_invalid"),
+            (["--rpc-user", "bad user"], "rpc_config_invalid"),
+        ):
+            with self.subTest(extra=extra):
+                other = self.world("cli-bad-" + extra[0][2:])
+                code, payload, _ = run_cli(other.services, "quit", "--rpc-port", "8080", *extra)
+                self.assertEqual((code, payload["error"]["code"]), (bm.EXIT_USAGE, expected))
+                self.assertEqual(other.transport.requests, [])
+
+    def test_quit_takes_no_other_arguments(self):
+        world = self.world()
+        for argv in (["quit", "extra"], ["quit", "--manifest", "x"], ["quit", "--signal", "TERM"], ["quit", "--force"],
+                     ["quit", "--app", "/tmp/x"]):
+            with self.subTest(argv=argv):
+                code, payload, _ = run_cli(world.services, *argv)
+                self.assertEqual((code, payload["error"]["code"]), (bm.EXIT_USAGE, "argument_invalid"))
+        self.assertEqual(world.transport.requests, [])
 
 
 # --- END OF TESTS MARKER (new test classes are inserted above this line) ---

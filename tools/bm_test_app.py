@@ -9,6 +9,8 @@ Subcommands (every one prints deterministic, sanitized JSON on stdout):
   verify     read-only proof that the installed trees equal the stage manifest
   run MODE   trigger the BM-023A adapter (install|retry|recover|status) over
              loopback JSON-RPC and report its fresh, allowlisted result
+  quit       ask the running Test.app to quit gracefully (Application.Quit over
+             loopback JSON-RPC) and prove it stopped; never sends a signal
   snapshot   read-only, secret-blind qualification census
 
 The only runtime target is ``/Applications/Kodi Build Manager Test.app`` and its
@@ -217,7 +219,7 @@ ERROR_CODES = frozenset({
     "addon_not_visible_to_kodi", "addon_view_mismatch",
     "result_path_unsafe", "result_not_produced", "result_stale",
     "result_malformed", "result_from_future", "adapter_mode_mismatch",
-    "kodi_exited_before_result",
+    "kodi_exited_before_result", "kodi_quit_rejected", "kodi_quit_timeout",
     # snapshot / privacy
     "private_path_denied", "read_not_allowlisted", "output_blocked_secret_detected",
     # generic
@@ -2965,6 +2967,18 @@ class RpcClient:
 DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
+# A graceful Kodi shutdown (settings save, add-on teardown) is short; an
+# unreachable deadline is a failure to investigate, never a reason to signal.
+QUIT_TIMEOUT_SECONDS = 60
+QUIT_TIMEOUT_MAX_SECONDS = 300
+# Census refusals that only mean the shutdown has not finished yet: the main
+# process is still alive, the sanctioned auxiliary or another in-bundle process
+# has not exited, or a process exited between the listing and its identity read.
+# Anything else (foreign Kodi, several main processes, a non-portable instance,
+# an unreadable listing) is never waited out.
+_QUIT_PENDING_CODES = frozenset({
+    "test_app_running", "test_app_process_mismatch", "test_app_process_ambiguous",
+})
 
 
 def _kodi_addon_view(client: RpcClient, manifest: Mapping[str, Any]) -> Dict[str, Any]:
@@ -3101,6 +3115,75 @@ def run_adapter(
         "result": projected,
         "result_withheld": withheld,
         "stage_verification": verification,
+    }
+
+
+def run_quit(
+    services: "Services", *, rpc: Mapping[str, Any], timeout: float,
+) -> Dict[str, Any]:
+    """Quit the one verified Test.app gracefully and prove that it stopped.
+
+    Only ``Application.Quit`` is sent, so Kodi runs its normal shutdown and
+    persists global settings. There is deliberately no signal, no escalation
+    and no external process control: if Kodi refuses or does not exit before
+    the deadline the command fails closed and leaves the process alone. A
+    forced termination is an external emergency action and is never graceful
+    qualification evidence.
+    """
+    identity = identify(services, require="running")
+    host = validate_loopback_host(rpc.get("host", DEFAULT_RPC_HOST))
+    if "port" not in rpc:
+        raise HelperError("rpc_port_invalid")
+    port = validate_port(rpc["port"])
+    username = rpc.get("username", DEFAULT_RPC_USERNAME)
+    if identity.pid is None:
+        raise HelperError("test_app_not_running")
+    client = RpcClient(services, identity.pid, host, port, username)
+    if client.call("JSONRPC.Ping", {}) != "pong":
+        raise HelperError("rpc_response_invalid")
+    try:
+        accepted = client.call("Application.Quit", {})
+    except HelperError as exc:
+        if exc.code == "rpc_error":
+            raise HelperError("kodi_quit_rejected", **exc.detail) from None
+        raise
+    if accepted != "OK":
+        raise HelperError("kodi_quit_rejected")
+    deadline = services.clock.monotonic() + timeout
+    polls = 0
+    while True:
+        try:
+            after = identify(services, require="not_running")
+            break
+        except HelperError as exc:
+            if exc.code not in _QUIT_PENDING_CODES:
+                raise
+            pending = exc.code
+        if services.clock.monotonic() >= deadline:
+            raise HelperError("kodi_quit_timeout", last_observation=pending, polls=polls)
+        polls += 1
+        services.clock.sleep(POLL_INTERVAL_SECONDS)
+    return {
+        "command": "quit",
+        "graceful": True,
+        "identity_after": after.report(),
+        "identity_before": identity.report(),
+        "invocation": {
+            "authenticated": client.authenticated,
+            "listener_pid_verified": True,
+            "method": "Application.Quit",
+            "rpc_host": host,
+            "rpc_port": port,
+            "rpc_requests": client.requests_sent,
+            "test_app_pid": identity.pid,
+        },
+        "ok": True,
+        "shutdown": {
+            "accepted": True,
+            "exited": True,
+            "forced_termination": False,
+            "polls": polls,
+        },
     }
 
 
@@ -3498,6 +3581,13 @@ def _add_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output", help="also write the JSON here (never overwrites)")
 
 
+def _add_rpc_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", help="machine-local JSON config (rpc section)")
+    parser.add_argument("--rpc-host", help="loopback IP literal (default 127.0.0.1)")
+    parser.add_argument("--rpc-port", type=int)
+    parser.add_argument("--rpc-user", help="web interface user name (never the password)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(prog=HELPER_NAME, description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True, parser_class=_Parser)
@@ -3522,14 +3612,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = commands.add_parser("run", help="trigger the BM-023A adapter over loopback RPC")
     run_parser.add_argument("mode", choices=ADAPTER_MODES)
     run_parser.add_argument("--manifest", required=True)
-    run_parser.add_argument("--config", help="machine-local JSON config (rpc section)")
-    run_parser.add_argument("--rpc-host", help="loopback IP literal (default 127.0.0.1)")
-    run_parser.add_argument("--rpc-port", type=int)
-    run_parser.add_argument("--rpc-user", help="web interface user name (never the password)")
+    _add_rpc_arguments(run_parser)
     run_parser.add_argument("--timeout", type=float, help="seconds to wait for the fresh result")
     run_parser.add_argument("--repo")
     run_parser.add_argument("--no-git-binding", action="store_true", help="weaker: skip the Git check")
     _add_output(run_parser)
+
+    quit_parser = commands.add_parser("quit", help="gracefully quit the Test.app over loopback RPC")
+    _add_rpc_arguments(quit_parser)
+    quit_parser.add_argument("--timeout", type=float, help="seconds to wait for the process to exit")
+    _add_output(quit_parser)
 
     snapshot_parser = commands.add_parser("snapshot", help="read-only secret-blind census")
     snapshot_parser.add_argument("--manifest")
@@ -3654,6 +3746,15 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
             timeout=timeout,
         )
         return payload, EXIT_OK if payload["adapter_ok"] else EXIT_ADAPTER_FAILED
+    if command == "quit":
+        config_rpc = {}
+        if args.config:
+            config_rpc = load_config(Path(args.config), services)["rpc"]
+        rpc = _merge_rpc(config_rpc, args)
+        timeout = args.timeout if args.timeout is not None else QUIT_TIMEOUT_SECONDS
+        if not 1 <= timeout <= QUIT_TIMEOUT_MAX_SECONDS:
+            raise HelperError("argument_invalid")
+        return run_quit(services, rpc=rpc, timeout=timeout), EXIT_OK
     if command == "snapshot":
         manifest = manifest_sha = None
         if args.manifest:

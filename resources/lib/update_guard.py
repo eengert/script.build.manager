@@ -17,6 +17,18 @@ class UpdateGuardError(Exception):
     """The global updater policy could not be safely read or changed."""
 
 
+class UpdaterNotQuarantinedError(UpdateGuardError):
+    """The updater policy was readable but is not ``NEVER_CHECK``."""
+
+    code = "FROZEN_UPDATER_NOT_QUARANTINED"
+
+
+class UpdaterStateUnavailableError(UpdateGuardError):
+    """The updater policy could not be read or was malformed."""
+
+    code = "FROZEN_UPDATER_STATE_UNAVAILABLE"
+
+
 class AddonUpdatePolicy(IntEnum):
     AUTOMATIC = 0
     NOTIFY_ONLY = 1
@@ -95,17 +107,37 @@ class AddonUpdateGuard:
         self.reassert_required()
 
     def reassert_required(self) -> None:
-        """Set and verify NEVER_CHECK using durable transaction ownership.
+        """Set and verify NEVER_CHECK within the process that engaged it.
 
-        This operation intentionally does not require an in-memory snapshot;
-        startup after Kodi restart reconstructs ownership from the durable
-        frozen-install transaction.
+        This is a changing write. Do not call it after a Kodi process restart:
+        a changing ``general.addonupdates`` write during startup can deadlock
+        Kodi 21.3. Post-restart code must use :meth:`verify_quarantined`.
         """
         try:
             self.backend.set_policy(AddonUpdatePolicy.NEVER_CHECK)
         except Exception as exc:
             raise UpdateGuardError("failed to reassert NEVER_CHECK updater policy") from exc
         self._verify(AddonUpdatePolicy.NEVER_CHECK, "verify reasserted updater policy")
+
+    def verify_quarantined(self) -> None:
+        """Require ``NEVER_CHECK`` by reading only; never writes the policy.
+
+        After a process restart the durable frozen transaction owns the
+        quarantine and Kodi must already have persisted ``NEVER_CHECK``. A
+        different readable policy raises ``UpdaterNotQuarantinedError``; an
+        unreadable or malformed one raises ``UpdaterStateUnavailableError``.
+        Both carry the status ``code`` the frozen lifecycle records.
+        """
+        try:
+            policy = _coerce_policy(self.backend.get_policy())
+        except Exception as exc:
+            raise UpdaterStateUnavailableError(
+                "updater policy could not be read for verification"
+            ) from exc
+        if policy is not AddonUpdatePolicy.NEVER_CHECK:
+            raise UpdaterNotQuarantinedError(
+                f"updater policy is {policy.name}, expected NEVER_CHECK"
+            )
 
     def restore(self) -> AddonUpdatePolicy:
         if self._snapshot is None:

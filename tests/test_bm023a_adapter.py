@@ -2550,7 +2550,14 @@ class TestBm023aStatusMode(unittest.TestCase):
             tree = ast.parse((project / "resources/lib" / (name + ".py")).read_text())
             literals.update(node.value for node in ast.walk(tree)
                             if isinstance(node, ast.Constant) and isinstance(node.value, str))
-        for code in bm023a_adapter_support.STATUS_FROZEN_CODES:
+        # Status codes that older builds persisted. The product no longer emits
+        # them (post-restart updater handling is verify-only and reports
+        # FROZEN_UPDATER_NOT_QUARANTINED / FROZEN_UPDATER_STATE_UNAVAILABLE), but
+        # the adapter must keep projecting an old durable transaction's code.
+        retired = frozenset({"UPDATER_REASSERT_FAILED"})
+        self.assertLessEqual(retired, bm023a_adapter_support.STATUS_FROZEN_CODES)
+        self.assertFalse(retired & literals, "a retired status code is emitted again")
+        for code in bm023a_adapter_support.STATUS_FROZEN_CODES - retired:
             with self.subTest(code=code):
                 if code.startswith("FROZEN_CONFIGURATION_") and code not in literals:
                     self.assertIn(code.removeprefix("FROZEN_CONFIGURATION_"), literals)

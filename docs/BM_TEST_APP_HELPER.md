@@ -71,6 +71,7 @@ accept `--output FILE` (written once, never overwritten).
 | `stage --candidate SHA --config CFG --evidence-dir DIR [--repo R] [--dry-run]` | Install the candidate while the Test.app is **not running**. `--dry-run` builds and reports only. |
 | `verify --manifest M [--repo R] [--no-git-binding]` | Read-only proof that installed trees equal the manifest (and, by default, the Git commit). |
 | `run MODE --manifest M [--config CFG] [--rpc-host H] [--rpc-port N] [--rpc-user U] [--timeout S]` | `MODE` is `install`, `retry`, `recover` or `status`. Needs a running portable Test.app. |
+| `quit [--config CFG] [--rpc-host H] [--rpc-port N] [--rpc-user U] [--timeout S]` | Gracefully quit the running portable Test.app (`Application.Quit`) and prove it exited. Never sends a signal. |
 | `snapshot [--manifest M]` | Read-only, secret-blind census of the portable data. |
 
 Exit codes: `0` success, `1` failed closed, `2` usage/config, `4` the adapter
@@ -166,9 +167,43 @@ carry the requested `adapter_mode`. Only allowlisted fields survive; unknown
 keys and invalid values are withheld and counted. The installed trees are
 verified again after the run.
 
-## Credentials for `run`
+## `quit`
 
-`run` needs a password only if Kodi's web interface answers `401`. Two entry
+The normal, graceful shutdown for the qualification restart. Kodi persists
+global settings (including `general.addonupdates`) through its normal application
+stop, not when a setting is changed, so a signal-terminated Test.app can lose a
+policy that a graceful exit keeps.
+
+Checks, in order: identity (running, one portable main process, optionally with
+the sanctioned `XBMCHelper` auxiliary), loopback RPC settings (same
+`--config`/`--rpc-*` model as `run`; the port has no default), `JSONRPC.Ping`,
+then exactly one `Application.Quit`. The listener on the RPC port must be the
+authorized PID before every request, and credentials come through the same
+`Services.password_prompt` seam as `run`. It then waits up to `--timeout`
+seconds (default 60, 1 to 300) for `identify(require="not_running")` to hold: no
+main process, no sanctioned auxiliary, no other in-bundle process. While the
+census only says the shutdown is unfinished (main still running, a lingering
+auxiliary, or a process that vanished between the listing and its identity read)
+the helper keeps polling. A foreign Kodi, a second main process, a non-portable
+instance or an unreadable listing fails immediately.
+
+Success prints `graceful: true` and `shutdown.forced_termination: false` together
+with the identity before and after. Failures:
+
+- `kodi_quit_rejected`: Kodi answered `Application.Quit` with an RPC error or
+  anything other than `"OK"`. Nothing is waited for.
+- `kodi_quit_timeout`: the census was not `not_running` before the deadline
+  (`last_observation` and `polls` say why). The process is left alone.
+
+On either failure the helper stops. It never sends a signal, never escalates, and
+contains no `kill`, `pkill`, `killall` or `osascript` behavior. A forced
+termination is an external emergency action and is never graceful qualification
+evidence. If the reply to `Application.Quit` is lost (`rpc_transport_failed`),
+run `identify` before trying again: the helper does not assume Kodi quit.
+
+## Credentials for `run` and `quit`
+
+`run` and `quit` need a password only if Kodi's web interface answers `401`. Two entry
 points supply it through the same reviewed `Services.password_prompt` seam; every
 other protection (Test.app identity, portable `-p`, exact listener PID, loopback
 validation, Git binding, installed-tree verification, result freshness, the
@@ -215,8 +250,32 @@ verify --manifest <dir>/stage-.../stage_manifest.json
 (start the Test.app yourself: open ".../Kodi Build Manager Test.app" --args -p)
 run status --manifest ... --config <cfg>
 run install | retry | recover --manifest ... --config <cfg>
+quit --config <cfg>                                          # graceful stop; see the restart sequence below
 snapshot --manifest ...
 ```
+
+## Qualification restart sequence
+
+A restart in the middle of a frozen install must keep the global updater
+quarantine. Build Manager writes `general.addonupdates = NEVER_CHECK` once, at the
+initial install; after a process restart it only **reads** the policy and
+continues only if it is still `NEVER_CHECK` (see `FROZEN_BUILD_INSTALL.md`).
+Restart the Test.app like this:
+
+```text
+quit --config <cfg>                       # graceful Application.Quit; proves not_running
+snapshot --manifest ...                   # persisted guisettings: settings.updater_policy
+                                          #   REQUIRE "NEVER_CHECK"; anything else is a HARD STOP
+(relaunch: open ".../Kodi Build Manager Test.app" --args -p)
+identify                                  # one portable process
+(the Build Manager service continues with a verify-only resume)
+run status --manifest ... --config <cfg>  # or snapshot, to observe the outcome
+```
+
+A persisted policy other than `NEVER_CHECK` (or an unreadable one) is a hard stop:
+do not relaunch to "see what happens", and do not rewrite the setting by hand or
+with a signal-based restart. A failed `quit` is evidence too; preserve it and
+investigate.
 
 If a held retry fails or state is contradictory, stop and preserve evidence; do
 not improvise another recovery. The helper has no reset or delete command and

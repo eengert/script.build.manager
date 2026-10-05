@@ -41,11 +41,34 @@ guard mutation. Its phases are:
 `resuming` → `validating` → `complete`
 
 Any failed phase becomes `needs_attention`. The durable record retains the
-original `general.addonupdates` policy. `NEVER_CHECK` is reasserted before
-BM-020 startup/resume and remains active until final exact-state validation
-completes. Only then is the original policy restored and the frozen
-transaction cleared. Explicit abandon restores the policy and clears the
-transaction, but does not pretend to roll back installed software.
+original `general.addonupdates` policy. The initial install captures the
+original policy, persists the transaction, sets `NEVER_CHECK` once, and reads it
+back. That is the only quarantine write. After a process restart `NEVER_CHECK` is
+only **verified** before BM-020 startup/resume (startup, the quiescence
+continuation, and the held retry all read the setting and never write it) and
+remains active until final exact-state validation completes. Only then is the
+original policy restored and the frozen transaction cleared. Explicit abandon
+restores the policy and clears the transaction, but does not pretend to roll
+back installed software.
+
+Kodi 21.3 can deadlock on a changing write to `general.addonupdates` while it is
+starting, and it persists global settings through its normal application stop.
+The quarantine must therefore already be on disk when Kodi restarts, which is
+why the qualification restart uses a graceful quit (see
+`BM_TEST_APP_HELPER.md`) rather than a signal. If the policy read after a restart
+is not `NEVER_CHECK`, the transaction fails closed with
+`FROZEN_UPDATER_NOT_QUARANTINED` (or `FROZEN_UPDATER_STATE_UNAVAILABLE` when it
+cannot be read or is malformed): no setting is written, BM-020 does not resume,
+no configuration or finalization runs, the policy is not restored, and the
+transaction keeps its identity, lifecycle stage and activation hold in
+`needs_attention`. This is a hard stop for a person to investigate, not a case
+that recovers automatically.
+
+Normal qualification restart sequence:
+
+`quit` → prove the process stopped → snapshot the persisted updater policy →
+**require `NEVER_CHECK`** → relaunch the Test.app with `-p` → identify the
+portable process → continue with the verify-only resume.
 
 BM-020 remains the owner of the ordinary configuration and restart transaction.
 BM-022 calls the existing Build Manager reconciliation path after the exact
@@ -60,8 +83,9 @@ content-addressed artifact store, and a complete typed manifest. It proves:
 
 - exact artifact hashes and deterministic repository → dependency → ordinary
   add-on installation order;
-- durable BM-020 restart handoff and restart-time updater reassertion before
-  BM-020 startup;
+- durable BM-020 restart handoff and a restart-time updater quarantine check
+  before BM-020 startup (the gate's log marker keeps its historical
+  "reasserted" wording; the product now verifies instead of writing);
 - existing Build Manager configuration through the production path;
 - final exact versions, enabled-state validation, policy restoration, and
   clearing of both BM-022 and BM-020 transactions; and

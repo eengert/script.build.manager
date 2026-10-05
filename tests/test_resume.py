@@ -227,7 +227,7 @@ class ResumeTestCase(unittest.TestCase):
         self.assertEqual(manager.reconcile_calls, [])
         self.assertEqual(self.store.inspect().phase, TransactionPhase.NEEDS_ATTENTION)
 
-    def test_startup_verifies_session_then_reasserts_guard_then_reloads(self):
+    def test_startup_verifies_session_then_checks_updater_guard_then_reloads(self):
         import resources.lib.startup as startup_module
         events = []
         coordinator = _StartupResume()
@@ -259,6 +259,62 @@ class ResumeTestCase(unittest.TestCase):
             )
         self.assertEqual(status.classification, StartupClassification.NO_TRANSACTION)
         self.assertEqual(events, ["session", "classify", "updater_guard", "classify", "resume"])
+
+    def test_failed_updater_verification_blocks_bm020_resume_without_a_settings_write(self):
+        from resources.lib.frozen_install import (
+            FrozenInstallPhase,
+            FrozenInstallStore,
+            FrozenInstallTransaction,
+            ensure_frozen_install_guard,
+        )
+        from resources.lib.update_guard import AddonUpdatePolicy, UpdatePolicyBackend
+
+        class Policy(UpdatePolicyBackend):
+            def __init__(self, value):
+                self.value = value
+                self.writes = []
+
+            def get_policy(self):
+                return self.value
+
+            def set_policy(self, policy):
+                self.writes.append(policy)
+                self.value = policy
+
+        bm020_before = self.store.inspect()
+        for value in (AddonUpdatePolicy.AUTOMATIC, AddonUpdatePolicy.NOTIFY_ONLY):
+            with self.subTest(policy=value):
+                frozen_store = FrozenInstallStore(Path(self.tmp.name) / f"frozen-{value.name}")
+                frozen = FrozenInstallTransaction(
+                    transaction_id="44444444-4444-4444-8444-444444444444",
+                    build_id="bm022-fixture",
+                    manifest_path="/fixture.json",
+                    device_profile_id="test",
+                    manifest_fingerprint="a" * 64,
+                    phase=FrozenInstallPhase.AWAITING_RESTART,
+                    originating_kodi_session_id=SESSION_A,
+                    original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+                    created_at="2026-09-21T00:00:00Z",
+                    updated_at="2026-09-21T00:00:00Z",
+                )
+                frozen_store.create(frozen)
+                policy = Policy(value)
+                coordinator = _StartupResume()
+                with patch("resources.lib.startup.get_current_kodi_session_id", return_value=SESSION_B):
+                    status = run_startup(
+                        store=self.store,
+                        resume_coordinator=coordinator,
+                        frozen_precondition=lambda: ensure_frozen_install_guard(
+                            store=frozen_store, policy_backend=policy
+                        ),
+                    )
+                self.assertEqual(status.classification, StartupClassification.NEEDS_ATTENTION)
+                self.assertEqual(status.code, "FROZEN_UPDATER_NOT_QUARANTINED")
+                self.assertEqual(coordinator.calls, [])  # BM-020 never resumed
+                self.assertEqual(policy.writes, [])  # and nothing changed the setting
+                self.assertEqual(policy.value, value)
+                self.assertEqual(self.store.inspect(), bm020_before)  # BM-020 state untouched
+                self.assertEqual(frozen_store.inspect().phase, FrozenInstallPhase.NEEDS_ATTENTION)
 
     def test_resuming_transaction_is_not_retried_on_startup(self):
         self.store.update_phase(TransactionPhase.RESUMING)

@@ -8,8 +8,10 @@ selected exact or resolved version.
 
 The durable transaction owns the global updater quarantine from the first
 mutation until explicit final release or recovery.  It is intentionally
-separate from BM-020's restart transaction; the startup precondition lets the
-frozen transaction reassert ``NEVER_CHECK`` before BM-020 may resume.
+separate from BM-020's restart transaction. The initial install is the only
+place that writes the quarantine; after a process restart the startup
+precondition only verifies that Kodi persisted ``NEVER_CHECK`` (a changing
+write there can deadlock Kodi 21.3) and fails closed otherwise.
 """
 
 from __future__ import annotations
@@ -2065,7 +2067,8 @@ class FrozenInstallCoordinator:
         guard = AddonUpdateGuard(self.policy_backend)
         try:
             if active_resume:
-                guard.reassert_required()
+                # Post-restart continuation: verify only, never write.
+                guard.verify_quarantined()
                 transaction = self.store.transition_expected(
                     transaction_id=transaction.transaction_id,
                     expected_phase=FrozenInstallPhase.AWAITING_RESTART,
@@ -2569,13 +2572,14 @@ class FrozenInstallCoordinator:
             )
 
         try:
-            AddonUpdateGuard(self.policy_backend).reassert_required()
-        except Exception:
+            AddonUpdateGuard(self.policy_backend).verify_quarantined()
+        except Exception as exc:
+            # Verify only: the held snapshot is left exactly as reviewed.
             return FrozenInstallResult(
                 "needs_attention",
                 transaction=current,
-                code="UPDATER_REASSERT_FAILED",
-                message="NEVER_CHECK could not be reasserted for held retry",
+                code=getattr(exc, "code", "") or "FROZEN_UPDATER_STATE_UNAVAILABLE",
+                message="NEVER_CHECK updater quarantine was not verified for held retry",
             )
 
         try:
@@ -2809,7 +2813,8 @@ class FrozenInstallCoordinator:
             if session == transaction.originating_kodi_session_id:
                 return FrozenInstallResult("awaiting_restart", transaction=transaction, code="SAME_SESSION", message="Kodi has not crossed the restart boundary")
             guard = AddonUpdateGuard(self.policy_backend)
-            guard.reassert_required()
+            # Post-restart: verify only, never write (see update_guard).
+            guard.verify_quarantined()
             manifest = self.manifest_loader(transaction.manifest_path)
             if transaction.lifecycle_stage is FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART:
                 plan, records, _resolution_manifest = self._restore_resolution(
@@ -3368,7 +3373,13 @@ def ensure_frozen_install_guard(
     store: Optional[FrozenInstallStore] = None,
     policy_backend: Optional[UpdatePolicyBackend] = None,
 ) -> FrozenStartupPrecondition:
-    """Reassert quarantine before any BM-020 startup/resume work."""
+    """Verify the updater quarantine before any BM-020 startup/resume work.
+
+    Read-only: after a process restart Kodi must already have persisted
+    ``NEVER_CHECK``. Any other state fails closed with no settings write, and
+    the frozen transaction keeps its identity, lifecycle stage and activation
+    hold while moving to NEEDS_ATTENTION.
+    """
     target = store or FrozenInstallStore()
     try:
         transaction = target.inspect()
@@ -3378,21 +3389,27 @@ def ensure_frozen_install_guard(
         return FrozenStartupPrecondition(True)
     backend = policy_backend or _default_policy_backend()
     try:
-        AddonUpdateGuard(backend).reassert_required()
-    except Exception:
-        try:
-            updated = target.transition_expected(
-                transaction_id=transaction.transaction_id,
-                expected_phase=transaction.phase,
-                new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
-                status_code="UPDATER_REASSERT_FAILED",
-                status_message="NEVER_CHECK could not be reasserted before startup resume",
-            )
-        except Exception:
-            updated = transaction
-        return FrozenStartupPrecondition(False, updated, "UPDATER_REASSERT_FAILED", "NEVER_CHECK could not be reasserted before startup resume")
+        AddonUpdateGuard(backend).verify_quarantined()
+    except Exception as exc:
+        code = getattr(exc, "code", "") or "FROZEN_UPDATER_STATE_UNAVAILABLE"
+        message = "NEVER_CHECK updater quarantine was not verified before startup resume"
+        updated = transaction
+        # An already-failed transaction keeps its original diagnostic.
+        if transaction.phase is not FrozenInstallPhase.NEEDS_ATTENTION:
+            try:
+                updated = target.transition_expected(
+                    transaction_id=transaction.transaction_id,
+                    expected_phase=transaction.phase,
+                    new_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+                    status_code=code,
+                    status_message=message,
+                )
+            except Exception:
+                updated = transaction
+        return FrozenStartupPrecondition(False, updated, code, message)
     try:
         import xbmc
+        # Wording is kept for the legacy harness, which greps for this marker.
         xbmc.log(
             "Build Manager BM-022 updater guard reasserted before BM-020 startup",
             xbmc.LOGINFO,
@@ -3401,7 +3418,7 @@ def ensure_frozen_install_guard(
         pass
     if transaction.phase is FrozenInstallPhase.NEEDS_ATTENTION:
         return FrozenStartupPrecondition(False, transaction, "FROZEN_NEEDS_ATTENTION", "frozen installation requires explicit recovery")
-    return FrozenStartupPrecondition(True, transaction, message="frozen updater guard reasserted")
+    return FrozenStartupPrecondition(True, transaction, message="frozen updater quarantine verified")
 
 
 @dataclass(frozen=True)
