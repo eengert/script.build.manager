@@ -1,7 +1,11 @@
-# BM-UI-002C-G3-POLICY-BINDING — PASS offline; STOP
+# BM-UI-003A — PASS offline; STOP
 
-Bound prior resolutions to the currently selected canonical install plan at the shared Plan/Status boundary; record policy eligibility retained even with matching digest.
-Product commit c3eb3bfbfc6de5de0c204d501f9f4ed5797b005c; baseline 44ae1ef624ca610f6a2c36f1914bbcaf2a4ab1ac; branch agent/codex.
-331 focused / 2696 full-suite PASS; tested source unchanged afterward.
-No push/publication/Test.app/live Kodi/device access or mutation. Independent narrow re-review is the exact next step; no further task authorized.
-See HANDOFF.md for reproductions, parity analysis and limitations.
+Canonical owned Build Library, durable selected-build association and production
+Status/Plan target resolution completed on agent/codex.
+Start ddeec17fbb010fd21f4c1de04002a02c79a2bae8;
+product f660332d4701bbf8493037f956ea62d8a539e023.
+43 new library / 843 final focused / 2739 full-suite tests PASS.
+Product/tests/documentation unchanged after the single final full-suite run.
+No push/publication/Test.app/live Kodi/device access or mutation.
+Exact next task: native Create Build capture/registration workflow.
+See HANDOFF.md for ownership, validation, privacy and limitations.
