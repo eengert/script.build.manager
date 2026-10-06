@@ -16,13 +16,6 @@ msgstr ""
 "Language: en_GB\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgctxt "Addon Summary"
-msgid "Declarative multi-device Kodi provisioning."
-msgstr ""
-
-msgctxt "Addon Description"
-msgid "Build Manager provisions Kodi devices to a declared desired state. Define what each device should have installed and configured; Build Manager applies the specification."
-msgstr ""
 
 msgctxt "#32000"
 msgid "Build Manager"
@@ -32,6 +25,258 @@ msgctxt "#32001"
 msgid "General"
 msgstr ""
 
-msgctxt "#32010"
-msgid "Build Manager is not yet configured.\n\nProvisioning features are coming in a future release."
+msgctxt "#32100"
+msgid "Create Build"
+msgstr ""
+
+msgctxt "#32101"
+msgid "Install Build"
+msgstr ""
+
+msgctxt "#32102"
+msgid "Update / Repair Build"
+msgstr ""
+
+msgctxt "#32103"
+msgid "Build Status"
+msgstr ""
+
+msgctxt "#32104"
+msgid "Settings"
+msgstr ""
+
+msgctxt "#32105"
+msgid "Help / Information"
+msgstr ""
+
+msgctxt "#32110"
+msgid "Create, install and maintain your Kodi builds."
+msgstr ""
+
+msgctxt "#32111"
+msgid "Choose a task from the menu. Help explains what each task does and how Build Manager keeps managed changes safe."
+msgstr ""
+
+msgctxt "#32112"
+msgid "Help"
+msgstr ""
+
+msgctxt "#32113"
+msgid "Back"
+msgstr ""
+
+msgctxt "#32114"
+msgid "Open Settings"
+msgstr ""
+
+msgctxt "#32115"
+msgid "Previous Section"
+msgstr ""
+
+msgctxt "#32116"
+msgid "Next Section"
+msgstr ""
+
+msgctxt "#32117"
+msgid "Use Up / Down to scroll. Back returns to the previous page."
+msgstr ""
+
+msgctxt "#32118"
+msgid "Choose a section to learn about Build Manager."
+msgstr ""
+
+msgctxt "#32119"
+msgid "Choose a section"
+msgstr ""
+
+msgctxt "#32120"
+msgid "Create Build is not available in this frontend build yet. You can read how capturing a setup works in Help."
+msgstr ""
+
+msgctxt "#32121"
+msgid "Install Build is not available in this frontend build yet. You can read how choosing and applying a build works in Help."
+msgstr ""
+
+msgctxt "#32122"
+msgid "Update / Repair is not available in this frontend build yet. Help explains how Build Manager reconciles managed differences."
+msgstr ""
+
+msgctxt "#32123"
+msgid "Build Status is not available in this frontend build yet. No current build-health check has been performed here. Help explains the status labels."
+msgstr ""
+
+msgctxt "#32124"
+msgid "Preferences for Build Manager"
+msgstr ""
+
+msgctxt "#32125"
+msgid "The Build Library is kept in Build Manager-owned storage. The Build Transfer Folder is only used when importing or exporting copies of build packages. Notification preferences apply when operation workflows are available."
+msgstr ""
+
+msgctxt "#32126"
+msgid "This page could not be opened"
+msgstr ""
+
+msgctxt "#32127"
+msgid "Return to the menu and try opening the page again. No build operation was started."
+msgstr ""
+
+msgctxt "#32130"
+msgid "Neutral"
+msgstr ""
+
+msgctxt "#32131"
+msgid "Verified"
+msgstr ""
+
+msgctxt "#32132"
+msgid "Applied with Exceptions"
+msgstr ""
+
+msgctxt "#32133"
+msgid "Incomplete"
+msgstr ""
+
+msgctxt "#32134"
+msgid "Warning"
+msgstr ""
+
+msgctxt "#32135"
+msgid "Blocked"
+msgstr ""
+
+msgctxt "#32136"
+msgid "Validation Failed"
+msgstr ""
+
+msgctxt "#32137"
+msgid "Needs Attention"
+msgstr ""
+
+msgctxt "#32138"
+msgid "Workflow Unavailable"
+msgstr ""
+
+msgctxt "#32140"
+msgid "Build Transfer Folder"
+msgstr ""
+
+msgctxt "#32141"
+msgid "Choose a folder Kodi can access when importing or exporting build packages."
+msgstr ""
+
+msgctxt "#32142"
+msgid "Notify When an Operation Finishes"
+msgstr ""
+
+msgctxt "#32143"
+msgid "Show a notification when an operation finishes. Its final result remains available in Build Manager until you acknowledge it."
+msgstr ""
+
+msgctxt "#32144"
+msgid "The authoritative Build Library stays in Build Manager-owned storage."
+msgstr ""
+
+msgctxt "#32145"
+msgid "About Build Manager"
+msgstr ""
+
+msgctxt "#32146"
+msgid "Version information is available in Kodi’s add-on information screen."
+msgstr ""
+
+msgctxt "#32147"
+msgid "Menu"
+msgstr ""
+
+msgctxt "#32148"
+msgid "Done"
+msgstr ""
+
+msgctxt "#32200"
+msgid "What is Build Manager?"
+msgstr ""
+
+msgctxt "#32201"
+msgid "Create Build"
+msgstr ""
+
+msgctxt "#32202"
+msgid "Install Build"
+msgstr ""
+
+msgctxt "#32203"
+msgid "Update / Repair"
+msgstr ""
+
+msgctxt "#32204"
+msgid "Build Status"
+msgstr ""
+
+msgctxt "#32205"
+msgid "Builds & Device Profiles"
+msgstr ""
+
+msgctxt "#32206"
+msgid "Safety — What Can BM Change?"
+msgstr ""
+
+msgctxt "#32207"
+msgid "Restarts & Resume"
+msgstr ""
+
+msgctxt "#32208"
+msgid "Problems & Recovery"
+msgstr ""
+
+msgctxt "#32209"
+msgid "About"
+msgstr ""
+
+msgctxt "#32300"
+msgid "Build Manager saves the setup you want Kodi to have and helps your devices match it. Create Build captures a desired Kodi setup. Install Build applies a selected build to a device. Update / Repair checks the differences and brings managed parts back to the build's desired state. Build Status shows what matches, what needs work and what has not been checked. Settings controls Build Manager preferences. Help / Information explains each workflow.\n\nBuild Manager leaves unmanaged add-ons alone. It does not uninstall unrelated add-ons. It manages declared software and supported configuration; it does not make a general backup of your Kodi files."
+msgstr ""
+
+msgctxt "#32301"
+msgid "Create Build reads selected add-ons, their exact versions, dependencies and enabled or disabled state. It can include the active skin and supported configuration you select. Supported private configuration is saved separately when you choose to include it. Its values are never shown.\n\nExact packages matter. Build Manager looks for verified packages for the captured versions. It does not rebuild packages from installed directories or quietly choose another version. If a package or selected configuration scope cannot be captured, the result explains what is missing. An incomplete build is saved for review; it is not proof that another device can reproduce the full setup.\n\nCapture reads this Kodi installation and writes Build Manager-owned build data. It does not reconcile, install, disable or replace the source add-ons. Media, playback history and unsupported settings are not captured. Review the included and excluded scopes before starting."
+msgstr ""
+
+msgctxt "#32302"
+msgid "Choose a build and a compatible device profile. Build Manager checks the selected packages and configuration, then shows the changes it expects to make. Review add-on versions, enabled or disabled state, skin changes, configuration scopes and any exceptions before choosing Apply Build.\n\nIf an exact package is missing, you can supply a verified exact package or cancel. Some builds explicitly allow a current trusted repository version or a skipped add-on. Those choices are shown clearly and may make the result differ from the captured build. Required dependencies and private compatibility can restrict the choices.\n\nKodi may need a full restart during installation. Build Manager saves progress and continues after you restart Kodi. Completion is shown only after final checks finish. If it needs attention, open the problem page and follow the available safe actions."
+msgstr ""
+
+msgctxt "#32303"
+msgid "Update / Repair compares this installation with the selected build. It repairs supported managed differences instead of reinstalling everything. It can install missing managed add-ons, restore enabled or disabled state, set the managed skin and apply configuration that differs.\n\nReview Changes shows the intended work before you apply it. Some configuration may need a check before Build Manager can say whether it differs. Unmanaged add-ons are left alone. If everything is already verified, no changes are needed. Private configuration repair may need managed add-ons kept off and a full restart before it is safe to finish."
+msgstr ""
+
+msgctxt "#32304"
+msgid "Current / Healthy means the applicable current checks pass and there is no pending operation needing attention. Changes Needed means managed differences were found. Restart Required means saved progress is waiting for a full Kodi restart. Needs Attention means Build Manager cannot safely continue without a supported correction. Incomplete Build means required captured parts or packages are missing. Validation Failed means the result of an attempted operation could not be confirmed.\n\nNot Fully Checked means some required checks have not run or are unavailable; it is not a healthy result. Applied with Exceptions means you approved a Skip or different repository version. Last verified information describes a past check; use Check Status for a current read-only check."
+msgstr ""
+
+msgctxt "#32305"
+msgid "A Build describes the Kodi setup you want. A Device Profile describes supported choices for a particular device or platform. The same logical build can have different device-specific configuration, while keeping its intended software and supported settings clear.\n\nChoose the profile that matches the destination device. Build Manager shows its platform before you apply anything. A revision is a saved capture of a build at a particular time; earlier revisions remain available. Public build exports exclude private configuration. A destination may need compatible private configuration supplied separately.\n\nBuild Manager has one internal Build Library in its own storage. Validated imports become library entries. Export creates a transfer copy; it does not move the authoritative build. The Build Transfer Folder is just a convenient location for importing and exporting packages."
+msgstr ""
+
+msgctxt "#32306"
+msgid "Create Build is a capture operation: it reads this Kodi setup and saves build data. Install and Update / Repair can install managed add-ons, enable or disable managed add-ons, change the managed skin and apply declared supported configuration. Unmanaged add-ons are not removed, and unrelated add-ons are not uninstalled.\n\nBuild Manager shows meaningful managed changes and asks for confirmation before applying them. It can temporarily pause automatic updates and keep some managed add-ons off while it safely configures them. Those protections remain visible until the operation finishes.\n\nInterrupted work uses saved progress and supported recovery. Closing a window does not undo completed changes. A pending operation or protection problem must be resolved through the available safe actions; do not remove saved progress or enable held add-ons to bypass it."
+msgstr ""
+
+msgctxt "#32307"
+msgid "Some managed software or configuration needs a full Kodi restart before the next step can safely run. Build Manager saves progress before asking you to restart. Fully close Kodi normally, then open it again. Closing only the Build Manager window is not a restart.\n\nBuild Manager continues the saved operation after Kodi returns. Open it to see progress and the final result. You may be asked for another restart if a later step requires it. If it reports Needs Attention, open the problem page rather than starting the build again."
+msgstr ""
+
+msgctxt "#32308"
+msgid "Needs Attention: open View Problem and use the specific safe action shown. If no safe retry is available, close Build Manager and keep its saved progress.\n\nMissing Artifact: provide the exact package, check again, or use only the fallback choices this build permits. Never assume another version is equivalent.\n\nIncomplete Capture: inspect the missing items. Check Missing Packages can look for exact packages; Create New Revision captures a changed setup. The source Kodi installation has not been repaired by capture.\n\nValidation Failed: read the failed categories. Use Review Changes or the offered safe repair only when Build Manager allows it. An attempted change is not the same as a verified result.\n\nRestart Required: fully close and reopen Kodi as described in Restarts & Resume. Repair Available: open Review Changes before applying anything. If automatic update protection or saved progress cannot be confirmed, keep the operation and use the safe problem code when seeking help. Advanced Details never needs to display private values."
+msgstr ""
+
+msgctxt "#32309"
+msgid "Build Manager 0.1.0. Kodi version and platform are available in Kodi’s System Information screen. Add-on ID: script.build.manager. Engine and schema details will appear when supported status checks are available. Source: https://github.com/eengert/script.build.manager. This beta's qualification status is stated by the released build; a platform listed in the design is not proof it has passed testing.\n\nAbout never displays credentials, private configuration, filesystem locations or internal payloads. Source link may open externally only through an explicit user action and a supported platform capability; otherwise show the public address as readable text."
+msgstr ""
+
+msgctxt "#32149"
+msgid "Use the arrows to navigate. OK selects. Back returns to the previous page."
+msgstr ""
+
+msgctxt "#32150"
+msgid "Why is this unavailable?"
 msgstr ""

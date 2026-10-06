@@ -1,19 +1,17 @@
-import sys
-
-import xbmc
-import xbmcgui
-
-import resources.lib.utils as utils
-
+"""Open Build Manager's native Kodi menu without starting operations."""
 
 def main():
-    """Build Manager entrypoint. Invoked by Kodi when the add-on is run."""
-    dialog = xbmcgui.Dialog()
-    dialog.ok(
-        utils.getString(32000),
-        utils.getString(32010),
-    )
-
+    import xbmc
+    import xbmcaddon
+    import xbmcgui
+    addon = xbmcaddon.Addon("script.build.manager")
+    try:
+        from resources.lib.ui.native_dialogs import NativeDialogs
+        NativeDialogs(addon, xbmcgui.Dialog(), xbmc.sleep).run()
+    except Exception:
+        # Never expose runtime exceptions or private settings in fallback text.
+        xbmcgui.Dialog().ok(addon.getLocalizedString(32126),
+                            addon.getLocalizedString(32127))
 
 if __name__ == '__main__':
     main()
