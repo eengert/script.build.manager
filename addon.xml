@@ -16,10 +16,11 @@
       <icon>resources/images/icon.png</icon>
     </assets>
     <news>Version 0.1.0
-Initial skeleton. Provisioning features not yet implemented.</news>
-    <summary lang="en_US">Declarative multi-device Kodi provisioning.</summary>
-    <summary lang="en_GB">Declarative multi-device Kodi provisioning.</summary>
-    <description lang="en_US">Build Manager provisions Kodi devices to a declared desired state. Define what each device should have installed and configured; Build Manager applies the specification. Supports tvOS, Android, Fire TV, and macOS.</description>
-    <description lang="en_GB">Build Manager provisions Kodi devices to a declared desired state. Define what each device should have installed and configured; Build Manager applies the specification. Supports tvOS, Android, Fire TV, and macOS.</description>
+Native menu with Settings and plain-language Help.
+Create, Install, Update / Repair and Build Status screens are not available yet.</news>
+    <summary lang="en_US">Save and restore your Kodi setup.</summary>
+    <summary lang="en_GB">Save and restore your Kodi setup.</summary>
+    <description lang="en_US">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings and Help. The Create, Install, Update / Repair and Build Status screens are still being built.</description>
+    <description lang="en_GB">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings and Help. The Create, Install, Update / Repair and Build Status screens are still being built.</description>
   </extension>
 </addon>

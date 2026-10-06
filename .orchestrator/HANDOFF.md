@@ -143,7 +143,9 @@ Do not assume historical ai-supervisor named actions/brokers exist. If a require
 
 **BM-UI-001 native-dialog foundation is complete and portable-Test.app validated.** The rejected custom full-screen WindowXML shell was removed. The accepted foundation uses native Kodi dialogs: the six-item Build Manager main menu, H01-H10 Help via native selection/text dialogs, and direct native Settings with focus restored to Settings on return. Focused UI tests passed and no backend mutation occurred.
 
-Eric/ChatGPT visual acceptance of the foundation remains pending; item 8 is not accepted. The next bounded step is therefore visual/product review of the native-dialog foundation and screenshots. Do not begin Create Build, Install Build, Update / Repair, or backend gaps G1-G6 until that review explicitly authorizes the next implementation task.
+Eric visually accepted the native-dialog model. BM-UI-002A (Help rewrite + package baseline) rewrote H01-H10 in plain scannable language, replaced stale skeleton addon.xml wording and recorded the Beta Candidate phase exit in `BUILD_MANAGER_PROJECT_PLAN.md` (Eengert Repository publication, custom icon, repository-distributed qualification). `resources/images/icon.png` is still the old generic icon: `CUSTOM_ICON_ASSET_REQUIRED` remains a hard package-exit check. Item 8 stays open.
+
+Next bounded step: truthful read-only Status / plan interfaces. Do not begin G1-G6, Create/Install/Repair backends or publication without an explicit task.
 
 The approved backend baseline remains `4a02b833178f5cb29e2b596985f1a8641ed3fa25`; accepted backend qualification evidence remains intact. BM-UI-001 adds frontend product changes above that baseline and is not yet a complete beta frontend.
 

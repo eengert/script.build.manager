@@ -122,4 +122,70 @@ class NativeFoundationTests(unittest.TestCase):
     def test_invalid_help_result_returns(self):
         _,d,_=self.flow([5,100,-1]); self.assertFalse(d.details)
 
+def _strings():
+    import re
+    text=(ROOT/'resources/language/resource.language.en_gb/strings.po').read_text(encoding='utf-8')
+    out={}
+    for m in re.finditer(r'msgctxt "#(\d+)"\nmsgid "((?:[^"\\]|\\.)*)"',text):
+        out[int(m.group(1))]=m.group(2).replace('\\n','\n').replace('\\"','"')
+    return out
+
+# Internal vocabulary that must not return to user-facing Help copy.
+BANNED_HELP_TERMS=('reconcil','lifecycle','transaction','adapter','schema','manifest',
+    'fingerprint','artifact','activation hold','quarantine','durable','private-resource',
+    'validation report','exact-version','desired state','owner')
+RAW_FIELDS=('traceback','exception','sha256','password','token','secret','api_key','/users/')
+
+class HelpCopyTests(unittest.TestCase):
+    def setUp(self): self.s=_strings()
+    def bodies(self): return {i:self.s[32300+i] for i in range(10)}
+    def test_titles_are_the_approved_ten(self):
+        self.assertEqual([self.s[32200+i] for i in range(10)],[
+            'What is Build Manager?','Create Build','Install Build','Update / Repair',
+            'Build Status','Builds & Device Profiles','Safety \u2014 What Can BM Change?',
+            'Restarts & Resume','Problems & Recovery','About'])
+    def test_no_internal_vocabulary(self):
+        for i,b in self.bodies().items():
+            for t in BANNED_HELP_TERMS: self.assertNotIn(t,b.lower(),(i,t))
+    def test_no_raw_diagnostics_or_private_values(self):
+        for i,b in self.bodies().items():
+            for t in RAW_FIELDS: self.assertNotIn(t,b.lower(),(i,t))
+    def test_old_technical_copy_removed(self):
+        for i,b in self.bodies().items():
+            for old in ('Exact packages matter','reconciles','Advanced Details','Missing Artifact'):
+                self.assertNotIn(old,b,i)
+    def test_pages_are_scannable(self):
+        for i,b in self.bodies().items():
+            self.assertIn('\n\n',b,i)
+            self.assertIn('\u2022 ',b,i)
+            self.assertLess(len(b),900 if i==8 else 650,i)
+            for para in b.split('\n\n'):
+                self.assertLessEqual(len(para.split('. ')),3,(i,para))
+    def test_safety_facts(self):
+        self.assertIn('Your Kodi is not changed',self.s[32301])
+        self.assertIn('never shown',self.s[32301])
+        self.assertIn('before anything happens',self.s[32302])
+        self.assertIn('fully closed and reopened',self.s[32302])
+        self.assertIn('Does not reinstall everything',self.s[32303].replace('does not','Does not'))
+        self.assertIn('older result is not the same as a fresh check',self.s[32304])
+        safety=self.s[32306]
+        for phrase in ('Uninstall your other add-ons','Install add-ons','Turn those add-ons on or off',
+                       'Change your skin','Restore supported settings','Closing a window does not undo'):
+            self.assertIn(phrase,safety)
+    def test_restart_is_manual(self):
+        r=self.s[32307]
+        self.assertIn('Fully close Kodi',r); self.assertIn('does not reopen Kodi for you',r)
+
+
+class AddonMetadataTests(unittest.TestCase):
+    def test_metadata_is_current_and_parses(self):
+        import xml.etree.ElementTree as ET
+        root=ET.parse(ROOT/'addon.xml').getroot()
+        self.assertEqual(root.attrib['id'],'script.build.manager')
+        text=(ROOT/'addon.xml').read_text()
+        self.assertNotIn('skeleton',text.lower())
+        self.assertNotIn('not yet implemented',text.lower())
+        self.assertEqual(root.findtext('.//assets/icon'),'resources/images/icon.png')
+
+
 if __name__ == '__main__': unittest.main()

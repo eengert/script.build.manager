@@ -35,6 +35,29 @@ Eric has approved `.qualification-evidence/ui-design-20261006T113406Z/UI_DESIGN.
 
 BM-UI-001 implements the real Dashboard + Help / Information (H01-H10) + Settings foundation. After focused automated tests pass, validate it interactively only in `/Applications/Kodi Build Manager Test.app`, portable `-p`. Then STOP for Eric/ChatGPT visual UX review before using that foundation to build the remaining major workflows. Review visual feel, spacing, readability, focus treatment, remote navigation, long Help content, Settings terminology, Estuary consistency, and whether it feels like a finished Kodi add-on rather than a developer harness. BM-UI-001 completion is not automatic visual-design approval.
 
+### Beta Candidate phase exit and remaining frontend sequence
+
+Eric visually accepted the BM-UI-001 native-dialog model (native main menu, direct Settings, native Help selection/dialog). The one remaining UX problem was verbose, technical Help; BM-UI-002A rewrites H01-H10 in plain, scannable language.
+
+The Beta Candidate phase is not finished until Build Manager is:
+
+- functionally complete for the approved beta workflows;
+- packaged as a normal Kodi add-on;
+- published in Eric's Eengert Kodi Repository (`/Users/eengert/Documents/Kodi/repository.eengert`, distribution layout `omega/zips/`, built only with `scripts/build_repository.py`, public source `https://eengert.github.io/repository.eengert/`);
+- installable/updateable through that repository in portable Test.app;
+- using Eric's supplied custom Build Manager icon (exact artwork from `BuildManager-addon-icon.svg`, square 512x512 PNG at `resources/images/icon.png`; the generic skeleton icon must not ship; hard package-exit check);
+- manually qualified from the repository-distributed package.
+
+Remaining frontend sequence:
+
+1. Help simplification / package baseline (BM-UI-002A).
+2. Truthful read-only Status / plan interfaces.
+3. Create Build end-to-end.
+4. Install + Update/Repair + Status + restart/recovery presentation.
+5. Full frontend qualification and Eengert Repository publication.
+
+Phase exit: install Build Manager from the Eengert Repository into a clean/authorized portable Test.app and verify the distributed package, custom icon, metadata, native UI, Help, and complete workflows. Normal Kodi and Shield remain prohibited until that exit is accepted and a later task explicitly authorizes the live target/action. Publication happens only at the completed-candidate boundary, not earlier.
+
 Carry forward Backup Pro UX principles as guidance, not copied implementation: persistent terminal results after all required work finishes; one canonical owned Build Library; human-readable labels consistent across workflows, Settings and Help; descriptive truthful stages rather than fake percentages; distinct valid warnings and actual failures; comprehensive task-organized Help. A notification supplements but never replaces an unacknowledged final result.
 
 ### Validation tools and retired framework work
