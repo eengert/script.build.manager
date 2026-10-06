@@ -27,7 +27,7 @@ class UnsafeStateFile(ReadOnlyStateError):
     """
 
 
-def read_regular_file(path: str, *, limit: int) -> Optional[bytes]:
+def read_regular_file(path: str, *, limit: int, dir_fd: Optional[int] = None) -> Optional[bytes]:
     """Return the file's bytes, or ``None`` when it does not exist.
 
     Never creates, truncates, locks, or follows a symlink, and never blocks on
@@ -36,7 +36,7 @@ def read_regular_file(path: str, *, limit: int) -> Optional[bytes]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags)
+        fd = os.open(path, flags, dir_fd=dir_fd)
     except FileNotFoundError:
         return None
     except OSError as exc:

@@ -50,6 +50,7 @@ from resources.lib.build_identity import (
     check_frozen_identity,
 )
 from resources.lib.build_manager import fingerprint_resolved_build
+from resources.lib.build_library import LibrarySource
 from resources.lib.config import ConfigTargetCheck
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import (
@@ -143,6 +144,10 @@ class PlanTarget:
     when it is bound to this exact build and frozen manifest. ``choices`` are the
     user's answers to missing-package decisions; they are part of the plan's
     identity, so changing one makes an earlier review stale.
+
+    ``library_source`` supplies one revalidated library-owned snapshot including
+    configuration packages. Its effective content still participates in the
+    accepted build/review fingerprint; no path substitutes for build identity.
     """
 
     configuration_manifest_path: str
@@ -150,8 +155,11 @@ class PlanTarget:
     software_manifest_path: str
     install_resolution: Optional[FrozenInstallResolutionManifest] = None
     choices: Tuple[Tuple[str, DecisionChoice], ...] = ()
+    library_source: Optional[LibrarySource] = None
 
     def __post_init__(self) -> None:
+        if self.library_source is not None and not isinstance(self.library_source, LibrarySource):
+            raise ValueError("library_source must be a LibrarySource")
         for name in ("configuration_manifest_path", "device_profile_id", "software_manifest_path"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name):
                 raise ValueError("%s must be a non-empty string" % name)
@@ -348,9 +356,13 @@ class BuildPlanService:
             blockers.append(PlanBlocker(BlockerCode.OPERATION_PENDING))
 
         try:
-            manifest = status.manifest_loader(target.configuration_manifest_path)
+            config_loader = status.config_loader
+            if target.library_source is not None:
+                manifest, frozen, config_loader = target.library_source.load()
+            else:
+                manifest = status.manifest_loader(target.configuration_manifest_path)
+                frozen = status.frozen_manifest_loader(target.software_manifest_path)
             desired = status.resolver(manifest, target.device_profile_id)
-            frozen = status.frozen_manifest_loader(target.software_manifest_path)
         except Exception as exc:
             self._log_failure("build", exc)
             gaps.append(CheckGap.BUILD_UNREADABLE)
@@ -376,7 +388,7 @@ class BuildPlanService:
         effective = None
         if desired.config is not None:
             try:
-                effective = status.config_loader.resolve(desired.config)
+                effective = config_loader.resolve(desired.config)
             except Exception as exc:
                 self._log_failure("configuration", exc)
         try:
@@ -829,6 +841,12 @@ class BuildPlanService:
 # ---------------------------------------------------------------------------
 # Production wiring
 # ---------------------------------------------------------------------------
+
+def default_plan_target() -> Optional[PlanTarget]:
+    """The current validated library selection, without acquiring/applying it."""
+    from resources.lib.build_library import selected_plan_target
+    return selected_plan_target()
+
 
 def default_plan_owners(*, log: Optional[Callable[[str], None]] = None) -> PlanOwners:
     """Production read-only collaborators, constructed without touching Kodi state."""

@@ -951,9 +951,14 @@ def _reject_json_constant(name: str) -> object:
 # ---------------------------------------------------------------------------
 
 def _parse_descriptor(
-    raw: object, *, package_id: str, package_dir: str
+    raw: object, *, package_id: str, package_dir: str, source_reader=None
 ) -> ConfigPackage:
-    """Parse and validate a package.json document."""
+    """Parse and validate a package.json document.
+
+    An optional source_reader lets the canonical library use already bounded,
+    no-follow, verified source bytes while reusing all package validation.
+    Normal embedded-package callers retain their existing source-file loader.
+    """
     label = f"package {package_id!r}"
     if not isinstance(raw, dict):
         raise ConfigPackageError(f"{label}: {_DESCRIPTOR_NAME} must be an object")
@@ -986,7 +991,8 @@ def _parse_descriptor(
 
     settings = _parse_settings(raw.get("settings", []), package_id=package_id)
     files = _parse_files(
-        raw.get("files", []), package_id=package_id, package_dir=package_dir
+        raw.get("files", []), package_id=package_id, package_dir=package_dir,
+        source_reader=source_reader,
     )
     return ConfigPackage(package_id=package_id, settings=settings, files=files)
 
@@ -1096,7 +1102,7 @@ def _parse_target_kind(raw: object, *, label: str) -> ConfigTargetKind:
 
 
 def _parse_files(
-    raw: object, *, package_id: str, package_dir: str
+    raw: object, *, package_id: str, package_dir: str, source_reader=None
 ) -> Tuple[ConfigFile, ...]:
     """Parse the descriptor 'files' array, reading and containing each source."""
     label = f"package {package_id!r}.files"
@@ -1127,7 +1133,7 @@ def _parse_files(
             entry["destination"], label=f"{entry_label}.destination"
         )
 
-        content = _read_source_file(
+        content = source_reader(source) if source_reader is not None else _read_source_file(
             package_dir=package_dir,
             source=source,
             label=f"{entry_label}.source",

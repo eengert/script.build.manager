@@ -108,6 +108,7 @@ from resources.lib.transaction import (
     TransactionStore,
 )
 from resources.lib.validator import ValidationDomain, ValidationStatus, validate_build_state
+from resources.lib.build_library import LibrarySource
 
 _ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _STATUS_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
@@ -143,14 +144,21 @@ class StatusTarget:
     prove it belongs to this build. Individual records carry neither, so raw
     record tuples are not accepted. The service verifies the binding
     (``resources.lib.build_identity``) before trusting any of it.
+
+    ``library_source`` reloads one verified owned manifest/frozen/package
+    snapshot. For that source, legacy path fields are internal locators only;
+    the service never passes them to independent filesystem/global loaders.
     """
 
     configuration_manifest_path: str
     device_profile_id: str
     software_manifest_path: str = ""
     install_resolution: Optional[FrozenInstallResolutionManifest] = None
+    library_source: Optional[LibrarySource] = None
 
     def __post_init__(self) -> None:
+        if self.library_source is not None and not isinstance(self.library_source, LibrarySource):
+            raise ValueError("library_source must be a LibrarySource")
         if not isinstance(self.configuration_manifest_path, str) or not self.configuration_manifest_path:
             raise ValueError("configuration_manifest_path must be a non-empty string")
         if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
@@ -446,12 +454,16 @@ class BuildStatusService:
     def _check_target(self, target: StatusTarget, gaps: List[CheckGap]):
         o = self._o
         try:
-            manifest = o.manifest_loader(target.configuration_manifest_path)
+            config_loader = o.config_loader
+            if target.library_source is not None:
+                manifest, frozen, config_loader = target.library_source.load()
+            else:
+                manifest = o.manifest_loader(target.configuration_manifest_path)
+                frozen = (
+                    o.frozen_manifest_loader(target.software_manifest_path)
+                    if target.software_manifest_path else None
+                )
             desired = o.resolver(manifest, target.device_profile_id)
-            frozen = (
-                o.frozen_manifest_loader(target.software_manifest_path)
-                if target.software_manifest_path else None
-            )
         except Exception as exc:
             self._log_failure("build", exc)
             gaps.append(CheckGap.BUILD_UNREADABLE)
@@ -493,7 +505,7 @@ class BuildStatusService:
             )
         else:
             software, skin, configuration = self._check_kodi_areas(
-                records, desired, frozen, skipped, actual, gaps
+                records, desired, frozen, skipped, actual, gaps, config_loader
             )
         try:
             private = self._check_private(desired, frozen, gaps)
@@ -503,7 +515,7 @@ class BuildStatusService:
             private = PrivateStatus(AreaLevel.UNAVAILABLE)
         return software, skin, configuration, private
 
-    def _check_kodi_areas(self, records, desired, frozen, skipped, actual: KodiState, gaps):
+    def _check_kodi_areas(self, records, desired, frozen, skipped, actual: KodiState, gaps, config_loader):
         o = self._o
         actual_map = {addon.addon_id: addon for addon in actual.addons}
 
@@ -551,7 +563,7 @@ class BuildStatusService:
         inspection = None
         if desired.config is not None:
             try:
-                effective = o.config_loader.resolve(desired.config)
+                effective = config_loader.resolve(desired.config)
                 inspection = o.configuration_inspector.inspect(effective)
             except Exception as exc:
                 self._log_failure("configuration", exc)
@@ -844,13 +856,12 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
 
 
 def default_status_target() -> Optional[StatusTarget]:
-    """The build this device is associated with, or ``None``.
-
-    Build Manager records no applied-build association yet (that arrives with
-    Install, recorded only from validated completion), so there is nothing to
-    compare against and build-dependent areas honestly report "not checked".
-    """
-    return None
+    """The explicitly selected, validated library build, or ``None``."""
+    from resources.lib.build_library import default_build_library
+    try:
+        return default_build_library().selected_status_target()
+    except Exception:
+        return None
 
 
 def check_build_status(*, log: Optional[Callable[[str], None]] = None) -> BuildStatus:
