@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-003C native Create workflow: PASS offline; STOP for independent review",
+  "task": "BM-UI-003C persistence correction: PASS offline; STOP for independent correction-delta review",
   "reason": null,
-  "last_commit": "db8ffe803a3e5350407f70f7618fc4c494dc3d17",
+  "last_commit": "9ee7f86fd5c2e3db6e53b00f7f3e6ee103886c7b",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T23:13:39.883495+00:00",
+  "updated_at": "2026-10-06T23:31:36.114592+00:00",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
