@@ -1,3 +1,42 @@
+# BM-UI-002C-G3-CORRECTION — PASS (offline; independent re-review pending)
+
+## Scope / provenance
+- Beta exit item 8: correct only four demonstrated G3 blockers plus adjacent ReviewIdentity hardening.
+- agent/codex; start 08459152d102aff3e541d946685065bc77b1b2f7; reviewed product 045935e2b3b2b8612760e6b8290e61022f5dd063; product correction dcd6fb0436be54dd1807cbde4adfe80241f01d2b.
+- Live Agent Handoff status confirmed Codex active and clean at start. No endpoint switch or publication.
+
+## What changed
+- plan_model.py / plan.py / ui/plan_view.py / strings.po: unresolved INSTALL_CURRENT -> RESOLUTION_REQUIRED, no review; structural model forbids ready plans with unresolved packages; native dialog explains resolution must precede final review.
+- frozen_install.py / plan.py: read-only stored_repository_dependencies helper extracted unchanged from _restore_resolution; G3 uses the exact saved package requirements, resolved versions, skip checks and extra dependency graph for ordering/feasibility. Installed saved repository packages are also parsed/checked.
+- plan.py: health reads and SOFTWARE_STATE binding extended to installed declared managed add-ons, required repositories and managed skin outside the frozen graph. Broken -> INSTALLED_ADDON_BROKEN; unavailable health -> incomplete. No repair.
+- status.py: unreadability outranks private settings drift and mixed resource drift; useful per-item statuses preserved, values hidden.
+- plan_model.py: exact part count, typed components, canonical order/uniqueness, digest format; rejects extra/unknown/duplicate/missing/malformed parts.
+- tests/test_plan.py, tests/test_plan_ui.py, tests/test_status.py: focused behavioral regressions, actual installer restore parity, identity/state invariants, private result shapes, privacy/tripwires and unchanged profile tree checks.
+- docs/BUILD_PLAN.md and docs/BUILD_STATUS.md: corrected states, future resolution -> re-preview -> exact review contract, saved-package parity and private precedence.
+
+## Reproduction / evidence
+- Initial regressions failed against unchanged source before implementation. Final disposable baseline confirmation: 7 tests / 7 failures for unresolved readiness, saved dependency order, introduced skip conflict, unfrozen health, mixed private settings/resources and unknown identity component.
+- Baseline saved required dependency was at index 5, dependent at index 3 (wrong order). Baseline broken unfrozen installation and mixed private drift/unreadability both kept CHANGES_READY and CURRENT prior reviews.
+- Actual _restore_resolution parity: unchanged/added saved requirements produce matching G3 order; skip, uncaptured dependency, minimum-version conflict and cycle both refuse; no installer mutation APIs used.
+- Focused: python3 -m unittest tests.test_plan tests.test_plan_ui tests.test_status tests.test_status_ui tests.test_ui_foundation tests.test_frozen_resolution tests.test_frozen_install tests.test_private_resource — 398 PASS (10.200s).
+- Full: python3 -m unittest discover -s tests -t . — 2691 PASS (131.294s). Initial restricted run had 8 failures/11 errors only in existing helper process/loopback tests due to sandbox denials; unchanged suite rerun with local test permissions passed. No source/test/documentation changes after final full-suite run.
+- git diff --check PASS; exact bytes of all 11 tested product/test/documentation files verified unchanged after validation.
+- Preview/validate tripwires cover mutators, locks, stores, repository fetches/network; profile-tree snapshots unchanged across corrected paths. Secrets absent from safe models/reprs/UI/logs. Full suite's loopback traffic uses disposable test fixtures only.
+- Logs in /private/tmp/g3-baseline-final.log, g3-baseline-stale.log, g3-focused.log, g3-full.log, g3-full-permitted.log (temporary local evidence; summarized here durably).
+
+## Not done / limitations
+- Offline evidence only; no Test.app launch, live Kodi/device/profile access or mutation. No downloads, Apply/G6, capture/retry/recovery, Build Library/Create Build, packaging/icon/repository changes, push/merge/publication.
+- Future explicitly authorized resolution/download stage and Apply remain unimplemented; this task accepts completed bound prior resolution packages only.
+- Required pre-0.2.0 SQLite '#' verify/apply URI finding retained in both docs; redlight_resource.py unchanged.
+- Existing unrelated limitations remain; this is implementer validation, not independent approval.
+- .orchestrator/HANDOFF.md is ChatGPT-maintained and was not edited.
+- Usage start/end/delta unavailable per AGENTS.md; observed GPT-6 session identity, exact tier and effort unavailable.
+
+## Next / human input
+Independent correction-delta re-review of 08459152d102aff3e541d946685065bc77b1b2f7..dcd6fb0436be54dd1807cbde4adfe80241f01d2b, excluding endpoint bookkeeping. Eric/ChatGPT must arrange that independent review; no further implementation or runtime work authorized. STOP.
+
+## Retained prior endpoint record
+
 # BM-UI-002C frozen plan / review identity and read-only preview (G3) — PASS (offline); not live-proven
 
 Start HEAD 958b5d7 on agent/claude; result is one bounded local commit (SHA in the report). No push, publication, Test.app, normal Kodi or device access.

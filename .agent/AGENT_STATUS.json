@@ -1,20 +1,30 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-002C frozen plan/review identity and read-only preview (G3): PASS offline; not live-proven",
+  "task": "BM-UI-002C-G3-CORRECTION: PASS offline; independent correction-delta re-review pending",
   "reason": null,
-  "last_commit": "045935e",
+  "last_commit": "dcd6fb0436be54dd1807cbde4adfe80241f01d2b",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T17:59:45Z",
+  "updated_at": "2026-10-06T18:26:41Z",
   "previous_task_record": {
-    "active_agent": "claude",
+    "active_agent": "codex",
     "status": "idle",
-    "task": "BM-UI-002B read-only Build Status (G2): PASS offline; not live-proven",
+    "task": "BM-UI-002C frozen plan/review identity and read-only preview (G3): PASS offline; not live-proven",
     "reason": null,
-    "last_commit": null,
+    "last_commit": "045935e",
     "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
     "next_agent": null,
-    "updated_at": "2026-10-06T15:45:00Z"
+    "updated_at": "2026-10-06T17:59:45Z",
+    "previous_task_record": {
+      "active_agent": "claude",
+      "status": "idle",
+      "task": "BM-UI-002B read-only Build Status (G2): PASS offline; not live-proven",
+      "reason": null,
+      "last_commit": null,
+      "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
+      "next_agent": null,
+      "updated_at": "2026-10-06T15:45:00Z"
+    }
   }
 }

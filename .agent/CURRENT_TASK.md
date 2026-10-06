@@ -1,3 +1,13 @@
+# BM-UI-002C-G3-CORRECTION — PASS offline; independent re-review pending
+
+Corrected only four G3 independent-review blockers plus ReviewIdentity constructor hardening.
+Product commit dcd6fb0436be54dd1807cbde4adfe80241f01d2b; branch agent/codex; baseline 08459152d102aff3e541d946685065bc77b1b2f7.
+398 focused tests and 2691 full-suite tests PASS; exact tested source unchanged afterward.
+No Test.app/live Kodi/devices, download/Apply/G6, push/publication or scope expansion.
+Next: independent correction-delta re-review. STOP; see HANDOFF.md.
+
+## Retained prior endpoint record
+
 # BM-UI-002C frozen plan / review identity and read-only preview (G3) — PASS (offline)
 
 Task: close two G2 identity gaps (frozen build ID, install-resolution binding), then build the read-only frozen-build plan/review contract with stale-plan validation and a native Review Changes view model. No Install/Update/Repair/G6, no apply, no Create.
