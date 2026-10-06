@@ -1,49 +1,45 @@
-# BM-UI-003B — Create Capture Engine: PASS offline; STOP
+# BM-UI-003B capture correction — PASS offline; STOP
 
-## Identity and admission
-- Worktree: /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
-- Branch: agent/codex; clean exact start e1e5c936ff2eed57bc5b64b77a53be2015c0dd2c.
-- Product commit: f08b3fda497da74ba3a6a4afaff672ee9b9ba05d. Separate endpoint tracking commit follows.
-- Advances beta exit item 8 / missing G1 capture foundation. Live Agent Handoff confirmed Codex active before edits.
-- Accepted Build Library f660332d4701bbf8493037f956ea62d8a539e023 and G2/G3 contracts unchanged.
+## Identity / admission
+- Branch/worktree: agent/codex, /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex.
+- Clean starting HEAD: 843794d2b5cd4342de99975486c4c7c4e9408ebf.
+- Corrected product: f08b3fda497da74ba3a6a4afaff672ee9b9ba05d.
+- Correction product commit: 2a7791cc7cf227fe15620207852d6c11ca6fae2d; separate endpoint tracking commit follows.
+- Live Agent Handoff confirmed Codex active, clean expected start. Removes two demonstrated blockers to beta exit item 8 / G1 capture; accepted architecture and other PASS areas preserved.
 
-## Completed
-- Immutable CreateBuildRequest, explicit PublicCaptureSpecification/PublicSettingTarget, read-only CapturePreview, typed COMPLETE/INCOMPLETE/FAILED CreateBuildResult and immutable PreparedPublicBundle.
-- Existing capture_frozen_build handles roots/dependencies/acquisition. Active skin comes through injected existing KodiStateInspector.inspect contract and joins managed/frozen roots. Root enabled states retained; dependencies not promoted to top-level roots.
-- Only declared typed settings/files read through ConfigurationBackend. Deterministic per-capture package descriptors/exact assets pass existing ConfigPackage ownership validation.
-- Existing-schema manifest uses build info, captured roots/skin, config/private declarations, platform profile and extending device profile. Exact default remains; no fabricated repositories/fallback/Skip policies.
-- Canonical public frozen graph removes diagnostic maps/error text but retains typed capture/provenance/artifact/optional-absence truth. Its fingerprint binds separate in-memory private overlay; build/package/device identity checks pass.
-- Existing PrivateSettingDeclaration and StructuredPrivateResourceManager.capture (real RedLightSettingsAdapter in isolated SQLite fixture) reused. Required failures discard all prepared output. Optional actual absence preserved; backend errors remain incomplete. No private persistence.
-- Public envelope is validated against accepted library format and transport limits. registration_inputs() stages ONLY public material in a fresh owned temporary context for later BuildLibrary.register(*inputs); capture never calls it, registers or selects.
-- Safe result/repr omit payloads/paths/raw exceptions; artifact gaps contain validated IDs and typed statuses. Incomplete capture exposes no partial bundle/overlay.
+## Reproduced before source edits
+- Real skin runtime adapter, mocked JSON-RPC: public CustomID failed lookup and fell back to private customid; COMPLETE; three RPCs; disposable private sentinel entered canonical public bundle and registered disposable library envelope.
+- Real Red Light adapter, held/disabled/initialized disposable WAL DB: COMPLETE and newest committed value captured; DB/WAL identical but existing live SHM changed.
+- Reproducer: /private/tmp/bm003b_reproduce.py (synthetic fixture values only).
 
-## Files
-- resources/lib/create_capture.py
-- tests/test_create_capture.py
-- docs/CREATE_CAPTURE.md
-- Endpoint bookkeeping: .agent/HANDOFF.md, CURRENT_TASK.md, AGENT_STATUS.json, USAGE_HISTORY.md.
+## Correction / files
+- resources/lib/skin.py: shared canonical_skin_setting_key() uses runtime lowercase alias identity; first requested RPC spelling and fallback behavior unchanged.
+- resources/lib/create_capture.py: public/public, private/private, public/private skin alias collisions rejected before getters. Effective target-kind value governs identity; ordinary add-on keys remain case-sensitive. No Red Light logic added here.
+- resources/lib/private_resource.py: explicit generic capture contract forbids managed-file/sidecar mutation; disposable internal scratch allowed.
+- resources/lib/redlight_resource.py: capture validates lifecycle before reading; opens ancestors/files no-follow; bounded main/WAL reads twice, compares bytes and device/inode/size/mtime/ctime before/between/after; verifies fresh ancestor identities; brackets temporary SQLite query with source/lifecycle rechecks; schema and quick_check validated on copy only. Live SHM never opened/copied. Temporary DB/WAL/SQLite sidecars cleaned on success/failure.
+- tests/test_create_capture.py: 11 additional regression methods (57 total), alias combinations/inverse case, effective enum target, unrelated skin and case-distinct add-on settings, real runtime fallback/privacy across all public and library surfaces, WAL-current values with SHM present/absent, unstable file/ancestor changes, symlink/FIFO/size rejection, query-time changes, scratch cleanup and safe failures.
+- tests/test_skin.py: shared alias helper/runtime fallback regression (one additional method).
+- docs/CREATE_CAPTURE.md and docs/BM017C_PRIVATE_RESOURCES.md: alias collision, generic non-mutating capture, coherent private WAL snapshot, scratch cleanup/privacy semantics. Existing pre-0.2.0 SQLite # URI finding retained verbatim; apply/verify and Status probe code unchanged.
 
-## Validation
-- 46 new offline capture tests PASS.
-- Final focused: 656 tests PASS (2.551 s).
-  python3 -m unittest tests.test_create_capture tests.test_frozen tests.test_config tests.test_private_overlay tests.test_private_resource tests.test_build_library tests.test_manifest_loader tests.test_manifest_resolver tests.test_artifacts -q
-- One final full suite: 2785 tests PASS (131.332 s).
-  python3 -m unittest discover -s tests -q
-  Permitted execution used for existing disposable loopback/process fixtures. No source/test/document edits afterward.
-- Candidate hashes of all three product/test/document files remain unchanged after full suite. git diff --cached --check PASS.
-- Logs: /private/tmp/bm-ui-003b-focused.log; /private/tmp/bm-ui-003b-full.log.
-- Disposable library registration validates prepared output, leaves selection unset and proves private sentinel absent from library envelope.
-- Private sentinel absent from public result/repr/serialization, generated manifest/frozen/package, and logging calls. Real structured capture leaves disposable DB bytes unchanged.
-- Mutation tripwires cover settings/files, public/private apply, resource apply/initialize, install, enable, skin, updater policy, restart transaction/coordinator, frozen install/retry/resume, overlay save and automatic registration. Exact artifacts are acquired only through established frozen engine.
-- Automated/offline evidence only. No independent review or live-runtime qualification claimed.
+## Evidence
+- 809 focused tests PASS (3.921 s): python3 -m unittest tests.test_create_capture tests.test_skin tests.test_private_overlay tests.test_private_resource tests.test_build_library tests.test_config tests.test_status tests.test_frozen tests.test_manifest_loader tests.test_manifest_resolver tests.test_artifacts -q
+- One full suite PASS: 2797 tests, 129.800 s; python3 -m unittest discover -s tests -q. Permitted execution for existing disposable process/loopback fixtures.
+- All eight product/test/document hashes match pre-full-suite candidate; no source/test/document edits after full PASS. git diff --cached --check PASS.
+- Focused/full logs: /private/tmp/bm003b-focused.log, /private/tmp/bm003b-full.log. Candidate hashes: /private/tmp/bm003b-candidate-hashes.json.
+- WAL regression uses checkpointed older value plus newer committed WAL value: captured newer value, DB/WAL/SHM existence+bytes unchanged; absent SHM remains absent. Snapshot paths cleaned before returning.
+- Source content change/replacement/WAL disappearance/ancestor replacement or symlink/query-time change yields INCOMPLETE with no public bundle/private overlay. No sensitive logging/error payloads.
+- Status still rejects non-empty WAL without changing live files; related Status tests PASS.
+- Rejected aliases reach neither PreparedPublicBundle nor registration. Valid private-only/unrelated captures keep synthetic private values outside canonical bundle, package descriptors/assets, Manifest, FrozenBuildManifest, staged registration inputs, library envelope, repr/safe output/logs.
+- Existing undeclared-read, wrong-type, ownership, skin include/exclude, exact artifact, required failure and all mutation tripwires pass.
+- Practical mutations: replacing canonical normalization with raw identity fails privacy regression; restoring old live SQLite path reproduces changed SHM with COMPLETE.
 
-## Limits / not done
-- Explicit public specification must be curated by trusted product code: existing library checks reject known private channels, but cannot classify secrets disguised as arbitrary declared public text/files.
-- Red Light requires existing quiesced/held/disabled/initialized resource state. Capture reports incomplete when unavailable; no state preparation or mutation. Existing pre-0.2.0 SQLite URI '#' hardening finding unchanged.
-- Diagnostic cleanup intentionally creates canonical public software identity; private binding uses its recomputed fingerprint. Missing exact artifacts are incomplete, never substituted. Incomplete results have no registration inputs; library contract unchanged.
-- Existing library ID/version conflicts, I/O errors and private persistence/selection atomicity belong to the later confirmed UI commit flow.
-- No native dialogs, real registration/selection, Install/Repair Apply, G6, version/icon/repository changes, new network logic, push/publication/matrix integration, Test.app launch, normal Kodi/profile/device access or mutation.
+## Scope / limits
+- Offline/disposable evidence only; no live-runtime or independent acceptance claimed.
+- One deterministic snapshot attempt; 64 MiB maximum per main/WAL file. Requires existing verified held/disabled/initialized lifecycle; changing/unsafe/oversized sources fail closed. No universal snapshot guarantee against malicious writers violating that contract.
+- Normal read-only file reads may update filesystem access metadata; byte/existence invariants are DB/WAL/SHM content and no SQLite live sidecar writes.
+- Exact model tier/effort unavailable; observed session identity GPT-6. Fresh desktop usage tool available despite stale CLI-only guidance: start remaining 5h 18%, weekly 54%; end 5h 13%, weekly 53%; account-wide observed burn 5/1 percentage points, no task attribution or estimation.
+- No push, matrix merge, publication, repository.eengert changes, Test.app launch/access, normal Kodi/profile/device access, real build registration/selection, real overlay persistence, native Create UI, Install/Repair Apply, G6, or unrelated hardening.
 
 ## Smallest next step / human input
-Independent review of this candidate, then native Create Build dialogs + confirmed registration/selection (private overlay saved separately).
-No implementation human input remains. Eric/ChatGPT supplies the bounded review/next-task prompt. STOP.
+- STOP: independent correction-delta review of 843794d2b5cd4342de99975486c4c7c4e9408ebf..2a7791cc7cf227fe15620207852d6c11ca6fae2d, excluding endpoint tracking.
+- Eric/ChatGPT relays exact candidate to the independent reviewer. No additional implementation or live operation authorized by this completion.

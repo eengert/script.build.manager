@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-003B Create Capture Engine: PASS offline; STOP for independent review",
+  "task": "BM-UI-003B capture correction: PASS offline; STOP for independent correction-delta review",
   "reason": null,
-  "last_commit": "f08b3fda497da74ba3a6a4afaff672ee9b9ba05d",
+  "last_commit": "2a7791cc7cf227fe15620207852d6c11ca6fae2d",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T20:03:21.290724Z",
+  "updated_at": "2026-10-06T20:27:48.077926Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
