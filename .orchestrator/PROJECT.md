@@ -29,7 +29,9 @@ Build Manager is not Backup Pro. It manages declarative software/configuration/p
 
 ## Current outcome
 
-The active milestone is **Build Manager macOS Beta Qualification**. Its authoritative seven-item exit checklist and critical-path admission rule are in `BUILD_MANAGER_PROJECT_PLAN.md` under “Current Outcome: Build Manager macOS Beta Qualification.” Every task in this milestone maps to one checklist item or a demonstrated blocker to it; broader 1.0 and cross-platform scope remains governed by the longer-range plan after this milestone.
+The active milestone is **Build Manager macOS Beta Qualification**. Its authoritative eight-item exit checklist and critical-path admission rule are in `BUILD_MANAGER_PROJECT_PLAN.md` under “Current Outcome: Build Manager macOS Beta Qualification.” Every task in this milestone maps to one checklist item or a demonstrated blocker to it; broader 1.0 and cross-platform scope remains governed by the longer-range plan after this milestone.
+
+Backend qualification alone does not satisfy product beta readiness. Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions. The accepted original seven backend criteria/evidence are preserved; complete frontend implementation and portable Test.app qualification are required by item 8. The approved UI design and BM-UI-001 visual-review stop are recorded in the project plan. Its eight-item admission rule supersedes older seven-item counts in endpoint instructions without changing their other safety boundaries.
 
 ## Manual worktrees
 

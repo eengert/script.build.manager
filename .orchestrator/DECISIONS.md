@@ -126,7 +126,7 @@ Every project task must materially change the target product/candidate, produce 
 
 ## D-024 — macOS Beta Qualification is the current Build Manager milestone
 
-The exact seven-item exit checklist and critical-path admission rule are in `BUILD_MANAGER_PROJECT_PLAN.md`. Nonessential orchestration/framework work is outside the Build Manager critical path.
+The exact eight-item exit checklist and critical-path admission rule are in `BUILD_MANAGER_PROJECT_PLAN.md`. Nonessential orchestration/framework work is outside the Build Manager critical path.
 
 ## D-025 — Manual relay is the active execution model
 
@@ -158,3 +158,11 @@ As of 2026-10-04, Build Manager's manual working lanes are two Agent Handoff end
 - **ai-supervisor remains retired** and cold-stored (D-025).
 - **`matrix` is the canonical guidance and protected integration lane.** Product candidate work continues in the endpoints; integrating that candidate into `matrix` is a separate deliberate decision. Endpoint copies of guidance are synchronized explicitly by path from `matrix` (path-level restore plus a local commit; see `.orchestrator/WORKFLOW.md`), never by merging `matrix` wholesale into the candidate branches, and `matrix` `.agent/**` is never copied.
 - **Standing agent-switch publication authorization.** When Eric explicitly tells the Build Manager Supervisor to switch from one configured agent to another, that request also authorizes Agent Handoff to perform the normal publication push of the target (incoming) agent branch that is required to complete that specific handoff. The authorization covers only that push, for only that requested switch. It does not authorize any unrelated push, any push of `matrix`, any release, any force-push, any history rewrite, or any push not required to complete the requested switch. A handoff Eric has not explicitly requested is not covered. This is the only standing exception to D-025's no-push rule.
+
+## D-027 — Complete frontend is required for product beta readiness (2026-10-06)
+
+Eric approved the UI design at `.qualification-evidence/ui-design-20261006T113406Z/UI_DESIGN.md`, subject to the adopted completion/library/help/status/visual-review amendments. The authoritative milestone now has eight exit items. Criteria 1-7 and their accepted backend evidence remain unchanged; item 8 requires complete user-facing workflow implementation and manual qualification in portable Test.app. Backend qualification alone does not satisfy product beta readiness.
+
+Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions.
+
+BM-UI-001 must pass focused tests and interactive Test.app validation, then STOP for Eric/ChatGPT visual UX review before the presentation foundation is used for remaining major workflows. Adopt persistent unacknowledged terminal results, one internal Build Library with a separate Build Transfer Folder, contextual navigation-only Help, and consistent success/exception/incomplete/warning/blocked/validation-failure/NEEDS_ATTENTION semantics. These reuse Backup Pro principles without copying its UI.

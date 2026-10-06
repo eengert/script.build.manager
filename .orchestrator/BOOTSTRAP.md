@@ -89,7 +89,9 @@ There is no autonomous planner, queue, runway, worker lease, controller turn, pr
 
 ## Current outcome
 
-The current milestone remains **Build Manager macOS Beta Qualification**. The authoritative seven-item exit checklist is in `BUILD_MANAGER_PROJECT_PLAN.md`.
+The current milestone remains **Build Manager macOS Beta Qualification**. The authoritative eight-item exit checklist is in `BUILD_MANAGER_PROJECT_PLAN.md`.
+
+Backend qualification alone does not satisfy product beta readiness. Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions. Preserve accepted backend evidence. BM-UI-001 stops after focused tests and interactive portable Test.app validation for Eric/ChatGPT visual UX review before remaining major workflows.
 
 Every task should materially advance one exit item or remove a demonstrated blocker to one. Do not spend time finishing retired ai-supervisor infrastructure unless Eric explicitly resurrects that project.
 

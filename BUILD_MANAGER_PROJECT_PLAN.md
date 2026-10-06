@@ -4,11 +4,11 @@
 
 ### Milestone objective
 
-Establish enough trustworthy evidence to call the macOS implementation beta-qualified. This is the active milestone; it does not mean completing every Build Manager feature, the full MVP, or all platform work. The longer-range phases and old “Recommended First Milestone” below are planning history and do not override this current outcome.
+Establish enough trustworthy backend and complete user-facing workflow evidence to call the macOS product beta-qualified. A fully designed and implemented frontend is a major part of manual beta testing and evaluation; backend qualification alone does not satisfy product beta readiness. This is the active milestone; it does not mean completing every Build Manager feature, the full MVP, or all platform work. The longer-range phases and old “Recommended First Milestone” below are planning history and do not override this current outcome.
 
 ### Beta exit checklist
 
-Initial macOS beta territory is reached only when all seven evidence items are satisfied:
+Initial macOS beta territory is reached only when all eight evidence items are satisfied:
 
 1. **Clean trustworthy candidate** — one clearly identified product candidate suitable for beta qualification.
 2. **Restart/resume/recovery** — required restart, resume, and recovery behavior works end-to-end in portable macOS Test.app.
@@ -17,12 +17,25 @@ Initial macOS beta territory is reached only when all seven evidence items are s
 5. **Truthful final validation** — final validation correctly distinguishes success from failure.
 6. **Second reconciliation** — a second run demonstrates idempotence or basic repair/reconciliation behavior.
 7. **No harmful residual state** — normal Kodi is undamaged; no secret/private data is exposed; no unsafe restart, updater quarantine, activation hold, or transaction state remains.
+8. **Complete User-Facing Workflow** — The candidate provides a coherent, remote-friendly Kodi frontend for Create Build, Install Build, Update / Repair Build, Build Status, Settings, and Help / Information. Ordinary supported build creation, selection, plan review, explicit artifact decisions, application, truthful status/validation, and restart/resume/recovery are usable through the Kodi UI without host-side harnesses, temporary validation adapters, hand-written manifests, or developer commands. Meaningful mutations are reviewed and confirmed before execution; unmanaged add-ons are left alone; private values are never rendered. The complete frontend is manually validated in authorized portable Test.app, including Estuary, restart/resume, error states, and second-run/no-op presentation, with durable evidence tied to the exact candidate. Backend qualification alone does not satisfy product beta readiness.
+
+Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions.
+
+The original seven backend criteria and their accepted qualification evidence remain intact. Item 8 is an additional product requirement, not a reinterpretation or reopening of backend qualification. Older seven-item counts, including the current AGENTS.md admission wording, are superseded by this eight-item checklist; AGENTS.md itself is unchanged in this documentation task.
 
 Each criterion requires durable evidence tied to the exact candidate and authorized portable Test.app profile. A task is in this milestone only when it advances one item or removes a demonstrated blocker to one. If it maps to neither, defer it post-beta.
 
 ### Critical-path admission
 
-Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, or represent a demonstrated blocker in the manual workflow or its safe host-side helpers (not retired ai-supervisor infrastructure) to one of those outcomes.
+Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, prevent completion or trustworthy evaluation of the complete user-facing workflow required by item 8, or represent a demonstrated blocker in the manual workflow or its safe host-side helpers (not retired ai-supervisor infrastructure) to one of those outcomes.
+
+### Frontend design authority and early visual review
+
+Eric has approved `.qualification-evidence/ui-design-20261006T113406Z/UI_DESIGN.md` as the frontend UX/architecture basis, with the adopted amendments in that document. Frontend work advances item 8. No UI implementation is authorized by this documentation adoption.
+
+BM-UI-001 implements the real Dashboard + Help / Information (H01-H10) + Settings foundation. After focused automated tests pass, validate it interactively only in `/Applications/Kodi Build Manager Test.app`, portable `-p`. Then STOP for Eric/ChatGPT visual UX review before using that foundation to build the remaining major workflows. Review visual feel, spacing, readability, focus treatment, remote navigation, long Help content, Settings terminology, Estuary consistency, and whether it feels like a finished Kodi add-on rather than a developer harness. BM-UI-001 completion is not automatic visual-design approval.
+
+Carry forward Backup Pro UX principles as guidance, not copied implementation: persistent terminal results after all required work finishes; one canonical owned Build Library; human-readable labels consistent across workflows, Settings and Help; descriptive truthful stages rather than fake percentages; distinct valid warnings and actual failures; comprehensive task-organized Help. A notification supplements but never replaces an unacknowledged final result.
 
 ### Validation tools and retired framework work
 

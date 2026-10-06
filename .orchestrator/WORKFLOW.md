@@ -168,6 +168,8 @@ Do not create autonomous work between messages.
 
 ## Current milestone
 
-The current outcome remains macOS Beta Qualification. Use the seven exit items in `BUILD_MANAGER_PROJECT_PLAN.md` as the finish line.
+The current outcome remains macOS Beta Qualification. Use the eight exit items in `BUILD_MANAGER_PROJECT_PLAN.md` as the finish line.
 
-Once those exit items are credibly satisfied, stop. Do not turn remaining optional ai-supervisor/framework work into a condition for finishing the hobby project.
+Backend qualification alone does not satisfy product beta readiness. Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions. Preserve accepted backend evidence. BM-UI-001 must pass focused tests and interactive portable Test.app validation, then STOP for Eric/ChatGPT visual UX review before remaining major workflow implementation. See the project plan and approved UI design for the review criteria.
+
+Once all eight exit items are credibly satisfied, stop. Do not turn remaining optional ai-supervisor/framework work into a condition for finishing the hobby project.

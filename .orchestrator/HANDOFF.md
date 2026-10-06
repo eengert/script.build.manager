@@ -16,9 +16,11 @@ The previous Relay-v1 scheduled automation has been disabled.
 
 ## Current milestone
 
-The current outcome remains **Build Manager macOS Beta Qualification**. Use the seven exit items in `BUILD_MANAGER_PROJECT_PLAN.md` as the finish line.
+The current outcome remains **Build Manager macOS Beta Qualification**. Use the eight exit items in `BUILD_MANAGER_PROJECT_PLAN.md` as the finish line.
 
 Do not turn unfinished ai-supervisor provenance, planner, trusted-action pinning, Relay-v1, or framework cleanup into Build Manager prerequisites.
+
+Backend qualification alone does not satisfy product beta readiness. Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions. Accepted backend criteria 1-7 remain complete; item 8 remains unimplemented/unqualified.
 
 ## Current product candidate
 
@@ -139,16 +141,11 @@ Do not assume historical ai-supervisor named actions/brokers exist. If a require
 
 ## Smallest next manual step
 
-Start with a **read-only manual reconciliation** of the product candidate in the Codex or Claude endpoint the prompt names (their product trees are identical; `agent/beta-recovery` is the historical reference) and the current beta exit checklist.
+**BM-UI-001 native-dialog foundation is complete and portable-Test.app validated.** The rejected custom full-screen WindowXML shell was removed. The accepted foundation uses native Kodi dialogs: the six-item Build Manager main menu, H01-H10 Help via native selection/text dialogs, and direct native Settings with focus restored to Settings on return. Focused UI tests passed and no backend mutation occurred.
 
-The first new Codex/Claude task should answer, from current Git and repository tooling:
+Eric/ChatGPT visual acceptance of the foundation remains pending; item 8 is not accepted. The next bounded step is therefore visual/product review of the native-dialog foundation and screenshots. Do not begin Create Build, Install Build, Update / Repair, or backend gaps G1-G6 until that review explicitly authorizes the next implementation task.
 
-1. Is the reviewed BM 0.0.15 product candidate still byte-identical to the accepted snapshot (compare the endpoint's product tree outside `.agent/**` with `agent/beta-recovery` and the reviewed 0.0.15 commit above)?
-2. Which macOS Beta Qualification exit items remain genuinely unproven?
-3. What is the smallest safe path to stage/identify the reviewed candidate in the portable Test.app **without depending on retired ai-supervisor infrastructure**?
-4. Does the repository already contain a safe host-side/manual staging/auth helper; if not, what minimal helper is actually required?
-
-That task should not change product source. It should produce a concrete manual qualification sequence, then return to ChatGPT for the next bounded prompt.
+The approved backend baseline remains `4a02b833178f5cb29e2b596985f1a8641ed3fa25`; accepted backend qualification evidence remains intact. BM-UI-001 adds frontend product changes above that baseline and is not yet a complete beta frontend.
 
 ## Historical files
 
