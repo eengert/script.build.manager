@@ -1,3 +1,40 @@
+# BM-UI-002C-G3-POLICY-BINDING — PASS (offline; independent narrow re-review pending)
+
+## Scope / identity
+- Beta exit item 8: remove only the demonstrated stored-resolution/current-policy trust blocker in Plan and Status.
+- Branch agent/codex; start 44ae1ef624ca610f6a2c36f1914bbcaf2a4ab1ac; product commit c3eb3bfbfc6de5de0c204d501f9f4ed5797b005c.
+- Clean expected baseline confirmed; dcd6fb correction is an ancestor. Active-worker pointer read directly: codex. Agent Handoff status command intentionally not invoked because it fetches; no switch/fetch/push.
+
+## Reproductions
+- Baseline shared binder, with canonical-valid prior fallback manifest, same frozen graph, exact package restored, selected exact-only policy: Plan CHANGES_READY, review issued, validate CURRENT; actual installer restoration rejects.
+- Baseline Status: old repository version CURRENT under original policy and still CURRENT after exact-only selection; without resolution CHANGES_NEEDED. Corrected Status INCOMPLETE.
+- Baseline confirmation used the original binder loaded from git show 44ae1ef into an isolated test process; no source rollback or network.
+
+## Changes / parity
+- resources/lib/build_identity.py: required keyword-only current policies; canonical frozen_resolution.install_plan_fingerprint comparison before records return; stable RESOLUTION_PLAN_MISMATCH. Existing build/source/record/terminal/resulting identity validation retained.
+- resources/lib/plan.py and status.py: pass selected resolved-build policies at the shared boundary before all projections. Mismatch uses existing RESOLUTION_IDENTITY_MISMATCH/unchecked semantics; no ReviewIdentity, no CURRENT validation, no Healthy status.
+- Fingerprint equality alone does not authenticate record eligibility. Shared binder also uses existing effective_policy and policy properties to reject forbidden fallback, wrong policy repository ID, and forbidden Skip, even with a matching digest. No second policy engine.
+- Installer restoration compares the same plan identity, repository_fallback_allowed, record repository vs trusted summary repository, skip_allowed and terminal states. Binding now covers current-policy eligibility. Trusted-package availability/integrity and dependency feasibility remain existing installer/G3 artifact checks; Status is a read-only installed-state comparison, not an install feasibility claim. Installer unchanged; no demonstrated remaining current-policy eligibility gap.
+- tests/test_plan.py and test_status.py: changed-policy fallback/Skip, original-policy restoration, matching exact resolution, matching-digest ineligible records, installer rejection, staleness, profile equality and secret-blind output. Legacy Status resolution fixtures now carry canonical digests and explicit allowing policies; Plan defaults remain exact.
+- docs/BUILD_PLAN.md and BUILD_STATUS.md: explain canonical binding and safe failures. Pre-0.2.0 SQLite '#' finding preserved unchanged.
+
+## Validation
+- Focused: python3 -m unittest tests.test_plan tests.test_status tests.test_plan_ui tests.test_status_ui tests.test_frozen_resolution tests.test_frozen_install — 331 PASS (9.609s).
+- Full: python3 -m unittest discover -s tests -t . — 2696 PASS (130.287s).
+- Initial restricted full run: 8 failures / 11 errors in existing process-listing/loopback fixtures due to sandbox denial. Unchanged source rerun with local test permissions passed.
+- Previous G3 regressions PASS: unresolved INSTALL_CURRENT, stored dependencies/order and actual installer parity, broken managed add-ons/staleness, private UNAVAILABLE precedence, strict ReviewIdentity constructor, mutator/network tripwires and privacy.
+- Existing identity failure coverage PASS: wrong build/source, changed captured version/enabled state, malformed manifests and unfinished states.
+- git diff --check PASS; hashes of all seven tested source/test/documentation files verified unchanged after passing full suite.
+- Plan/Status tripwires and disposable profile-tree equality prove zero mutation/network; secrets/identity digests excluded from UI/log output. Full-suite local loopback fixtures are disposable test infrastructure only.
+- Temporary logs: /private/tmp/bm-policy-focused.log, bm-policy-full.log, bm-policy-full-permitted.log; tested-source hashes bm-policy-tested-source.json.
+
+## Not done / next
+- Offline evidence only; no Test.app launch, normal Kodi/profile/device access, install/download/fetch, enable/disable, skin/config/private/updater/transaction mutation, capture/retry/recovery, Apply/G6, Build Library/Create Build, icon/package/repository changes, push/publication or matrix merge.
+- Exact next step: independent narrow re-review of this correction against 44ae1ef. No implementation follow-on authorized. No human input needed to review; independent acceptance remains pending.
+- Model observed only as GPT-6 session identity; exact tier/effort unavailable. Usage start/end/delta unavailable per current endpoint instruction; no estimates.
+
+## Retained prior endpoint record
+
 # BM-UI-002C-G3-CORRECTION — PASS (offline; independent re-review pending)
 
 ## Scope / provenance

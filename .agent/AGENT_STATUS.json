@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-002C-G3-CORRECTION: PASS offline; independent correction-delta re-review pending",
+  "task": "BM-UI-002C-G3-POLICY-BINDING: PASS offline; independent narrow re-review pending",
   "reason": null,
-  "last_commit": "dcd6fb0436be54dd1807cbde4adfe80241f01d2b",
+  "last_commit": "c3eb3bfbfc6de5de0c204d501f9f4ed5797b005c",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T18:26:41Z",
+  "updated_at": "2026-10-06T19:03:54.909560Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
