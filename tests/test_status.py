@@ -20,6 +20,9 @@ from resources.lib import (
     frozen_install, private_overlay, private_resource, redlight_resource, repository,
     restart_coordinator, resume, session, skin, startup, transaction, update_guard,
 )
+from resources.lib.build_identity import (
+    IdentityCode, IdentityMismatch, bind_resolutions,
+)
 from resources.lib.config import (
     ConfigBackendError, ConfigFile, ConfigSetting, ConfigSettingType, ConfigTargetKind,
     ConfigurationBackend, ConfigurationInspector, EffectiveConfiguration,
@@ -32,8 +35,9 @@ from resources.lib.frozen import (
 from resources.lib.frozen_install import (
     FrozenInstallPhase, FrozenInstallStore, FrozenInstallTransaction,
 )
+from resources.lib import frozen_resolution
 from resources.lib.frozen_resolution import (
-    InstallResolution, InstallResolutionRecord, ResolutionState,
+    FrozenInstallResolutionManifest, InstallResolution, InstallResolutionRecord, ResolutionState,
 )
 from resources.lib.inspector import KodiBackend, KodiStateInspector
 from resources.lib.manifest import (
@@ -375,6 +379,21 @@ class Harness:
         kwargs.setdefault("software_manifest_path", "/frozen.json" if self.with_frozen else "")
         return StatusTarget("/build.json", "d", **kwargs)
 
+    def resolution(self, *records, **overrides):
+        """A valid install-resolution manifest bound to this build and its frozen graph."""
+        records = tuple(sorted(records, key=lambda record: record.addon_id))
+        values = dict(
+            build_id=self.desired.build.id,
+            source_software_fingerprint=self.frozen.fingerprint(),
+            install_plan_fingerprint="c" * 64,
+            records=records)
+        if "resulting_software_fingerprint" not in overrides:
+            values["resulting_software_fingerprint"] = (
+                frozen_resolution._resolved_fingerprint_from_records(
+                    self.frozen.fingerprint(), records))
+        values.update(overrides)
+        return FrozenInstallResolutionManifest(**values)
+
     def service(self, **overrides):
         return BuildStatusService(self.owners(**overrides))
 
@@ -624,7 +643,7 @@ class CurrentAndDrift(StatusBase):
         del h.kodi.addons[MODULE]
         skip = InstallResolutionRecord(MODULE, "2.0.0", InstallResolution.SKIPPED,
                                        ResolutionState.SKIPPED)
-        status = h.check(install_resolutions=(skip,))
+        status = h.check(install_resolution=h.resolution(skip))
         self.assertNotIn(MODULE, {i.addon_id for i in status.software.items})
         self.assertEqual(status.overall, OverallStatus.CURRENT)
         h = self.current()
@@ -633,7 +652,7 @@ class CurrentAndDrift(StatusBase):
             MODULE, "2.0.0", InstallResolution.REPOSITORY_CURRENT, ResolutionState.INSTALLED,
             repository_id="repository.demo", resolved_version="2.0.1",
             artifact_sha256="b" * 64, artifact_size=10)
-        self.assertEqual(h.check(install_resolutions=(fallback,)).overall, OverallStatus.CURRENT)
+        self.assertEqual(h.check(install_resolution=h.resolution(fallback)).overall, OverallStatus.CURRENT)
 
     def test_incomplete_capture_node_is_uncheckable_not_current(self):
         h = self.current()
@@ -1233,19 +1252,23 @@ class IndependentReviewRegressions(StatusBase):
         self.assertEqual(status.gaps, (CheckGap.NOTHING_TO_COMPARE,))
 
     def test_an_incomplete_frozen_capture_is_not_a_whole_build(self):
-        for capture, records, expected in (
-                (CaptureStatus.INCOMPLETE_PROVENANCE, (), AreaLevel.UNAVAILABLE),
-                (CaptureStatus.INCOMPLETE_ARTIFACT, (), AreaLevel.UNAVAILABLE),
-                (CaptureStatus.INCOMPLETE_PROVENANCE, "skip", AreaLevel.UNAVAILABLE),
-                (CaptureStatus.INCOMPLETE_ARTIFACT, "skip", AreaLevel.CURRENT)):
-            with self.subTest(capture=capture, records=bool(records)):
-                h = self.current()
-                h.frozen = replace(h.frozen, capture_status=capture)
+        gap = "plugin.video.gap"
+        for capture, skipped, expected in (
+                (CaptureStatus.INCOMPLETE_PROVENANCE, False, AreaLevel.UNAVAILABLE),
+                (CaptureStatus.INCOMPLETE_ARTIFACT, False, AreaLevel.UNAVAILABLE),
+                (CaptureStatus.INCOMPLETE_PROVENANCE, True, AreaLevel.UNAVAILABLE),
+                (CaptureStatus.INCOMPLETE_ARTIFACT, True, AreaLevel.CURRENT)):
+            with self.subTest(capture=capture, skipped=skipped):
+                h = Harness(self)
+                h.frozen = replace(frozen_manifest(extra=(
+                    _node(gap, "1.0", status=CaptureStatus.INCOMPLETE_ARTIFACT),)),
+                    capture_status=capture)
+                h.kodi.addons[gap] = ("1.0", True)
+                h.save_overlay()
                 extra = {}
-                if records:
-                    extra["install_resolutions"] = (InstallResolutionRecord(
-                        "script.module.optional", "1.0", InstallResolution.SKIPPED,
-                        ResolutionState.SKIPPED),)
+                if skipped:
+                    extra["install_resolution"] = h.resolution(InstallResolutionRecord(
+                        gap, "1.0", InstallResolution.SKIPPED, ResolutionState.SKIPPED))
                 status = h.check(**extra)
                 self.assertEqual(status.software.level, expected)
                 if expected is AreaLevel.UNAVAILABLE:
@@ -1301,7 +1324,7 @@ class IndependentReviewRegressions(StatusBase):
         h.deps = NeedsModule(dict(h.kodi.addons))
         skip = InstallResolutionRecord(MODULE, "2.0.0", InstallResolution.SKIPPED,
                                        ResolutionState.SKIPPED)
-        status = h.check(install_resolutions=(skip,))
+        status = h.check(install_resolution=h.resolution(skip))
         self.assertNotIn(MODULE, {i.addon_id for i in status.software.items})
         self.assertEqual(status.overall, OverallStatus.CURRENT)
 
@@ -1355,18 +1378,6 @@ class IndependentReviewRegressions(StatusBase):
         h.desired = replace(h.desired, config=replace(
             h.desired.config, private_settings=(), structured_private_resources=()))
         self.assertEqual(h.check().private.level, AreaLevel.UNAVAILABLE)
-
-    def test_target_resolutions_must_be_terminal_and_unique(self):
-        selected = InstallResolutionRecord(
-            MODULE, "2.0.0", InstallResolution.REPOSITORY_CURRENT, ResolutionState.SELECTED,
-            repository_id="repository.demo")
-        skipped = InstallResolutionRecord(MODULE, "2.0.0", InstallResolution.SKIPPED,
-                                          ResolutionState.SKIPPED)
-        with self.assertRaises(ValueError):
-            StatusTarget("/b.json", "d", install_resolutions=(selected,))
-        with self.assertRaises(ValueError):
-            StatusTarget("/b.json", "d", install_resolutions=(skipped, skipped))
-        StatusTarget("/b.json", "d", install_resolutions=(skipped,))
 
     def test_markup_and_format_characters_cannot_reach_a_dialog_through_a_name(self):
         h = self.current()
@@ -1522,3 +1533,212 @@ class RedLightStatusProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# -- BM-UI-002C correction 1: the frozen graph must belong to the selected build ----------
+
+class FrozenBuildIdentity(StatusBase):
+    def other_build(self, h):
+        """Build B's frozen manifest (same graph, so the saved private data still fits it)."""
+        h.frozen = replace(h.frozen, build_id="another-build")
+
+    def test_16_frozen_manifest_for_another_build_is_never_current(self):
+        h = self.current()
+        self.other_build(h)
+        status = h.check()
+        self.assertNotEqual(status.overall, OverallStatus.CURRENT)
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertIn(CheckGap.BUILD_IDENTITY_MISMATCH, status.gaps)
+        self.assertTrue(status.build_selected)
+
+    def test_the_mismatched_graph_is_not_used_for_software_or_private_verification(self):
+        h = self.current()
+        # Build B's graph describes an extra add-on that is genuinely missing, and
+        # the saved overlay is bound to that very graph: using either would report
+        # drift or verify private data against the wrong build.
+        h.frozen = replace(frozen_manifest(extra=(_node("plugin.video.other", "1.0"),)),
+                           build_id="another-build")
+        h.save_overlay()
+        loaded = []
+        with h.instrumented():
+            service = h.service(overlay_loader=lambda overlay_id: loaded.append(overlay_id))
+            status = service.check(h.target())
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertEqual(status.software.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual(status.software.items, ())
+        self.assertEqual(status.private.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual(status.private.items, ())
+        self.assertEqual(loaded, [])
+        for area in StatusArea:
+            self.assertEqual(status.area(area), AreaLevel.UNAVAILABLE, area)
+
+    def test_the_mismatch_result_and_log_carry_only_a_stable_code(self):
+        h = self.current()
+        self.other_build(h)
+        status = h.check()
+        text = safe_text(status) + "\n".join(h.logs)
+        self.assertNotIn("another-build", text)
+        self.assertNotIn(BUILD_ID, text)
+        self.assertNotIn(h.frozen.fingerprint(), text)
+        self.assertNotIn("/frozen.json", text)
+        self.assertIn("frozen_build_mismatch", "\n".join(h.logs))
+        self.assertEqual(status.gaps, (CheckGap.BUILD_IDENTITY_MISMATCH,))
+
+    def test_matching_build_ids_keep_the_normal_result(self):
+        h = self.current()
+        self.assertEqual(h.frozen.build_id, h.desired.build.id)
+        status = h.check()
+        self.assertEqual(status.overall, OverallStatus.CURRENT)
+        self.assertEqual(status.gaps, ())
+        del h.kodi.addons[MODULE]
+        self.assertEqual(h.check().overall, OverallStatus.CHANGES_NEEDED)
+
+    def test_a_mismatch_is_reported_even_when_the_state_has_drift(self):
+        h = self.current()
+        self.other_build(h)
+        del h.kodi.addons[MODULE]
+        status = h.check()
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertEqual(status.software.items, ())
+
+
+# -- BM-UI-002C correction 2: recorded install outcomes must be bound to this build ---------
+
+class ResolutionIdentity(StatusBase):
+    def skip(self, addon_id=MODULE, version="2.0.0", **kwargs):
+        return InstallResolutionRecord(addon_id, version, InstallResolution.SKIPPED,
+                                       ResolutionState.SKIPPED, **kwargs)
+
+    def missing_module(self):
+        h = self.current()
+        del h.kodi.addons[MODULE]               # a genuinely missing managed add-on
+        return h
+
+    def code(self, h, resolution):
+        with self.assertRaises(IdentityMismatch) as caught:
+            bind_resolutions(BUILD_ID, h.frozen, resolution)
+        return caught.exception.code
+
+    def assertRejected(self, h, resolution, code):
+        self.assertEqual(self.code(h, resolution), code)
+        status = h.check(install_resolution=resolution)
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertEqual(status.gaps, (CheckGap.RESOLUTION_IDENTITY_MISMATCH,))
+        for area in StatusArea:
+            self.assertEqual(status.area(area), AreaLevel.UNAVAILABLE, area)
+        self.assertEqual(status.software.items, ())
+        self.assertIn(code.value, "\n".join(h.logs))
+
+    def test_03_unbound_raw_records_cannot_be_trusted(self):
+        h = self.missing_module()
+        for raw in ((self.skip(),), [self.skip()], self.skip(), {MODULE: self.skip()}):
+            with self.assertRaises(ValueError):
+                StatusTarget("/b.json", "d", install_resolution=raw)
+        with self.assertRaises(TypeError):
+            StatusTarget("/b.json", "d", install_resolutions=(self.skip(),))
+        self.assertEqual(self.code(h, (self.skip(),)), IdentityCode.RESOLUTION_INVALID)
+        self.assertFalse(hasattr(StatusTarget("/b.json", "d"), "install_resolutions"))
+        # the record is real, but nothing binds it to this build
+        self.assertEqual(h.check().overall, OverallStatus.CHANGES_NEEDED)
+
+    def test_04_resolution_for_another_build_is_rejected(self):
+        h = self.missing_module()
+        self.assertRejected(h, h.resolution(self.skip(), build_id="another-build"),
+                            IdentityCode.RESOLUTION_BUILD_MISMATCH)
+
+    def test_05_resolution_for_another_software_graph_is_rejected(self):
+        h = self.missing_module()
+        other = "d" * 64
+        resolution = h.resolution(
+            self.skip(), source_software_fingerprint=other,
+            resulting_software_fingerprint=frozen_resolution._resolved_fingerprint_from_records(
+                other, (self.skip(),)))
+        self.assertRejected(h, resolution, IdentityCode.RESOLUTION_SOURCE_MISMATCH)
+
+    def test_06_resolution_record_with_another_captured_version_is_rejected(self):
+        h = self.missing_module()
+        self.assertRejected(h, h.resolution(self.skip(version="9.9.9")),
+                            IdentityCode.RESOLUTION_RECORD_MISMATCH)
+
+    def test_07_resolution_record_with_another_enabled_state_is_rejected(self):
+        h = self.missing_module()
+        self.assertRejected(h, h.resolution(self.skip(desired_enabled=False)),
+                            IdentityCode.RESOLUTION_RECORD_MISMATCH)
+
+    def test_07b_resolution_record_for_an_unmanaged_node_is_rejected(self):
+        h = self.missing_module()
+        for addon_id, version in (("plugin.video.not-in-graph", "1.0"),
+                                  ("xbmc.python", "3.0.1"),                # system dependency
+                                  ("script.module.optional", "1.0")):      # absent optional
+            with self.subTest(addon_id):
+                self.assertRejected(h, h.resolution(self.skip(addon_id, version)),
+                                    IdentityCode.RESOLUTION_RECORD_MISMATCH)
+
+    def test_07c_internally_inconsistent_resolution_is_rejected(self):
+        h = self.missing_module()
+        tampered = h.resolution(self.skip(), resulting_software_fingerprint="e" * 64)
+        self.assertRejected(h, tampered, IdentityCode.RESOLUTION_INVALID)
+        duplicate = h.resolution(self.skip(), self.skip())
+        self.assertRejected(h, duplicate, IdentityCode.RESOLUTION_INVALID)
+        unfinished = InstallResolutionRecord(
+            MODULE, "2.0.0", InstallResolution.REPOSITORY_CURRENT, ResolutionState.SELECTED,
+            repository_id="repository.demo")
+        self.assertRejected(
+            h, h.resolution(unfinished, resulting_software_fingerprint="f" * 64),
+            IdentityCode.RESOLUTION_INVALID)
+        self.assertRejected(h, h.resolution(self.skip(), install_plan_fingerprint="not-a-digest"),
+                            IdentityCode.RESOLUTION_INVALID)
+
+    def test_07d_resolution_without_a_frozen_manifest_cannot_be_bound(self):
+        h = self.missing_module()
+        resolution = h.resolution(self.skip())
+        with self.assertRaises(IdentityMismatch) as caught:
+            bind_resolutions(BUILD_ID, None, resolution)
+        self.assertEqual(caught.exception.code, IdentityCode.RESOLUTION_WITHOUT_SOFTWARE)
+        status = h.check(h.target(software_manifest_path="", install_resolution=resolution))
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertEqual(status.gaps, (CheckGap.RESOLUTION_IDENTITY_MISMATCH,))
+
+    def test_08_valid_matching_resolution_manifest_works(self):
+        h = self.missing_module()
+        resolution = h.resolution(self.skip())
+        records = bind_resolutions(BUILD_ID, h.frozen, resolution)
+        self.assertEqual([r.addon_id for r in records], [MODULE])
+        status = h.check(install_resolution=resolution)
+        self.assertEqual(status.overall, OverallStatus.CURRENT)
+        self.assertNotIn(MODULE, {i.addon_id for i in status.software.items})
+        h = self.current()
+        h.kodi.addons[MODULE] = ("2.0.1", True)
+        fallback = InstallResolutionRecord(
+            MODULE, "2.0.0", InstallResolution.REPOSITORY_CURRENT, ResolutionState.INSTALLED,
+            repository_id="repository.demo", resolved_version="2.0.1",
+            artifact_sha256="b" * 64, artifact_size=10)
+        self.assertEqual(h.check(install_resolution=h.resolution(fallback)).overall,
+                         OverallStatus.CURRENT)
+        self.assertEqual(h.check().overall, OverallStatus.CHANGES_NEEDED)   # no record: wrong version
+
+    def test_09_an_accepted_skip_only_counts_when_the_binding_is_valid(self):
+        h = self.missing_module()
+        self.assertEqual(h.check().overall, OverallStatus.CHANGES_NEEDED)
+        valid = h.check(install_resolution=h.resolution(self.skip()))
+        foreign = h.check(install_resolution=h.resolution(self.skip(), build_id="another-build"))
+        self.assertEqual(valid.overall, OverallStatus.CURRENT)
+        self.assertEqual(foreign.overall, OverallStatus.INCOMPLETE)
+        self.assertNotEqual(foreign.overall, OverallStatus.CURRENT)
+
+    def test_a_valid_resolution_still_does_not_hide_a_mismatched_frozen_build(self):
+        h = self.missing_module()
+        resolution = h.resolution(self.skip())
+        h.frozen = replace(h.frozen, build_id="another-build")
+        status = h.check(install_resolution=resolution)
+        self.assertEqual(status.gaps, (CheckGap.BUILD_IDENTITY_MISMATCH,))
+
+    def test_rejection_output_has_no_identity_material(self):
+        h = self.missing_module()
+        resolution = h.resolution(self.skip(), build_id="another-build")
+        status = h.check(install_resolution=resolution)
+        text = safe_text(status) + "\n".join(h.logs)
+        for forbidden in ("another-build", resolution.resolution_fingerprint,
+                          resolution.source_software_fingerprint, resolution.install_plan_fingerprint,
+                          resolution.resulting_software_fingerprint):
+            self.assertNotIn(forbidden, text)

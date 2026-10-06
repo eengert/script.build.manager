@@ -1,3 +1,29 @@
+# BM-UI-002C frozen plan / review identity and read-only preview (G3) — PASS (offline); not live-proven
+
+Start HEAD 958b5d7 on agent/claude; result is one bounded local commit (SHA in the report). No push, publication, Test.app, normal Kodi or device access.
+
+Corrections to G2 first (each reproduced against the unfixed code, then fixed):
+1. Frozen manifest `build_id` is now checked against the resolved build before any frozen data is used (`resources/lib/build_identity.py`, used by status and plan). Pre-fix, config build A + frozen build B reported CURRENT. Now: INCOMPLETE, every area UNAVAILABLE, nothing verified against the mismatched graph (software or private), gap `BUILD_IDENTITY_MISMATCH` (enum only).
+2. `StatusTarget` no longer accepts raw `InstallResolutionRecord` tuples. It takes the installer's own `FrozenInstallResolutionManifest`, trusted only if bound to this build ID and this frozen manifest fingerprint, internally valid, and every record matches a managed node (captured version, desired enabled). Pre-fix, a foreign SKIPPED record flipped a missing add-on from changes_needed to current. Now: INCOMPLETE with `RESOLUTION_IDENTITY_MISMATCH`.
+
+G3: `resources/lib/plan_model.py` (stdlib-only public contract; structurally cannot claim ready while blocked/undecided/unchecked), `plan.py` (`PlanTarget`, `BuildPlanService.preview()/validate()`, `ReadOnlyArtifactStore`, `plan_provider`), `ui/plan_view.py` + `NativeDialogs.review()` (native dialogs only; no Apply; Close is the viewer's own), strings 32541-32542 and 32600-32693. Precedence BLOCKED > INCOMPLETE > DECISION_REQUIRED > CHANGES_READY > NO_CHANGES. Software rows come from `summarize_frozen_recoverability`/`validate_frozen_install_plan`; skin and unsaved managed add-ons from the pure BM-006 `plan_changes` over the post-software state; settings/private/operation from the status read-only views (owners not installed yet count as "will be written", so a fresh device gets a ready plan). G6 cases (different installed version, broken install) and the other conditions the installer only hits after the updater guard is engaged are BLOCKED before apply. Review identity: 11 separately hashed components, opaque, issued only for CHANGES_READY; `validate()` returns CURRENT / STALE(components) / UNVERIFIABLE. Docs: docs/BUILD_PLAN.md (new), BUILD_STATUS.md, TESTING.md, changelog. addon.xml untouched (nothing user-visible: no route reaches the review yet).
+
+Validation: full suite 2671 tests PASS (was 2554). New/changed: `test_plan.py` 81, `test_plan_ui.py` 20, `test_status.py` 93 (was 77), plus import-policy updates. Tripwires on every mutating or file-creating owner plus network and repository fetch, profile-tree equality, sentinel secrets through plan/repr/identity/view/logs.
+
+NOT live-proven: no Test.app run. Kodi-API reads (`Addons.GetAddonDetails` broken flag, settings, JSON-RPC) and Estuary rendering are unit-tested only. No applied-build association or Build Library exists, so Install / Update-Repair routes still show their no-build pages and nothing in the product calls the review yet. No independent review was run for G3 (G2's found 15 issues; one is recommended before acceptance).
+
+Decisions worth a second look: (a) an installed add-on whose saved package is missing and has no recorded resolution is BLOCKED (skip fails and a repository fallback ends in NEEDS_ATTENTION in the current installer); (b) a recorded skip whose add-on is now present is BLOCKED (`_finalize` fails it); (c) a build manages an add-on it did not save -> BLOCKED (`ADDON_NOT_IN_SAVED_SOFTWARE`); (d) a repository fallback is not previewable offline (version/dependencies known only after download) and is refused while pre-activation holds exist; (e) preview/validate read and validate every saved package like the installer, so big builds are slow; (f) no production display-name resolver, so IDs show when no name is known.
+
+REQUIRED before 0.2.0 (not fixed here, by instruction): `redlight_resource.py` verify()/apply() SQLite URIs are not percent-quoted; a `#` in the profile path truncates the URI and can create a stray file. Not an issue for the authorized Test.app or normal Kodi paths (no `#`). The read-only status probe already quotes its URI. Recorded in docs/BUILD_PLAN.md and docs/BUILD_STATUS.md.
+
+Out of scope — noticed: updater-policy residue is still not read by status/plan; `.orchestrator/HANDOFF.md` is ChatGPT-maintained and was not edited (it should record G2/G3, the SQLite `#` hardening item and this task's usage summary).
+
+Usage row appended to `.agent/USAGE_HISTORY.md` (claude-sonnet-5-5, effort max; 5h 3%->32%, weekly 91%->96%, account-wide).
+
+Next bounded task (suggested): independent review of G3, then the Build Library / selected-build association that gives Install and Update-Repair a real target, with G6 (version replacement / broken repair) as its own gated task. Human input: Eric/ChatGPT review. STOP here.
+
+## Retained prior endpoint record
+
 # BM-UI-002B read-only Build Status (G2) — PASS (offline); not live-proven
 
 Done: one production read-only status API (`resources/lib/status.py`, public contract `status_model.py`) wired to the main-menu Build Status route (native page: Overall / Add-ons / Skin / Settings / Private settings + Check Again / Help / Close; Help opens H05). Fresh read per call; never raises; never reports CURRENT while an applicable area is unchecked. Overall precedence: NEEDS_ATTENTION > RESTART_REQUIRED > CHANGES_NEEDED > INCOMPLETE > CURRENT.

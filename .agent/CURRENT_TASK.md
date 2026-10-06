@@ -1,3 +1,11 @@
+# BM-UI-002C frozen plan / review identity and read-only preview (G3) — PASS (offline)
+
+Task: close two G2 identity gaps (frozen build ID, install-resolution binding), then build the read-only frozen-build plan/review contract with stale-plan validation and a native Review Changes view model. No Install/Update/Repair/G6, no apply, no Create.
+Result: see HANDOFF.md. 2671 tests pass; not live-proven; no Test.app run; local commit only, no push/publication.
+Next: independent review, then Build Library / selected-build association (separate tasks).
+
+## Retained prior endpoint record
+
 # BM-UI-002B read-only Build Status (G2) — PASS (offline)
 
 Task: truthful read-only Build Status interface beneath the main-menu route. G2 only: no G3, Create, Install or Update/Repair.

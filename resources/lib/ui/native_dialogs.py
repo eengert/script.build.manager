@@ -1,10 +1,12 @@
 """Skin-owned native dialogs. No route starts a product operation; Build Status
-calls only an injected read-only provider."""
+and Review Changes call only an injected read-only provider."""
 from resources.lib.ui.controller import ROUTES, TITLE_IDS, CONTEXT_HELP, Route
 from resources.lib.ui.help_content import SECTIONS
 from resources.lib.ui.models import PageModel, Semantic, SEMANTIC_LABELS
+from resources.lib.ui.plan_view import CHOICE_LABEL, ReviewViewModel
+from resources.lib.ui.plan_view import Text as PlanText
 from resources.lib.ui.status_view import (
-    S_CHECK_AGAIN, S_CLOSE, S_ROW, StatusViewModel,
+    S_CHECK_AGAIN, S_CHECKED_AT, S_CLOSE, S_ROW, StatusViewModel,
 )
 
 class NativeDialogs:
@@ -107,6 +109,43 @@ class NativeDialogs:
             else:
                 return
             selection = selected
+
+    # -- Review Changes (read-only) -------------------------------------------------------
+
+    def check_plan(self, plan_provider, choices):
+        """One fresh read-only plan; any failure becomes the not-checked view."""
+        try:
+            return ReviewViewModel.from_plan(plan_provider(dict(choices)))
+        except Exception:
+            return ReviewViewModel.unavailable()
+
+    def review_body(self, model):
+        parts = []
+        for section in model.sections:
+            if section.heading is not None:
+                parts.append(self.render(section.heading))
+            parts.extend('\u2022 ' + self.render(line) for line in section.lines)
+            parts.append('')
+        if model.check_time:
+            parts.append(self.render(PlanText(S_CHECKED_AT, name=model.check_time)))
+        return '\n'.join(parts).strip()
+
+    def review(self, plan_provider):
+        """Review Changes. It shows what would change and what is in the way, asks
+        for any missing-package choice, and offers nothing that starts work: the
+        page ends with the native viewer's own close action."""
+        choices = {}
+        while True:
+            model = self.check_plan(plan_provider, choices)
+            if not model.decisions or model.decisions[0].addon_id in choices:
+                break           # nothing to decide, or a provider that ignores a choice already made
+            prompt = model.decisions[0]
+            selected = self.select(self.render(prompt.heading),
+                [self.text(CHOICE_LABEL[c]) for c in prompt.choices], preselect=0)
+            if not 0 <= selected < len(prompt.choices):
+                return          # Back: nothing was decided and nothing was started
+            choices[prompt.addon_id] = prompt.choices[selected]
+        self.viewer(self.render(model.title), self.review_body(model))
 
     def run(self):
         while True:

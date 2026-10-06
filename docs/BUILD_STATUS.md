@@ -54,8 +54,21 @@ anything else. A selected build that lists nothing to compare is `INCOMPLETE`
 
 A `StatusTarget` names the desired build: the resolved build manifest and device
 profile (skin, supported settings, private data, managed add-on states), an
-optional frozen software graph (exact versions), and optional recorded install
-resolutions (an accepted skip, or a repository fallback version). With no
+optional frozen software graph (exact versions), and an optional recorded install
+resolution (an accepted skip, or a repository fallback version) given as the
+installer's own `FrozenInstallResolutionManifest`.
+
+The three inputs must describe one build before any of them is used
+(`resources/lib/build_identity.py`, BM-UI-002C). The frozen manifest's build ID
+must equal the resolved build's ID, and a recorded resolution is trusted only if
+its build ID and source software fingerprint match this build and this frozen
+manifest, it is internally valid, and every record names a managed node of that
+frozen graph with the same captured version and desired enabled state. Raw
+record tuples are not accepted: individual records carry no build identity.
+Anything else makes the whole comparison target invalid. Nothing is checked
+against it, every area is `UNAVAILABLE`, the overall result is `INCOMPLETE`, and
+the gap is the stable code `BUILD_IDENTITY_MISMATCH` or
+`RESOLUTION_IDENTITY_MISMATCH` (never a path, ID or fingerprint). With no
 target the build-dependent areas are `UNAVAILABLE` (`NO_BUILD_SELECTED`) and the
 overall result is `INCOMPLETE`; pending-restart and needs-attention state is
 still reported. Build Manager records no applied-build association yet, so the

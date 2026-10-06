@@ -92,6 +92,8 @@ class CheckGap(str, Enum):
     NO_BUILD_SELECTED = "no_build_selected"
     NOTHING_TO_COMPARE = "nothing_to_compare"
     BUILD_UNREADABLE = "build_unreadable"
+    BUILD_IDENTITY_MISMATCH = "build_identity_mismatch"          # frozen graph is another build's
+    RESOLUTION_IDENTITY_MISMATCH = "resolution_identity_mismatch"  # install record is not bound to this build
     KODI_STATE_UNAVAILABLE = "kodi_state_unavailable"
     SOFTWARE_UNAVAILABLE = "software_unavailable"
     CONFIGURATION_UNAVAILABLE = "configuration_unavailable"

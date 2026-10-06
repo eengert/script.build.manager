@@ -37,6 +37,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
+from resources.lib.build_identity import (
+    IdentityCode,
+    IdentityMismatch,
+    bind_resolutions,
+    check_frozen_identity,
+)
 from resources.lib.config import (
     ConfigPackageLoader,
     ConfigSetting,
@@ -58,9 +64,9 @@ from resources.lib.frozen_install import (
     FrozenInstallStore,
 )
 from resources.lib.frozen_resolution import (
+    FrozenInstallResolutionManifest,
     InstallResolution,
     InstallResolutionRecord,
-    ResolutionState,
 )
 from resources.lib.inspector import KodiRuntimeBackend, KodiState, KodiStateInspector
 from resources.lib.manifest import load_manifest_file
@@ -128,15 +134,21 @@ class StatusTarget:
     ``configuration_manifest_path`` plus ``device_profile_id`` select the
     resolved build manifest (skin, settings, private data, managed add-on
     states). ``software_manifest_path`` is the optional frozen software graph
-    carrying exact versions. ``install_resolutions`` are the recorded outcomes
-    of an earlier install (an accepted skip or a repository fallback version);
-    they refine what "current" means for those add-ons and decide nothing.
+    carrying exact versions. ``install_resolution`` is the recorded outcome of
+    an earlier install (an accepted skip or a repository fallback version); it
+    refines what "current" means for those add-ons and decides nothing.
+
+    The resolution is the installer's own ``FrozenInstallResolutionManifest``
+    because only it carries the build ID and source software fingerprint that
+    prove it belongs to this build. Individual records carry neither, so raw
+    record tuples are not accepted. The service verifies the binding
+    (``resources.lib.build_identity``) before trusting any of it.
     """
 
     configuration_manifest_path: str
     device_profile_id: str
     software_manifest_path: str = ""
-    install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
+    install_resolution: Optional[FrozenInstallResolutionManifest] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration_manifest_path, str) or not self.configuration_manifest_path:
@@ -145,15 +157,10 @@ class StatusTarget:
             raise ValueError("device_profile_id must be a non-empty string")
         if not isinstance(self.software_manifest_path, str):
             raise ValueError("software_manifest_path must be a string")
-        if not isinstance(self.install_resolutions, tuple) or any(
-            not isinstance(item, InstallResolutionRecord) for item in self.install_resolutions
+        if self.install_resolution is not None and not isinstance(
+            self.install_resolution, FrozenInstallResolutionManifest
         ):
-            raise ValueError("install_resolutions must be a tuple of resolution records")
-        if len({item.addon_id for item in self.install_resolutions}) != len(self.install_resolutions):
-            raise ValueError("install_resolutions must not contain duplicate add-on IDs")
-        if any(item.state not in (ResolutionState.INSTALLED, ResolutionState.SKIPPED)
-               for item in self.install_resolutions):
-            raise ValueError("install_resolutions must contain only completed resolutions")
+            raise ValueError("install_resolution must be an install resolution manifest")
 
 
 @dataclass(frozen=True)
@@ -257,6 +264,10 @@ def _project_resolutions(
     return replace(desired, addons=tuple(
         addon for addon in desired.addons if addon.addon_id not in skipped
     )), skipped
+
+
+project_resolutions = _project_resolutions
+clean_name = _clean_name
 
 
 def _unavailable_areas() -> Tuple[SoftwareStatus, SkinStatus, ConfigurationStatus, PrivateStatus]:
@@ -437,11 +448,30 @@ class BuildStatusService:
         try:
             manifest = o.manifest_loader(target.configuration_manifest_path)
             desired = o.resolver(manifest, target.device_profile_id)
-            desired, skipped = _project_resolutions(desired, target.install_resolutions)
             frozen = (
                 o.frozen_manifest_loader(target.software_manifest_path)
                 if target.software_manifest_path else None
             )
+        except Exception as exc:
+            self._log_failure("build", exc)
+            gaps.append(CheckGap.BUILD_UNREADABLE)
+            return _unavailable_areas()
+
+        # The inputs must describe one build before any of them is used. A frozen
+        # graph or install record that does not belong to the selected build makes
+        # the whole comparison target invalid: nothing is verified against it.
+        try:
+            if frozen is not None:
+                check_frozen_identity(desired.build.id, frozen)
+            records = bind_resolutions(desired.build.id, frozen, target.install_resolution)
+            desired, skipped = _project_resolutions(desired, records)
+        except IdentityMismatch as exc:
+            self._log("Build Status check rejected the selected build's inputs (%s)" % exc.code.value)
+            gaps.append(
+                CheckGap.BUILD_IDENTITY_MISMATCH if exc.code is IdentityCode.FROZEN_BUILD_MISMATCH
+                else CheckGap.RESOLUTION_IDENTITY_MISMATCH
+            )
+            return _unavailable_areas()
         except Exception as exc:
             self._log_failure("build", exc)
             gaps.append(CheckGap.BUILD_UNREADABLE)
@@ -462,7 +492,7 @@ class BuildStatusService:
             )
         else:
             software, skin, configuration = self._check_kodi_areas(
-                target, desired, frozen, skipped, actual, gaps
+                records, desired, frozen, skipped, actual, gaps
             )
         try:
             private = self._check_private(desired, frozen, gaps)
@@ -472,7 +502,7 @@ class BuildStatusService:
             private = PrivateStatus(AreaLevel.UNAVAILABLE)
         return software, skin, configuration, private
 
-    def _check_kodi_areas(self, target, desired, frozen, skipped, actual: KodiState, gaps):
+    def _check_kodi_areas(self, records, desired, frozen, skipped, actual: KodiState, gaps):
         o = self._o
         actual_map = {addon.addon_id: addon for addon in actual.addons}
 
@@ -483,15 +513,14 @@ class BuildStatusService:
             # An incomplete capture does not describe a whole build. The installer
             # accepts one only when recorded resolutions covered its gaps.
             if frozen.capture_status is not CaptureStatus.COMPLETE and not (
-                frozen.capture_status is CaptureStatus.INCOMPLETE_ARTIFACT
-                and target.install_resolutions
+                frozen.capture_status is CaptureStatus.INCOMPLETE_ARTIFACT and records
             ):
                 software_unchecked = True
-            records = {record.addon_id: record for record in target.install_resolutions}
+            resolved = {record.addon_id: record for record in records}
             for node in frozen.addons:
                 if node.system or node.is_absent_optional_dependency or node.addon_id in skipped:
                     continue
-                record = records.get(node.addon_id)
+                record = resolved.get(node.addon_id)
                 version = (record.resolved_version if record is not None else "") or node.version
                 enabled = record.desired_enabled if record is not None else node.desired_enabled
                 installed = actual_map.get(node.addon_id)
@@ -641,6 +670,29 @@ class BuildStatusService:
     # -- private data ---------------------------------------------------------
 
     def _check_private(self, desired: ResolvedBuild, frozen, gaps: List[CheckGap]) -> PrivateStatus:
+        return self._inspect_private(desired, frozen, gaps)[0]
+
+    def inspect_private(
+        self, desired: ResolvedBuild, frozen, gaps: List[CheckGap],
+        pending_owners: frozenset = frozenset(),
+    ) -> Tuple[PrivateStatus, str]:
+        """Private-data status plus the overlay's secret-blind fingerprint (or "").
+
+        ``pending_owners`` names add-ons that are not installed yet. Their
+        private data cannot be inspected, and applying it is certain, so it
+        counts as "changes needed" instead of "unavailable". Status itself never
+        passes any: an owner that is missing there is a gap, not a plan.
+        """
+        return self._inspect_private(desired, frozen, gaps, pending_owners)
+
+    def inspect_operation(self, gaps: List[CheckGap]) -> OperationStatus:
+        """Durable restart / needs-attention state, read without locks or creation."""
+        return self._operation(gaps)
+
+    def _inspect_private(
+        self, desired: ResolvedBuild, frozen, gaps: List[CheckGap],
+        pending: frozenset = frozenset(),
+    ) -> Tuple[PrivateStatus, str]:
         o = self._o
         config = desired.config
         setting_declarations = config.private_settings if config is not None else ()
@@ -652,10 +704,10 @@ class BuildStatusService:
             or any(item.required for item in resource_declarations)
         )
         if reference is None and not setting_declarations and not resource_declarations:
-            return PrivateStatus(AreaLevel.NOT_APPLICABLE)
+            return PrivateStatus(AreaLevel.NOT_APPLICABLE), ""
         if reference is None:
             return self._private_unavailable(CheckGap.PRIVATE_DATA_MISSING, gaps) if any_required \
-                else PrivateStatus(AreaLevel.NOT_APPLICABLE)
+                else (PrivateStatus(AreaLevel.NOT_APPLICABLE), "")
         if reference.type != "local_file" or not (setting_declarations or resource_declarations):
             # Same conditions under which applying the overlay refuses to start.
             return self._private_unavailable(CheckGap.PRIVATE_DATA_UNUSABLE, gaps)
@@ -663,7 +715,7 @@ class BuildStatusService:
             overlay = o.overlay_loader(reference.overlay_id)
         except PrivateOverlayMissingError:
             return self._private_unavailable(CheckGap.PRIVATE_DATA_MISSING, gaps) if any_required \
-                else PrivateStatus(AreaLevel.NOT_APPLICABLE)
+                else (PrivateStatus(AreaLevel.NOT_APPLICABLE), "")
         except Exception as exc:
             self._log_failure("private-load", exc)
             return self._private_unavailable(CheckGap.PRIVATE_DATA_UNUSABLE, gaps)
@@ -682,21 +734,27 @@ class BuildStatusService:
 
         items: List[PrivateItem] = []
         if overlay.entries:
-            settings = tuple(
-                ConfigSetting(
-                    addon_id=entry.addon_id, key=entry.key, setting_type=entry.setting_type,
-                    value=entry.value, package_id="private-overlay",
-                    target_kind=entry.target_kind,
+            live = tuple(entry for entry in overlay.entries if entry.addon_id not in pending)
+            waiting = len(live) != len(overlay.entries)
+            level = AreaLevel.CURRENT
+            if live:
+                settings = tuple(
+                    ConfigSetting(
+                        addon_id=entry.addon_id, key=entry.key, setting_type=entry.setting_type,
+                        value=entry.value, package_id="private-overlay",
+                        target_kind=entry.target_kind,
+                    )
+                    for entry in live
                 )
-                for entry in overlay.entries
-            )
-            result = o.configuration_inspector.inspect_settings(
-                settings, effective_identity=overlay.fingerprint
-            )
-            level = (
-                AreaLevel.CHANGES_NEEDED if result.differing
-                else AreaLevel.UNAVAILABLE if result.unreadable else AreaLevel.CURRENT
-            )
+                result = o.configuration_inspector.inspect_settings(
+                    settings, effective_identity=overlay.fingerprint
+                )
+                level = (
+                    AreaLevel.CHANGES_NEEDED if result.differing
+                    else AreaLevel.UNAVAILABLE if result.unreadable else AreaLevel.CURRENT
+                )
+            if waiting and level is not AreaLevel.UNAVAILABLE:
+                level = AreaLevel.CHANGES_NEEDED
             items.append(PrivateItem("private-settings", PrivateItemKind.SETTINGS, level))
         if resource_declarations:
             levels = {
@@ -704,21 +762,30 @@ class BuildStatusService:
                 ResourceCheckStatus.CHANGES_NEEDED: AreaLevel.CHANGES_NEEDED,
                 ResourceCheckStatus.UNAVAILABLE: AreaLevel.UNAVAILABLE,
             }
-            for check in o.resource_manager().inspect(resource_declarations, overlay.resources):
-                items.append(PrivateItem(
-                    check.resource_id, PrivateItemKind.RESOURCE, levels[check.status]
-                ))
+            live_declarations = tuple(
+                item for item in resource_declarations if item.owner_addon_id not in pending
+            )
+            for item in resource_declarations:
+                if item.owner_addon_id in pending:
+                    items.append(PrivateItem(item.resource_id, PrivateItemKind.RESOURCE,
+                                             AreaLevel.CHANGES_NEEDED))
+            if live_declarations:
+                for check in o.resource_manager().inspect(live_declarations, overlay.resources):
+                    items.append(PrivateItem(
+                        check.resource_id, PrivateItemKind.RESOURCE, levels[check.status]
+                    ))
         if any(item.level is AreaLevel.CHANGES_NEEDED for item in items):
-            return PrivateStatus(AreaLevel.CHANGES_NEEDED, tuple(items))
+            return PrivateStatus(AreaLevel.CHANGES_NEEDED, tuple(items)), overlay.fingerprint
         if any(item.level is AreaLevel.UNAVAILABLE for item in items):
             gaps.append(CheckGap.PRIVATE_UNAVAILABLE)
-            return PrivateStatus(AreaLevel.UNAVAILABLE, tuple(items))
-        return PrivateStatus(AreaLevel.CURRENT if items else AreaLevel.NOT_APPLICABLE, tuple(items))
+            return PrivateStatus(AreaLevel.UNAVAILABLE, tuple(items)), overlay.fingerprint
+        return (PrivateStatus(AreaLevel.CURRENT if items else AreaLevel.NOT_APPLICABLE, tuple(items)),
+                overlay.fingerprint)
 
     @staticmethod
-    def _private_unavailable(gap: CheckGap, gaps: List[CheckGap]) -> PrivateStatus:
+    def _private_unavailable(gap: CheckGap, gaps: List[CheckGap]) -> Tuple[PrivateStatus, str]:
         gaps.append(gap)
-        return PrivateStatus(AreaLevel.UNAVAILABLE)
+        return PrivateStatus(AreaLevel.UNAVAILABLE), ""
 
     # -- logging ----------------------------------------------------------------
 

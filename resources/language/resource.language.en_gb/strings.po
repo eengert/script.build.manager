@@ -564,3 +564,211 @@ msgstr ""
 msgctxt "#32498"
 msgid "This build does not list anything to compare."
 msgstr ""
+
+msgctxt "#32541"
+msgid "This build's saved software list belongs to a different build, so nothing was checked against it."
+msgstr ""
+
+msgctxt "#32542"
+msgid "The saved install record does not belong to this build, so nothing was checked against it."
+msgstr ""
+
+msgctxt "#32600"
+msgid "Review Changes"
+msgstr ""
+
+msgctxt "#32601"
+msgid "Build Manager can't continue yet"
+msgstr ""
+
+msgctxt "#32602"
+msgid "Nothing needs to change"
+msgstr ""
+
+msgctxt "#32603"
+msgid "A choice is needed"
+msgstr ""
+
+msgctxt "#32604"
+msgid "Build Manager couldn't check everything"
+msgstr ""
+
+msgctxt "#32610"
+msgid "Add-ons"
+msgstr ""
+
+msgctxt "#32611"
+msgid "Skin"
+msgstr ""
+
+msgctxt "#32612"
+msgid "Settings"
+msgstr ""
+
+msgctxt "#32613"
+msgid "Private settings"
+msgstr ""
+
+msgctxt "#32614"
+msgid "Restart"
+msgstr ""
+
+msgctxt "#32620"
+msgid "Install %s"
+msgstr ""
+
+msgctxt "#32621"
+msgid "Install the current version of %s (it may differ from the saved version)"
+msgstr ""
+
+msgctxt "#32622"
+msgid "Enable %s"
+msgstr ""
+
+msgctxt "#32623"
+msgid "Disable %s"
+msgstr ""
+
+msgctxt "#32624"
+msgid "Skip %s (you chose not to install it)"
+msgstr ""
+
+msgctxt "#32625"
+msgid "%s needs a choice"
+msgstr ""
+
+msgctxt "#32626"
+msgid "%d add-ons are already up to date"
+msgstr ""
+
+msgctxt "#32627"
+msgid "1 add-on is already up to date"
+msgstr ""
+
+msgctxt "#32628"
+msgid "%s could not be checked"
+msgstr ""
+
+msgctxt "#32629"
+msgid "Everything already matches this build."
+msgstr ""
+
+msgctxt "#32630"
+msgid "Change to %s"
+msgstr ""
+
+msgctxt "#32631"
+msgid "%s is already active"
+msgstr ""
+
+msgctxt "#32632"
+msgid "Build Manager could not tell which skin is active."
+msgstr ""
+
+msgctxt "#32640"
+msgid "%d settings will be updated"
+msgstr ""
+
+msgctxt "#32641"
+msgid "1 setting will be updated"
+msgstr ""
+
+msgctxt "#32642"
+msgid "Settings are up to date"
+msgstr ""
+
+msgctxt "#32643"
+msgid "Settings could not be checked"
+msgstr ""
+
+msgctxt "#32650"
+msgid "Settings will be restored"
+msgstr ""
+
+msgctxt "#32651"
+msgid "Private settings are up to date"
+msgstr ""
+
+msgctxt "#32652"
+msgid "Private settings could not be checked"
+msgstr ""
+
+msgctxt "#32660"
+msgid "Kodi will need to be closed and reopened"
+msgstr ""
+
+msgctxt "#32670"
+msgid "%s has a different version installed. Build Manager can't safely replace it yet."
+msgstr ""
+
+msgctxt "#32671"
+msgid "%s is installed but isn't working properly. Build Manager can't safely repair it yet."
+msgstr ""
+
+msgctxt "#32672"
+msgid "The saved copy of %s is missing, and there is no safe way to get it."
+msgstr ""
+
+msgctxt "#32673"
+msgid "%s is part of this build, but it was not saved with it."
+msgstr ""
+
+msgctxt "#32674"
+msgid "%s was skipped, but it is installed on this device. Build Manager can't remove it."
+msgstr ""
+
+msgctxt "#32675"
+msgid "That choice is not available for %s."
+msgstr ""
+
+msgctxt "#32676"
+msgid "Skipping or replacing %s would break something this build needs."
+msgstr ""
+
+msgctxt "#32677"
+msgid "You chose to cancel because of %s."
+msgstr ""
+
+msgctxt "#32678"
+msgid "This build's saved software can't be installed safely."
+msgstr ""
+
+msgctxt "#32679"
+msgid "This build's settings contradict each other."
+msgstr ""
+
+msgctxt "#32680"
+msgid "The private settings this build needs are not on this device."
+msgstr ""
+
+msgctxt "#32681"
+msgid "The private settings on this device can't be used with this build."
+msgstr ""
+
+msgctxt "#32682"
+msgid "An earlier change is waiting for Kodi to be restarted."
+msgstr ""
+
+msgctxt "#32683"
+msgid "An earlier change did not finish."
+msgstr ""
+
+msgctxt "#32684"
+msgid "Something this build needs can't be done safely yet."
+msgstr ""
+
+msgctxt "#32690"
+msgid "The saved copy of %s is missing"
+msgstr ""
+
+msgctxt "#32691"
+msgid "Install the current version"
+msgstr ""
+
+msgctxt "#32692"
+msgid "Skip this add-on"
+msgstr ""
+
+msgctxt "#32693"
+msgid "Cancel"
+msgstr ""
