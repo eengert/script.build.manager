@@ -508,6 +508,11 @@ class StructuredPrivateResourceAdapter:
         return self.verify(declaration, overlay)
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration) -> tuple[StructuredPrivateResourceOverlay, StructuredResourceResult]:
+        """Read declared values without modifying managed resource files or sidecars.
+
+        Adapters may use internal disposable scratch, cleaned before returning.
+        Private values and scratch paths must stay out of public diagnostics.
+        """
         raise NotImplementedError
 
     def apply(self, declaration: StructuredPrivateResourceDeclaration, overlay: StructuredPrivateResourceOverlay) -> StructuredResourceResult:
@@ -534,6 +539,7 @@ class StructuredPrivateResourceManager:
         return adapter
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration):
+        """Delegate the generic non-mutating managed-resource capture contract."""
         return self._adapter(declaration).capture(declaration)
 
     def initialize(

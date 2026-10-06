@@ -14,7 +14,11 @@ public package ID, and optional existing private setting/resource declarations
 with an overlay ID. Invalid IDs, duplicate/overlapping targets, noncanonical
 file destinations, and known private public-package targets are rejected with
 `INVALID_CREATE_REQUEST` before backend reads. No output/source/profile path
-is accepted in this request.
+is accepted in this request. Skin keys share the runtime adapter's lowercase
+fallback collision identity (`CustomID`/`customid`, `CUSTOMID`/`customid`, and
+`HomeSwitcher.Foo`/`homeswitcher.foo`). Public/public, private/private and
+public/private aliases are rejected before any getter runs. Ordinary add-on
+setting keys retain case-sensitive identities.
 
 Every public setting is a `PublicSettingTarget` with owner ID, key,
 `SettingTargetKind` and `ConfigSettingType`. Add-on values support the existing
@@ -82,6 +86,18 @@ as optional absence. Required failures discard the entire overlay and bundle.
 Red Light capture preserves its existing quiesced/held/disabled and initialized
 resource prerequisites. If they are unavailable, this engine reports incomplete;
 it does not establish a hold, disable an owner, initialize a DB, or reload it.
+Structured capture must not alter managed resource files or sidecars. Red Light
+reads bounded main DB and optional WAL bytes through no-follow descriptors for
+all ancestors and files. Two reads and inode/size/mtime/ctime checks establish
+one stable snapshot; source and lifecycle checks bracket the temporary query.
+A changed/replaced source fails safely as incomplete, with no prepared outputs.
+SQLite queries only a private disposable DB/WAL copy, so committed WAL values
+are current and any SQLite SHM writes occur only in scratch. Live SHM is never
+copied. Scratch is removed before return, including failure paths, and its paths
+and private content stay outside all public material. Each DB/WAL file is
+bounded to 64 MiB; one deterministic attempt is made without retries. Status
+inspection retains its immutable/no-sidecar, uncheckpointed-WAL fail-closed
+behavior; apply and verify behavior are unchanged.
 The existing pre-0.2.0 SQLite URI `#` hardening finding remains unchanged.
 
 ## Result and registration boundary

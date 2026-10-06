@@ -14,6 +14,8 @@ import os
 import re
 import sqlite3
 import threading
+import tempfile
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -41,6 +43,7 @@ from resources.lib.installed_addon_source import (
     VerifiedInstalledAddonSource,
 )
 from resources.lib.verified_addon_imports import verified_addon_import_context
+from resources.lib.readonly_io import read_regular_file
 
 
 REDLIGHT_ADDON_ID = "plugin.video.redlight"
@@ -749,6 +752,89 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 connection.close()
             raise PrivateResourceCompatibilityError("Red Light settings database cannot be read safely") from exc
 
+    @staticmethod
+    def _snapshot_signature(info):
+        return (info.st_dev, info.st_ino, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns)
+
+    @contextmanager
+    def _snapshot_source_directory(self):
+        """Anchor every ancestor without following symlinks, including profile."""
+        with ExitStack() as stack:
+            fd = os.open(self.database_path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            stack.callback(os.close, fd)
+            identities = [(os.fstat(fd).st_dev, os.fstat(fd).st_ino)]
+            for part in self.database_path.parent.parts[1:]:
+                fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                stack.callback(os.close, fd)
+                info = os.fstat(fd)
+                identities.append((info.st_dev, info.st_ino))
+            yield fd, tuple(identities)
+
+    def _snapshot_state(self, directory):
+        result = []
+        for name in ("settings.db", "settings.db-wal"):
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                result.append(self._snapshot_signature(info))
+            except FileNotFoundError:
+                result.append(None)
+        return tuple(result)
+
+    def _read_snapshot_files(self, directory):
+        # Bounded regular-file reads reject symlinks, special files and growth.
+        return tuple(read_regular_file(name, dir_fd=directory, limit=64 * 1024 * 1024)
+                     for name in ("settings.db", "settings.db-wal"))
+
+    @contextmanager
+    def _capture_snapshot(self):
+        """Query only a disposable copy of stable, current committed DB/WAL bytes.
+
+        One attempt, two complete reads, and before/between/after inode/time/size
+        checks detect changes or replacement. Ancestor identities are rechecked
+        through fresh no-follow descriptors. SHM is never read or copied.
+        """
+        self._validate_lifecycle()
+        connection = None
+        try:
+            with self._snapshot_source_directory() as (directory, ancestors):
+                before = self._snapshot_state(directory)
+                data = self._read_snapshot_files(directory)
+                middle = self._snapshot_state(directory)
+                again = self._read_snapshot_files(directory)
+                after = self._snapshot_state(directory)
+                with self._snapshot_source_directory() as (current, current_ancestors):
+                    current_state = self._snapshot_state(current)
+                if (before != middle or before != after or before != current_state
+                        or ancestors != current_ancestors or data != again or data[0] is None):
+                    raise PrivateResourceCompatibilityError("Red Light capture snapshot is unstable")
+            def require_unchanged():
+                with self._snapshot_source_directory() as (current, current_ancestors):
+                    if (ancestors != current_ancestors
+                            or before != self._snapshot_state(current)):
+                        raise PrivateResourceCompatibilityError("Red Light capture snapshot is unstable")
+                self._validate_lifecycle()
+
+            require_unchanged()
+            with tempfile.TemporaryDirectory(prefix="bm-redlight-capture-") as temporary:
+                copy = Path(temporary) / "settings.db"
+                copy.write_bytes(data[0])
+                if data[1] is not None:
+                    Path(str(copy) + "-wal").write_bytes(data[1])
+                try:
+                    connection = sqlite3.connect(copy.as_uri() + "?mode=ro", uri=True, timeout=0.5)
+                    self._validate_schema(connection)
+                    if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                        raise PrivateResourceCompatibilityError("Red Light capture snapshot is inconsistent")
+                    require_unchanged()
+                    yield connection
+                    require_unchanged()
+                finally:
+                    if connection is not None:
+                        connection.close()
+        except (OSError, sqlite3.Error):
+            raise PrivateResourceCompatibilityError("Red Light capture snapshot cannot be read safely") from None
+
     def _verify_overlay_values(
         self,
         declaration: StructuredPrivateResourceDeclaration,
@@ -824,8 +910,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration):
         self._validate_declaration(declaration)
-        connection = self._open_read_only()
-        try:
+        with self._capture_snapshot() as connection:
             values = []
             results = []
             field_map = declaration.field_map
@@ -851,8 +936,6 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                 REDLIGHT_RESOURCE_ID, "captured", True, tuple(results),
                 "captured in memory; runtime reload remains explicit",
             )
-        finally:
-            connection.close()
 
     def apply(self, declaration: StructuredPrivateResourceDeclaration, overlay: StructuredPrivateResourceOverlay):
         self._validate_declaration(declaration)

@@ -24,6 +24,15 @@ from resources.lib.restart import (
 )
 
 
+def canonical_skin_setting_key(key: str) -> str:
+    """Collision identity for Kodi's requested-key/lowercase fallback aliases.
+
+    Preserve the requested spelling for the first RPC; all spellings that can
+    fall back to the same lowercase key must share one capture identity.
+    """
+    return key.lower()
+
+
 class SkinFailureCode(str, Enum):
     """Allowlisted, value-free reasons for a failed skin activation."""
 
@@ -624,7 +633,7 @@ class KodiRuntimeSkinSettingsBackend:
         try:
             return self._rpc(method, request)
         except _SkinRpcError as exc:
-            lower = key.lower()
+            lower = canonical_skin_setting_key(key)
             if lower == key or exc.code != self._NOT_FOUND:
                 raise
             try:

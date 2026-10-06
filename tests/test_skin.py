@@ -480,6 +480,18 @@ class TestKodiRuntimeSkinSettingsBackend(unittest.TestCase):
             "id": 1,
         }
 
+    def test_shared_skin_alias_identity_preserves_runtime_fallback(self):
+        from resources.lib.skin import canonical_skin_setting_key
+        for key, expected in (("CustomID", "customid"), ("CUSTOMID", "customid"),
+                              ("HomeSwitcher.Foo", "homeswitcher.foo")):
+            with self.subTest(key=key):
+                self.assertEqual(canonical_skin_setting_key(key), expected)
+                backend, xbmc = self._backend([self._missing(), {"result": {"value": "fixture"}}])
+                with patch.dict(sys.modules, {"xbmc": xbmc}):
+                    self.assertEqual(backend.get_setting("skin.foo", key, "string"), "fixture")
+                self.assertEqual([json.loads(call.args[0])["params"]["setting"] for call in
+                                  xbmc.executeJSONRPC.call_args_list], [key, expected])
+
     def test_bool_read_and_write_use_skin_jsonrpc_namespace(self):
         backend, xbmc = self._backend([
             {"jsonrpc": "2.0", "result": {"value": False}, "id": 1},

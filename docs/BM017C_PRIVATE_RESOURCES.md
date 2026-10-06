@@ -118,7 +118,15 @@ synthesize it. Red Light initialization must happen through Red Light's own
 normal lifecycle before a future application attempt. A schema mismatch or
 unknown version is `PRIVATE_RESOURCE_UNSUPPORTED`.
 
-The adapter uses a read-only SQLite connection for capture. Application uses a
+Every structured adapter's capture contract forbids modifications to managed
+resource files, including sidecars; private values remain only in PrivateOverlay.
+Red Light capture validates quiesced/held/disabled/initialized prerequisites,
+then takes one bounded, no-follow, stability-checked main DB/WAL snapshot.
+SQLite reads only the internal disposable copy, preserving newest committed
+WAL values while any SHM activity remains beside that copy. Live SHM is neither
+copied nor opened; scratch is cleaned before return or failure. Replaced/changed
+sources fail closed. Status retains its separate immutable/no-sidecar probe and
+fails closed with uncheckpointed WAL. Application uses a
 bounded connection timeout, verifies WAL without changing it, starts
 `BEGIN IMMEDIATE`, updates only owned rows, reads each updated value back in
 the same transaction, and commits only after all owned fields verify. A lock

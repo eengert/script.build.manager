@@ -1,7 +1,8 @@
 """Read-only, explicitly owned Create Build capture (BM-UI-003B).
 
 Runtime dependencies are composed by trusted application code, never supplied
-as paths in the UI request. Only frozen capture may write ArtifactStore data.
+as paths in the UI request. Frozen capture may write ArtifactStore data;
+resource adapters may use disposable scratch.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind,
 from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayEntry, validate_private_overlay
 from resources.lib.private_resource import StructuredPrivateResourceDeclaration, PrivateResourceNotInitializedError
 from resources.lib.resolver import resolve_manifest
+from resources.lib.skin import canonical_skin_setting_key
 
 
 class CreateRequestError(ValueError):
@@ -242,7 +244,8 @@ def _validate_request(request):
         raise ValueError()
     if request.captures_private != bool(request.private_overlay_id):
         raise ValueError()
-    identities = [(t.target_kind.value, t.addon_id, t.key)
+    identities = [(t.target_kind.value, t.addon_id,
+                   canonical_skin_setting_key(t.key) if t.target_kind.value == "skin" else t.key)
                   for t in (*request.public_capture.settings, *request.private_settings)]
     if len(set(identities)) != len(identities):
         raise ValueError()

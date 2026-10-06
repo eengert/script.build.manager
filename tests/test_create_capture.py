@@ -252,6 +252,107 @@ class CreateCaptureTests(unittest.TestCase):
                     private_settings=(PrivateSettingDeclaration(ROOT, 'privateid', 'string'),), private_overlay_id='private-demo')
         self.assertEqual(self.config.reads, [])
 
+    def test_skin_alias_collisions_rejected_before_all_reads(self):
+        for first, second in (("CustomID", "customid"), ("customid", "CUSTOMID"),
+                              ("HomeSwitcher.Foo", "homeswitcher.foo")):
+            for group in ("overlap", "public", "private"):
+                with self.subTest(first=first, second=second, group=group):
+                    public = tuple(Target(SKIN, key, T.STRING, K.SKIN) for key in
+                                   ((first, second) if group == "public" else (first,) if group == "overlap" else ()))
+                    private = tuple(PrivateSettingDeclaration(SKIN, key, "string", target_kind=K.SKIN) for key in
+                                    ((first, second) if group == "private" else (second,) if group == "overlap" else ()))
+                    with patch.object(self.config, "get_skin_setting") as skin_get, \
+                         patch.object(self.config, "get_setting") as addon_get, \
+                         patch.object(self.engine, "inspect_state") as inspect, \
+                         self.assertRaisesRegex(CreateRequestError, "^INVALID_CREATE_REQUEST$"):
+                        replace(self.request, include_active_skin=True, public_capture=Spec(public),
+                                private_settings=private, private_overlay_id="private-demo" if private else "")
+                    skin_get.assert_not_called()
+                    addon_get.assert_not_called()
+                    inspect.assert_not_called()
+
+    def test_skin_alias_identity_uses_effective_target_kind(self):
+        from resources.lib.config import ConfigTargetKind
+        # These enums share the runtime target value. Validation must use that
+        # value too rather than enum object identity.
+        with self.assertRaises(CreateRequestError):
+            self.capture(include_active_skin=True,
+                public_capture=Spec((Target(SKIN, "CustomID", T.STRING, ConfigTargetKind.SKIN),)),
+                private_settings=(PrivateSettingDeclaration(SKIN, "customid", "string", target_kind=K.SKIN),),
+                private_overlay_id="private-demo")
+        self.assertEqual(self.config.reads, [])
+
+    def test_addon_case_distinct_public_and_private_groups(self):
+        self.config.values.update({(ROOT, "CustomID"): "one", (ROOT, "customid"): "two"})
+        public = self.capture(public_capture=Spec(tuple(Target(ROOT, key, T.STRING) for key in ("CustomID", "customid"))))
+        self.bundle(public)
+        private = self.capture(private_settings=tuple(PrivateSettingDeclaration(ROOT, key, "string") for key in
+                                                     ("CustomID", "customid")), private_overlay_id="private-demo")
+        self.bundle(private)
+        self.assertEqual(len(private.private_overlay.entries), 2)
+
+    def test_skin_unrelated_and_addon_case_distinct_semantics(self):
+        self.config.values.update({(SKIN, "CustomID"): "public", (SKIN, "otherid"): SECRET,
+                                   (ROOT, "CustomID"): "public", (ROOT, "customid"): SECRET})
+        for owner, kind, public_key, private_key in ((SKIN, K.SKIN, "CustomID", "otherid"),
+                                                   (ROOT, K.ADDON, "CustomID", "customid")):
+            result = self.capture(include_active_skin=True,
+                public_capture=Spec((Target(owner, public_key, T.STRING, kind),)),
+                private_settings=(PrivateSettingDeclaration(owner, private_key, "string", target_kind=kind),),
+                private_overlay_id="private-demo")
+            self.assert_public_surfaces_clean(result)
+            self.assertEqual(result.private_overlay.entries[0].value, SECRET)
+
+    def assert_public_surfaces_clean(self, result):
+        raw = self.bundle(result)
+        surfaces = [result.public_bundle.canonical_json, json.dumps(raw["packages"]),
+                    json.dumps(raw["manifest"]), json.dumps(raw["frozen"]), repr(result),
+                    str(result.safe_dict()), repr(result.private_overlay)]
+        library_root = self.base / ("privacy-library-" + str(len(list(self.base.glob("privacy-library-*")))))
+        library = BuildLibrary(library_root)
+        with result.public_bundle.registration_inputs() as inputs:
+            surfaces.extend(p.read_text() for path in inputs for p in
+                            ([Path(path)] if Path(path).is_file() else Path(path).rglob("*")) if p.is_file())
+            entry = library.register(*inputs)
+        surfaces.append((library_root / "builds" / (entry.entry_id + ".json")).read_text())
+        for surface in surfaces:
+            self.assertNotIn(SECRET, surface)
+
+    def test_real_skin_runtime_fallback_and_capture_alias_privacy(self):
+        from resources.lib.skin import KodiRuntimeSkinSettingsBackend
+        backend = KodiRuntimeSkinSettingsBackend()
+        xbmc = Mock()
+        xbmc.getSkinDir.return_value = SKIN
+        def rpc(payload):
+            key = json.loads(payload)["params"]["setting"]
+            return json.dumps({"error": {"code": -32602}} if key == "CustomID" else
+                              {"result": {"value": SECRET}})
+        xbmc.executeJSONRPC.side_effect = rpc
+        self.config.get_skin_setting = backend.get_setting
+        with patch.dict("sys.modules", {"xbmc": xbmc}), patch("logging.Logger._log") as log:
+            self.assertEqual(backend.get_setting(SKIN, "CustomID", T.STRING), SECRET)
+            self.assertEqual([json.loads(c.args[0])["params"]["setting"] for c in
+                              xbmc.executeJSONRPC.call_args_list], ["CustomID", "customid"])
+            xbmc.reset_mock()
+            with patch("resources.lib.create_capture.PreparedPublicBundle") as prepared, \
+                 patch("resources.lib.build_library.BuildLibrary.register") as register:
+                with self.assertRaises(CreateRequestError) as error:
+                    self.capture(include_active_skin=True,
+                        public_capture=Spec((Target(SKIN, "CustomID", T.STRING, K.SKIN),)),
+                        private_settings=(PrivateSettingDeclaration(SKIN, "customid", "string", target_kind=K.SKIN),),
+                        private_overlay_id="private-demo")
+                prepared.assert_not_called()
+                register.assert_not_called()
+                self.assertNotIn(SECRET, repr(error.exception))
+            xbmc.executeJSONRPC.assert_not_called()
+            log.assert_not_called()
+            result = self.capture(include_active_skin=True,
+                private_settings=(PrivateSettingDeclaration(SKIN, "customid", "string", target_kind=K.SKIN),),
+                private_overlay_id="private-demo")
+            self.assert_public_surfaces_clean(result)
+            self.assertEqual(result.private_overlay.entries[0].value, SECRET)
+            log.assert_not_called()
+
     def test_sensitive_public_surface_rejected(self):
         for spec in (Spec((Target(ROOT, 'password', T.STRING),)), Spec(files=('userdata/addon_data/plugin.video.redlight/settings.db',))):
             with self.assertRaises(CreateRequestError):
@@ -341,6 +442,185 @@ class CreateCaptureTests(unittest.TestCase):
         self.assertNotIn(SECRET, repr(result))
         self.assertFalse(log.called)
         self.assertEqual(adapter.database_path.read_bytes(), before)
+
+    def wal_fixture(self, *, shm=True):
+        import sqlite3
+        adapter = self.redlight()
+        db = sqlite3.connect(adapter.database_path)
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA wal_autocheckpoint=0")
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.execute("UPDATE settings SET setting_value=?", ("checkpointed-disposable-value",))
+        db.commit()
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.execute("UPDATE settings SET setting_value=?", (SECRET,))
+        db.commit()
+        self.addCleanup(db.close)
+        self.assertGreater(Path(str(adapter.database_path) + "-wal").stat().st_size, 0)
+        if not shm:
+            Path(str(adapter.database_path) + "-shm").unlink()
+        return adapter
+
+    @staticmethod
+    def live_database_state(adapter):
+        return tuple(p.read_bytes() if p.exists() else None for p in
+                     (Path(str(adapter.database_path) + suffix) for suffix in ("", "-wal", "-shm")))
+
+    def test_wal_current_capture_preserves_all_live_files_and_cleans_scratch(self):
+        for shm in (True, False):
+            with self.subTest(shm=shm):
+                # Separate fixtures to avoid two registered owners or library version conflicts.
+                case = CreateCaptureTests()
+                case.setUp()
+                try:
+                    adapter = case.wal_fixture(shm=shm)
+                    before = case.live_database_state(adapter)
+                    scratch = []
+                    original = tempfile.TemporaryDirectory
+                    def temporary(**kwargs):
+                        directory = original(**kwargs)
+                        scratch.append(Path(directory.name))
+                        return directory
+                    with patch("resources.lib.redlight_resource.tempfile.TemporaryDirectory", side_effect=temporary), \
+                         patch.object(adapter, "_open_read_only", side_effect=AssertionError("live SQLite")), \
+                         patch("logging.Logger._log") as log:
+                        result = case.capture()
+                    case.assertEqual(case.live_database_state(adapter), before)
+                    case.assertEqual(result.private_overlay.resources[0].values[0].value, SECRET)
+                    case.assert_public_surfaces_clean(result)
+                    case.assertTrue(scratch)
+                    case.assertTrue(all(not p.exists() for p in scratch))
+                    log.assert_not_called()
+                    # Status still fails closed on uncheckpointed WAL and touches nothing.
+                    from resources.lib.private_resource import PrivateResourceCompatibilityError
+                    with case.assertRaises(PrivateResourceCompatibilityError):
+                        adapter.inspect(case.request.private_resources[0], result.private_overlay.resources[0])
+                    case.assertEqual(case.live_database_state(adapter), before)
+                finally:
+                    case.doCleanups()
+
+    def test_unstable_snapshot_fails_incomplete_without_outputs(self):
+        adapter = self.wal_fixture()
+        original = adapter._read_snapshot_files
+        for mutation in ("content", "replacement", "wal_disappears", "ancestor"):
+            with self.subTest(mutation=mutation):
+                # Mutation of the disposable source emulates an external actor.
+                calls = []
+                restore = []
+                def read(directory):
+                    data = original(directory)
+                    calls.append(True)
+                    if len(calls) == 1:
+                        if mutation == "content":
+                            p = adapter.database_path
+                            data_mutated = bytearray(p.read_bytes()); data_mutated[-1] ^= 1
+                            restore.append((p, p.read_bytes()))
+                            p.write_bytes(data_mutated)
+                        elif mutation == "replacement":
+                            p = adapter.database_path
+                            other = p.with_name("replacement.db")
+                            other.write_bytes(p.read_bytes()); other.replace(p)
+                        elif mutation == "wal_disappears":
+                            p = Path(str(adapter.database_path) + "-wal")
+                            restore.append((p, p.read_bytes())); p.unlink()
+                        else:
+                            parent = adapter.database_path.parent
+                            moved = parent.with_name("moved-databases")
+                            parent.rename(moved); parent.mkdir()
+                            self.addCleanup(lambda: parent.rmdir())
+                            restore.append((parent, moved))
+                    return data
+                try:
+                    with patch.object(adapter, "_read_snapshot_files", side_effect=read), \
+                         patch("logging.Logger._log") as log:
+                        result = self.capture()
+                    self.assertEqual(result.status, S.INCOMPLETE)
+                    self.assertEqual(result.gaps, ("PRIVATE_RESOURCE_UNREADABLE",))
+                    self.assertIsNone(result.public_bundle)
+                    self.assertIsNone(result.private_overlay)
+                    self.assertNotIn(SECRET, repr(result))
+                    log.assert_not_called()
+                finally:
+                    for path, content in restore:
+                        if isinstance(content, Path):
+                            path.rmdir(); content.rename(path)
+                            self._cleanups.pop()
+                        else:
+                            path.write_bytes(content)
+
+    def test_source_change_during_temporary_query_fails_and_cleans(self):
+        adapter = self.redlight()
+        original = adapter._validate_schema
+        scratch = []
+        original_temporary = tempfile.TemporaryDirectory
+        def temporary(**kwargs):
+            directory = original_temporary(**kwargs); scratch.append(Path(directory.name)); return directory
+        def validate(connection):
+            original(connection)
+            adapter.database_path.touch()
+        with patch.object(adapter, "_validate_schema", side_effect=validate), \
+             patch("resources.lib.redlight_resource.tempfile.TemporaryDirectory", side_effect=temporary):
+            result = self.capture()
+        self.assertEqual(result.status, S.INCOMPLETE)
+        self.assertIsNone(result.public_bundle)
+        self.assertIsNone(result.private_overlay)
+        self.assertTrue(all(not p.exists() for p in scratch))
+
+    def test_snapshot_rejects_ancestor_symlink(self):
+        adapter = self.redlight()
+        parent = adapter.database_path.parent
+        moved = parent.with_name("moved-databases")
+        parent.rename(moved)
+        parent.symlink_to(moved, target_is_directory=True)
+        before = (moved / "settings.db").read_bytes()
+        try:
+            self.assertEqual(self.capture().status, S.INCOMPLETE)
+            self.assertEqual((moved / "settings.db").read_bytes(), before)
+        finally:
+            parent.unlink(); moved.rename(parent)
+
+    def test_snapshot_rejects_symlinks_special_files_and_oversize(self):
+        adapter = self.redlight()
+        for suffix in ("", "-wal"):
+            with self.subTest(suffix=suffix):
+                path = Path(str(adapter.database_path) + suffix)
+                saved = path.read_bytes() if path.exists() else None
+                target = self.base / "untouched.db"
+                target.write_bytes(b"untouched")
+                if path.exists(): path.unlink()
+                try:
+                    path.symlink_to(target)
+                    result = self.capture()
+                    self.assertEqual(result.status, S.INCOMPLETE)
+                    self.assertEqual(target.read_bytes(), b"untouched")
+                    path.unlink()
+                    import os
+                    os.mkfifo(path)
+                    self.assertEqual(self.capture().status, S.INCOMPLETE)
+                    path.unlink()
+                    with path.open("wb") as handle:
+                        handle.truncate(64 * 1024 * 1024 + 1)
+                    self.assertEqual(self.capture().status, S.INCOMPLETE)
+                finally:
+                    path.unlink()
+                    if saved is not None: path.write_bytes(saved)
+
+    def test_snapshot_sqlite_failure_cleans_scratch_and_redacts(self):
+        adapter = self.redlight()
+        before = self.live_database_state(adapter)
+        adapter.database_path.write_bytes(b"invalid database")
+        scratch = []
+        original = tempfile.TemporaryDirectory
+        def temporary(**kwargs):
+            directory = original(**kwargs); scratch.append(Path(directory.name)); return directory
+        with patch("resources.lib.redlight_resource.tempfile.TemporaryDirectory", side_effect=temporary):
+            result = self.capture()
+        self.assertEqual(result.status, S.INCOMPLETE)
+        self.assertIsNone(result.public_bundle)
+        self.assertTrue(scratch)
+        self.assertTrue(all(not p.exists() for p in scratch))
+        self.assertNotIn(SECRET, repr(result))
+        self.assertEqual(self.live_database_state(adapter), (b"invalid database", before[1], before[2]))
 
     def test_required_resource_absent_incomplete(self):
         self.redlight(present=False)
