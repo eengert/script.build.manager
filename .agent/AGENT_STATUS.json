@@ -1,12 +1,12 @@
 {
-  "active_agent": "claude",
+  "active_agent": "codex",
   "status": "idle",
   "task": "BM-UI-002C frozen plan/review identity and read-only preview (G3): PASS offline; not live-proven",
   "reason": null,
-  "last_commit": null,
+  "last_commit": "045935e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T17:35:00Z",
+  "updated_at": "2026-10-06T17:59:45Z",
   "previous_task_record": {
     "active_agent": "claude",
     "status": "idle",
