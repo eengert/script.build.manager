@@ -1,12 +1,12 @@
 {
-  "active_agent": "codex",
-  "status": "complete",
+  "active_agent": "claude",
+  "status": "idle",
   "task": "BM-UI-001 native-dialog correction: PASS; STOP for visual review",
-  "reason": "Portable final UI validated; beta item 8 pending Eric/ChatGPT visual acceptance; no next phase authorized",
-  "last_commit": "e24b3cd",
+  "reason": null,
+  "last_commit": "404f080",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T13:14:52.986044+00:00",
+  "updated_at": "2026-10-06T13:31:06Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "complete",
