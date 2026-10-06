@@ -94,7 +94,13 @@ production default target is `None` until Install records one.
   through `StructuredPrivateResourceManager.inspect`, which returns status only.
   Missing, unreadable, mismatched, or wrong-build private data, an unsupported
   overlay reference, or a store that cannot be inspected without touching it is
-  `UNAVAILABLE`, never `CURRENT`.
+  `UNAVAILABLE`, never `CURRENT`. Within the private area, unreadability
+  outranks drift: `UNAVAILABLE > CHANGES_NEEDED > CURRENT`. This applies both
+  to a mixed settings inspection (differing plus unreadable) and to the
+  aggregate of settings and structured resources. Available per-item statuses
+  are preserved; private values and exception text remain hidden. G3 cannot
+  issue a ready plan or review identity from mixed drift/unavailable results.
+  Overall Build Status precedence for other proven drift is unchanged.
 * **Restart / attention** — the restart transaction and frozen-install
   transaction are read with `read_snapshot()` (no lock, no directory or lock
   file created; writers replace records atomically). An awaiting-restart record

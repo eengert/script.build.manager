@@ -1177,6 +1177,28 @@ def _repository_package_required_dependencies(
     return tuple(sorted(set(dependencies)))
 
 
+def stored_repository_dependencies(store, record, plan, records, skipped) -> Tuple[str, ...]:
+    """Read an exact saved repository package and reconstruct installer semantics.
+
+    Deterministic read-only helper shared by restart restoration and plan preview.
+    No fetching, persistence, locks, runtime state, or Kodi mutation.
+    """
+    data = store.read_bytes(record.artifact_sha256)
+    metadata = store.get_metadata(record.artifact_sha256)
+    if (
+        metadata.addon_id != record.addon_id
+        or metadata.version != record.resolved_version
+        or metadata.sha256 != record.artifact_sha256
+        or metadata.size != record.artifact_size
+        or len(data) != record.artifact_size
+    ):
+        raise FrozenInstallValidationError("durable resolved artifact identity is invalid")
+    package = RepositoryPackage(
+        record.addon_id, record.repository_id, record.resolved_version, data
+    )
+    return _repository_package_required_dependencies(package, plan, records, skipped)
+
+
 @dataclass(frozen=True)
 class FrozenInstalledAddon:
     addon_id: str
@@ -2440,21 +2462,8 @@ class FrozenInstallCoordinator:
                         or record.state is not ResolutionState.INSTALLED
                     ):
                         raise FrozenInstallValidationError("durable repository resolution is inconsistent")
-                    data = self.artifact_store.read_bytes(record.artifact_sha256)
-                    metadata = self.artifact_store.get_metadata(record.artifact_sha256)
-                    if (
-                        metadata.addon_id != addon_id
-                        or metadata.version != record.resolved_version
-                        or metadata.sha256 != record.artifact_sha256
-                        or metadata.size != record.artifact_size
-                        or len(data) != record.artifact_size
-                    ):
-                        raise FrozenInstallValidationError("durable resolved artifact identity is invalid")
-                    package = RepositoryPackage(
-                        addon_id, record.repository_id, record.resolved_version, data
-                    )
-                    extra_dependencies[addon_id] = _repository_package_required_dependencies(
-                        package, plan, record_map, frozenset(skipped)
+                    extra_dependencies[addon_id] = stored_repository_dependencies(
+                        self.artifact_store, record, plan, record_map, frozenset(skipped)
                     )
                 elif record.resolution is InstallResolution.SKIPPED:
                     policy = effective_policy(addon_id, {item.addon_id: item for item in policies})

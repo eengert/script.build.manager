@@ -750,8 +750,8 @@ class BuildStatusService:
                     settings, effective_identity=overlay.fingerprint
                 )
                 level = (
-                    AreaLevel.CHANGES_NEEDED if result.differing
-                    else AreaLevel.UNAVAILABLE if result.unreadable else AreaLevel.CURRENT
+                    AreaLevel.UNAVAILABLE if result.unreadable
+                    else AreaLevel.CHANGES_NEEDED if result.differing else AreaLevel.CURRENT
                 )
             if waiting and level is not AreaLevel.UNAVAILABLE:
                 level = AreaLevel.CHANGES_NEEDED
@@ -774,11 +774,11 @@ class BuildStatusService:
                     items.append(PrivateItem(
                         check.resource_id, PrivateItemKind.RESOURCE, levels[check.status]
                     ))
-        if any(item.level is AreaLevel.CHANGES_NEEDED for item in items):
-            return PrivateStatus(AreaLevel.CHANGES_NEEDED, tuple(items)), overlay.fingerprint
         if any(item.level is AreaLevel.UNAVAILABLE for item in items):
             gaps.append(CheckGap.PRIVATE_UNAVAILABLE)
             return PrivateStatus(AreaLevel.UNAVAILABLE, tuple(items)), overlay.fingerprint
+        if any(item.level is AreaLevel.CHANGES_NEEDED for item in items):
+            return PrivateStatus(AreaLevel.CHANGES_NEEDED, tuple(items)), overlay.fingerprint
         return (PrivateStatus(AreaLevel.CURRENT if items else AreaLevel.NOT_APPLICABLE, tuple(items)),
                 overlay.fingerprint)
 

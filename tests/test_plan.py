@@ -42,6 +42,7 @@ from tests.test_status import (
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "repository.demo"
 EXTRA = "plugin.video.extra"
+LATE_DEPENDENCY = "script.module.z-late"
 SKIN_TYPE = "xbmc.gui.skin"
 REPO_TYPE = "xbmc.addon.repository"
 PLUGIN_TYPE = "xbmc.python.pluginsource"
@@ -434,10 +435,10 @@ class Decisions(PlanBase):
         self.assertEqual(row.choices, (DecisionChoice.INSTALL_CURRENT, DecisionChoice.CANCEL))
         self.assertIsNone(plan.review)
         chosen = h.plan(h.plan_target().with_choice(MODULE, DecisionChoice.INSTALL_CURRENT))
-        self.assertEqual(chosen.state, PlanState.CHANGES_READY)
+        self.assertEqual(chosen.state, PlanState.RESOLUTION_REQUIRED)
         self.assertEqual(self.row(chosen, MODULE).action, SoftwareAction.INSTALL_REPOSITORY)
         self.assertEqual(self.row(chosen, MODULE).version, "")      # only known after the download
-        self.assertIsNotNone(chosen.review)
+        self.assertIsNone(chosen.review)
 
     def test_20_permitted_skip_needs_a_decision_until_chosen(self):
         h = self.skippable_extra(with_resource=False)
@@ -463,9 +464,11 @@ class Decisions(PlanBase):
         # The same state with the other choice is a different plan with a different identity.
         fetch = h.plan(h.plan_target().with_choice(EXTRA, DecisionChoice.INSTALL_CURRENT))
         self.assertEqual(skip.state, PlanState.CHANGES_READY)
-        self.assertEqual(fetch.state, PlanState.CHANGES_READY)
-        self.assertNotEqual(skip.review, fetch.review)
-        self.assertIn(IdentityComponent.POLICY, fetch.review.changed_since(skip.review))
+        self.assertEqual(fetch.state, PlanState.RESOLUTION_REQUIRED)
+        self.assertIsNone(fetch.review)
+        check = h.validate(h.plan_target().with_choice(EXTRA, DecisionChoice.INSTALL_CURRENT), skip.review)
+        self.assertEqual(check.freshness, ReviewFreshness.STALE)
+        self.assertIn(IdentityComponent.POLICY, check.changed)
         self.assertEqual(skip.review, h.plan(h.plan_target().with_choice(
             EXTRA, DecisionChoice.SKIP)).review)
 
@@ -923,7 +926,7 @@ class Safety(PlanBase):
         h.forget_package(MODULE)
         h.save_overlay()
         plan = h.plan(h.plan_target().with_choice(MODULE, DecisionChoice.INSTALL_CURRENT))
-        self.assertEqual(plan.state, PlanState.CHANGES_READY)
+        self.assertEqual(plan.state, PlanState.RESOLUTION_REQUIRED)
         self.assertEqual(h.deps.repository_reads, [])                  # nothing consulted a repository
         self.assertEqual(h.touched, [])                                # urlopen / sockets / fetch tripwires
         store = ReadOnlyArtifactStore(h.store_root)
@@ -1019,6 +1022,7 @@ class Contract(unittest.TestCase):
             build(PlanState.NO_CHANGES, [self.CURRENT]),
             build(PlanState.CHANGES_READY, [self.INSTALL], review=review),
             build(PlanState.DECISION_REQUIRED, [self.DECISION]),
+            build(PlanState.RESOLUTION_REQUIRED, [SoftwareRow(MODULE, SoftwareAction.INSTALL_REPOSITORY)]),
             build(PlanState.BLOCKED, [SoftwareRow(MODULE, SoftwareAction.DIFFERENT_VERSION)],
                   blockers=(PlanBlocker(BlockerCode.DIFFERENT_VERSION_INSTALLED, MODULE),)),
             build(PlanState.INCOMPLETE, [], gaps=(CheckGap.KODI_STATE_UNAVAILABLE,),
@@ -1205,6 +1209,279 @@ class ParityWithOwners(PlanBase):
         kinds = {(a.kind, a.addon_id) for a in plan_changes(h.desired, actual).actions}
         self.assertIn(("SET_SKIN", SKIN), kinds)
         self.assertEqual(h.plan().skin.kind, SkinPlanKind.SWITCH)
+
+
+class G3CorrectionRegressions(PlanBase):
+    def repository_fixture(self, requires=(), *, skip=False):
+        h = PlanHarness(self, with_resource=False)
+        policies = [h.policy(MODULE, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY)]
+        if skip:
+            policies.append(h.policy(EXTRA, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP))
+        h.set_graph(extra=[(EXTRA, '1.0.0', PLUGIN_TYPE, ()),
+                           (LATE_DEPENDENCY, '1.0.0', PLUGIN_TYPE, ())], policies=policies)
+        data = make_zip(MODULE, '2.0.1')
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, 'w') as dest:
+            for name in source.namelist():
+                payload = source.read(name)
+                if name.endswith('/addon.xml'):
+                    payload = payload.replace(b'<requires/>', ('<requires>' + ''.join(
+                        '<import addon="%s" version="%s"/>' % pair for pair in requires
+                    ) + '</requires>').encode())
+                dest.writestr(name, payload)
+        saved = ArtifactStore(h.store_root).import_zip(
+            output.getvalue(), expected_addon_id=MODULE, expected_version='2.0.1')
+        h.forget_package(MODULE)
+        records = [InstallResolutionRecord(
+            MODULE, '2.0.0', InstallResolution.REPOSITORY_CURRENT, ResolutionState.INSTALLED,
+            repository_id=REPOSITORY, resolved_version='2.0.1',
+            artifact_sha256=saved.sha256, artifact_size=saved.size)]
+        if skip:
+            h.forget_package(EXTRA)
+            records.append(InstallResolutionRecord(
+                EXTRA, '1.0.0', InstallResolution.SKIPPED, ResolutionState.SKIPPED))
+        h.save_overlay()
+        del h.kodi.addons[MODULE]
+        return h, h.resolution(*records), saved
+
+    def test_unresolved_current_cannot_be_reviewed(self):
+        h = self.current(with_resource=False)
+        h.set_graph(policies=[h.policy(MODULE, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY)])
+        h.forget_package(MODULE)
+        h.save_overlay()
+        del h.kodi.addons[MODULE]
+        plan = h.plan(h.plan_target().with_choice(MODULE, DecisionChoice.INSTALL_CURRENT))
+        self.assertEqual(plan.state.value, 'resolution_required')
+        self.assertIsNone(plan.review)
+
+    def test_saved_package_adds_required_edge_and_order(self):
+        h, resolution, _ = self.repository_fixture(((LATE_DEPENDENCY, '1.0.0'),))
+        plan = h.plan(install_resolution=resolution)
+        self.assertEqual(plan.state, PlanState.CHANGES_READY)
+        order = [row.addon_id for row in plan.software]
+        self.assertLess(order.index(LATE_DEPENDENCY), order.index(MODULE))
+
+    def test_saved_package_skip_conflict_is_blocked(self):
+        h, resolution, _ = self.repository_fixture(((EXTRA, '1.0.0'),), skip=True)
+        plan = h.plan(install_resolution=resolution)
+        self.assertEqual(plan.state, PlanState.BLOCKED)
+        self.assertIn((BlockerCode.SOFTWARE_PLAN_INVALID, ''), self.codes(plan))
+        self.assertIsNone(plan.review)
+
+    def test_saved_package_uncaptured_or_newer_dependency_is_blocked(self):
+        for dependency in (('plugin.video.unknown', '1.0.0'), (EXTRA, '9.0.0')):
+            with self.subTest(dependency):
+                h, resolution, _ = self.repository_fixture((dependency,))
+                self.assertEqual(h.plan(install_resolution=resolution).state, PlanState.BLOCKED)
+
+    def test_saved_package_unchanged_and_tampered(self):
+        h, resolution, saved = self.repository_fixture()
+        plan = h.plan(install_resolution=resolution)
+        self.assertEqual(plan.state, PlanState.CHANGES_READY)
+        (h.store_root / 'artifacts' / (saved.sha256 + '.zip')).write_bytes(b'bad zip')
+        invalid = h.plan(install_resolution=resolution)
+        self.assertEqual(invalid.state, PlanState.BLOCKED)
+        self.assertIsNone(invalid.review)
+
+    def unfrozen_fixture(self):
+        h = self.current(with_resource=False)
+        h.desired = replace(h.desired, addons=h.desired.addons + (AddonEntry(EXTRA, 'enabled'),))
+        h.kodi.addons[EXTRA] = ('1.0.0', False)
+        return h
+
+    def test_unfrozen_managed_broken_blocks_and_stales(self):
+        h = self.unfrozen_fixture()
+        plan = h.plan()
+        self.assertEqual(self.row(plan, EXTRA).action, SoftwareAction.ENABLE)
+        self.assertIsNotNone(plan.review)
+        h.broken.add(EXTRA)
+        broken = h.plan()
+        self.assertEqual(broken.state, PlanState.BLOCKED)
+        self.assertEqual(self.row(broken, EXTRA).action, SoftwareAction.BROKEN)
+        check = h.validate(h.plan_target(), plan.review)
+        self.assertEqual(check.freshness, ReviewFreshness.STALE)
+        self.assertIn(IdentityComponent.SOFTWARE_STATE, check.changed)
+        with h.instrumented():
+            _, material = h.plan_service()._evaluate(h.plan_target())
+        self.assertEqual({r[0]: r[-1] for r in material[IdentityComponent.SOFTWARE_STATE]}[EXTRA], True)
+
+    def test_unmanaged_broken_does_not_change_review(self):
+        h = self.unfrozen_fixture()
+        plan = h.plan()
+        h.broken.add('plugin.video.unmanaged')
+        self.assertEqual(h.validate(h.plan_target(), plan.review).freshness, ReviewFreshness.CURRENT)
+
+    def two_private_settings(self):
+        from resources.lib.manifest import PrivateSettingDeclaration
+        from resources.lib.private_overlay import PrivateOverlayEntry
+        from resources.lib.config import ConfigSettingType
+        h = self.current(with_resource=False)
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+            private_settings=h.desired.config.private_settings + (
+                PrivateSettingDeclaration(DEMO, 'second_token', 'string', True, 'token'),)))
+        overlay = h.overlay_store.load('status-overlay')
+        h.overlay_store.save(replace(overlay, entries=overlay.entries + (
+            PrivateOverlayEntry(DEMO, 'second_token', ConfigSettingType.STRING, SECRET),)))
+        h.config_backend.settings[(DEMO, 'second_token')] = SECRET
+        return h
+
+    def test_private_settings_drift_cannot_hide_unreadability(self):
+        h = self.two_private_settings()
+        self.assertEqual(h.plan().private.kind, PrivatePlanKind.CURRENT)
+        h.config_backend.settings[(DEMO, 'api_token')] = 'different'
+        plan = h.plan()
+        self.assertEqual(plan.private.kind, PrivatePlanKind.CHANGES_NEEDED)
+        h.config_backend.unreadable.add((DEMO, 'second_token'))
+        result = h.plan()
+        self.assertEqual(result.private.kind, PrivatePlanKind.UNAVAILABLE)
+        self.assertIsNone(result.review)
+        self.assertNotEqual(h.validate(h.plan_target(), plan.review).freshness, ReviewFreshness.CURRENT)
+        self.assertSecretFree(result, h.logs)
+
+    def test_private_setting_drift_and_unreadable_real_resource(self):
+        h = self.current()
+        h.config_backend.settings[(DEMO, 'api_token')] = 'different'
+        h.db.write_bytes(b'unreadable database')
+        plan = h.plan()
+        self.assertEqual(plan.private.kind, PrivatePlanKind.UNAVAILABLE)
+        self.assertIsNone(plan.review)
+
+    def test_review_constructor_rejects_noncanonical_parts(self):
+        parts = tuple((component, 'a' * 64) for component in IdentityComponent)
+        self.assertEqual(ReviewIdentity(parts).parts, parts)
+        cases = (parts + (('unknown', 'a' * 64),), parts + (parts[0],),
+                 (parts[0],) + parts[:-1], (('unknown', 'a' * 64),) + parts[1:], parts[:-1],
+                 tuple(reversed(parts)), ((parts[0][0], 'bad'),) + parts[1:])
+        for value in cases:
+            with self.subTest(value=str(value)), self.assertRaises(ValueError):
+                ReviewIdentity(value)
+
+    def installer_restore(self, h, resolution):
+        from types import SimpleNamespace
+        from resources.lib.frozen_resolution import (
+            default_exact_record, install_plan_fingerprint, resolution_fingerprint,
+            resolved_software_fingerprint)
+        records = {r.addon_id: r for r in resolution.records}
+        for node in h.frozen.addons:
+            if not node.system and not node.is_absent_optional_dependency and node.addon_id not in records:
+                records[node.addon_id] = replace(default_exact_record(node), state=ResolutionState.INSTALLED)
+        transaction = SimpleNamespace(
+            policies=h.desired.frozen_install_policies,
+            resolution_records=tuple(records.values()),
+            install_plan_fingerprint=install_plan_fingerprint(h.frozen, h.desired.frozen_install_policies),
+            manifest_fingerprint=h.frozen.fingerprint(),
+            resolution_fingerprint=resolution_fingerprint(tuple(records.values())),
+            resolved_software_fingerprint=resolved_software_fingerprint(h.frozen, tuple(records.values())))
+        coordinator = frozen_install.FrozenInstallCoordinator(
+            store=None, artifact_store=ReadOnlyArtifactStore(h.store_root), policy_backend=None, installer=None)
+        return coordinator._restore_resolution(h.frozen, transaction)[0]
+
+    def test_actual_installer_restoration_order_matches_g3(self):
+        for requires in ((), ((LATE_DEPENDENCY, '1.0.0'),)):
+            with self.subTest(requires):
+                h, resolution, _ = self.repository_fixture(requires)
+                before = snapshot_tree(h.profile)
+                with h.instrumented():
+                    installer = self.installer_restore(h, resolution)
+                plan = h.plan(install_resolution=resolution)
+                self.assertEqual([r.addon_id for r in plan.software],
+                                 [n.addon_id for n in installer.install_order])
+                self.assertEqual(before, snapshot_tree(h.profile))
+                h.assert_untouched()
+
+    def test_actual_installer_restoration_and_g3_reject_same_dependencies(self):
+        for requires, skip in ((((EXTRA, '1.0.0'),), True),
+                               ((('plugin.video.unknown', '1.0.0'),), False),
+                               (((EXTRA, '9.0.0'),), False),
+                               (((DEMO, '1.0.0'),), False)):
+            with self.subTest(requires=requires, skip=skip):
+                h, resolution, _ = self.repository_fixture(requires, skip=skip)
+                with h.instrumented(), self.assertRaises(frozen_install.FrozenInstallValidationError):
+                    self.installer_restore(h, resolution)
+                self.assertEqual(h.plan(install_resolution=resolution).state, PlanState.BLOCKED)
+                h.assert_untouched()
+
+    def test_installed_saved_repository_package_is_still_parsed_and_integrity_checked(self):
+        h, resolution, saved = self.repository_fixture(((EXTRA, '1.0.0'),), skip=True)
+        h.kodi.addons[MODULE] = ('2.0.1', True)
+        self.assertEqual(h.plan(install_resolution=resolution).state, PlanState.BLOCKED)
+        h, resolution, saved = self.repository_fixture()
+        h.kodi.addons[MODULE] = ('2.0.1', True)
+        del h.kodi.addons[DEMO]
+        plan = h.plan(install_resolution=resolution)
+        self.assertIsNotNone(plan.review)
+        (h.store_root / 'artifacts' / (saved.sha256 + '.zip')).write_bytes(b'bad zip')
+        self.assertEqual(h.plan(install_resolution=resolution).state, PlanState.BLOCKED)
+        self.assertNotEqual(h.validate(h.plan_target(install_resolution=resolution), plan.review).freshness,
+                            ReviewFreshness.CURRENT)
+
+    def test_unfrozen_disable_and_skin_health(self):
+        h = self.unfrozen_fixture()
+        h.desired = replace(h.desired, addons=h.desired.addons[:-1] + (AddonEntry(EXTRA, 'disabled'),))
+        h.kodi.addons[EXTRA] = ('1.0.0', True)
+        self.assertEqual(self.row(h.plan(), EXTRA).action, SoftwareAction.DISABLE)
+        h.broken.add(EXTRA)
+        self.assertEqual(self.row(h.plan(), EXTRA).action, SoftwareAction.BROKEN)
+        h = self.current(with_resource=False)
+        h.set_graph(without=(SKIN,))
+        h.save_overlay()
+        h.kodi.skin = 'skin.estuary'
+        plan = h.plan()
+        self.assertIsNotNone(plan.review)
+        h.broken.add(SKIN)
+        self.assertEqual(h.plan().state, PlanState.BLOCKED)
+        self.assertIn(IdentityComponent.SOFTWARE_STATE,
+                      h.validate(h.plan_target(), plan.review).changed)
+
+    def test_unfrozen_health_unavailable_refuses_review(self):
+        h = self.unfrozen_fixture()
+        service = h.plan_service(addon_details=lambda aid: None if aid == EXTRA else h.details(aid))
+        with h.instrumented():
+            plan = service.preview(h.plan_target())
+        self.assertEqual(plan.state, PlanState.INCOMPLETE)
+        self.assertIsNone(plan.review)
+        h.assert_untouched()
+
+    def test_resolution_required_model_and_ui(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        row = SoftwareRow(MODULE, SoftwareAction.INSTALL_REPOSITORY, MODULE)
+        plan = build(PlanState.RESOLUTION_REQUIRED, [row])
+        self.assertFalse(plan.can_proceed)
+        self.assertEqual(ReviewViewModel.from_plan(plan).state, PlanState.RESOLUTION_REQUIRED)
+        for state in (PlanState.CHANGES_READY, PlanState.NO_CHANGES):
+            with self.assertRaises(ValueError):
+                build(state, [row])
+
+
+    def test_corrected_paths_preserve_profile_tree_and_private_output(self):
+        for arrange in ('unresolved', 'stored', 'broken', 'private'):
+            with self.subTest(arrange):
+                if arrange == 'stored':
+                    h, resolution, _ = self.repository_fixture(((LATE_DEPENDENCY, '1.0.0'),))
+                    target = h.plan_target(install_resolution=resolution)
+                elif arrange == 'unresolved':
+                    h = self.current(with_resource=False)
+                    h.set_graph(policies=[h.policy(MODULE, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY)])
+                    h.forget_package(MODULE)
+                    del h.kodi.addons[MODULE]
+                    h.save_overlay()
+                    target = h.plan_target().with_choice(MODULE, DecisionChoice.INSTALL_CURRENT)
+                elif arrange == 'broken':
+                    h = self.unfrozen_fixture()
+                    h.broken.add(EXTRA)
+                    target = h.plan_target()
+                else:
+                    h = self.two_private_settings()
+                    h.config_backend.settings[(DEMO, 'api_token')] = 'different'
+                    h.config_backend.unreadable.add((DEMO, 'second_token'))
+                    target = h.plan_target()
+                before = snapshot_tree(h.profile)
+                plan = h.plan(target)
+                self.assertEqual(before, snapshot_tree(h.profile))
+                self.assertSecretFree(plan, plan.to_safe_dict(), h.logs)
+                if plan.review is not None:
+                    self.assertEqual(h.validate(target, plan.review).freshness, ReviewFreshness.CURRENT)
+                    self.assertEqual(before, snapshot_tree(h.profile))
 
 
 if __name__ == "__main__":

@@ -33,7 +33,8 @@ nothing is planned against it.
 
 ## Plan states and precedence
 
-`BLOCKED` > `INCOMPLETE` > `DECISION_REQUIRED` > `CHANGES_READY` > `NO_CHANGES`.
+`BLOCKED` > `INCOMPLETE` > `DECISION_REQUIRED` > `RESOLUTION_REQUIRED` >
+`CHANGES_READY` > `NO_CHANGES`.
 
 * `BLOCKED`: a proven reason the work cannot proceed. Proven facts outrank "not
   checked", as in Build Status.
@@ -42,10 +43,13 @@ nothing is planned against it.
   compare proves nothing (`NOTHING_TO_COMPARE`).
 * `DECISION_REQUIRED`: the user must choose for an add-on whose saved package is
   missing before anything is proposed.
+* `RESOLUTION_REQUIRED`: Install Current was selected but the exact repository
+  package is not yet resolved. This is waiting for resolution, not a blocker.
+  It has no review identity and cannot proceed.
 * `CHANGES_READY` / `NO_CHANGES`.
 
 The model enforces this structurally: it will not construct a ready plan with a
-blocker, an undecided add-on, an unchecked area or a gap, and only a
+blocker, an undecided add-on, an unresolved repository package, an unchecked area or a gap, and only a
 `CHANGES_READY` plan can carry a review identity (`can_proceed`).
 
 ## What each part comes from
@@ -83,9 +87,26 @@ missing package is `DECISION_REQUIRED` with the choices policy allows
 (`INSTALL_CURRENT`, `SKIP`, `CANCEL`), or `BLOCKED` when policy allows none. A
 choice is data in the `PlanTarget`; selecting one is not a mutation, and it is
 part of the plan's identity, so changing it makes an earlier review stale.
-A repository fallback cannot be previewed fully offline: the version and its
-dependencies are known only after the download the installation performs, which
-re-validates the package.
+Selecting Install Current yields `RESOLUTION_REQUIRED`, never a reviewed ready
+plan. The UI explains that Build Manager needs the repository version before
+final changes can be reviewed. Preview itself never downloads anything.
+
+The future flow is: choose Install Current; resolve/download the exact package
+in a later explicitly authorized stage; persist its identity and dependencies
+in a resolution record bound to the selected build and frozen graph; preview
+again from the saved package; review its exact ordered actions; only then issue
+a ReviewIdentity. That resolution stage and Apply are not implemented here.
+
+For a completed bound prior repository-current resolution, G3 reads the exact
+saved ZIP and reconstructs its required dependencies through
+`stored_repository_dependencies`, the same read-only helper used by the
+installer's `_restore_resolution()`. Both use the strict requirement parser,
+resolved dependency versions, optional/system rules, skip conflict checks and
+`validate_frozen_install_plan(..., extra_dependencies=...)` for order and cycle
+validation. Added dependencies contribute to order and feasibility even when
+the repository-resolved add-on is already installed. Missing/tampered packages
+are rejected. The existing frozen dependency edges are retained exactly as in
+the installer; repository requirements supplement that graph.
 
 ## Review identity and stale-plan validation
 
@@ -93,13 +114,27 @@ re-validates the package.
 hashed per component over canonical JSON (never values): the resolved build and
 effective configuration, the device profile, the frozen build ID and software
 fingerprint, the install policy, recorded resolution and chosen resolutions,
-saved-package availability and identity, managed add-on state in Kodi, the
+saved-package availability and identity (including reconstructed repository
+package semantics), all installed managed add-on states and broken flags in Kodi, the
 active skin, configuration verification state, a secret-blind private
 verification state and overlay fingerprint, pending-operation state, and the
 resulting ordered plan. It is a stale-plan guard, not a credential: `repr` is
 opaque, the digest is never rendered or serialized in public output, and it is
 issued only for a `CHANGES_READY` plan. Unmanaged add-ons and check time are not
-part of it.
+part of it. Constructor parts must be the exact canonical IdentityComponent set,
+each appearing once in order, with a valid SHA-256 digest; extra, unknown,
+duplicate, missing, out-of-order and malformed parts are rejected.
+
+Broken-state inspection covers frozen nodes, declared add-ons outside the
+frozen graph, required repositories and the managed skin. A broken managed
+installation blocks with `INSTALLED_ADDON_BROKEN` instead of receiving an
+ordinary enable/disable action; a health change invalidates an earlier review.
+Unmanaged broken add-ons are ignored. No G6 repair is added.
+
+Private inspection uses `UNAVAILABLE > CHANGES_NEEDED > CURRENT` within the
+private area. An unreadable setting or resource cannot hide behind another
+item's drift. Useful item statuses remain available, but such a plan is never
+ready and receives no review. An earlier review becomes unverifiable.
 
 `validate(target, review)` re-reads all of that, with the same read-only
 owners, and returns `CURRENT`, `STALE` (with the changed components) or

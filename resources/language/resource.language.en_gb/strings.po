@@ -772,3 +772,11 @@ msgstr ""
 msgctxt "#32693"
 msgid "Cancel"
 msgstr ""
+
+msgctxt "#32605"
+msgid "Repository version needed"
+msgstr ""
+
+msgctxt "#32606"
+msgid "Build Manager needs to get the current repository version before you can review the final changes."
+msgstr ""

@@ -49,6 +49,7 @@ class PlanState(str, Enum):
     NO_CHANGES = "no_changes"
     CHANGES_READY = "changes_ready"
     DECISION_REQUIRED = "decision_required"
+    RESOLUTION_REQUIRED = "resolution_required"
     BLOCKED = "blocked"
     INCOMPLETE = "incomplete"
 
@@ -230,7 +231,10 @@ class ReviewIdentity:
 
     def __post_init__(self) -> None:
         _require(isinstance(self.parts, tuple)
-                 and tuple(c for c, _ in self.parts if isinstance(c, IdentityComponent))
+                 and len(self.parts) == len(IdentityComponent)
+                 and all(isinstance(p, tuple) and len(p) == 2
+                         and isinstance(p[0], IdentityComponent) for p in self.parts)
+                 and tuple(c for c, _ in self.parts)
                  == tuple(IdentityComponent)
                  and all(isinstance(d, str) and _SHA256.fullmatch(d) for _, d in self.parts),
                  "unsupported review identity")
@@ -443,13 +447,18 @@ class BuildPlan:
                      "only a blocked plan carries blockers")
         if self.state is PlanState.INCOMPLETE:
             _require(bool(self.gaps) or unavailable, "an incomplete plan says what was not checked")
-        if self.state in (PlanState.DECISION_REQUIRED, PlanState.CHANGES_READY, PlanState.NO_CHANGES):
+        if self.state in (PlanState.DECISION_REQUIRED, PlanState.RESOLUTION_REQUIRED,
+                          PlanState.CHANGES_READY, PlanState.NO_CHANGES):
             _require(not self.gaps and not unavailable,
                      "a plan with unchecked areas cannot be ready")
         has_decision = any(r.action is SoftwareAction.DECISION for r in self.software)
         _require(has_decision == (self.state is PlanState.DECISION_REQUIRED)
                  or self.state in (PlanState.BLOCKED, PlanState.INCOMPLETE),
                  "decisions and plan state disagree")
+        unresolved = any(r.action is SoftwareAction.INSTALL_REPOSITORY for r in self.software)
+        _require(unresolved == (self.state is PlanState.RESOLUTION_REQUIRED)
+                 or self.state in (PlanState.BLOCKED, PlanState.INCOMPLETE, PlanState.DECISION_REQUIRED),
+                 "unresolved packages and plan state disagree")
         if self.state in (PlanState.CHANGES_READY, PlanState.NO_CHANGES):
             _require(self.has_changes == (self.state is PlanState.CHANGES_READY),
                      "changes and plan state disagree")

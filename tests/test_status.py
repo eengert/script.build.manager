@@ -1742,3 +1742,60 @@ class ResolutionIdentity(StatusBase):
                           resolution.source_software_fingerprint, resolution.install_plan_fingerprint,
                           resolution.resulting_software_fingerprint):
             self.assertNotIn(forbidden, text)
+
+
+class PrivateUnreadabilityPrecedence(StatusBase):
+    def two_settings(self):
+        h = self.current(with_resource=False)
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+            private_settings=h.desired.config.private_settings + (
+                PrivateSettingDeclaration(DEMO, 'second_token', 'string', True, 'token'),)))
+        overlay = h.overlay_store.load('status-overlay')
+        h.overlay_store.save(replace(overlay, entries=overlay.entries + (
+            PrivateOverlayEntry(DEMO, 'second_token', ConfigSettingType.STRING, SECRET),)))
+        h.config_backend.settings[(DEMO, 'second_token')] = SECRET
+        return h
+
+    def test_real_setting_results_current_drift_and_unavailable(self):
+        h = self.two_settings()
+        self.assertEqual(h.check().private.level, AreaLevel.CURRENT)
+        h.config_backend.settings[(DEMO, 'api_token')] = 'different'
+        self.assertEqual(h.check().private.level, AreaLevel.CHANGES_NEEDED)
+        h.config_backend.settings[(DEMO, 'second_token')] = 'also different'
+        self.assertEqual(h.check().private.level, AreaLevel.CHANGES_NEEDED)
+        h.config_backend.unreadable.add((DEMO, 'second_token'))
+        result = h.check()
+        self.assertEqual(result.private.level, AreaLevel.UNAVAILABLE)
+        self.assertIn(CheckGap.PRIVATE_UNAVAILABLE, result.gaps)
+        self.assertSecretFree(safe_text(result), h.logs)
+
+    def mixed_resources(self):
+        h = self.current()
+        second = replace(h.declaration, resource_id='private.second', adapter_id='unavailable.adapter')
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+            structured_private_resources=(h.declaration, second)))
+        overlay = h.overlay_store.load('status-overlay')
+        first = replace(overlay.resources[0], values=(
+            StructuredPrivateValue('trakt.token', 'string', 'different'),))
+        h.overlay_store.save(replace(overlay, resources=(first, replace(first, resource_id='private.second'))))
+        return h
+
+    def test_real_resource_manager_mixed_results_preserve_items(self):
+        h = self.mixed_resources()
+        result = h.check()
+        self.assertEqual(result.private.level, AreaLevel.UNAVAILABLE)
+        items = {item.item_id: item.level for item in result.private.items}
+        self.assertEqual(items[REDLIGHT_RESOURCE_ID], AreaLevel.CHANGES_NEEDED)
+        self.assertEqual(items['private.second'], AreaLevel.UNAVAILABLE)
+        self.assertIn(CheckGap.PRIVATE_UNAVAILABLE, result.gaps)
+        self.assertSecretFree(safe_text(result), h.logs)
+
+    def test_real_resource_unreadability_outranks_setting_drift(self):
+        h = self.current()
+        h.config_backend.settings[(DEMO, 'api_token')] = 'different'
+        h.db.write_bytes(b'unreadable database')
+        result = h.check()
+        self.assertEqual(result.private.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual({item.kind: item.level for item in result.private.items}, {
+            PrivateItemKind.SETTINGS: AreaLevel.CHANGES_NEEDED,
+            PrivateItemKind.RESOURCE: AreaLevel.UNAVAILABLE})

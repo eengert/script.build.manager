@@ -28,10 +28,10 @@ activator, updater-policy setter, or configuration/private-resource applier,
 reaches the saved-package store only through a subclass that creates nothing,
 and reads Kodi only through the status owners and one add-on-details accessor.
 
-A repository fallback the user chooses cannot be previewed fully offline: the
-current version and its dependencies are only known after a download that
-happens during the installation itself. The plan shows the choice and the
-installer re-validates the package before using it.
+An unresolved repository-current choice produces RESOLUTION_REQUIRED with no
+review identity. A later authorized resolution stage must save the exact
+package before a new preview and review. Bound saved repository packages use
+the installer's read-only dependency reconstruction; preview never downloads.
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ from resources.lib.frozen_install import (
     KodiRuntimeFrozenArtifactBackend,
     default_frozen_install_root,
     validate_frozen_install_plan,
+    stored_repository_dependencies,
 )
 from resources.lib.frozen_resolution import (
     FrozenInstallResolutionManifest,
@@ -442,6 +443,8 @@ class BuildPlanService:
             state = PlanState.INCOMPLETE
         elif has_decision:
             state = PlanState.DECISION_REQUIRED
+        elif software.repository:
+            state = PlanState.RESOLUTION_REQUIRED
         elif has_changes:
             state = PlanState.CHANGES_READY
         else:
@@ -603,8 +606,25 @@ class BuildPlanService:
         }
         managed = {n.addon_id for n in installable}
         managed.update(item.addon_id for item in desired.addons)
+        managed.update(item.addon_id for item in desired.repositories if item.required)
         if desired.skin is not None:
             managed.add(desired.skin.addon_id)
+        # Declared managed nodes and the managed skin may be outside the saved graph.
+        # Their installed health affects stage-two actions and must bind the review too.
+        for aid in sorted(managed - {n.addon_id for n in installable}):
+            if aid not in actual_map:
+                continue
+            try:
+                detail = o.addon_details(aid)
+            except Exception as exc:
+                self._log_failure("details", exc)
+                detail = None
+            broken[aid] = None if detail is None else bool(detail.broken)
+            if detail is None:
+                gaps.append(CheckGap.SOFTWARE_UNAVAILABLE)
+                put(aid, SoftwareAction.UNAVAILABLE)
+            elif detail.broken:
+                block(aid, SoftwareAction.BROKEN, BlockerCode.INSTALLED_ADDON_BROKEN)
         material[IdentityComponent.SOFTWARE_STATE] = sorted(
             [aid, aid in actual_map,
              actual_map[aid].version if aid in actual_map else "",
@@ -616,7 +636,7 @@ class BuildPlanService:
         self._check_choices(desired, frozen, sw, blockers)
         if not blockers or all(b.code in (BlockerCode.OPERATION_PENDING,
                                           BlockerCode.OPERATION_NEEDS_ATTENTION) for b in blockers):
-            self._validate_graph(desired, frozen, policies, sw, blockers)
+            self._validate_graph(desired, frozen, policies, sw, blockers, prior)
         return sw
 
     def _recorded_package(self, record: InstallResolutionRecord) -> bool:
@@ -656,11 +676,22 @@ class BuildPlanService:
             except Exception:
                 blockers.append(PlanBlocker(BlockerCode.CHOICE_CONFLICTS_WITH_BUILD, aid, self._name(aid)))
 
-    def _validate_graph(self, desired, frozen, policies, sw: _Software, blockers) -> None:
+    def _validate_graph(self, desired, frozen, policies, sw: _Software, blockers, records) -> None:
         """Dependency graph, skip permissions and activation holds, exactly as the installer checks."""
         try:
             plan = validate_frozen_install_plan(
                 frozen, self._o.artifact_store, policies, skipped=tuple(sorted(sw.skipped)))
+            skipped = frozenset(sw.skipped)
+            extra_dependencies = {
+                aid: stored_repository_dependencies(
+                    self._o.artifact_store, record, plan, records, skipped)
+                for aid, record in sorted(records.items())
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT
+            }
+            if extra_dependencies:
+                plan = validate_frozen_install_plan(
+                    frozen, self._o.artifact_store, policies, skipped=tuple(sorted(skipped)),
+                    extra_dependencies=extra_dependencies)
             sw.install_order = tuple(node.addon_id for node in plan.install_order)
             sw.hold_ids = _hold_ids(plan.install_order, desired)
         except Exception as exc:

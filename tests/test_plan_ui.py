@@ -227,8 +227,10 @@ class Decisions(ReviewBase):
     def test_choosing_the_current_version_is_described_without_promising_a_version(self):
         h, seen = self.missing_package(), []
         dialog = review(self.provider(h, seen), [0])
-        _title, body = self.body(dialog)
-        self.assertIn("Install the current version of Extra Videos (it may differ from the saved version)", body)
+        title, body = self.body(dialog)
+        self.assertEqual(title, "Repository version needed")
+        self.assertIn("before you can review the final changes", body)
+        self.assertNotIn("Install the current version of Extra Videos", body)
 
     def test_cancelling_the_choice_explains_why_nothing_can_continue(self):
         h, seen = self.missing_package(), []

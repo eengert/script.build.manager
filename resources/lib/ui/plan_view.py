@@ -19,12 +19,13 @@ from resources.lib.ui.status_view import GAP_TEXT, S_CHECKED_AT, S_CLOSE, S_MORE
 # -- localized string identifiers (resource.language.en_gb/strings.po) -----------------------
 TITLE = {
     PlanState.CHANGES_READY: 32600, PlanState.BLOCKED: 32601, PlanState.NO_CHANGES: 32602,
-    PlanState.DECISION_REQUIRED: 32603, PlanState.INCOMPLETE: 32604,
+    PlanState.DECISION_REQUIRED: 32603, PlanState.INCOMPLETE: 32604, PlanState.RESOLUTION_REQUIRED: 32605,
 }
 SEMANTIC = {
     PlanState.CHANGES_READY: Semantic.WARNING, PlanState.BLOCKED: Semantic.BLOCKED,
     PlanState.NO_CHANGES: Semantic.VERIFIED, PlanState.DECISION_REQUIRED: Semantic.WARNING,
     PlanState.INCOMPLETE: Semantic.INCOMPLETE,
+    PlanState.RESOLUTION_REQUIRED: Semantic.INCOMPLETE,
 }
 S_ADDONS, S_SKIN, S_SETTINGS, S_PRIVATE, S_RESTART = 32610, 32611, 32612, 32613, 32614
 SOFTWARE_LINE = {
@@ -63,7 +64,7 @@ CHOICE_LABEL = {
 }
 
 PLAN_TEXT_IDS = frozenset(
-    [S_CLOSE, S_MORE_ITEMS, S_CHECKED_AT, S_ADDONS, S_SKIN, S_SETTINGS, S_PRIVATE, S_RESTART,
+    [32606, S_CLOSE, S_MORE_ITEMS, S_CHECKED_AT, S_ADDONS, S_SKIN, S_SETTINGS, S_PRIVATE, S_RESTART,
      S_CURRENT_MANY, S_CURRENT_ONE, S_UNCHECKED_ADDON, S_ALL_MATCH, S_SETTINGS_MANY,
      S_SETTINGS_ONE, S_RESTART_EXPECTED, S_BLOCKER_GENERIC, S_DECISION_HEADING]
     + list(TITLE.values()) + list(SOFTWARE_LINE.values()) + list(SKIN_LINE.values())
@@ -150,6 +151,8 @@ def _capped(lines):
 
 
 def _sections(plan):
+    if plan.state is PlanState.RESOLUTION_REQUIRED:
+        return (ReviewSection(None, (Text(32606),)),)
     if plan.state is PlanState.NO_CHANGES:
         kept = [Text(SOFTWARE_LINE[r.action], name=r.label) for r in plan.software
                 if r.action is SoftwareAction.ACCEPTED_SKIP]
