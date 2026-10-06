@@ -1,55 +1,49 @@
-# BM-UI-003A — Canonical Build Library: PASS offline; STOP
+# BM-UI-003B — Create Capture Engine: PASS offline; STOP
 
 ## Identity and admission
 - Worktree: /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
-- Branch: agent/codex; clean required start ddeec17fbb010fd21f4c1de04002a02c79a2bae8.
-- Product commit: f660332d4701bbf8493037f956ea62d8a539e023.
-- Advances beta exit item 8: owned build data and persisted selection for native workflows. G2/G3 remain accepted.
-- Live Agent Handoff status confirmed Codex active before implementation. No agent switch.
+- Branch: agent/codex; clean exact start e1e5c936ff2eed57bc5b64b77a53be2015c0dd2c.
+- Product commit: f08b3fda497da74ba3a6a4afaff672ee9b9ba05d. Separate endpoint tracking commit follows.
+- Advances beta exit item 8 / missing G1 capture foundation. Live Agent Handoff confirmed Codex active before edits.
+- Accepted Build Library f660332d4701bbf8493037f956ea62d8a539e023 and G2/G3 contracts unchanged.
 
 ## Completed
-- Canonical active-special-profile Build Library: build-library/{registry.json, selection.json, library.lock, builds/<sha256>.json}.
-- Immutable content-bound entries own existing public/frozen manifest formats and all required package descriptors/assets; deterministic usable listing and strict ID/version conflicts.
-- Reused package validation through an optional source-byte reader and existing bounded regular-file reads through optional dir_fd.
-- One optional typed LibrarySource in StatusTarget/PlanTarget supplies a revalidated coherent owned snapshot; default_status_target and default_plan_target use persisted selection. Legacy path targets preserve their previous behavior.
-- Exact ZIPs remain in existing ArtifactStore; private payloads remain in PrivateOverlayStore; prior completed install resolutions remain separate and association is deferred (None).
-- No-follow ancestor/leaf traversal, bounded reads, regular-file checks, writer lock, atomic fsynced publication, ignored/unselectable interrupted stages/orphans, corruption and registry/content disagreement fail closed.
-- Private declarations/Red Light/credential targets and diagnostic payloads rejected; unrelated private files are not imported. Public models/logs contain no private test sentinels/internal paths.
+- Immutable CreateBuildRequest, explicit PublicCaptureSpecification/PublicSettingTarget, read-only CapturePreview, typed COMPLETE/INCOMPLETE/FAILED CreateBuildResult and immutable PreparedPublicBundle.
+- Existing capture_frozen_build handles roots/dependencies/acquisition. Active skin comes through injected existing KodiStateInspector.inspect contract and joins managed/frozen roots. Root enabled states retained; dependencies not promoted to top-level roots.
+- Only declared typed settings/files read through ConfigurationBackend. Deterministic per-capture package descriptors/exact assets pass existing ConfigPackage ownership validation.
+- Existing-schema manifest uses build info, captured roots/skin, config/private declarations, platform profile and extending device profile. Exact default remains; no fabricated repositories/fallback/Skip policies.
+- Canonical public frozen graph removes diagnostic maps/error text but retains typed capture/provenance/artifact/optional-absence truth. Its fingerprint binds separate in-memory private overlay; build/package/device identity checks pass.
+- Existing PrivateSettingDeclaration and StructuredPrivateResourceManager.capture (real RedLightSettingsAdapter in isolated SQLite fixture) reused. Required failures discard all prepared output. Optional actual absence preserved; backend errors remain incomplete. No private persistence.
+- Public envelope is validated against accepted library format and transport limits. registration_inputs() stages ONLY public material in a fresh owned temporary context for later BuildLibrary.register(*inputs); capture never calls it, registers or selects.
+- Safe result/repr omit payloads/paths/raw exceptions; artifact gaps contain validated IDs and typed statuses. Incomplete capture exposes no partial bundle/overlay.
 
 ## Files
-resources/lib/build_library.py; resources/lib/config.py; resources/lib/readonly_io.py;
-resources/lib/status.py; resources/lib/plan.py; tests/test_build_library.py;
-docs/BUILD_LIBRARY.md. Endpoint bookkeeping additionally updates HANDOFF.md,
-CURRENT_TASK.md, AGENT_STATUS.json and append-only USAGE_HISTORY.md.
+- resources/lib/create_capture.py
+- tests/test_create_capture.py
+- docs/CREATE_CAPTURE.md
+- Endpoint bookkeeping: .agent/HANDOFF.md, CURRENT_TASK.md, AGENT_STATUS.json, USAGE_HISTORY.md.
 
 ## Validation
-- 43 new library regressions PASS, including scoped Status/Plan behavior for two same-package-ID builds, deleted/changed sources, source/library symlinks/FIFOs, ancestor swap, interrupted registration/selection, stale targets, privacy and mutation/network tripwires.
-- Final focused: 843 tests PASS (8.586 s).
-  python3 -m unittest tests.test_build_library tests.test_status tests.test_plan tests.test_config tests.test_manifest_loader tests.test_manifest_resolver tests.test_manifest_schema tests.test_frozen tests.test_artifacts tests.test_frozen_resolution -q
-- One full suite: 2739 tests PASS (133.031 s).
+- 46 new offline capture tests PASS.
+- Final focused: 656 tests PASS (2.551 s).
+  python3 -m unittest tests.test_create_capture tests.test_frozen tests.test_config tests.test_private_overlay tests.test_private_resource tests.test_build_library tests.test_manifest_loader tests.test_manifest_resolver tests.test_artifacts -q
+- One final full suite: 2785 tests PASS (131.332 s).
   python3 -m unittest discover -s tests -q
-  Permitted execution used for existing disposable loopback/process fixtures. No source changed afterward.
-- git diff --check PASS. Seven product/test/document files match pre-full-suite SHA-256 digests.
-- Logs: /private/tmp/bm-ui-003a-focused.log; /private/tmp/bm-ui-003a-full.log.
-- Automated/disposable evidence only; no independent review or live runtime claim.
+  Permitted execution used for existing disposable loopback/process fixtures. No source/test/document edits afterward.
+- Candidate hashes of all three product/test/document files remain unchanged after full suite. git diff --cached --check PASS.
+- Logs: /private/tmp/bm-ui-003b-focused.log; /private/tmp/bm-ui-003b-full.log.
+- Disposable library registration validates prepared output, leaves selection unset and proves private sentinel absent from library envelope.
+- Private sentinel absent from public result/repr/serialization, generated manifest/frozen/package, and logging calls. Real structured capture leaves disposable DB bytes unchanged.
+- Mutation tripwires cover settings/files, public/private apply, resource apply/initialize, install, enable, skin, updater policy, restart transaction/coordinator, frozen install/retry/resume, overlay save and automatic registration. Exact artifacts are acquired only through established frozen engine.
+- Automated/offline evidence only. No independent review or live-runtime qualification claimed.
 
-## Not done / boundaries
-No Create UI/capture, Install/Repair Apply, G6, acquisition/network, transfer folder,
-installed-resolution association, removal/repair API, version/icon/repository work,
-push/publication/matrix integration, Test.app launch, live Kodi/profile/device
-access or mutation. Full-suite helper output comes from existing disposable/mock
-fixtures; it is not live Kodi qualification.
-
-Prepared inputs must already be public under the existing package contract.
-Known private targets/diagnostic channels are blocked; there is no universal
-classifier for secrets disguised as arbitrary public text. Prepared frozen
-bundles must omit node errors/arbitrary provenance maps; only matching typed
-kodi_version source metadata is accepted. macOS beta uses POSIX dir_fd/flock;
-unsupported runtime/profile translation fails closed. Corrupt indexed entries
-are retained/unavailable pending explicit repair; unindexed valid content can be
-recovered by exact registration retry.
+## Limits / not done
+- Explicit public specification must be curated by trusted product code: existing library checks reject known private channels, but cannot classify secrets disguised as arbitrary declared public text/files.
+- Red Light requires existing quiesced/held/disabled/initialized resource state. Capture reports incomplete when unavailable; no state preparation or mutation. Existing pre-0.2.0 SQLite URI '#' hardening finding unchanged.
+- Diagnostic cleanup intentionally creates canonical public software identity; private binding uses its recomputed fingerprint. Missing exact artifacts are incomplete, never substituted. Incomplete results have no registration inputs; library contract unchanged.
+- Existing library ID/version conflicts, I/O errors and private persistence/selection atomicity belong to the later confirmed UI commit flow.
+- No native dialogs, real registration/selection, Install/Repair Apply, G6, version/icon/repository changes, new network logic, push/publication/matrix integration, Test.app launch, normal Kodi/profile/device access or mutation.
 
 ## Smallest next step / human input
-Exact next task: native Create Build capture/registration workflow.
-No further work is authorized by this task. Eric/ChatGPT supplies its bounded
-prompt and any separate review direction. No implementation human input remains.
+Independent review of this candidate, then native Create Build dialogs + confirmed registration/selection (private overlay saved separately).
+No implementation human input remains. Eric/ChatGPT supplies the bounded review/next-task prompt. STOP.
