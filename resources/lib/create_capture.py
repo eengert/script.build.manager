@@ -66,6 +66,7 @@ class CreateBuildRequest:
     private_settings: tuple[PrivateSettingDeclaration, ...] = ()
     private_resources: tuple[StructuredPrivateResourceDeclaration, ...] = ()
     private_overlay_id: str = ""
+    expected_active_skin: str = ""
 
     def __post_init__(self):
         try:
@@ -234,6 +235,10 @@ def _validate_request(request):
                   request.public_capture.settings, request.public_capture.files):
         if not isinstance(value, tuple):
             raise ValueError()
+    if request.expected_active_skin and (not request.include_active_skin or
+            request.expected_active_skin not in request.root_addon_ids or
+            not request.expected_active_skin.startswith('skin.')):
+        raise ValueError()
     if type(request.include_active_skin) is not bool or not request.build_name:
         raise ValueError()
     for pid in (request.config_package_id, request.platform_profile_id, request.device_profile_id):
@@ -302,6 +307,8 @@ class CreateBuildCaptureEngine:
             if request.include_active_skin:
                 stage = "ACTIVE_SKIN_UNAVAILABLE"
                 skin = state.active_skin
+                if request.expected_active_skin and skin != request.expected_active_skin:
+                    raise ValueError()
                 if not isinstance(skin, str) or not skin.startswith("skin."):
                     raise ValueError()
                 validate_manifest({"schema_version": 1, "build": {"id": request.build_id, "version": request.build_version},

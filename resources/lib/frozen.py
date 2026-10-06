@@ -486,7 +486,7 @@ class KodiInventoryBackend(InventoryBackend):
             "Addons.GetAddons",
             {
                 "installed": True,
-                "properties": ["version", "path", "enabled", "installed", "broken", "dependencies"],
+                "properties": ["name", "version", "path", "enabled", "installed", "broken", "dependencies"],
             },
         )
         addons = result.get("addons") if isinstance(result, Mapping) else None

@@ -14,11 +14,14 @@ keychain-backed backend can replace this storage abstraction later.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import hashlib
 import json
 import os
 import re
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -409,6 +412,68 @@ class ConfigurationApplyBundle:
         return self.public_result.restart_report
 
 
+class PrivateOverlayConflict(PrivateOverlayError):
+    """Create refused to replace differing private content."""
+
+
+class _CreatePrivateCommit:
+    def __init__(self, store, fd):
+        self.store, self.fd = store, fd
+
+    def _read(self, overlay_id):
+        from resources.lib.build_library import _read_at, _json
+        raw = _read_at(self.fd, self.store.path_for(overlay_id).name, 4 * 1024 * 1024)
+        if raw is None:
+            return None
+        overlay = PrivateOverlay.from_dict(_json(raw))
+        if overlay.overlay_id != overlay_id:
+            raise PrivateOverlayValidationError('PRIVATE_CREATE_IDENTITY_FAILED')
+        return overlay
+
+    def ensure_exact(self, overlay):
+        # Roundtrip validates all captured content before any write.
+        overlay = PrivateOverlay.from_dict(overlay.to_dict())
+        existing = self._read(overlay.overlay_id)
+        if existing is not None:
+            if existing.fingerprint != overlay.fingerprint:
+                raise PrivateOverlayConflict('PRIVATE_CREATE_CONFLICT')
+            return False
+        # Publish a fully fsynced private inode without replacing any target.
+        name = '.create-' + uuid.uuid4().hex
+        target = self.store.path_for(overlay.overlay_id).name
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                handle.write(_canonical_json(overlay.to_dict()) + '\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.link(name, target, src_dir_fd=self.fd, dst_dir_fd=self.fd, follow_symlinks=False)
+            except FileExistsError:
+                existing = self._read(overlay.overlay_id)
+                if existing is None or existing.fingerprint != overlay.fingerprint:
+                    raise PrivateOverlayConflict('PRIVATE_CREATE_CONFLICT')
+                return False
+            try:
+                os.fsync(self.fd)
+            except OSError:
+                # Publication is known to be ours; remove only exact content
+                # while holding the Create lock. Preserve ambiguous state.
+                self.remove_if_exact(overlay.overlay_id, overlay.fingerprint)
+                raise
+            return True
+        finally:
+            os.unlink(name, dir_fd=self.fd)
+
+    def remove_if_exact(self, overlay_id, expected_fingerprint):
+        existing = self._read(overlay_id)
+        if existing is None or existing.fingerprint != expected_fingerprint:
+            return False
+        os.unlink(self.store.path_for(overlay_id).name, dir_fd=self.fd)
+        os.fsync(self.fd)
+        return True
+
+
 class PrivateOverlayStore:
     """Atomic profile-local active overlay store."""
 
@@ -465,6 +530,10 @@ class PrivateOverlayStore:
         return overlay
 
     def save(self, overlay: PrivateOverlay) -> Path:
+        with self.create_commit():
+            return self._save(overlay)
+
+    def _save(self, overlay: PrivateOverlay) -> Path:
         if not isinstance(overlay, PrivateOverlay):
             raise PrivateOverlayValidationError("private overlay has an invalid type")
         target = self.path_for(overlay.overlay_id)
@@ -498,6 +567,27 @@ class PrivateOverlayStore:
                     staged.unlink()
                 except OSError:
                     pass
+
+    @contextmanager
+    def create_commit(self):
+        """Serialize Create publication/rollback under no-follow ancestor handles.
+
+        The existing save/import overwrite path also takes this lock. A crash
+        after private publication can leave an orphan, never an overwritten ID.
+        """
+        import fcntl
+        import stat
+        from resources.lib.build_library import _directory
+        with _directory(str(self.directory), create=True) as fd:
+            lock = os.open('create.lock', os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                           0o600, dir_fd=fd)
+            try:
+                if not stat.S_ISREG(os.fstat(lock).st_mode):
+                    raise PrivateOverlayPersistenceError('PRIVATE_CREATE_LOCK_FAILED')
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                yield _CreatePrivateCommit(self, fd)
+            finally:
+                os.close(lock)
 
     def import_file(self, source: str | Path) -> PrivateOverlay:
         """Validate an explicitly supplied import artifact into active storage."""

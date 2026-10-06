@@ -1,5 +1,5 @@
-"""Skin-owned native dialogs. No route starts a product operation; Build Status
-and Review Changes call only an injected read-only provider."""
+"""Skin-owned dialogs. Create uses an injected confirmed workflow; Status and
+Review Changes retain their read-only providers."""
 from resources.lib.ui.controller import ROUTES, TITLE_IDS, CONTEXT_HELP, Route
 from resources.lib.ui.help_content import SECTIONS
 from resources.lib.ui.models import PageModel, Semantic, SEMANTIC_LABELS
@@ -10,11 +10,13 @@ from resources.lib.ui.status_view import (
 )
 
 class NativeDialogs:
-    def __init__(self, addon, dialog, settle, status_provider=None):
+    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None):
         self.addon = addon
         self.dialog = dialog
         self.settle = settle
         self.status_provider = status_provider
+        self.create_provider = create_provider
+        self.busy = busy
         self.main_selection = 0
         self.help_selection = 0
 
@@ -147,6 +149,101 @@ class NativeDialogs:
             choices[prompt.addon_id] = prompt.choices[selected]
         self.viewer(self.render(model.title), self.review_body(model))
 
+    def create(self):
+        from resources.lib.create_workflow import CreateValidationError
+        try:
+            workflow = self.create_provider()
+            session = workflow.open(self.text(32703))
+        except Exception as exc:
+            self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32722))
+            return
+        focus = 0
+        while True:
+            labels = [self.text(32700) + ': ' + session.name,
+                      self.text(32701) + ': ' + session.version,
+                      self.text(32702) + ': ' + session.device_label,
+                      self.text(32704) % (len(session.selected), len(session.components)),
+                      self.text(32705) + ': ' + self.text(32706 if session.include_private else 32707),
+                      self.text(32708), self.text(32112), self.text(32113)]
+            choice = self.select(self.text(32100), labels, focus)
+            if not 0 <= choice < 7:
+                return
+            focus = choice
+            try:
+                if choice in (0, 1, 2):
+                    prior = (session.name, session.version, session.device_label)[choice]
+                    value = self.dialog.input(self.text((32700, 32701, 32702)[choice]), defaultt=prior)
+                    self.settle(200)
+                    if not value:
+                        continue
+                    if choice == 0:
+                        version = workflow.suggest_version(value)
+                        session.name, session.version = value, version
+                    elif choice == 1:
+                        from resources.lib.create_workflow import version_tuple
+                        version_tuple(value)
+                        session.version = value
+                    else:
+                        from resources.lib.create_workflow import identity
+                        identity(value)
+                        session.device_label = value
+                elif choice == 3:
+                    rows = [c.label + (' — ' + self.text(32709) if c.current_skin else '') for c in session.components]
+                    indices = self.dialog.multiselect(self.text(32710), rows,
+                        preselect=[i for i,c in enumerate(session.components) if c.addon_id in session.selected])
+                    self.settle(200)
+                    session.choose(indices)
+                elif choice == 4:
+                    session.include_private = not session.include_private
+                elif choice == 6:
+                    self.detail(CONTEXT_HELP[Route.CREATE])
+                else:
+                    preview = workflow.preview(session)
+                    request = preview.request
+                    roots, excluded, public_settings, public_files, private_settings, private_resources = preview.counts
+                    body = '\n'.join([self.text(32700) + ': ' + request.build_name,
+                        self.text(32701) + ': ' + request.build_version,
+                        self.text(32702) + ': ' + request.device_label,
+                        self.text(32711) % (roots, excluded),
+                        self.text(32712 if request.include_active_skin else 32713),
+                        self.text(32714) % (public_settings, public_files),
+                        self.text(32715) % (private_settings, private_resources) if preview.private_enabled else self.text(32716)])
+                    preview_focus = 0
+                    while True:
+                        action = self.select(self.text(32708), [self.text(32717), self.text(32718), self.text(32112), self.text(32113)], preview_focus)
+                        if action == 1:
+                            self.viewer(self.text(32718), body + ('\n\n' + self.text(32719) + '\n' + '\n'.join(preview.excluded_labels) if preview.excluded_labels else ''))
+                        elif action == 2:
+                            self.detail(CONTEXT_HELP[Route.CREATE])
+                        elif action == 0:
+                            confirmed = self.dialog.yesno(self.text(32100), body,
+                                nolabel=self.text(32113), yeslabel=self.text(32717))
+                            self.settle(200)
+                            if not confirmed:
+                                break
+                            if self.busy:
+                                self.busy(True)
+                            try:
+                                terminal = workflow.execute(preview)
+                            finally:
+                                if self.busy:
+                                    self.busy(False)
+                            message = self.text(terminal.string_id)
+                            if terminal.string_id in (32735, 32736):
+                                message += '\n' + request.build_name + ' ' + request.build_version
+                                message += '\n' + self.text(32737) % terminal.addon_count
+                                message += '\n' + self.text(32712 if terminal.skin_included else 32713)
+                                message += '\n' + self.text(32738 if terminal.private_included else 32739)
+                            self.dialog.ok(self.text(32100), message)
+                            self.settle(200)
+                            return
+                        else:
+                            break
+                        preview_focus = action
+            except Exception as exc:
+                self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32732))
+                self.settle(200)
+
     def run(self):
         while True:
             selected = self.select(self.text(32000),
@@ -160,6 +257,8 @@ class NativeDialogs:
             elif route == Route.SETTINGS:
                 self.addon.openSettings()
                 self.settle(200)
+            elif route == Route.CREATE and self.create_provider is not None:
+                self.create()
             elif route == Route.STATUS:
                 self.status()
             else:

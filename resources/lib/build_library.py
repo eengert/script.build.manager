@@ -430,6 +430,27 @@ class BuildLibrary:
         except Exception:
             raise _error() from None
 
+    def registered_bundle(self, bundle):
+        """Resolve an ambiguous register failure against authoritative state.
+
+        Returns None only after a readable registry proves absence. Corruption
+        propagates so callers retain required private data instead of guessing.
+        """
+        _validate_bundle(bundle)
+        key = hashlib.sha256(_encode(bundle)).hexdigest()
+        try:
+            with _directory(self.root) as fd:
+                entries = self._registry(fd)
+                if key not in entries:
+                    return None
+                manifest, _, _ = self._load_at(fd, key, entries)
+                return LibraryEntry(key, manifest.build.id, manifest.build.version,
+                                    manifest.build.name, tuple(sorted(manifest.device_profiles)))
+        except FileNotFoundError:
+            return None
+        except Exception:
+            raise _error() from None
+
     def select(self, entry_id, device_profile_id):
         try:
             with self._writer() as fd:

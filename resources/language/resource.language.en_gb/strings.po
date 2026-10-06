@@ -234,7 +234,7 @@ msgid "Build Manager saves the Kodi setup you like, and helps put it on your dev
 msgstr ""
 
 msgctxt "#32301"
-msgid "Create Build saves your current Kodi setup so you can use it again.\n\nWhat it does\n• Reads the add-ons and settings you choose\n• Saves the exact add-on versions\n• Can include your skin and supported settings\n\nWhat you'll do\n• Choose what to include\n• Check the list before you start\n\nGood to know\n• Your Kodi is not changed\n• Private settings are saved separately and their values are never shown\n• If something couldn't be saved, Build Manager tells you what\n• Media and watch history are not included"
+msgid "• Everything eligible is included by default. Uncheck add-ons you do not want. Dependencies needed by kept add-ons are handled automatically.\n\n• The current skin is included unless you exclude it. Private settings are included by default and can be turned off. Private values are never shown; only supported configuration is captured.\n\n• Enter a build name, version and device label, then review and confirm Create Build. Your Kodi is not changed: Create only reads installed software and settings. Nothing is saved as a build unless capture succeeds."
 msgstr ""
 
 msgctxt "#32302"
@@ -779,4 +779,148 @@ msgstr ""
 
 msgctxt "#32606"
 msgid "Build Manager needs to get the current repository version before you can review the final changes."
+msgstr ""
+
+msgctxt "#32700"
+msgid "Build name"
+msgstr ""
+
+msgctxt "#32701"
+msgid "Version"
+msgstr ""
+
+msgctxt "#32702"
+msgid "Device profile"
+msgstr ""
+
+msgctxt "#32703"
+msgid "Current device"
+msgstr ""
+
+msgctxt "#32704"
+msgid "Add-ons: %s of %s included"
+msgstr ""
+
+msgctxt "#32705"
+msgid "Include private settings"
+msgstr ""
+
+msgctxt "#32706"
+msgid "On"
+msgstr ""
+
+msgctxt "#32707"
+msgid "Off"
+msgstr ""
+
+msgctxt "#32708"
+msgid "Review & Create"
+msgstr ""
+
+msgctxt "#32709"
+msgid "Current skin"
+msgstr ""
+
+msgctxt "#32710"
+msgid "Uncheck add-ons you do not want"
+msgstr ""
+
+msgctxt "#32711"
+msgid "%s add-ons included; %s excluded"
+msgstr ""
+
+msgctxt "#32712"
+msgid "Current skin included"
+msgstr ""
+
+msgctxt "#32713"
+msgid "Current skin excluded"
+msgstr ""
+
+msgctxt "#32714"
+msgid "Supported public configuration: %s settings, %s files"
+msgstr ""
+
+msgctxt "#32715"
+msgid "Supported private configuration: %s settings, %s components"
+msgstr ""
+
+msgctxt "#32716"
+msgid "Private settings excluded"
+msgstr ""
+
+msgctxt "#32717"
+msgid "Create Build"
+msgstr ""
+
+msgctxt "#32718"
+msgid "Details"
+msgstr ""
+
+msgctxt "#32719"
+msgid "Excluded add-ons"
+msgstr ""
+
+msgctxt "#32720"
+msgid "Enter a valid name or device label."
+msgstr ""
+
+msgctxt "#32721"
+msgid "Enter a version as MAJOR.MINOR.PATCH, for example 1.0.0."
+msgstr ""
+
+msgctxt "#32722"
+msgid "Current device information could not be read. Nothing was saved."
+msgstr ""
+
+msgctxt "#32723"
+msgid "The current skin could not be identified safely. Nothing was saved."
+msgstr ""
+
+msgctxt "#32724"
+msgid "This name conflicts with an existing build. Choose another name."
+msgstr ""
+
+msgctxt "#32725"
+msgid "Include at least one add-on before creating a build."
+msgstr ""
+
+msgctxt "#32730"
+msgid "One or more exact add-on files could not be saved. No build was saved."
+msgstr ""
+
+msgctxt "#32731"
+msgid "Supported public or private configuration could not be captured. No build was saved."
+msgstr ""
+
+msgctxt "#32732"
+msgid "Capture could not be completed safely. No build was saved."
+msgstr ""
+
+msgctxt "#32733"
+msgid "This build and version already exist with different content. Choose another version."
+msgstr ""
+
+msgctxt "#32734"
+msgid "Saving could not be confirmed safely. Try again with the same version; existing content will be preserved."
+msgstr ""
+
+msgctxt "#32735"
+msgid "The build was saved, but it could not be selected automatically. You can select it later."
+msgstr ""
+
+msgctxt "#32736"
+msgid "Build created. It was saved and selected."
+msgstr ""
+
+msgctxt "#32737"
+msgid "%s add-ons saved"
+msgstr ""
+
+msgctxt "#32738"
+msgid "Private settings included"
+msgstr ""
+
+msgctxt "#32739"
+msgid "No private settings saved"
 msgstr ""

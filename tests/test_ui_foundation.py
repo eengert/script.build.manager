@@ -88,7 +88,7 @@ class NativeFoundationTests(unittest.TestCase):
         for p in (ROOT/'resources/lib/ui').glob('*.py'):
             tree=ast.parse(p.read_text())
             for n in ast.walk(tree):
-                if isinstance(n,ast.ImportFrom): self.assertTrue((n.module or '').startswith(('dataclasses','enum','resources.lib.ui','resources.lib.status_model','resources.lib.plan_model')),p)
+                if isinstance(n,ast.ImportFrom): self.assertTrue((n.module or '').startswith(('dataclasses','enum','resources.lib.ui','resources.lib.status_model','resources.lib.plan_model','resources.lib.create_workflow')),p)
                 if isinstance(n,ast.Import): self.fail('unexpected import '+str(p))
     def test_status_model_is_standard_library_only(self):
         tree=ast.parse((ROOT/'resources/lib/status_model.py').read_text())
