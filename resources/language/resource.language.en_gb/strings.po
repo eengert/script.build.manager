@@ -902,7 +902,7 @@ msgid "This build and version already exist with different content. Choose anoth
 msgstr ""
 
 msgctxt "#32734"
-msgid "Saving could not be confirmed safely. Try again with the same version; existing content will be preserved."
+msgid "Saving could not be confirmed safely. Existing content was preserved. Try again; if this version now exists, choose the next version."
 msgstr ""
 
 msgctxt "#32735"

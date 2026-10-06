@@ -63,6 +63,15 @@ and validating the stored copy. A different envelope with the same build ID and
 version raises `LibraryConflict`; nothing is silently overwritten. An existing
 indexed corrupt/missing entry also fails closed on duplicate registration.
 
+`registered_bundle(bundle)` resolves exact-public authority without writing. It
+returns None only when the entire root is genuinely absent, or a readable valid
+registry lacks the exact canonical envelope key. Once indexed, the builds
+directory and exact envelope must be readable, valid and consistent with their
+hash and registry metadata. Missing or unavailable indexed content raises a
+safe LibraryError instead of authorizing private rollback. A present root with
+no readable registry is ambiguous and also fails closed.
+
+
 `LibraryEntry` is frozen and carries entry ID, build ID/version, display name,
 sorted device profiles and `usable`. Usable means the public definition is
 validated and fully owned; it does not promise that exact ZIPs are available or

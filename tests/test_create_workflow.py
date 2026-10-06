@@ -253,11 +253,314 @@ class WorkflowTests(unittest.TestCase):
 
     def test_ambiguous_registry_failure_retains_private_fail_closed(self):
         self.library.register=Mock(side_effect=OSError(SECRET))
-        self.library.registered_bundle=Mock(side_effect=OSError(SECRET))
+        self.library.registered_bundle=Mock(side_effect=[None, OSError(SECRET)])
         p=self.preview()
         self.assertEqual(self.workflow.execute(p).string_id,32734)
         self.assertTrue(self.private_store.path_for(p.request.private_overlay_id).exists())
         self.assertEqual(self.entries(),())
+
+    def test_exact_public_missing_private_never_recreated(self):
+        p = self.preview()
+        self.assertEqual(self.workflow.execute(p).string_id, 32736)
+        path = self.private_store.path_for(p.request.private_overlay_id)
+        path.unlink()
+        self.config.values[(ROOT, 'privateid')] = 'changed-disposable-private'
+        self.library.register = Mock(side_effect=AssertionError('must reuse entry'))
+        self.assertEqual(self.workflow.execute(p).string_id, 32733)
+        self.assertFalse(path.exists())
+        self.library.register.assert_not_called()
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_exact_public_matching_private_reuses_entry_without_writes(self):
+        p = self.preview()
+        self.assertEqual(self.workflow.execute(p).string_id, 32736)
+        path = self.private_store.path_for(p.request.private_overlay_id)
+        before = path.stat()
+        self.library.register = Mock(side_effect=AssertionError('must reuse entry'))
+        self.assertEqual(self.workflow.execute(p).string_id, 32736)
+        self.library.register.assert_not_called()
+        self.assertEqual(path.stat().st_ino, before.st_ino)
+        self.assertEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
+
+    def test_exact_public_malformed_private_preserved(self):
+        p = self.preview(); self.workflow.execute(p)
+        path = self.private_store.path_for(p.request.private_overlay_id)
+        path.write_text('{')
+        self.assertEqual(self.workflow.execute(p).string_id, 32734)
+        self.assertEqual(path.read_text(), '{')
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_exact_public_nonregular_private_fails_closed(self):
+        import os
+        p = self.preview(); self.workflow.execute(p)
+        path = self.private_store.path_for(p.request.private_overlay_id)
+        path.unlink(); os.mkfifo(path)
+        self.assertEqual(self.workflow.execute(p).string_id, 32734)
+        self.assertTrue(path.exists())
+
+    def test_exact_public_unreadable_private_fails_closed(self):
+        p = self.preview(); self.workflow.execute(p)
+        path = self.private_store.path_for(p.request.private_overlay_id)
+        before = path.read_bytes()
+        from resources.lib.build_library import _read_at
+        def deny(fd, name, limit):
+            if name == path.name:
+                raise PermissionError(SECRET)
+            return _read_at(fd, name, limit)
+        with patch('resources.lib.build_library._read_at', side_effect=deny):
+            terminal = self.workflow.execute(p)
+        self.assertEqual(terminal.string_id, 32734)
+        self.assertNotIn(SECRET, repr(terminal))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_orphan_matching_continues_and_differing_conflicts(self):
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        with self.private_store.create_commit() as commit:
+            commit.ensure_exact(result.private_overlay)
+        self.config.values[(ROOT, 'privateid')] = 'changed-disposable-private'
+        self.assertEqual(self.workflow.execute(p).string_id, 32733)
+        self.assertEqual(self.entries(), ())
+        self.config.values[(ROOT, 'privateid')] = SECRET
+        self.assertEqual(self.workflow.execute(p).string_id, 32736)
+
+    def test_indexed_missing_builds_recovery_preserves_private(self):
+        import shutil
+        original = self.library.register
+        def publish_then_lose_content(*inputs):
+            original(*inputs)
+            shutil.rmtree(Path(self.library.root) / 'builds')
+            raise OSError(SECRET)
+        self.library.register = publish_then_lose_content
+        p = self.preview()
+        terminal = self.workflow.execute(p)
+        self.assertEqual(terminal.string_id, 32734)
+        self.assertTrue(self.private_store.path_for(p.request.private_overlay_id).exists())
+        self.assertNotIn(SECRET, repr(terminal))
+
+    def test_authority_check_is_inside_private_commit_lock(self):
+        original = self.library.registered_bundle
+        def inspect(bundle):
+            with self.assertRaises(OSError):
+                with self.private_store.create_commit():
+                    pass
+            return original(bundle)
+        self.library.registered_bundle = inspect
+        self.assertEqual(self.execute().string_id, 32736)
+        self.assertEqual(self.execute().string_id, 32736)
+
+    def reject_complete_overlay(self, transform):
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        result = replace(result, private_overlay=transform(result.private_overlay))
+        self.engine.capture = Mock(return_value=result)
+        self.library.register = Mock(side_effect=AssertionError('must not register'))
+        self.library.select = Mock(side_effect=AssertionError('must not select'))
+        from resources.lib.create_capture import PreparedPublicBundle
+        with patch.object(PreparedPublicBundle, 'registration_inputs', side_effect=AssertionError('must not stage')) as stage:
+            terminal = self.workflow.execute(p)
+        self.assertEqual(terminal.string_id, 32732)
+        self.assertNotIn(SECRET, repr(terminal))
+        self.assertNotIn(SECRET, str(terminal.safe_dict()))
+        self.private_factory.assert_not_called()
+        self.library.register.assert_not_called(); self.library.select.assert_not_called()
+        stage.assert_not_called()
+        self.assertFalse(Path(self.library.root).exists())
+        self.assertFalse(self.private_store.directory.exists())
+        self.assertEqual(self.config.mutations, [])
+
+    def test_complete_undeclared_private_setting_zero_persistence(self):
+        self.reject_complete_overlay(lambda overlay: replace(overlay, entries=overlay.entries +
+            (PrivateOverlayEntry(ROOT, 'undeclared', ConfigSettingType.STRING, SECRET),)))
+
+    def test_complete_undeclared_private_resource_zero_persistence(self):
+        from resources.lib.private_resource import StructuredPrivateResourceOverlay, StructuredPrivateValue
+        resource = StructuredPrivateResourceOverlay('redlight.settings', RED, '2.6.8',
+            'redlight-settings-v1', (StructuredPrivateValue('trakt.token', 'string', SECRET),))
+        self.reject_complete_overlay(lambda overlay: replace(overlay, resources=(resource,)))
+
+    def test_complete_missing_required_private_zero_persistence(self):
+        self.reject_complete_overlay(lambda overlay: replace(overlay, entries=()))
+
+    def test_complete_wrong_overlay_id_zero_persistence(self):
+        self.reject_complete_overlay(lambda overlay: replace(overlay, overlay_id='wrong-overlay'))
+
+    def test_complete_wrong_source_fingerprint_zero_persistence(self):
+        self.reject_complete_overlay(lambda overlay: replace(overlay, target_build_id='sha256:' + 'a'*64))
+
+    def test_complete_wrong_setting_type_zero_persistence(self):
+        self.reject_complete_overlay(lambda overlay: replace(overlay, entries=
+            (PrivateOverlayEntry(ROOT, 'privateid', ConfigSettingType.BOOL, True),)))
+
+    def test_complete_other_valid_public_frozen_identity_zero_persistence(self):
+        from resources.lib.create_capture import PreparedPublicBundle
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        raw = result.public_bundle.to_dict()
+        from resources.lib.frozen import FrozenBuildManifest
+        frozen = FrozenBuildManifest.from_dict(raw['frozen'])
+        raw['frozen'] = replace(frozen, kodi_version='22.0', source_metadata={'kodi_version': '22.0'}).to_dict()
+        result = replace(result, public_bundle=PreparedPublicBundle(json.dumps(raw)))
+        self.engine.capture = Mock(return_value=result)
+        self.assertEqual(self.workflow.execute(p).string_id, 32732)
+        self.private_factory.assert_not_called(); self.assertEqual(self.entries(), ())
+
+    def reject_public_binding(self, transform):
+        from resources.lib.create_capture import PreparedPublicBundle
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        raw = result.public_bundle.to_dict(); transform(raw)
+        result = replace(result, public_bundle=PreparedPublicBundle(json.dumps(raw)))
+        self.engine.capture = Mock(return_value=result)
+        self.assertEqual(self.workflow.execute(p).string_id, 32732)
+        self.private_factory.assert_not_called(); self.assertEqual(self.entries(), ())
+
+    def test_complete_public_overlay_reference_mismatch_zero_persistence(self):
+        self.reject_public_binding(lambda raw: raw['manifest']['private_overlay'].update(overlay_id='wrong'))
+
+    def test_complete_public_private_declarations_mismatch_zero_persistence(self):
+        self.reject_public_binding(lambda raw: raw['manifest']['config'].update(private_settings=[]))
+
+    def test_complete_public_build_version_mismatch_zero_persistence(self):
+        self.reject_public_binding(lambda raw: raw['manifest']['build'].update(version='2.0.0'))
+
+    def test_complete_missing_required_resource_zero_persistence(self):
+        from resources.lib.create_capture import PreparedPublicBundle
+        from resources.lib.redlight_resource import redlight_declaration
+        declaration = redlight_declaration()
+        self.assertTrue(declaration.required)
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        p = replace(p, request=replace(p.request, private_resources=(declaration,)))
+        raw = result.public_bundle.to_dict()
+        raw['manifest']['config']['structured_private_resources'] = [declaration.safe_dict()]
+        result = replace(result, public_bundle=PreparedPublicBundle(json.dumps(raw)))
+        self.engine.capture = Mock(return_value=result)
+        self.assertEqual(self.workflow.execute(p).string_id, 32732)
+        self.private_factory.assert_not_called(); self.assertEqual(self.entries(), ())
+
+    def test_require_exact_missing_never_writes(self):
+        with self.private_store.create_commit() as commit:
+            with self.assertRaises(PrivateOverlayConflict):
+                commit.require_exact(self.overlay())
+            self.assertFalse(self.private_store.path_for('test-private').exists())
+            commit.ensure_exact(self.overlay())
+            commit.require_exact(self.overlay())
+            with self.assertRaises(PrivateOverlayConflict):
+                commit.require_exact(self.overlay('different'))
+
+    def test_rollback_unlink_failure_retains_private(self):
+        import os
+        original = os.unlink
+        p = self.preview()
+        def deny(name, *args, **kwargs):
+            if name == self.private_store.path_for(p.request.private_overlay_id).name:
+                raise OSError(SECRET)
+            return original(name, *args, **kwargs)
+        self.library.register = Mock(side_effect=OSError(SECRET))
+        with patch('resources.lib.private_overlay.os.unlink', side_effect=deny):
+            self.assertEqual(self.workflow.execute(p).string_id, 32734)
+        self.assertTrue(self.private_store.path_for(p.request.private_overlay_id).exists())
+
+    def test_rollback_fsync_failure_safe_terminal(self):
+        import os
+        original = os.fsync
+        count = 0
+        def fail_rollback(fd):
+            nonlocal count
+            count += 1
+            if count == 3:
+                raise OSError(SECRET)
+            return original(fd)
+        p = self.preview(); captured = self.engine.capture(p.request, created_at=STAMP)
+        self.engine.capture = Mock(return_value=captured)
+        self.library.register = Mock(side_effect=OSError(SECRET))
+        with patch('resources.lib.private_overlay.os.fsync', side_effect=fail_rollback):
+            terminal = self.execute()
+        self.assertEqual(terminal.string_id, 32734)
+        self.assertEqual(self.entries(), ())
+        self.assertNotIn(SECRET, repr(terminal))
+
+    def test_private_file_fsync_failure_no_publication(self):
+        p = self.preview(); captured = self.engine.capture(p.request, created_at=STAMP)
+        self.engine.capture = Mock(return_value=captured)
+        with patch('resources.lib.private_overlay.os.fsync', side_effect=OSError(SECRET)):
+            terminal = self.execute()
+        self.assertEqual(terminal.string_id, 32734)
+        self.assertEqual(self.entries(), ())
+        self.assertFalse(self.private_store.path_for(self.preview().request.private_overlay_id).exists())
+
+    def test_concurrent_same_overlay_creates_safe_and_retry_idempotent(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        p = self.preview(); original = self.library.register
+        entered, release = Event(), Event()
+        def slow_register(*inputs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('disposable test timeout')
+            return original(*inputs)
+        self.library.register = slow_register
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.workflow.execute, p)
+            self.assertTrue(entered.wait(5))
+            try:
+                second = pool.submit(self.workflow.execute, p).result(timeout=5)
+                self.assertEqual(second.string_id, 32734)
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5).string_id, 32736)
+        self.assertEqual(self.workflow.execute(p).string_id, 32736)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_library_entry_publication_failure_rolls_back_proven_absence(self):
+        from resources.lib import build_library as lib
+        root = Path(self.library.root); root.mkdir(parents=True)
+        (root / 'registry.json').write_text(json.dumps({'schema_version': 1, 'entries': {}}))
+        original = lib._atomic
+        def fail_envelope(fd, name, data):
+            if name not in ('registry.json', 'selection.json'):
+                raise OSError(SECRET)
+            return original(fd, name, data)
+        with patch.object(lib, '_atomic', side_effect=fail_envelope):
+            terminal = self.execute()
+        self.assertEqual(terminal.string_id, 32734)
+        self.assertEqual(self.entries(), ())
+        self.assertFalse(self.private_store.path_for(self.preview().request.private_overlay_id).exists())
+
+    def test_missing_registry_after_publication_preserves_private(self):
+        original = self.library.register
+        def lose_registry(*inputs):
+            original(*inputs)
+            (Path(self.library.root) / 'registry.json').unlink()
+            raise OSError(SECRET)
+        self.library.register = lose_registry
+        self.assertEqual(self.execute().string_id, 32734)
+        self.assertTrue(self.private_store.path_for(self.preview().request.private_overlay_id).exists())
+
+    def test_private_sentinels_absent_from_staging_logs_and_errors(self):
+        p = self.preview(); result = self.engine.capture(p.request, created_at=STAMP)
+        self.assertNotIn(SECRET, repr(result.private_overlay))
+        original = self.library.register
+        def inspect_staging(*inputs):
+            for name in inputs:
+                path = Path(name)
+                paths = path.rglob('*') if path.is_dir() else (path,)
+                for item in paths:
+                    if item.is_file():
+                        self.assertNotIn(SECRET.encode(), item.read_bytes())
+            return original(*inputs)
+        self.library.register = inspect_staging
+        with self.assertNoLogs(level='DEBUG'):
+            terminal = self.workflow.execute(p)
+            self.config.values[(ROOT, 'privateid')] = SECRET + '-different'
+            conflict = self.workflow.execute(p)
+        self.assertEqual(terminal.string_id, 32736)
+        self.assertEqual(conflict.string_id, 32733)
+        for value in (repr(terminal), str(terminal.safe_dict()), repr(conflict), str(conflict.safe_dict())):
+            self.assertNotIn(SECRET, value)
+        self.assertEqual(self.config.mutations, [])
+
+    def test_storage_wording_allows_next_version(self):
+        po = (Path(__file__).parents[1] / 'resources/language/resource.language.en_gb/strings.po').read_text()
+        text = po.split('msgctxt "#32734"', 1)[1].split('msgstr', 1)[0]
+        self.assertNotIn('same version', text)
+        self.assertIn('choose the next version', text)
 
     def test_selection_failure_keeps_saved_private_and_build(self):
         self.library.select=Mock(side_effect=OSError(SECRET));p=self.preview()

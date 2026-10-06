@@ -9,10 +9,12 @@ from pathlib import Path
 from resources.lib.build_library import LibraryConflict
 from resources.lib.config import ConfigPackageLoader
 from resources.lib.create_capture import (CreateBuildRequest, CreateCaptureStatus,
-    PublicCaptureSpecification, PublicSettingTarget)
+    PublicCaptureSpecification, PublicSettingTarget, PreparedPublicBundle)
 from resources.lib.dependencies import _is_system_dependency
-from resources.lib.manifest import SettingTargetKind
-from resources.lib.private_overlay import PrivateOverlayConflict
+from resources.lib.manifest import SettingTargetKind, validate_manifest
+from resources.lib.resolver import resolve_manifest
+from resources.lib.private_overlay import PrivateOverlayConflict, PrivateOverlay, validate_private_overlay
+from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.redlight_resource import redlight_declaration
 
 
@@ -206,31 +208,63 @@ class CreateBuildWorkflow:
             return CreateTerminal(category)
         if result.public_bundle is None or bool(result.private_overlay) != request.captures_private:
             return CreateTerminal(32732)
+        try:
+            # Reuse accepted validators at the commit boundary, independently of
+            # the capture engine's COMPLETE claim. Bind to public frozen identity.
+            public = PreparedPublicBundle(result.public_bundle.canonical_json)
+            bundle = public.to_dict()
+            frozen = FrozenBuildManifest.from_dict(bundle['frozen'])
+            manifest = validate_manifest(bundle['manifest'])
+            if (frozen.build_id != request.build_id or manifest.build.id != request.build_id
+                    or manifest.build.version != request.build_version):
+                raise ValueError()
+            desired = resolve_manifest(manifest, request.device_profile_id)
+            config = desired.config
+            declared_settings = config.private_settings if config else ()
+            declared_resources = config.structured_private_resources if config else ()
+            if (sorted(declared_settings, key=lambda p: (p.target_kind.value, p.addon_id, p.key)) !=
+                    sorted(request.private_settings, key=lambda p: (p.target_kind.value, p.addon_id, p.key))
+                    or sorted(declared_resources, key=lambda p: p.resource_id) !=
+                    sorted(request.private_resources, key=lambda p: p.resource_id)):
+                raise ValueError()
+            if request.captures_private and (desired.private_overlay is None or
+                    desired.private_overlay.overlay_id != request.private_overlay_id):
+                raise ValueError()
+            overlay = result.private_overlay
+            if overlay is not None:
+                overlay = PrivateOverlay.from_dict(overlay.to_dict())
+                validate_private_overlay(overlay, request.private_settings,
+                    expected_overlay_id=request.private_overlay_id,
+                    expected_source_software_fingerprint=frozen.fingerprint(),
+                    resource_declarations=request.private_resources)
+        except Exception:
+            return CreateTerminal(32732)
         def register():
-            with result.public_bundle.registration_inputs() as inputs:
+            with public.registration_inputs() as inputs:
                 return self.library.register(*inputs)
         try:
             if result.private_overlay is None:
                 entry = register()
             else:
-                overlay = result.private_overlay
-                if overlay.overlay_id != request.private_overlay_id:
-                    return CreateTerminal(32732)
                 with self.private_store_factory().create_commit() as commit:
-                    created = commit.ensure_exact(overlay)
-                    try:
-                        entry = register()
-                    except Exception:
-                        # register may raise after its registry publication (e.g.
-                        # directory fsync or final read). Never remove private data
-                        # until authoritative readable state proves no such build.
-                        recovered = self.library.registered_bundle(result.public_bundle.to_dict())
-                        if recovered is not None:
-                            entry = recovered
-                        else:
-                            if created:
-                                commit.remove_if_exact(overlay.overlay_id, overlay.fingerprint)
-                            raise
+                    entry = self.library.registered_bundle(bundle)
+                    if entry is not None:
+                        commit.require_exact(overlay)
+                    else:
+                        created = commit.ensure_exact(overlay)
+                        try:
+                            entry = register()
+                        except Exception:
+                            # register may raise after its registry publication (e.g.
+                            # directory fsync or final read). Never remove private data
+                            # until authoritative readable state proves no such build.
+                            recovered = self.library.registered_bundle(bundle)
+                            if recovered is not None:
+                                entry = recovered
+                            else:
+                                if created:
+                                    commit.remove_if_exact(overlay.overlay_id, overlay.fingerprint)
+                                raise
         except (LibraryConflict, PrivateOverlayConflict):
             return CreateTerminal(32733)
         except Exception:

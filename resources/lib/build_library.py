@@ -7,7 +7,7 @@ all directory traversal is anchored with no-follow directory descriptors.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import hashlib
 import json
@@ -270,9 +270,11 @@ class BuildLibrary:
             raise _error()
         _parts(self.root[1:])
 
-    def _registry(self, fd):
+    def _registry(self, fd, *, required=False):
         data = _read_at(fd, "registry.json", STATE_LIMIT)
         if data is None:
+            if required:
+                raise _error()
             return {}
         raw = _json(data)
         if not isinstance(raw, dict) or set(raw) != {"schema_version", "entries"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
@@ -433,21 +435,24 @@ class BuildLibrary:
     def registered_bundle(self, bundle):
         """Resolve an ambiguous register failure against authoritative state.
 
-        Returns None only after a readable registry proves absence. Corruption
-        propagates so callers retain required private data instead of guessing.
+        Returns None only for a genuinely absent root or readable valid registry
+        lacking the exact key. Indexed-content failures propagate so callers
+        retain required private data instead of guessing.
         """
         _validate_bundle(bundle)
         key = hashlib.sha256(_encode(bundle)).hexdigest()
         try:
-            with _directory(self.root) as fd:
-                entries = self._registry(fd)
+            with ExitStack() as stack:
+                try:
+                    fd = stack.enter_context(_directory(self.root))
+                except FileNotFoundError:
+                    return None
+                entries = self._registry(fd, required=True)
                 if key not in entries:
                     return None
                 manifest, _, _ = self._load_at(fd, key, entries)
                 return LibraryEntry(key, manifest.build.id, manifest.build.version,
                                     manifest.build.name, tuple(sorted(manifest.device_profiles)))
-        except FileNotFoundError:
-            return None
         except Exception:
             raise _error() from None
 

@@ -71,6 +71,68 @@ class LibraryTests(unittest.TestCase):
     def envelope(self, key):
         return self.root / "builds" / (key + ".json")
 
+    def registered_fixture(self):
+        entry = self.register()
+        return entry, json.loads(self.envelope(entry.entry_id).read_text())
+
+    def test_registered_missing_entire_root_proves_absence(self):
+        _, bundle = self.registered_fixture()
+        shutil.rmtree(self.root)
+        self.assertIsNone(self.library.registered_bundle(bundle))
+
+    def test_registered_readable_registry_key_absent(self):
+        _, bundle = self.registered_fixture()
+        (self.root / 'registry.json').write_text(json.dumps({'schema_version': 1, 'entries': {}}))
+        self.assertIsNone(self.library.registered_bundle(bundle))
+
+    def test_registered_valid_indexed_entry(self):
+        entry, bundle = self.registered_fixture()
+        self.assertEqual(self.library.registered_bundle(bundle), entry)
+
+    def test_registered_missing_registry_is_ambiguous(self):
+        _, bundle = self.registered_fixture()
+        (self.root / 'registry.json').unlink()
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_missing_builds_is_error(self):
+        _, bundle = self.registered_fixture()
+        shutil.rmtree(self.root / 'builds')
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_missing_envelope_is_error(self):
+        entry, bundle = self.registered_fixture()
+        self.envelope(entry.entry_id).unlink()
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_corrupt_envelope_is_error(self):
+        entry, bundle = self.registered_fixture()
+        self.envelope(entry.entry_id).write_text('{')
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_digest_disagreement_is_error(self):
+        entry, bundle = self.registered_fixture()
+        changed = json.loads(json.dumps(bundle)); changed['manifest']['build']['name'] = 'Changed'
+        self.envelope(entry.entry_id).write_text(json.dumps(changed))
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_metadata_disagreement_is_error(self):
+        entry, bundle = self.registered_fixture()
+        registry = json.loads((self.root / 'registry.json').read_text())
+        registry['entries'][entry.entry_id]['display_name'] = 'Changed'
+        (self.root / 'registry.json').write_text(json.dumps(registry))
+        with self.assertRaises(LibraryError): self.library.registered_bundle(bundle)
+
+    def test_registered_indexed_unreadable_content_is_error(self):
+        _, bundle = self.registered_fixture()
+        original = lib._read_at
+        def deny(fd, name, limit):
+            if name.startswith('builds/'):
+                raise PermissionError(SECRET)
+            return original(fd, name, limit)
+        with patch.object(lib, '_read_at', side_effect=deny):
+            with self.assertRaises(LibraryError) as error: self.library.registered_bundle(bundle)
+        self.assertNotIn(SECRET, str(error.exception))
+
     def test_empty_is_creation_free_and_not_auto_selected(self):
         self.assertEqual(self.library.list_builds(), ())
         self.assertIsNone(self.library.current_selection())

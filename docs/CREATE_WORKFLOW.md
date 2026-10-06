@@ -33,23 +33,46 @@ capturing another skin. Older capture callers retain their existing default.
 A native `busydialognocancel` presents indeterminate activity; no percentages
 are fabricated. Every confirmed attempt ends in an acknowledged native result.
 
-Only COMPLETE capture proceeds. Private content uses a deterministic ID derived
-from build ID/version. `PrivateOverlayStore.create_commit()` holds a no-follow,
-profile-local advisory lock across private publication, registration and any
-rollback. `ensure_exact()` validates bounded regular existing content, rejects
-malformed/duplicate-key JSON and conflicts, and atomically links a fully synced
-0600 private file without replacing a target. Existing exact content is
-idempotent. The legacy explicit overwrite/import path cooperates with this
-lock; Create never uses it. `remove_if_exact()` checks the expected fingerprint
-and removes only a new overlay owned by this attempt.
+Only COMPLETE capture proceeds. Before opening the private store, staging public
+registration inputs or selecting a build, the workflow independently revalidates
+the PreparedPublicBundle and uses the existing manifest/resolver validators to
+bind build ID/version, selected-profile private declarations and overlay ID to
+the confirmed request. It roundtrips the private overlay and calls the accepted
+`validate_private_overlay()` with the request's settings/resources and the
+software fingerprint derived from the exact returned FrozenBuildManifest.
+Undeclared entries/resources, missing required content, wrong types or identity
+fail with no workflow persistence; the overlay's claimed source is never used
+as the expected fingerprint.
+
+Private content uses a deterministic ID derived from build ID/version.
+`PrivateOverlayStore.create_commit()` holds a no-follow, profile-local advisory
+lock across the exact-public authority check, private publication, registration
+and any rollback. An already-authoritative exact public build requires its
+existing exact private overlay: `require_exact()` reads bounded regular content
+and never writes. Matching content reuses the authoritative LibraryEntry;
+missing, differing, malformed, unreadable or unsafe private state fails closed.
+Missing private meaning is never silently reconstructed, even on an exact-public
+retry. No private-derived fingerprint is added to public storage.
+
+Only proven public absence allows `ensure_exact()` to create or adopt an exact
+private overlay. It rejects malformed/duplicate-key JSON and conflicts, and
+atomically links a fully synced 0600 private file without replacing a target.
+An exact orphan can continue; a differing orphan conflicts. The legacy explicit
+overwrite/import path cooperates with this lock; Create never uses it.
+`remove_if_exact()` checks the expected fingerprint and removes only a new
+overlay owned by this attempt.
 
 Public registration uses `PreparedPublicBundle.registration_inputs()` and the
 accepted BuildLibrary API. Registration can raise after publishing its registry;
-`registered_bundle()` distinguishes a validated published entry from proven
-absence before rollback. If authoritative state cannot be read, private content
-is retained and the result says saving could not be confirmed. Successful
-registration selects the new entry/profile. Selection failure preserves both
-stores and reports that the saved build could not be selected automatically.
+`registered_bundle()` returns None only for a genuinely missing library root or
+a readable valid registry without the exact key. A present root with a missing
+registry, or any unavailable/corrupt indexed directory, envelope, digest or
+metadata fails closed. Recovery reuses a validated published entry, rolls back
+new private content only on proven absence, and retains private data on ambiguous
+authority. The terminal guidance permits retry while advising the next version
+if this version now exists. Selection occurs only after an authoritative entry;
+selection failure preserves both stores and reports that the saved build could
+not be selected automatically.
 
 The stores are not one atomic transaction. A crash after private publication
 can leave a non-authoritative private orphan (or a private staging inode);

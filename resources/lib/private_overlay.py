@@ -430,6 +430,13 @@ class _CreatePrivateCommit:
             raise PrivateOverlayValidationError('PRIVATE_CREATE_IDENTITY_FAILED')
         return overlay
 
+    def require_exact(self, overlay):
+        """Require already-published matching private meaning; never write."""
+        overlay = PrivateOverlay.from_dict(overlay.to_dict())
+        existing = self._read(overlay.overlay_id)
+        if existing is None or existing.fingerprint != overlay.fingerprint:
+            raise PrivateOverlayConflict('PRIVATE_CREATE_CONFLICT')
+
     def ensure_exact(self, overlay):
         # Roundtrip validates all captured content before any write.
         overlay = PrivateOverlay.from_dict(overlay.to_dict())
