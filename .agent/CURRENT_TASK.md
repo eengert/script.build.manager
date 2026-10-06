@@ -1,8 +1,9 @@
-# BM-UI-003B capture correction — PASS offline; STOP
+# BM-UI-003C — Native Create Build workflow: PASS offline; STOP
 
-Branch agent/codex; clean start 843794d2b5cd4342de99975486c4c7c4e9408ebf.
-Correction product 2a7791cc7cf227fe15620207852d6c11ca6fae2d.
-Only skin alias privacy + Red Light capture SHM side-effect blockers corrected.
-809 focused / 2797 full-suite PASS; eight candidate files unchanged after full run.
-No live Kodi/Test.app/device access, push, publication or integration.
-Exact next step: independent correction-delta review. See HANDOFF.md.
+Branch agent/codex; start d905190ec69d2f896ab675b74e71136b21c261c1.
+Product commit db8ffe803a3e5350407f70f7618fc4c494dc3d17.
+68 new workflow tests; 652 focused / 2865 full-suite PASS.
+All product/test/documentation content unchanged after the passing full run.
+No Test.app/live Kodi/device access, push/publication or integration.
+Next: independent BM-UI-003C review, then separately authorized portable Test.app qualification.
+See HANDOFF.md for scope, evidence and store/crash limitations.
