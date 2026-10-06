@@ -22,6 +22,7 @@ from typing import Iterator, Optional
 
 from resources.lib.build_manager import ReconcileRequest, ReconcileResult
 from resources.lib.frozen_resolution import InstallResolutionRecord, FrozenResolutionError
+from resources.lib.readonly_io import ReadOnlyStateError, UnsafeStateFile, read_regular_file
 from resources.lib.restart import RestartRequirement
 
 
@@ -380,6 +381,31 @@ class TransactionStore:
     def inspect(self) -> Optional[RestartTransaction]:
         with self.locked():
             return self._read_unlocked()
+
+    def read_snapshot(self) -> Optional[RestartTransaction]:
+        """Read-only observation of the durable record for status callers.
+
+        Takes no lock and creates no directory or lock file, so an observer
+        never changes Build Manager state and never collides with a running
+        operation. Writers replace the record atomically, so the snapshot is
+        always one complete record. Raises ``TransactionPersistenceError`` when
+        the record cannot be read, ``TransactionCorrupt`` (also for a symlink,
+        FIFO, directory or oversized file) or ``TransactionUnsupportedSchema``
+        when it is not trustworthy.
+        """
+        try:
+            raw = read_regular_file(self.transaction_path, limit=128 * 1024)
+        except UnsafeStateFile as exc:
+            raise TransactionCorrupt("transaction file is not a safe regular file") from exc
+        except ReadOnlyStateError as exc:
+            raise TransactionPersistenceError("could not read the transaction") from exc
+        if raw is None:
+            return None
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TransactionCorrupt("transaction JSON is malformed") from exc
+        return RestartTransaction.from_dict(value)
 
     @contextmanager
     def locked_access(self) -> Iterator["TransactionStoreAccess"]:

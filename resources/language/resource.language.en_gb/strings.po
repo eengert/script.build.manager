@@ -101,10 +101,6 @@ msgctxt "#32122"
 msgid "Update / Repair is not available in this frontend build yet. Help explains how it finds and fixes what doesn't match."
 msgstr ""
 
-msgctxt "#32123"
-msgid "Build Status is not available in this frontend build yet. No current build-health check has been performed here. Help explains the status labels."
-msgstr ""
-
 msgctxt "#32124"
 msgid "Preferences for Build Manager"
 msgstr ""
@@ -250,7 +246,7 @@ msgid "Update / Repair fixes a device that no longer matches its build.\n\nWhat 
 msgstr ""
 
 msgctxt "#32304"
-msgid "Build Status tells you how your build is doing.\n\nWhat the labels mean\n• Healthy: everything matches\n• Changes Needed: some parts don't match\n• Restart Required: close and reopen Kodi to continue\n• Needs Attention: Build Manager needs your help\n• Not Fully Checked: some checks haven't run yet\n\nGood to know\n• An older result is not the same as a fresh check\n• Use Check Status to look again\n• Checking changes nothing"
+msgid "Build Status tells you how your build is doing.\n\nWhat the labels mean\n• Healthy: everything matches\n• Changes Needed: some parts don't match\n• Restart Required: close and reopen Kodi to continue\n• Needs Attention: Build Manager needs your help\n• Not Fully Checked: some checks haven't run yet\n\nGood to know\n• An older result is not the same as a fresh check\n• Use Check Again to look again\n• Checking changes nothing"
 msgstr ""
 
 msgctxt "#32305"
@@ -279,4 +275,292 @@ msgstr ""
 
 msgctxt "#32150"
 msgid "Why is this unavailable?"
+msgstr ""
+
+msgctxt "#32401"
+msgid "Overall"
+msgstr ""
+
+msgctxt "#32402"
+msgid "Add-ons"
+msgstr ""
+
+msgctxt "#32403"
+msgid "Skin"
+msgstr ""
+
+msgctxt "#32404"
+msgid "Settings"
+msgstr ""
+
+msgctxt "#32405"
+msgid "Private settings"
+msgstr ""
+
+msgctxt "#32406"
+msgid "%s: %s"
+msgstr ""
+
+msgctxt "#32420"
+msgid "Current"
+msgstr ""
+
+msgctxt "#32421"
+msgid "Needs updating"
+msgstr ""
+
+msgctxt "#32422"
+msgid "Not checked"
+msgstr ""
+
+msgctxt "#32423"
+msgid "Not part of this build"
+msgstr ""
+
+msgctxt "#32424"
+msgid "%d need attention"
+msgstr ""
+
+msgctxt "#32425"
+msgid "1 needs attention"
+msgstr ""
+
+msgctxt "#32430"
+msgid "Healthy"
+msgstr ""
+
+msgctxt "#32431"
+msgid "Changes Needed"
+msgstr ""
+
+msgctxt "#32432"
+msgid "Restart Required"
+msgstr ""
+
+msgctxt "#32433"
+msgid "Needs Attention"
+msgstr ""
+
+msgctxt "#32434"
+msgid "Not Fully Checked"
+msgstr ""
+
+msgctxt "#32440"
+msgid "Check Again"
+msgstr ""
+
+msgctxt "#32441"
+msgid "Close"
+msgstr ""
+
+msgctxt "#32450"
+msgid "Everything Build Manager checked matches your build."
+msgstr ""
+
+msgctxt "#32451"
+msgid "Some parts of this device don't match your build."
+msgstr ""
+
+msgctxt "#32452"
+msgid "Fully close Kodi and open it again so Build Manager can finish."
+msgstr ""
+
+msgctxt "#32453"
+msgid "An earlier step did not finish. Build Manager needs your attention before it carries on."
+msgstr ""
+
+msgctxt "#32454"
+msgid "Some checks could not be completed, so this is not a healthy result."
+msgstr ""
+
+msgctxt "#32460"
+msgid "• Add-ons are current"
+msgstr ""
+
+msgctxt "#32461"
+msgid "• %d add-ons need attention"
+msgstr ""
+
+msgctxt "#32462"
+msgid "• 1 add-on needs attention"
+msgstr ""
+
+msgctxt "#32463"
+msgid "• Add-ons could not be checked"
+msgstr ""
+
+msgctxt "#32465"
+msgid "• Skin is current"
+msgstr ""
+
+msgctxt "#32466"
+msgid "• Skin needs changing"
+msgstr ""
+
+msgctxt "#32467"
+msgid "• Skin could not be checked"
+msgstr ""
+
+msgctxt "#32468"
+msgid "• Settings are current"
+msgstr ""
+
+msgctxt "#32469"
+msgid "• Settings need updating"
+msgstr ""
+
+msgctxt "#32470"
+msgid "• Settings could not be checked"
+msgstr ""
+
+msgctxt "#32471"
+msgid "• Private settings are current"
+msgstr ""
+
+msgctxt "#32472"
+msgid "• Private settings need updating"
+msgstr ""
+
+msgctxt "#32473"
+msgid "• Private settings could not be checked"
+msgstr ""
+
+msgctxt "#32480"
+msgid "No build has been applied on this device yet, so there is nothing to compare."
+msgstr ""
+
+msgctxt "#32481"
+msgid "Your build's files could not be read."
+msgstr ""
+
+msgctxt "#32482"
+msgid "Kodi's add-on list could not be read."
+msgstr ""
+
+msgctxt "#32483"
+msgid "Some settings could not be read."
+msgstr ""
+
+msgctxt "#32484"
+msgid "Your saved private settings were not found."
+msgstr ""
+
+msgctxt "#32485"
+msgid "Your saved private settings do not fit this build."
+msgstr ""
+
+msgctxt "#32486"
+msgid "Private settings could not be verified."
+msgstr ""
+
+msgctxt "#32487"
+msgid "Build Manager could not read its saved progress."
+msgstr ""
+
+msgctxt "#32488"
+msgid "The check could not finish."
+msgstr ""
+
+msgctxt "#32489"
+msgid "Some add-ons could not be checked."
+msgstr ""
+
+msgctxt "#32490"
+msgid "Not installed"
+msgstr ""
+
+msgctxt "#32491"
+msgid "Different version"
+msgstr ""
+
+msgctxt "#32492"
+msgid "Turned on or off differently than your build"
+msgstr ""
+
+msgctxt "#32493"
+msgid "Could not be checked"
+msgstr ""
+
+msgctxt "#32494"
+msgid "…and %d more"
+msgstr ""
+
+msgctxt "#32495"
+msgid "• %s — %s"
+msgstr ""
+
+msgctxt "#32496"
+msgid "Your build's add-ons are installed and set up as expected."
+msgstr ""
+
+msgctxt "#32497"
+msgid "This build does not manage add-ons."
+msgstr ""
+
+msgctxt "#32500"
+msgid "Your build uses the skin: %s"
+msgstr ""
+
+msgctxt "#32501"
+msgid "The skin in use now: %s"
+msgstr ""
+
+msgctxt "#32502"
+msgid "This build does not set a skin."
+msgstr ""
+
+msgctxt "#32510"
+msgid "Settings and files checked: %d"
+msgstr ""
+
+msgctxt "#32511"
+msgid "Needing an update: %d"
+msgstr ""
+
+msgctxt "#32512"
+msgid "Could not be read: %d"
+msgstr ""
+
+msgctxt "#32513"
+msgid "This build does not manage any settings."
+msgstr ""
+
+msgctxt "#32520"
+msgid "Private settings"
+msgstr ""
+
+msgctxt "#32521"
+msgid "Private add-on data"
+msgstr ""
+
+msgctxt "#32525"
+msgid "• %s: %s"
+msgstr ""
+
+msgctxt "#32526"
+msgid "This build does not use private settings."
+msgstr ""
+
+msgctxt "#32530"
+msgid "Kodi was restarted, but Build Manager has not finished its earlier work."
+msgstr ""
+
+msgctxt "#32531"
+msgid "An earlier operation was interrupted before it finished."
+msgstr ""
+
+msgctxt "#32532"
+msgid "Build Manager's saved progress could not be read safely."
+msgstr ""
+
+msgctxt "#32534"
+msgid "Automatic add-on protection stays on until that work finishes."
+msgstr ""
+
+msgctxt "#32540"
+msgid "Checked at %s"
+msgstr ""
+
+msgctxt "#32498"
+msgid "This build does not list anything to compare."
 msgstr ""

@@ -30,6 +30,8 @@ The test suite covers:
 | `test_restart.py` | Typed restart-requirement aggregation (BM-019) | 13 |
 | `test_restart_coordinator.py` | Restart capability and manual handoff (BM-020C1) | 13 |
 | `test_resume.py` | Post-restart resume orchestration (BM-020C) | 14 |
+| `test_status.py` | Read-only Build Status: truthfulness, zero-mutation, privacy (BM-UI-002B) | 77 |
+| `test_status_ui.py` | Native Build Status page: plain language, secret-blind, Check Again (BM-UI-002B) | 32 |
 
 ## Disposable Kodi harness
 

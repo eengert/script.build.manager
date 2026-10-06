@@ -16,11 +16,11 @@
       <icon>resources/images/icon.png</icon>
     </assets>
     <news>Version 0.1.0
-Native menu with Settings and plain-language Help.
-Create, Install, Update / Repair and Build Status screens are not available yet.</news>
+Native menu with Settings, plain-language Help and Build Status.
+Create, Install and Update / Repair screens are not available yet.</news>
     <summary lang="en_US">Save and restore your Kodi setup.</summary>
     <summary lang="en_GB">Save and restore your Kodi setup.</summary>
-    <description lang="en_US">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings and Help. The Create, Install, Update / Repair and Build Status screens are still being built.</description>
-    <description lang="en_GB">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings and Help. The Create, Install, Update / Repair and Build Status screens are still being built.</description>
+    <description lang="en_US">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings, Help and Build Status. Build Status shows whether Kodi needs a restart or Build Manager needs your attention; comparing a device with a build arrives with Install. The Create, Install and Update / Repair screens are still being built.</description>
+    <description lang="en_GB">Build Manager helps you save a Kodi setup and put it on your devices. This version has the main menu, Settings, Help and Build Status. Build Status shows whether Kodi needs a restart or Build Manager needs your attention; comparing a device with a build arrives with Install. The Create, Install and Update / Repair screens are still being built.</description>
   </extension>
 </addon>

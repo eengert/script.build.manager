@@ -10,6 +10,7 @@ then applies only owned rows; it does not run service, provider, or auth setup.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 import threading
@@ -660,19 +661,57 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             expected_exceptions=(ImportError, AttributeError, ValueError, OSError),
         )
 
-    def _verify_database(self) -> None:
+    def _probe_uri(self) -> str:
+        """Immutable, percent-quoted URI for a status read that touches nothing.
+
+        A normal read-only connection to a WAL database rewrites (or creates)
+        SQLite's ``-shm`` index beside it, so a status read opens the main file
+        ``immutable=1``, which takes no locks and creates or touches no sidecar.
+        That is only exact when no committed frame can be waiting in the WAL, so
+        a non-empty (or unstattable) ``-wal`` is reported as not inspectable
+        instead of being read in a way that would write beside the store.
+        """
+        try:
+            frames = os.stat(str(self.database_path) + "-wal").st_size > 0
+        except FileNotFoundError:
+            frames = False
+        except OSError:
+            frames = True
+        if frames:
+            raise PrivateResourceCompatibilityError(
+                "Red Light settings database has unflushed writes and cannot be "
+                "inspected without touching its files"
+            )
+        return self.database_path.as_uri() + "?mode=ro&immutable=1"
+
+    def _header_declares_wal(self) -> bool:
+        """The database header's read/write format bytes are 2 only in WAL mode."""
+        try:
+            with open(self.database_path, "rb") as handle:
+                header = handle.read(20)
+        except OSError:
+            return False
+        return len(header) == 20 and header[18] == 2 and header[19] == 2
+
+    def _verify_database(self, probe: bool = False) -> str:
+        """Verify the store; returns the read-only URI the caller should reuse."""
         if not self.database_path.is_file():
             raise PrivateResourceNotInitializedError(
                 "Red Light settings database is absent"
             )
         connection = None
         try:
-            uri = f"file:{self.database_path}?mode=ro"
+            uri = self._probe_uri() if probe else f"file:{self.database_path}?mode=ro"
             connection = sqlite3.connect(uri, uri=True, timeout=0.5)
-            journal_mode = str(
-                connection.execute("PRAGMA journal_mode").fetchone()[0]
-            ).lower()
-            if journal_mode != "wal":
+            if probe:
+                # Immutable connections do not use WAL, so judge the audited
+                # journal mode from the file header instead of the pragma.
+                wal = self._header_declares_wal()
+            else:
+                wal = str(
+                    connection.execute("PRAGMA journal_mode").fetchone()[0]
+                ).lower() == "wal"
+            if not wal:
                 raise PrivateResourceCompatibilityError(
                     "Red Light settings database is not using audited WAL mode"
                 )
@@ -686,6 +725,7 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         finally:
             if connection is not None:
                 connection.close()
+        return uri
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -713,13 +753,13 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         self,
         declaration: StructuredPrivateResourceDeclaration,
         overlay: StructuredPrivateResourceOverlay,
+        probe: bool = False,
     ) -> StructuredResourceResult:
-        self._verify_database()
+        uri = self._verify_database(probe)
         connection = None
         results = []
         matched = True
         try:
-            uri = f"file:{self.database_path}?mode=ro"
             connection = sqlite3.connect(uri, uri=True, timeout=0.5)
             self._validate_schema(connection)
             for value in overlay.values:
@@ -771,6 +811,16 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         self._validate_declaration(declaration)
         validate_resource_overlay(overlay, declaration)
         return self._verify_overlay_values(declaration, overlay)
+
+    def inspect(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        overlay: StructuredPrivateResourceOverlay,
+    ) -> StructuredResourceResult:
+        """Status check: ``verify`` semantics, but touching nothing beside the store."""
+        self._validate_declaration(declaration)
+        validate_resource_overlay(overlay, declaration)
+        return self._verify_overlay_values(declaration, overlay, probe=True)
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration):
         self._validate_declaration(declaration)

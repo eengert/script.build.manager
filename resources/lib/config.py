@@ -1575,6 +1575,158 @@ class ConfigurationManager:
 
 
 # ---------------------------------------------------------------------------
+# Read-only inspection (BM-UI-002B / G2)
+# ---------------------------------------------------------------------------
+
+class ReadOnlyConfigurationBackend:
+    """View of a ``ConfigurationBackend`` that exposes only its read methods.
+
+    Only the backend's three bound read methods are exposed: there is no setter,
+    writer, or ``__getattr__`` fallthrough, so code that uses this view has no
+    attribute to call that writes. That prevents accidents; it is not a
+    security boundary, since a bound method still references its backend.
+    """
+
+    __slots__ = ("get_setting", "get_skin_setting", "read_file")
+
+    def __init__(self, backend: ConfigurationBackend) -> None:
+        object.__setattr__(self, "get_setting", backend.get_setting)
+        object.__setattr__(self, "get_skin_setting", backend.get_skin_setting)
+        object.__setattr__(self, "read_file", backend.read_file)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("read-only configuration view")
+
+
+class ConfigTargetCheck(str, Enum):
+    """Outcome of comparing one managed target with its desired value."""
+    MATCHES = "matches"
+    DIFFERS = "differs"
+    UNREADABLE = "unreadable"
+
+
+@dataclass(frozen=True)
+class ConfigInspectionResult:
+    """Read-only comparison of desired configuration with current state.
+
+    Carries target identities and an outcome per target — never a current or
+    desired value, and never a read-error message (infrastructure failures are
+    only ``UNREADABLE``, which is not evidence of drift).
+    """
+    effective_identity: str = ""
+    setting_checks: Tuple[Tuple[Tuple[str, str, str], ConfigTargetCheck], ...] = ()
+    file_checks: Tuple[Tuple[str, ConfigTargetCheck], ...] = ()
+
+    def _count(self, outcome: ConfigTargetCheck) -> int:
+        return sum(1 for _, c in self.setting_checks if c is outcome) + sum(
+            1 for _, c in self.file_checks if c is outcome
+        )
+
+    @property
+    def total(self) -> int:
+        return len(self.setting_checks) + len(self.file_checks)
+
+    @property
+    def matching(self) -> int:
+        return self._count(ConfigTargetCheck.MATCHES)
+
+    @property
+    def differing(self) -> int:
+        return self._count(ConfigTargetCheck.DIFFERS)
+
+    @property
+    def unreadable(self) -> int:
+        return self._count(ConfigTargetCheck.UNREADABLE)
+
+    @property
+    def validation_state(self) -> ConfigurationValidationState:
+        """Snapshot for BM-014: only targets that matched are verified."""
+        return ConfigurationValidationState(
+            effective_identity=self.effective_identity,
+            setting_targets=tuple(sorted(t for t, _ in self.setting_checks)),
+            file_targets=tuple(sorted(d for d, _ in self.file_checks)),
+            verified_settings=tuple(sorted(
+                t for t, c in self.setting_checks if c is ConfigTargetCheck.MATCHES
+            )),
+            verified_files=tuple(sorted(
+                d for d, c in self.file_checks if c is ConfigTargetCheck.MATCHES
+            )),
+        )
+
+
+class ConfigurationInspector:
+    """Compare desired configuration with current state without writing.
+
+    Reuses the apply path's typed read check and ``values_equal`` so there is
+    one definition of "matches", but is constructed from read methods only and
+    has no code path that calls a setter or writer.
+    """
+
+    def __init__(self, reader: ReadOnlyConfigurationBackend) -> None:
+        if not isinstance(reader, ReadOnlyConfigurationBackend):
+            raise TypeError("ConfigurationInspector requires a read-only backend view")
+        self._reader = reader
+
+    def inspect(self, effective: EffectiveConfiguration) -> ConfigInspectionResult:
+        return ConfigInspectionResult(
+            effective_identity=effective.identity,
+            setting_checks=tuple(
+                (setting.target, self._check_setting(setting))
+                for setting in effective.settings
+            ),
+            file_checks=tuple(
+                (item.destination, self._check_file(item)) for item in effective.files
+            ),
+        )
+
+    def inspect_settings(
+        self, settings: Tuple[ConfigSetting, ...], *, effective_identity: str
+    ) -> ConfigInspectionResult:
+        """Compare an already-authorized typed setting sequence (e.g. private values)."""
+        return ConfigInspectionResult(
+            effective_identity=effective_identity,
+            setting_checks=tuple(
+                (setting.target, self._check_setting(setting)) for setting in settings
+            ),
+        )
+
+    def _check_setting(self, setting: ConfigSetting) -> ConfigTargetCheck:
+        read = (
+            self._reader.get_setting
+            if setting.target_kind is ConfigTargetKind.ADDON
+            else self._reader.get_skin_setting
+        )
+        try:
+            current = _check_runtime_value(
+                setting.setting_type,
+                read(setting.addon_id, setting.key, setting.setting_type),
+                context="inspect",
+            )
+        except Exception:
+            return ConfigTargetCheck.UNREADABLE
+        return (
+            ConfigTargetCheck.MATCHES
+            if values_equal(setting.setting_type, current, setting.value)
+            else ConfigTargetCheck.DIFFERS
+        )
+
+    def _check_file(self, config_file: ConfigFile) -> ConfigTargetCheck:
+        try:
+            current = self._reader.read_file(config_file.destination)
+        except Exception:
+            return ConfigTargetCheck.UNREADABLE
+        if current is None:
+            return ConfigTargetCheck.DIFFERS
+        if not isinstance(current, (bytes, bytearray)):
+            return ConfigTargetCheck.UNREADABLE
+        return (
+            ConfigTargetCheck.MATCHES
+            if bytes(current) == config_file.content
+            else ConfigTargetCheck.DIFFERS
+        )
+
+
+# ---------------------------------------------------------------------------
 # Production backend — Kodi runtime
 # ---------------------------------------------------------------------------
 

@@ -34,16 +34,16 @@ class NativeFoundationTests(unittest.TestCase):
     def test_cancel_main_exits(self):
         a,d,_=self.flow([-1]); self.assertEqual(len(d.calls),1); self.assertFalse(a.opened)
     def test_every_foundation_route_explains_unavailability(self):
-        for i in range(4):
+        for i in range(3):  # Create, Install, Update/Repair; Build Status has its own page
             with self.subTest(route=i):
                 a,d,_=self.flow([i,0,-1,-1]); self.assertEqual(d.details,[(str(32100+i),str(32120+i))]); self.assertFalse(a.opened)
                 self.assertIn('32138',d.calls[1][0])
     def test_every_foundation_context_help(self):
-        for i in range(4):
+        for i in range(3):  # Build Status Help is covered in test_status_ui
             with self.subTest(route=i):
                 _,d,_=self.flow([i,1,-1,-1]); self.assertEqual(d.details,[(str(32201+i),str(32301+i))])
     def test_foundation_back_restores_main_selection(self):
-        for i in range(4):
+        for i in range(3):
             _,d,_=self.flow([i,2,-1]); self.assertEqual(d.calls[-1][2],i)
     def test_context_help_returns_to_invoking_choice(self):
         _,d,_=self.flow([0,1,-1,-1]); self.assertEqual(d.calls[2][2],1)
@@ -88,8 +88,14 @@ class NativeFoundationTests(unittest.TestCase):
         for p in (ROOT/'resources/lib/ui').glob('*.py'):
             tree=ast.parse(p.read_text())
             for n in ast.walk(tree):
-                if isinstance(n,ast.ImportFrom): self.assertTrue((n.module or '').startswith(('dataclasses','enum','resources.lib.ui')),p)
+                if isinstance(n,ast.ImportFrom): self.assertTrue((n.module or '').startswith(('dataclasses','enum','resources.lib.ui','resources.lib.status_model')),p)
                 if isinstance(n,ast.Import): self.fail('unexpected import '+str(p))
+    def test_status_model_is_standard_library_only(self):
+        tree=ast.parse((ROOT/'resources/lib/status_model.py').read_text())
+        allowed={'__future__','re','dataclasses','datetime','enum','typing','unicodedata'}
+        for n in ast.walk(tree):
+            if isinstance(n,ast.ImportFrom): self.assertIn((n.module or '').split('.')[0],allowed)
+            if isinstance(n,ast.Import): self.assertTrue(all(a.name.split('.')[0] in allowed for a in n.names))
     def test_no_custom_shell_or_palette(self):
         self.assertFalse((ROOT/'resources/skins').exists())
         self.assertFalse((ROOT/'resources/lib/ui/main_window.py').exists())

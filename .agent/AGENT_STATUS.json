@@ -1,20 +1,20 @@
 {
   "active_agent": "claude",
   "status": "idle",
-  "task": "BM-UI-001 native-dialog correction: PASS; STOP for visual review",
+  "task": "BM-UI-002B read-only Build Status (G2): PASS offline; not live-proven",
   "reason": null,
-  "last_commit": "404f080",
+  "last_commit": null,
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-06T13:31:06Z",
+  "updated_at": "2026-10-06T15:45:00Z",
   "previous_task_record": {
-    "active_agent": "codex",
-    "status": "complete",
-    "task": "WF-FRONTEND-BETA-GATE: documentation adoption PASS; item 8 pending",
-    "reason": "Backend evidence preserved; complete frontend required; next BM-UI-001 stops for visual UX review",
-    "last_commit": "e24b3cd",
+    "active_agent": "claude",
+    "status": "idle",
+    "task": "BM-UI-001 native-dialog correction: PASS; STOP for visual review",
+    "reason": null,
+    "last_commit": "404f080",
     "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
     "next_agent": null,
-    "updated_at": "2026-10-06T12:00:27.146710+00:00"
+    "updated_at": "2026-10-06T13:31:06Z"
   }
 }

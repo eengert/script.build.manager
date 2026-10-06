@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Read-only Build Status: a fresh check of managed add-ons, skin, supported
+  settings and private settings, plus pending-restart and needs-attention
+  state, shown in a plain-language native page with Check Again and Help.
+  The check changes nothing in Kodi or Build Manager and never shows a
+  private value. Without an applied build it reports what it cannot compare.
+
 ## [0.1.0] — 2026-09-17
 
 ### Added

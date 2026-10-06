@@ -446,6 +446,24 @@ class StructuredResourceResult:
         }
 
 
+class ResourceCheckStatus(str, Enum):
+    CURRENT = "current"
+    CHANGES_NEEDED = "changes_needed"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class StructuredResourceCheck:
+    """Status-only outcome of a read-only resource check.
+
+    Identifies the resource by its public declaration and carries nothing from
+    the resource or the overlay: no field IDs, values, or error text.
+    """
+    resource_id: str
+    resource_type: str
+    status: ResourceCheckStatus
+
+
 class StructuredPrivateResourceAdapter:
     """Adapter interface; implementations must keep values out of results."""
 
@@ -479,6 +497,15 @@ class StructuredPrivateResourceAdapter:
                 "resource adapter cannot verify its configured state"
             )
         raise NotImplementedError
+
+    def inspect(
+        self,
+        declaration: StructuredPrivateResourceDeclaration,
+        overlay: StructuredPrivateResourceOverlay,
+    ) -> StructuredResourceResult:
+        """Read-only status check. Defaults to ``verify``; an adapter whose read
+        path can leave traces beside the store overrides this to avoid them."""
+        return self.verify(declaration, overlay)
 
     def capture(self, declaration: StructuredPrivateResourceDeclaration) -> tuple[StructuredPrivateResourceOverlay, StructuredResourceResult]:
         raise NotImplementedError
@@ -576,6 +603,50 @@ class StructuredPrivateResourceManager:
                 )
             results.append(result)
         return tuple(results)
+
+    def inspect(
+        self,
+        declarations: Sequence[StructuredPrivateResourceDeclaration],
+        overlays: Sequence[StructuredPrivateResourceOverlay],
+    ) -> tuple[StructuredResourceCheck, ...]:
+        """Read-only, status-only check of declared resources.
+
+        Uses only each adapter's read-only ``inspect``; never initializes or
+        applies. Unlike ``verify`` it does not raise for drift or for an
+        unverifiable resource: a resource that is absent or whose values differ
+        is ``CHANGES_NEEDED``; any other failure (unsupported schema, locked or
+        unreadable store, missing adapter) is ``UNAVAILABLE`` because it is not
+        evidence of drift. Returns no field IDs, values, or error text.
+        """
+        declarations_by_id = {item.resource_id: item for item in declarations}
+        if len(declarations_by_id) != len(declarations):
+            raise PrivateResourceValidationError("duplicate resource ownership")
+        overlays_by_id = {item.resource_id: item for item in overlays}
+        if len(overlays_by_id) != len(overlays):
+            raise PrivateResourceValidationError("duplicate resource overlays")
+        checks = []
+        for declaration in declarations:
+            overlay = overlays_by_id.get(declaration.resource_id)
+            if overlay is None:
+                if declaration.required:
+                    status = ResourceCheckStatus.UNAVAILABLE
+                else:
+                    continue
+            else:
+                try:
+                    result = self._adapter(declaration).inspect(declaration, overlay)
+                    status = (
+                        ResourceCheckStatus.CURRENT if result.succeeded
+                        else ResourceCheckStatus.CHANGES_NEEDED
+                    )
+                except PrivateResourceNotInitializedError:
+                    status = ResourceCheckStatus.CHANGES_NEEDED
+                except Exception:
+                    status = ResourceCheckStatus.UNAVAILABLE
+            checks.append(StructuredResourceCheck(
+                declaration.resource_id, declaration.resource_type, status
+            ))
+        return tuple(checks)
 
     def apply(
         self,

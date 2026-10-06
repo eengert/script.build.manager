@@ -1,3 +1,11 @@
+# BM-UI-002B read-only Build Status (G2) — PASS (offline)
+
+Task: truthful read-only Build Status interface beneath the main-menu route. G2 only: no G3, Create, Install or Update/Repair.
+Result: see HANDOFF.md. 2554 tests pass; not live-proven; no Test.app run; no push/publication.
+Next: separate G3 task (frozen plan/review interface).
+
+## Retained prior endpoint record
+
 # BM-UI-001 native-dialog correction — PASS; STOP for visual review
 
 Done: replaced rejected WindowXML shell with native select/text dialogs and direct script.build.manager native Settings. Removed custom XML, six textures and palette. Four workflow placeholders remain non-mutating; H01-H10/contextual Help retained; native Back/Cancel restores selection. Settings now opens directly and returns to main Settings selection, with no intermediary.

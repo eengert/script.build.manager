@@ -1,3 +1,21 @@
+# BM-UI-002B read-only Build Status (G2) — PASS (offline); not live-proven
+
+Done: one production read-only status API (`resources/lib/status.py`, public contract `status_model.py`) wired to the main-menu Build Status route (native page: Overall / Add-ons / Skin / Settings / Private settings + Check Again / Help / Close; Help opens H05). Fresh read per call; never raises; never reports CURRENT while an applicable area is unchecked. Overall precedence: NEEDS_ATTENTION > RESTART_REQUIRED > CHANGES_NEEDED > INCOMPLETE > CURRENT.
+
+Read-only seams added (existing paths mutate or create files): `TransactionStore.read_snapshot`, `FrozenInstallStore.read_snapshot`, `session.peek_current_kodi_session_id`, `PrivateOverlayStore.read_snapshot`, `ConfigurationInspector`/`ReadOnlyConfigurationBackend`, `StructuredPrivateResourceManager.inspect`, `RedLightSettingsAdapter.inspect` (immutable sidecar-free probe; a non-empty `-wal` is UNAVAILABLE). `verify()`/`apply()` unchanged. Dependency metadata never reads repositories (no network).
+
+Validation: 2554 tests PASS (full suite, was 2444); focused `test_status` (77) + `test_status_ui` (32). Zero-mutation proven by tripwires on every mutating/file-creating owner plus network and repository reads, and by profile-tree equality (incl. SQLite sidecars). Secret-blind proven with sentinel values through result, view model, dialogs, logs and serialized evidence. An independent adversarial review reported 15 findings; 14 fixed with regression tests, see docs/BUILD_STATUS.md.
+
+NOT live-proven: no Test.app run. Dialog rendering in Estuary, `xbmcaddon`/JSON-RPC reads, and the Red Light probe against Kodi's SQLite are unit-tested only. There is no applied-build association yet, so production `default_status_target()` is None and build-dependent areas report "Not Fully Checked"; software/skin/settings/private drift is proven by tests with explicit targets only.
+
+Metadata touched for truthfulness (not a release): addon.xml news/description now list Build Status as present; changelog Unreleased entry; stale string 32123 removed; H05 now says "Use Check Again" (button name). No version bump, no icon change.
+
+Out of scope — noticed: `redlight_resource.py` verify/apply SQLite URIs are not percent-quoted (a `#` in the profile path truncates the URI and can create a stray file); frozen manifest `build_id` is not cross-checked against the resolved build; updater-policy residue is not read.
+
+Next: G3 frozen plan/review interface (separate task). Human input: Eric/ChatGPT review; optional portable Test.app visual validation of the Status page. No push, publication, live Kodi or device access.
+
+## Retained prior endpoint record
+
 # BM-UI-001 native-dialog correction — PASS; STOP for visual review
 
 Done: replaced rejected WindowXML shell with native select/text dialogs and direct script.build.manager native Settings. Removed custom XML, six textures and palette. Four workflow placeholders remain non-mutating; H01-H10/contextual Help retained; native Back/Cancel restores selection. Settings now opens directly and returns to main Settings selection, with no intermediary.

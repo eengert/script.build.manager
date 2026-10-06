@@ -14,6 +14,28 @@ class SessionIdentityError(RuntimeError):
     """Kodi could not provide a process-scoped session property."""
 
 
+def peek_current_kodi_session_id(*, window=None) -> str:
+    """Read-only: the session UUID if Kodi already holds one, else ``""``.
+
+    Unlike ``get_current_kodi_session_id`` this never creates or stores an
+    identity, so status observers cannot change Kodi window properties.
+    """
+    if window is None:
+        try:
+            import xbmcgui
+            window = xbmcgui.Window(GLOBAL_WINDOW_ID)
+        except (ImportError, AttributeError, RuntimeError):
+            return ""
+    try:
+        existing = window.getProperty(SESSION_PROPERTY)
+        if isinstance(existing, str) and existing:
+            uuid.UUID(existing)
+            return existing
+    except Exception:
+        pass
+    return ""
+
+
 def get_current_kodi_session_id(
     *, window=None, token_factory: Optional[Callable[[], str]] = None
 ) -> str:

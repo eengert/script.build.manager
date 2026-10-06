@@ -38,6 +38,7 @@ from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.build_manager import ActionFailureDiagnostic, ReconcileRequest
 from resources.lib.skin import SkinFailureCode
 from resources.lib.private_resource import ResourceInitializationStage
+from resources.lib.readonly_io import ReadOnlyStateError, UnsafeStateFile, read_regular_file
 from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureError,
@@ -97,6 +98,10 @@ class FrozenInstallValidationError(FrozenInstallError):
 
 class FrozenInstallPersistenceError(FrozenInstallError):
     code = "FROZEN_TRANSACTION_PERSISTENCE_FAILED"
+
+
+class FrozenInstallStateUnreadable(FrozenInstallPersistenceError):
+    """The durable record could not be read at all (I/O), as opposed to being invalid."""
 
 
 class FrozenInstallStateConflict(FrozenInstallError):
@@ -652,6 +657,33 @@ class FrozenInstallStore:
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise FrozenInstallPersistenceError("could not read frozen transaction") from exc
             return FrozenInstallTransaction.from_dict(data)
+
+    @staticmethod
+    def read_snapshot(root: Optional[Path] = None) -> Optional[FrozenInstallTransaction]:
+        """Read-only observation of the durable record for status callers.
+
+        A static method on purpose: constructing a store creates its directory
+        and ``inspect()`` creates the lock file. This takes no lock and creates
+        nothing; writers replace the record atomically, so the snapshot is one
+        complete record. Raises ``FrozenInstallStateUnreadable`` when the file
+        cannot be read and ``FrozenInstallValidationError`` (or the record's own
+        validation errors) when its content is not trustworthy, including a
+        symlink, FIFO, directory or oversized file.
+        """
+        base = Path(root) if root is not None else default_frozen_install_root()
+        try:
+            raw = read_regular_file(str(base / _TRANSACTION_FILENAME), limit=4 * 1024 * 1024)
+        except UnsafeStateFile as exc:
+            raise FrozenInstallValidationError("frozen transaction file is not a safe regular file") from exc
+        except ReadOnlyStateError as exc:
+            raise FrozenInstallStateUnreadable("could not read frozen transaction") from exc
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FrozenInstallValidationError("frozen transaction is malformed") from exc
+        return FrozenInstallTransaction.from_dict(data)
 
     def create(self, transaction: FrozenInstallTransaction) -> FrozenInstallTransaction:
         with self.locked():

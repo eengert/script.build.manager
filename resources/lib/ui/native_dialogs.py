@@ -1,13 +1,18 @@
-"""Skin-owned native dialogs. Foundation routes never invoke product operations."""
+"""Skin-owned native dialogs. No route starts a product operation; Build Status
+calls only an injected read-only provider."""
 from resources.lib.ui.controller import ROUTES, TITLE_IDS, CONTEXT_HELP, Route
 from resources.lib.ui.help_content import SECTIONS
 from resources.lib.ui.models import PageModel, Semantic, SEMANTIC_LABELS
+from resources.lib.ui.status_view import (
+    S_CHECK_AGAIN, S_CLOSE, S_ROW, StatusViewModel,
+)
 
 class NativeDialogs:
-    def __init__(self, addon, dialog, settle):
+    def __init__(self, addon, dialog, settle, status_provider=None):
         self.addon = addon
         self.dialog = dialog
         self.settle = settle
+        self.status_provider = status_provider
         self.main_selection = 0
         self.help_selection = 0
 
@@ -56,6 +61,53 @@ class NativeDialogs:
                 return
             selection = selected
 
+    def render(self, text):
+        """Localized text with its constrained arguments; never raises."""
+        template = self.text(text.string_id)
+        args = ([text.name] if text.name else []) + [self.text(r) for r in text.refs]
+        if text.count >= 0:
+            args.append(text.count)
+        if not args:
+            return template
+        try:
+            return template % tuple(args)
+        except (TypeError, ValueError):
+            return template
+
+    def row_text(self, row):
+        label, state = self.render(row.label), self.render(row.state)
+        try:
+            return self.text(S_ROW) % (label, state)
+        except (TypeError, ValueError):
+            return label + ': ' + state
+
+    def check_status(self):
+        """One fresh read-only check; any failure becomes the not-checked view."""
+        try:
+            return StatusViewModel.from_status(self.status_provider())
+        except Exception:
+            return StatusViewModel.unavailable()
+
+    def status(self):
+        model = self.check_status()
+        count = len(model.rows)
+        selection = 0
+        while True:
+            rows = [self.row_text(r) for r in model.rows]
+            selected = self.select(self.text(TITLE_IDS[3]),
+                rows + [self.text(S_CHECK_AGAIN), self.text(32112), self.text(S_CLOSE)],
+                preselect=selection)
+            if 0 <= selected < count:
+                row = model.rows[selected]
+                self.viewer(self.render(row.label), '\n'.join(self.render(t) for t in row.detail))
+            elif selected == count:
+                model = self.check_status()
+            elif selected == count + 1:
+                self.detail(CONTEXT_HELP[Route.STATUS])
+            else:
+                return
+            selection = selected
+
     def run(self):
         while True:
             selected = self.select(self.text(32000),
@@ -69,5 +121,7 @@ class NativeDialogs:
             elif route == Route.SETTINGS:
                 self.addon.openSettings()
                 self.settle(200)
+            elif route == Route.STATUS:
+                self.status()
             else:
                 self.foundation(route)

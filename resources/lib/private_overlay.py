@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
+from resources.lib.readonly_io import ReadOnlyStateError, read_regular_file
 from resources.lib.config import (
     ConfigApplyResult,
     ConfigSetting,
@@ -430,6 +431,29 @@ class PrivateOverlayStore:
             raise PrivateOverlayMissingError("required private overlay is absent") from exc
         except (OSError, UnicodeError) as exc:
             raise PrivateOverlayPersistenceError("private overlay could not be read") from exc
+        return self._parse(overlay_id, raw)
+
+    def read_snapshot(self, overlay_id: str) -> PrivateOverlay:
+        """Read-only ``load`` for status callers.
+
+        Same result and errors as ``load`` but opens the file non-blocking and
+        no-follow, requires a bounded regular file, and so cannot hang on a
+        FIFO or follow a symlink. Creates nothing.
+        """
+        try:
+            raw = read_regular_file(str(self.path_for(overlay_id)), limit=4 * 1024 * 1024)
+        except ReadOnlyStateError as exc:
+            raise PrivateOverlayPersistenceError("private overlay could not be read") from exc
+        if raw is None:
+            raise PrivateOverlayMissingError("required private overlay is absent")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise PrivateOverlayPersistenceError("private overlay could not be read") from exc
+        return self._parse(overlay_id, text)
+
+    @staticmethod
+    def _parse(overlay_id: str, raw: str) -> PrivateOverlay:
         try:
             overlay = PrivateOverlay.from_dict(json.loads(raw))
         except (UnicodeError, json.JSONDecodeError, PrivateOverlayError) as exc:
