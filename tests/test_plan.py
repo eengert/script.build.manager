@@ -81,6 +81,7 @@ class PlanHarness(Harness):
         super().__init__(test, with_private=with_private, with_resource=with_resource,
                          with_frozen=True)
         self.store_root = self.profile / "addon_data" / "script.build.manager" / "frozen-artifacts"
+        self.desired = replace(self.desired, frozen_install_policies=())
         self.broken = set()
         self.node_specs = {}
         self.zips = {}
@@ -628,7 +629,8 @@ class InputsAndOperations(PlanBase):
 
     def test_a_build_that_lists_nothing_proves_nothing(self):
         h = Harness(self, with_private=False, with_resource=False)
-        h.desired = replace(h.desired, addons=(), skin=None, config=None, private_overlay=None)
+        h.desired = replace(h.desired, addons=(), skin=None, config=None, private_overlay=None,
+                            frozen_install_policies=())
         h.frozen = replace(h.frozen, addons=tuple(n for n in h.frozen.addons if n.system))
         owners = PlanOwners(h.owners(), ReadOnlyArtifactStore(h.profile / "none"), lambda i: None)
         plan = BuildPlanService(owners).preview(PlanTarget("/b", "d", "/f"))
@@ -1243,6 +1245,79 @@ class G3CorrectionRegressions(PlanBase):
         h.save_overlay()
         del h.kodi.addons[MODULE]
         return h, h.resolution(*records), saved
+
+    def test_stored_repository_resolution_is_bound_to_selected_policy(self):
+        h, resolution, _ = self.repository_fixture()
+        # Restore the exact captured package without changing the frozen graph.
+        ArtifactStore(h.store_root).import_zip(make_zip(MODULE, '2.0.0'),
+            expected_addon_id=MODULE, expected_version='2.0.0')
+        original = h.desired
+        target = h.plan_target(install_resolution=resolution)
+        ready = h.plan(target)
+        self.assertEqual(ready.state, PlanState.CHANGES_READY)
+        self.assertIsNotNone(ready.review)
+        h.desired = replace(original, frozen_install_policies=())
+        before = snapshot_tree(h.profile)
+        with h.instrumented():
+            rejected = h.plan(target)
+            validation = h.validate(target, ready.review)
+            with self.assertRaises(frozen_install.FrozenInstallValidationError):
+                self.installer_restore(h, resolution)
+        self.assertNotIn(rejected.state, (PlanState.CHANGES_READY, PlanState.NO_CHANGES,
+                                         PlanState.RESOLUTION_REQUIRED))
+        self.assertIsNone(rejected.review)
+        self.assertNotEqual(validation.freshness, ReviewFreshness.CURRENT)
+        self.assertIn(CheckGap.RESOLUTION_IDENTITY_MISMATCH, rejected.gaps)
+        self.assertEqual(before, snapshot_tree(h.profile))
+        h.assert_untouched()
+        self.assertSecretFree(rejected, h.logs)
+        for digest in (resolution.install_plan_fingerprint, resolution.source_software_fingerprint):
+            self.assertNotIn(digest, str(rejected.to_safe_dict()) + str(h.logs))
+        h.desired = original
+        self.assertEqual(h.plan(target).state, PlanState.CHANGES_READY)
+        self.assertEqual(h.validate(target, ready.review).freshness, ReviewFreshness.CURRENT)
+
+    def test_stored_skip_is_bound_to_selected_policy(self):
+        h, resolution, _ = self.repository_fixture(skip=True)
+        original = h.desired
+        target = h.plan_target(install_resolution=resolution)
+        ready = h.plan(target)
+        self.assertIsNotNone(ready.review)
+        h.desired = replace(original, frozen_install_policies=original.frozen_install_policies[:1])
+        result = h.plan(target)
+        self.assertIsNone(result.review)
+        self.assertIn(CheckGap.RESOLUTION_IDENTITY_MISMATCH, result.gaps)
+        self.assertNotEqual(h.validate(target, ready.review).freshness, ReviewFreshness.CURRENT)
+        h.desired = original
+        self.assertIsNotNone(h.plan(target).review)
+
+    def test_matching_plan_identity_rejects_ineligible_records(self):
+        from resources.lib.frozen_resolution import install_plan_fingerprint
+        for kind in ('repository', 'skip', 'wrong_repository'):
+            with self.subTest(kind=kind):
+                h, resolution, _ = self.repository_fixture(skip=kind == 'skip')
+                if kind == 'wrong_repository':
+                    records = (replace(resolution.records[0], repository_id='repository.other'),)
+                    resolution = h.resolution(*records)
+                else:
+                    h.desired = replace(h.desired, frozen_install_policies=())
+                    resolution = replace(resolution, install_plan_fingerprint=
+                        install_plan_fingerprint(h.frozen, h.desired.frozen_install_policies))
+                result = h.plan(install_resolution=resolution)
+                self.assertIsNone(result.review)
+                self.assertIn(CheckGap.RESOLUTION_IDENTITY_MISMATCH, result.gaps)
+                self.assertIn(CheckGap.RESOLUTION_IDENTITY_MISMATCH,
+                              h.check(install_resolution=resolution).gaps)
+                with self.assertRaises(frozen_install.FrozenInstallValidationError):
+                    self.installer_restore(h, resolution)
+
+    def test_matching_exact_resolution_remains_valid(self):
+        from resources.lib.frozen_resolution import default_exact_record
+        h = self.current(with_resource=False)
+        resolution = h.resolution(*(replace(default_exact_record(node), state=ResolutionState.INSTALLED)
+            for node in h.frozen.addons if not node.system and not node.is_absent_optional_dependency))
+        self.assertEqual(h.plan(install_resolution=resolution).state, PlanState.NO_CHANGES)
+        self.assertEqual(h.check(install_resolution=resolution).overall.value, "current")
 
     def test_unresolved_current_cannot_be_reviewed(self):
         h = self.current(with_resource=False)

@@ -463,7 +463,8 @@ class BuildStatusService:
         try:
             if frozen is not None:
                 check_frozen_identity(desired.build.id, frozen)
-            records = bind_resolutions(desired.build.id, frozen, target.install_resolution)
+            records = bind_resolutions(desired.build.id, frozen, target.install_resolution,
+                                       policies=desired.frozen_install_policies)
             desired, skipped = _project_resolutions(desired, records)
         except IdentityMismatch as exc:
             self._log("Build Status check rejected the selected build's inputs (%s)" % exc.code.value)

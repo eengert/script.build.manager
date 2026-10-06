@@ -359,7 +359,8 @@ class BuildPlanService:
         # The inputs must describe one build before any of them is used.
         try:
             check_frozen_identity(desired.build.id, frozen)
-            records = bind_resolutions(desired.build.id, frozen, target.install_resolution)
+            records = bind_resolutions(desired.build.id, frozen, target.install_resolution,
+                                       policies=desired.frozen_install_policies)
         except IdentityMismatch as exc:
             self._log("Build plan rejected the selected build's inputs (%s)" % exc.code.value)
             gaps.append(

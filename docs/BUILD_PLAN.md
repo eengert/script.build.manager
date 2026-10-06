@@ -31,6 +31,18 @@ build and this frozen manifest (see `BUILD_STATUS.md`). A mismatch leaves the
 plan `INCOMPLETE` (`BUILD_IDENTITY_MISMATCH` / `RESOLUTION_IDENTITY_MISMATCH`);
 nothing is planned against it.
 
+Stored resolutions must also match `frozen_resolution.install_plan_fingerprint()`
+for the selected frozen manifest and effective install policies. The shared binder
+requires current policies from both callers and rejects a mismatch before any
+record can affect comparison, accepted skips, enabled state or software projection.
+Changing repository fallback or skip policy requires a new plan/resolution; returning
+to the original policy restores the original binding. A matching digest still must
+pass record eligibility: repository fallback must be allowed and use the policy's
+repository, and Skip must be allowed. Existing terminal-state validation remains.
+Failure uses `RESOLUTION_IDENTITY_MISMATCH`, leaves the target unchecked and issues
+no review identity. Logs carry only stable identity codes, including
+`resolution_plan_mismatch`; UI output contains no paths, IDs or fingerprints.
+
 ## Plan states and precedence
 
 `BLOCKED` > `INCOMPLETE` > `DECISION_REQUIRED` > `RESOLUTION_REQUIRED` >

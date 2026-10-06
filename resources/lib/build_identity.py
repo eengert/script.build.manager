@@ -15,6 +15,8 @@ A trusted resolution set proves, at minimum, that:
 
 * the resolution manifest's build ID is the resolved build's ID;
 * its source software fingerprint is the frozen manifest's fingerprint;
+* its canonical install-plan fingerprint matches the current effective policies;
+* each record is eligible under that policy (including the selected repository);
 * it is internally valid (fingerprint formats, unique add-ons, terminal
   states, and a resulting software fingerprint that matches its records);
 * every record refers to a managed node of that frozen manifest and agrees with
@@ -27,12 +29,16 @@ path, fingerprint, or message from the rejected input.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from resources.lib.frozen import FrozenBuildManifest
+from resources.lib.manifest import FrozenInstallPolicy
 from resources.lib.frozen_resolution import (
     FrozenInstallResolutionManifest,
     InstallResolutionRecord,
+    InstallResolution,
+    effective_policy,
+    install_plan_fingerprint,
     resolved_software_fingerprint,
 )
 
@@ -42,6 +48,7 @@ class IdentityCode(str, Enum):
     RESOLUTION_WITHOUT_SOFTWARE = "resolution_without_software"
     RESOLUTION_BUILD_MISMATCH = "resolution_build_mismatch"
     RESOLUTION_SOURCE_MISMATCH = "resolution_source_mismatch"
+    RESOLUTION_PLAN_MISMATCH = "resolution_plan_mismatch"
     RESOLUTION_RECORD_MISMATCH = "resolution_record_mismatch"
     RESOLUTION_INVALID = "resolution_invalid"
 
@@ -69,12 +76,15 @@ def bind_resolutions(
     build_id: str,
     frozen: Optional[FrozenBuildManifest],
     resolution: object,
+    *,
+    policies: Sequence[FrozenInstallPolicy],
 ) -> Tuple[InstallResolutionRecord, ...]:
     """Return the records of a resolution manifest proven to belong here.
 
     ``None`` means no prior resolution and yields no records. Anything that is
     not a ``FrozenInstallResolutionManifest`` bound to exactly this build and
-    this frozen manifest is rejected; raw record tuples are never accepted.
+    this frozen manifest and the required current policies is rejected. Raw
+    record tuples are never accepted.
     """
     if resolution is None:
         return ()
@@ -93,6 +103,13 @@ def bind_resolutions(
         checked = FrozenInstallResolutionManifest.from_dict(resolution.to_dict())
     except Exception as exc:
         raise IdentityMismatch(IdentityCode.RESOLUTION_INVALID) from exc
+    try:
+        expected = install_plan_fingerprint(frozen, policies)
+    except Exception as exc:
+        raise IdentityMismatch(IdentityCode.RESOLUTION_INVALID) from exc
+    if checked.install_plan_fingerprint != expected:
+        raise IdentityMismatch(IdentityCode.RESOLUTION_PLAN_MISMATCH)
+    selected = {policy.addon_id: policy for policy in policies}
     nodes = {node.addon_id: node for node in frozen.addons}
     for record in checked.records:
         node = nodes.get(record.addon_id)
@@ -103,6 +120,12 @@ def bind_resolutions(
             or record.captured_version != node.version
             or record.desired_enabled is not node.desired_enabled
         ):
+            raise IdentityMismatch(IdentityCode.RESOLUTION_RECORD_MISMATCH)
+        policy = effective_policy(record.addon_id, selected)
+        if (
+            record.resolution is InstallResolution.REPOSITORY_CURRENT
+            and (not policy.repository_fallback_allowed or record.repository_id != policy.repository_id)
+        ) or (record.resolution is InstallResolution.SKIPPED and not policy.skip_allowed):
             raise IdentityMismatch(IdentityCode.RESOLUTION_RECORD_MISMATCH)
     try:
         if resolved_software_fingerprint(frozen, checked.records) != checked.resulting_software_fingerprint:

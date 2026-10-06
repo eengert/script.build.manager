@@ -41,6 +41,7 @@ from resources.lib.frozen_resolution import (
 )
 from resources.lib.inspector import KodiBackend, KodiStateInspector
 from resources.lib.manifest import (
+    FrozenInstallPolicy, FrozenInstallPolicyMode,
     AddonEntry, BuildInfo, ConfigDeclarations, ManagedSettingScope,
     PrivateOverlayRef, PrivateSettingDeclaration, SkinEntry,
 )
@@ -302,6 +303,9 @@ class Harness:
         self.db = build_db(self.profile) if with_resource else None
         self.records = ()
         self.rebuild()
+        self.desired = replace(self.desired, frozen_install_policies=(
+            FrozenInstallPolicy(MODULE, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP,
+                                "repository.demo"),))
 
     # desired state -------------------------------------------------------------
     def rebuild(self, *, skin_id=SKIN):
@@ -385,7 +389,8 @@ class Harness:
         values = dict(
             build_id=self.desired.build.id,
             source_software_fingerprint=self.frozen.fingerprint(),
-            install_plan_fingerprint="c" * 64,
+            install_plan_fingerprint=frozen_resolution.install_plan_fingerprint(
+                self.frozen, self.desired.frozen_install_policies),
             records=records)
         if "resulting_software_fingerprint" not in overrides:
             values["resulting_software_fingerprint"] = (
@@ -1267,6 +1272,8 @@ class IndependentReviewRegressions(StatusBase):
                 h.save_overlay()
                 extra = {}
                 if skipped:
+                    h.desired = replace(h.desired, frozen_install_policies=(
+                        FrozenInstallPolicy(gap, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP),))
                     extra["install_resolution"] = h.resolution(InstallResolutionRecord(
                         gap, "1.0", InstallResolution.SKIPPED, ResolutionState.SKIPPED))
                 status = h.check(**extra)
@@ -1616,7 +1623,7 @@ class ResolutionIdentity(StatusBase):
 
     def code(self, h, resolution):
         with self.assertRaises(IdentityMismatch) as caught:
-            bind_resolutions(BUILD_ID, h.frozen, resolution)
+            bind_resolutions(BUILD_ID, h.frozen, resolution, policies=h.desired.frozen_install_policies)
         return caught.exception.code
 
     def assertRejected(self, h, resolution, code):
@@ -1628,6 +1635,33 @@ class ResolutionIdentity(StatusBase):
             self.assertEqual(status.area(area), AreaLevel.UNAVAILABLE, area)
         self.assertEqual(status.software.items, ())
         self.assertIn(code.value, "\n".join(h.logs))
+
+    def test_policy_change_rejects_repository_version_and_skip(self):
+        for skipped in (False, True):
+            with self.subTest(skipped=skipped):
+                h = self.current()
+                if skipped:
+                    del h.kodi.addons[MODULE]
+                    record = self.skip()
+                else:
+                    h.kodi.addons[MODULE] = ("2.0.1", True)
+                    record = InstallResolutionRecord(
+                        MODULE, "2.0.0", InstallResolution.REPOSITORY_CURRENT, ResolutionState.INSTALLED,
+                        repository_id="repository.demo", resolved_version="2.0.1",
+                        artifact_sha256="b" * 64, artifact_size=10)
+                original = h.desired
+                resolution = h.resolution(record)
+                self.assertEqual(h.check(install_resolution=resolution).overall, OverallStatus.CURRENT)
+                h.desired = replace(original, frozen_install_policies=())
+                before = snapshot_tree(h.profile)
+                with h.instrumented():
+                    self.assertRejected(h, resolution, IdentityCode.RESOLUTION_PLAN_MISMATCH)
+                self.assertEqual(before, snapshot_tree(h.profile))
+                self.assertEqual(h.touched, [])
+                self.assertEqual(h.check().overall, OverallStatus.CHANGES_NEEDED)
+                self.assertIn(MODULE, {item.addon_id for item in h.check().software.items})
+                h.desired = original
+                self.assertEqual(h.check(install_resolution=resolution).overall, OverallStatus.CURRENT)
 
     def test_03_unbound_raw_records_cannot_be_trusted(self):
         h = self.missing_module()
@@ -1693,7 +1727,7 @@ class ResolutionIdentity(StatusBase):
         h = self.missing_module()
         resolution = h.resolution(self.skip())
         with self.assertRaises(IdentityMismatch) as caught:
-            bind_resolutions(BUILD_ID, None, resolution)
+            bind_resolutions(BUILD_ID, None, resolution, policies=h.desired.frozen_install_policies)
         self.assertEqual(caught.exception.code, IdentityCode.RESOLUTION_WITHOUT_SOFTWARE)
         status = h.check(h.target(software_manifest_path="", install_resolution=resolution))
         self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
@@ -1702,7 +1736,7 @@ class ResolutionIdentity(StatusBase):
     def test_08_valid_matching_resolution_manifest_works(self):
         h = self.missing_module()
         resolution = h.resolution(self.skip())
-        records = bind_resolutions(BUILD_ID, h.frozen, resolution)
+        records = bind_resolutions(BUILD_ID, h.frozen, resolution, policies=h.desired.frozen_install_policies)
         self.assertEqual([r.addon_id for r in records], [MODULE])
         status = h.check(install_resolution=resolution)
         self.assertEqual(status.overall, OverallStatus.CURRENT)
