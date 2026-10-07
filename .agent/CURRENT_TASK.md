@@ -1,9 +1,10 @@
 # Current Task
 
-First bounded Install Build frontend slice — STOPPED before product mutation.
+Durable Build Library -> frozen install backend bridge — candidate complete, STOP for independent review.
 
-Baseline: agent/codex @ 74ebefbe28ed3befa8bc9e7ca0c34d88cf0b944b, clean.
+Baseline: agent/codex @ 72970ba9c07aa6d2d60c4bdc626c41a32d1a3b86, clean.
+Product candidate: 32d915e0ea4f97748b505ca131d0f16df08832f0.
 
-Blocker: library-owned reviewed target has no durable frozen install/configuration/resume bridge. See HANDOFF.md for offline reproduction and 155 passing tests.
+14 new tests; 561 focused and 2960 full-suite tests PASS offline. See HANDOFF.md and docs/LIBRARY_INSTALL_TARGET.md.
 
-Next: separately authorize the smallest backend bridge; do not begin frontend implementation or runtime qualification.
+Next: independent review of the exact backend candidate. No Install frontend or runtime qualification authorized in this task. Nothing pushed/released/published.
