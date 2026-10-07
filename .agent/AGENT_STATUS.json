@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "Install Review Changes friendly add-on name correction (offline)",
-  "reason": "Correction committed and offline validation passed; STOP before runtime qualification per bounded task.",
-  "last_commit": "7118b763bc1782092acd5ec738745eeab69604ab",
+  "task": "Install Review friendly-name JSON-RPC correction (offline)",
+  "reason": "Kodi v12 schema diagnosis confirmed; correction committed and offline validation passed. STOP before runtime qualification per task.",
+  "last_commit": "439ab4f8884d59b3c02a096eb1c515e5e661950e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T19:55:53Z",
+  "updated_at": "2026-10-07T20:47:31Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
