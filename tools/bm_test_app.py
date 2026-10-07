@@ -224,6 +224,7 @@ ERROR_CODES = frozenset({
     # snapshot / privacy
     "private_path_denied", "read_not_allowlisted", "output_blocked_secret_detected",
     "build_library_state_invalid",
+    "build_library_state_changed",
     # generic
     "interrupted", "unexpected_error", "internal_error",
 })
@@ -3699,10 +3700,11 @@ def run_snapshot(
     manifest: Optional[Mapping[str, Any]],
     manifest_sha256: Optional[str],
     git_repo: Optional[Path],
+    library_baseline: bool = False,
 ) -> Dict[str, Any]:
     """One sanitized census; touches only allowlisted portable-data locations."""
     target = services.target
-    identity = identify(services)
+    identity = identify(services, require="not_running") if library_baseline else identify(services)
     if not (identity.bundle.portable_data_present and identity.bundle.addons_dir_present
             and identity.bundle.userdata_dir_present):
         raise HelperError("layout_missing")
@@ -3711,7 +3713,6 @@ def run_snapshot(
     versions = {entry["id"]: entry["version"] for entry in addons["entries"]}
     payload: Dict[str, Any] = {
         "adapter_result_file": census_result_file(target, guard),
-        "build_library": census_build_library(target, guard),
         "build_manager": {
             "installed": BUILD_MANAGER_ID in versions, "version": versions.get(BUILD_MANAGER_ID),
         },
@@ -3739,6 +3740,15 @@ def run_snapshot(
             "manifest_sha256": manifest_sha256,
         }
         payload["stage_verification"] = verify_installed(services, manifest, git_repo=git_repo)
+    if library_baseline:
+        first = census_build_library(target, guard)
+        second = census_build_library(target, guard)
+        if first != second:
+            raise HelperError("build_library_state_changed")
+        # Each census closes its own descriptors. Re-prove stopped immediately
+        # before returning; external host writers are excluded by contract.
+        identify(services, require="not_running")
+        payload["build_library"] = second
     return payload
 
 
@@ -3854,6 +3864,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_output(quit_parser)
 
     snapshot_parser = commands.add_parser("snapshot", help="read-only secret-blind census")
+    snapshot_parser.add_argument("--library-baseline", action="store_true",
+                                 help="include public library baseline; requires stopped Test.app and no host writer")
     snapshot_parser.add_argument("--manifest")
     snapshot_parser.add_argument("--repo")
     snapshot_parser.add_argument("--no-git-binding", action="store_true", help="weaker: skip the Git check")
@@ -3996,6 +4008,7 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
             manifest=manifest,
             manifest_sha256=manifest_sha,
             git_repo=_git_repo(args, services) if manifest is not None else None,
+            library_baseline=args.library_baseline,
         )
         return payload, EXIT_OK
     raise HelperError("argument_invalid")

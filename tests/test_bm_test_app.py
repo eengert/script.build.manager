@@ -4718,6 +4718,98 @@ class SnapshotTestCase(TripwireTestCase):
 
 
 class TestLibrarySnapshot(SnapshotTestCase):
+    def snapshot(self, manifest=None, **kwargs):
+        kwargs.setdefault("library_baseline", True)
+        return super().snapshot(manifest, **kwargs)
+
+    def test_cli_opt_in_and_ordinary_running_no_library_reads(self):
+        self.write_library(selection=self.selected())
+        self.lister.run_test_app(self.target, pid=321)
+        with mock.patch.object(bm, "census_build_library", side_effect=AssertionError("library read")):
+            code, payload, _ = run_cli(self.services, "snapshot")
+            self.assertEqual(code, bm.EXIT_OK)
+            self.assertNotIn("build_library", payload)
+            code, payload, _ = run_cli(self.services, "snapshot", "--library-baseline")
+            self.assertNotEqual(code, bm.EXIT_OK)
+            self.assertNotIn("build_library", payload)
+        self.lister.processes.clear()
+        with mock.patch.object(bm, "census_build_library", wraps=bm.census_build_library) as reads:
+            code, payload, _ = run_cli(self.services, "snapshot", "--library-baseline")
+            self.assertEqual(code, bm.EXIT_OK)
+            self.assertIn("build_library", payload)
+            self.assertEqual(reads.call_count, 2)
+
+    def test_two_independent_samples_detect_all_state_transitions(self):
+        for case in ("root", "registry", "selection", "registry_change", "selection_change"):
+            with self.subTest(case=case):
+                if self.target.build_library_dir.exists():
+                    shutil.rmtree(self.target.build_library_dir)
+                if case == "registry":
+                    self.target.build_library_dir.mkdir()
+                if case in ("selection", "registry_change", "selection_change"):
+                    self.write_library()
+                if case == "selection_change":
+                    self.target.build_library_selection.write_text(json.dumps(self.selected()))
+                original = bm.census_build_library
+                samples = []
+                def sample(*args):
+                    result = original(*args)
+                    samples.append(result)
+                    if len(samples) == 1:
+                        if case in ("root", "registry"):
+                            self.write_library()
+                        elif case == "registry_change":
+                            self.write_library({"b" * 64: self.metadata()})
+                        elif case == "selection_change":
+                            self.target.build_library_selection.write_text("null")
+                        else:
+                            self.target.build_library_selection.write_text(json.dumps(self.selected()))
+                    return result
+                with mock.patch.object(bm, "census_build_library", side_effect=sample):
+                    with self.assertRaises(bm.HelperError) as raised:
+                        self.snapshot()
+                self.assertEqual(raised.exception.code, "build_library_state_changed")
+                self.assertEqual(len(samples), 2)
+                self.assertNotEqual(samples[0], samples[1])
+
+    def test_process_starts_between_samples_or_before_final_identity(self):
+        for launch_after in (1, 2):
+            with self.subTest(launch_after=launch_after):
+                self.lister.processes.clear()
+                original = bm.census_build_library
+                samples = []
+                def sample(*args):
+                    result = original(*args)
+                    samples.append(result)
+                    if len(samples) == launch_after:
+                        self.lister.run_test_app(self.target, pid=321)
+                    return result
+                with mock.patch.object(bm, "census_build_library", side_effect=sample):
+                    with self.assertRaises(bm.HelperError):
+                        self.snapshot()
+                self.assertEqual(len(samples), 2)
+
+    def test_stable_states_two_samples_deterministic_and_no_mutation(self):
+        for state in ("absent", "empty", "populated", "selected"):
+            with self.subTest(state=state):
+                if state != "absent":
+                    self.write_library({} if state == "empty" else None,
+                                       self.selected() if state == "selected" else None)
+                before = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
+                          for p in self.tmp.rglob("*") if p.is_file()}
+                expected = bm.census_build_library(self.target, bm.ReadGuard(self.target))
+                with mock.patch.object(bm, "census_build_library", wraps=bm.census_build_library) as reads:
+                    first = self.snapshot()
+                    self.assertEqual(reads.call_count, 2)
+                self.assertEqual(first["build_library"], expected)
+                self.assertEqual(first, self.snapshot())
+                after = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
+                         for p in self.tmp.rglob("*") if p.is_file()}
+                self.assertEqual(before, after)
+                self.assertFalse((self.target.build_library_dir / "library.lock").exists())
+                if state == "absent":
+                    self.assertFalse(self.target.build_library_dir.exists())
+
     def write_library(self, entries=None, selection=None):
         self.target.build_library_dir.mkdir(exist_ok=True)
         entries = entries if entries is not None else {"a" * 64: self.metadata()}

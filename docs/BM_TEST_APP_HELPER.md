@@ -73,7 +73,7 @@ accept `--output FILE` (written once, never overwritten).
 | `verify --manifest M [--repo R] [--no-git-binding]` | Read-only proof that installed trees equal the manifest (and, by default, the Git commit). |
 | `run MODE --manifest M [--config CFG] [--rpc-host H] [--rpc-port N] [--rpc-user U] [--timeout S]` | `MODE` is `install`, `retry`, `recover` or `status`. Needs a running portable Test.app. |
 | `quit [--config CFG] [--rpc-host H] [--rpc-port N] [--rpc-user U] [--timeout S]` | Gracefully quit the running portable Test.app (`Application.Quit`) and prove it exited. Never sends a signal. |
-| `snapshot [--manifest M]` | Read-only, secret-blind census of the portable data. |
+| `snapshot [--manifest M] [--library-baseline]` | Read-only, secret-blind census of the portable data. |
 
 Exit codes: `0` success, `1` failed closed, `2` usage/config, `4` the adapter
 reported failure (fresh evidence was captured), `130` interrupted.
@@ -260,6 +260,30 @@ product.
 
 ## `snapshot`
 
+Ordinary `snapshot` omits `build_library` and does not read Build Library paths;
+its existing supported running/stopped process states remain available.
+
+`snapshot --library-baseline` is an opt-in STOPPED / WRITER-FREE qualification
+operation. Full helper identity with `require="not_running"` is enforced before
+any library read: exact authorized bundle, zero Test.app main processes, no
+foreign/ambiguous Kodi process, and valid portable layout. Two complete,
+independent library censuses open and close their own no-follow descriptors.
+Their secret-blind projections must match exactly, including absence, hashes,
+sizes, counts, IDs and selection. A mismatch fails with the fixed error
+`build_library_state_changed`, without samples or old/new values. Immediately
+before success, full `not_running` identity is enforced again. A running app or
+ambiguous identity fails closed without returning a library baseline.
+
+Test.app must remain stopped for the entire operation. No separate host process
+may invoke BuildLibrary mutation APIs against this profile concurrently; the
+qualification controller/agent must exclude such writers during the bounded
+operation. There is no product-wide lock for an absent library root that this
+read-only helper can acquire without mutation. No helper lock/root is created.
+The stopped contract excludes Kodi's normal product writer; two matching samples
+provide additional change detection. This is not atomic against arbitrary host
+processes: an injected external writer after the final sample is outside the
+supported contract, as is launching and stopping Test.app between identity checks.
+
 The PUBLIC Build Library baseline reads exactly `build-library/registry.json`
 and `build-library/selection.json` beneath the authorized portable BM data root.
 It reports root/file presence, SHA-256 and byte size, sorted registry entry IDs
@@ -295,6 +319,15 @@ files plus the adapter result through the product's bounded status reader. A
 positive allowlist guards every read; `addon_data/plugin.video.redlight/**` and
 `private_overlays/**` are explicit denials. `guisettings.xml` and the database
 may lag a running Kodi; `run status` reports the in-Kodi state.
+
+For BM-UI-003C, take the pre-staging/pre-Create baseline with Test.app stopped
+using `snapshot --library-baseline`. For Preview-Cancel, perform the UI scenario,
+gracefully stop Test.app using the cleared helper, take the same baseline and
+compare with pre-Create, then relaunch for successful Create. Post-Create, verify
+Build Status while running, gracefully stop Test.app, and take the opt-in
+baseline to prove registry/selection persistence. These are qualification steps;
+the helper does not orchestrate them. Live-use clearance remains PENDING
+independent review of this correction.
 
 ## Typical sequence
 
