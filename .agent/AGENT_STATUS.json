@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-003C helper library baseline projection: PASS offline; STOP for independent review",
-  "reason": "Live-use clearance PENDING independent review; runtime qualification prohibited in this task",
-  "last_commit": "4ceed8bdf2ccc76abd8f4484d7615ba5fc7edb64",
+  "task": "BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION: PASS offline; STOP for independent review",
+  "reason": "Live-use clearance PENDING independent correction-delta review; no runtime qualification",
+  "last_commit": "24e0332c15eb27942f0901d405d7138af966d2c7",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T00:44:57Z",
+  "updated_at": "2026-10-07T01:02:18Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",

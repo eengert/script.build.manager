@@ -1,21 +1,20 @@
-# BM-UI-003C helper Build Library baseline projection
+# Handoff
 
-Status: PASS offline implementation; live-use clearance PENDING independent review.
+## Task / outcome
+BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION: PASS offline. Removes stable-absence blocker to beta exit item 8; STOP for independent correction-delta review. Live-use clearance PENDING.
 
-## Done
-- Branch agent/codex; clean start 2be4c01a711c164d652511887c379bbc5919cafd.
-- Substantive local commit 4ceed8bdf2ccc76abd8f4484d7615ba5fc7edb64.
-- Changed tools/bm_test_app.py, tests/test_bm_test_app.py, docs/BM_TEST_APP_HELPER.md only.
-- Snapshot adds fixed registry.json/selection.json allowlist and secret-blind public-v1 projection; exact schema, duplicate rejection, registry/profile cross-check, bounded safe profile identity, stable safe errors.
-- No-follow pinned ancestor descriptors, regular/nonblocking bounded leaves, no envelope/private reads or writes. Missing root/registry and absent/null selection supported.
-- 11 new focused test methods PASS (2.738s), covering the requested 35 scenarios with subtests; complete helper-focused suite 448 tests PASS (90.312s) with permitted macOS process/socket fixtures.
-- Initial sandbox suite had expected process/socket denials plus a too-broad new audit assertion (allowed Red Light addon.xml); assertion corrected to prohibited addon_data reads before final permitted run. No protections weakened.
-- Standalone disposable probes A-G PASS, repeated after substantive commit. Exact projection, envelope/overlay sentinel exclusion and unopened paths, absent selection entry/malformed registry closed, ancestor symlink refused, identical unchanged projections/bytes.
-- git diff --check PASS. Helper blob a6ada3141bfaa570073f48390944396fdcc840dc.
+## Identity / changes
+Branch agent/codex; start 16c6124b9c1188b95979fee78e0b35bf69b2e19b (clean; live Agent Handoff current agent codex). Substantive commit 24e0332c15eb27942f0901d405d7138af966d2c7; helper blob 35bf742047bbc7656634ab508cfef0ae61a4a096.
+Changed only tools/bm_test_app.py, tests/test_bm_test_app.py, docs/BM_TEST_APP_HELPER.md, plus separate .agent bookkeeping.
+Ordinary snapshot omits library and never calls census_build_library. --library-baseline enforces full not_running identity before reads, two independently opened/closed matching samples, then full not_running identity immediately before success. Fixed mismatch error build_library_state_changed. Reviewed projection/schema/read guard unchanged.
 
-## Not done
-- No runtime qualification, live Test.app commands/access, real credentials, normal Kodi/profile, or device access. No product/shared-runtime or Keychain-wrapper changes. No push/publication/integration.
-- Offline validation is implementation evidence, not independent clearance or live qualification.
+## Evidence
+Before source edits, standalone disposable probes used supported BuildLibrary.register/select APIs: root absent, registry absent, selection absent each returned stale absent ok:true after writer ran before return. Present registry/selection changes also reproduced.
+After correction, all five supported-writer transitions injected after first sample fail with build_library_state_changed; no successful stale projection. Separate probes reject process launches after sample 1 and sample 2; running baseline refuses before library opens; ordinary running snapshot performs zero library opens. Present empty registry/null selection opens exactly two registry/selection pairs. Envelope/private-overlay/Red Light addon-data/library-lock sentinels unread and absent from output. Fixture file path/byte sets unchanged. Scripts retained at /private/tmp/bm_baseline_probe.py and /private/tmp/bm_baseline_read_probe.py (disposable, not repository dependencies).
+15 focused library tests PASS (4 added methods; all 11 existing tests preserved with explicit opt-in). Stable absent/empty/populated/no-selection/selected states match reviewed census, deterministic across repeated commands; bytes/mtime unchanged and no root/lock creation.
+Full requested helper suite: 452 tests PASS in 89.945s with permitted escalation. Initial sandbox run: 452 tests, 8 failures / 11 errors due solely to denied ps / loopback binds; unchanged rerun passed, no tests weakened.
+git diff --check PASS. Documentation states stopped/writer-free controller contract, limits against arbitrary host writers, and BM-UI-003C pre-staging/Preview-Cancel/post-Create stop-baseline sequences.
 
-## Next step / human gate
-Independent review of this helper delta and renewed live-use clearance; only after PASS restart BM-UI-003C Test.app qualification from Phase 1. Eric/ChatGPT must relay that review task. Stop here.
+## Scope / next step
+No product/shared-runtime changes, subagents, live Test.app staging/launch/snapshot/RPC/quit, real credentials/keychain/defaults, portable_data, normal Kodi/profile, devices, push/release/publication/matrix integration/history rewrite.
+Not live-proven. Independent review of this correction; only after PASS restart BM-UI-003C Test.app qualification. Human relay required to obtain independent review; runtime qualification not restarted.
