@@ -7,8 +7,9 @@ adapter over loopback JSON-RPC, and collects secret-blind evidence. It replaces
 the retired ai-supervisor actions; it needs no framework state. Tests:
 `tests/test_bm_test_app.py` (temporary fixtures only).
 
-**Status.** Implemented and tested offline against fake bundles. It has had no
-live use and needs independent review before it touches the real Test.app.
+**Status.** Implemented and tested offline against fake bundles. The current
+six-blocker correction requires fresh independent correction-delta review
+before any live staging, launch or runtime qualification.
 
 ## Safety boundary
 
@@ -136,13 +137,28 @@ the values), and the helper's own SHA-256.
    against the manifest. It must share a device with `addons/`.
 3. Copy every tree about to be replaced into the evidence directory
    (`<evidence-dir>/stage-<UTC>-<sha12>/replaced/<addon-id>`) and verify the copy.
-4. Re-check that the Test.app is not running, then rename live to `old/` and new
-   to live for both add-ons; verify the live trees; roll back on any failure
-   (also on interrupt). If a rollback itself fails the area is kept untouched.
-5. Re-verify the evidence copy and fingerprint the actual moved-aside `old/`
-   trees against the backup digests. If presence or contents differ, fail closed
-   and retain `.bm-stage/old` and all evidence. A later stage refuses that retained
-   area. Only matching, verified old trees may be discarded with `.bm-stage`.
+4. Durably publish the backup hierarchy bottom-up (files, symlinks and directory
+   entries), the run directory and its evidence parent with strict directory
+   fsync. Publish the new staging hierarchy too. Any durability failure prevents
+   the swap. Re-check that the Test.app is not running, then pin device/inode
+   identities for the entire bundle ancestor chain, `addons`, `.bm-stage`, and
+   its `new`, `old`, and `failed` directories.
+5. Rename live to `old/` and new to live for both add-ons; strictly fsync both
+   source and destination parents after every rename. Until the durable commit
+   boundary, any exception or interrupt attempts bounded rollback. Before each
+   rollback inspection/rename, check every pinned directory shallowest-first.
+   A symlink or a different real directory is `rollback_ancestor_unsafe`: stop
+   without further mutation and preserve stage, old trees and evidence. Rollback
+   renames also sync both parents; a rollback failure preserves the area.
+6. Verify the live candidate, recheck evidence backups, fingerprint moved-old
+   trees against backup digests, and complete the final directory fsync/identity
+   checks. Only then reach the explicit durable commit boundary (`durable_commit:
+   true`) and allow conservative stage cleanup to discard old trees. Successful
+   rollback restores originals and re-raises the original exception (interrupt
+   remains exit 130). A backup mismatch retains staging evidence even after
+   originals are restored. Cleanup and result reporting follow commit; their
+   failures cannot undo a committed stage. Unit tests prove fsync ordering and
+   failure handling, not power-loss survival on hardware.
 
 Evidence per run: `stage_manifest.json`, `stage_result.json`, `replaced/`.
 `userdata` is never touched.
@@ -151,8 +167,10 @@ Evidence per run: `stage_manifest.json`, `stage_result.json`, `replaced/`.
 
 Checks, in order: identity (running, one portable main process, optionally with
 the sanctioned `XBMCHelper` auxiliary), installed trees ==
-manifest, result path safe, then for every request the listener on the RPC port
-must be exactly the authorized PID. Kodi's own view of the driver and Build
+manifest, result path safe, then before every request (including authenticated
+retries) refresh the full trusted executable and portable argv identity, require
+one authorized process with the original PID, and check the listener on the RPC
+port is exactly that PID. Kodi's own view of the driver and Build
 Manager (`Addons.GetAddonDetails`) must be enabled with the staged versions;
 nothing is enabled for you. The driver is invoked once with
 `Addons.ExecuteAddon {params: MODE, wait: false}`.
@@ -165,7 +183,11 @@ Success is the adapter's fresh result file, not Kodi's `OK`: it must have a new
 inode or new content since before the call, be written after the invocation, and
 carry the requested `adapter_mode`. Only allowlisted fields survive; unknown
 keys and invalid values are withheld and counted. The installed trees are
-verified again after the run.
+verified again after the run. `adapter_ok` reports the adapter result separately;
+overall `ok` requires both adapter success and final installed-tree equality.
+Source drift retains the verification problems and exits 1; adapter failure
+retains exit 4. Invalid final runtime identity or a verification error fails
+closed even when a fresh adapter result exists.
 
 ## `quit`
 
@@ -177,8 +199,8 @@ policy that a graceful exit keeps.
 Checks, in order: identity (running, one portable main process, optionally with
 the sanctioned `XBMCHelper` auxiliary), loopback RPC settings (same
 `--config`/`--rpc-*` model as `run`; the port has no default), `JSONRPC.Ping`,
-then exactly one `Application.Quit`. The listener on the RPC port must be the
-authorized PID before every request, and credentials come through the same
+then exactly one `Application.Quit`. Full executable/portable argv identity is refreshed before every request;
+the listener on the RPC port must then be the authorized original PID, and credentials come through the same
 `Services.password_prompt` seam as `run`. It then waits up to `--timeout`
 seconds (default 60, 1 to 300) for `identify(require="not_running")` to hold: no
 main process, no sanctioned auxiliary, no other in-bundle process. While the
@@ -219,6 +241,12 @@ secret registry and the output leak guard) stays inside `bm_test_app.py`.
   argv list, no shell, stdin closed, stderr discarded, fixed minimal environment,
   15 s timeout, strict validation of the item. The item identity is a constant of
   that file; it cannot come from the command line, environment, config or stdin.
+
+Both entry points require a password of at least **8 characters**. After a 401,
+the shared helper rejects shorter supplied passwords with fixed
+`credential_unsupported` before any authenticated retry. Supported passwords
+and Basic tokens are registered with the output leak guard. The Keychain path
+uses this same policy and never falls back to interactive prompting.
 
 No password belongs in a config file, argument, environment variable or stdin;
 neither entry point accepts one. The Keychain wrapper **fails closed and never

@@ -362,8 +362,11 @@ class TestKeychainThroughTheReviewedRpcClient(helper_tests.TripwireTestCase):
         self.transport = helper_tests.FakeTransport()
         self.transport.password = SENTINEL
         self.runner = FakeRunner(stdout=item_bytes())
+        target = helper_tests.make_fake_app(self.tmp)
+        lister = helper_tests.FakeProcessLister()
+        lister.run_test_app(target, pid=4242)
         self.services = helper_tests.make_services(
-            helper_tests.make_fake_app(self.tmp),
+            target, process_lister=lister,
             transport=self.transport,
             listener_lookup=lambda port: {4242},
             password_prompt=kc.make_keychain_password_prompt(self.runner),
@@ -500,3 +503,43 @@ class TestWrapperStaticSafety(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSharedMinimumCredentialPolicy(helper_tests.TripwireTestCase):
+    def test_fake_keychain_short_item_never_retries_or_prompts_interactively(self):
+        for secret in ('Z', 'qzv', 'qzxv739'):
+            with self.subTest(length=len(secret)):
+                w = helper_tests.RunWorld(self, 'kc-short-' + str(len(secret)))
+                w.transport.password = secret
+                runner = FakeRunner(stdout=item_bytes(secret))
+                w.services.password_prompt = kc.make_keychain_password_prompt(runner)
+                manifest = self.tmp / ('kc-' + str(len(secret)) + '.json')
+                manifest.write_bytes(bm.manifest_bytes(w.manifest))
+                output = self.tmp / ('kc-' + str(len(secret)) + '-output.json')
+                with mock.patch.object(bm, 'interactive_password_prompt', side_effect=AssertionError('fallback')):
+                    code, payload, text = helper_tests.run_cli(
+                        w.services, 'run', 'status', '--manifest', str(manifest), '--no-git-binding',
+                        '--rpc-port', '8080', '--output', str(output))
+                self.assertEqual((code, payload['error']['code']), (bm.EXIT_FAILED, 'credential_unsupported'))
+                self.assertEqual(len(runner.calls), 1)
+                self.assertEqual(len(w.transport.requests), 1)
+                self.assertNotIn(secret, text + output.read_text())
+
+    def test_fake_keychain_minimum_item_authenticates_with_shared_guard(self):
+        w = helper_tests.RunWorld(self)
+        secret = 'qzv739mn'
+        w.transport.password = secret
+        runner = FakeRunner(stdout=item_bytes(secret))
+        w.services.password_prompt = kc.make_keychain_password_prompt(runner)
+        w.produce_on_sleep(helper_tests.adapter_payload('status', **{secret: True}))
+        manifest = self.tmp / 'kc-supported.json'; manifest.write_bytes(bm.manifest_bytes(w.manifest))
+        output = self.tmp / 'kc-output.json'
+        with mock.patch.object(bm, 'interactive_password_prompt', side_effect=AssertionError('fallback')):
+            code, payload, text = helper_tests.run_cli(
+                w.services, 'run', 'status', '--manifest', str(manifest), '--no-git-binding',
+                '--rpc-port', '8080', '--output', str(output))
+        self.assertEqual((code, payload['error']['code']), (bm.EXIT_FAILED, 'output_blocked_secret_detected'))
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(len(w.transport.requests), 5)
+        self.assertNotIn(secret, text)
+        self.assertFalse(output.exists())

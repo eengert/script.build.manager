@@ -209,11 +209,12 @@ ERROR_CODES = frozenset({
     # stage
     "stage_area_exists", "stage_area_invalid", "stage_write_failed",
     "stage_new_tree_mismatch", "stage_backup_failed", "stage_swap_failed",
-    "stage_post_verify_failed", "rollback_failed", "evidence_exists",
+    "stage_post_verify_failed", "rollback_failed", "rollback_ancestor_unsafe",
+    "stage_durability_failed", "evidence_exists",
     # rpc / run
     "rpc_config_invalid", "rpc_host_not_loopback", "rpc_port_invalid",
     "listener_lookup_failed", "listener_not_found", "listener_pid_mismatch",
-    "credential_prompt_unavailable", "credential_missing", "rpc_transport_failed",
+    "credential_prompt_unavailable", "credential_missing", "credential_unsupported", "rpc_transport_failed",
     "rpc_auth_failed", "rpc_http_error", "rpc_response_invalid",
     "rpc_response_too_large", "rpc_error", "rpc_execute_rejected",
     "addon_not_visible_to_kodi", "addon_view_mismatch",
@@ -522,6 +523,30 @@ def fsync_directory(path: Any) -> None:
         pass
     finally:
         os.close(fd)
+
+
+def fsync_directory_strict(path: Any) -> None:
+    """Publish critical directory entries or fail closed; never best effort."""
+    fd = None
+    try:
+        reject_symlink_components(path)
+        fd = os.open(os.fspath(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0))
+        if not stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("not a directory")
+        os.fsync(fd)
+    except (OSError, FsProblem):
+        raise HelperError("stage_durability_failed") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _sync_tree_directories(root: Path) -> None:
+    """Bottom-up publication of all entries, including symlinks (no traversal)."""
+    directories = [root] + [root / entry.rel for entry in walk_tree(root) if entry.kind == "dir"]
+    for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+        fsync_directory_strict(directory)
 
 
 def write_new_file_atomic(path: Any, data: bytes, mode: int = 0o644) -> None:
@@ -2244,7 +2269,8 @@ def _has_entries(path: Path) -> bool:
         return any(True for _ in iterator)
 
 
-def _remove_stage_area(target: TestAppTarget, *, discard_old: bool) -> bool:
+def _remove_stage_area(target: TestAppTarget, *, discard_old: bool,
+                       journal: Optional["StageJournal"] = None) -> bool:
     """Remove the helper-owned staging area only while its full path is safe.
 
     Unless discard_old is set (only after every replaced tree has a verified
@@ -2255,12 +2281,18 @@ def _remove_stage_area(target: TestAppTarget, *, discard_old: bool) -> bool:
     """
     area = target.stage_area
     try:
+        if journal is not None:
+            journal.check()
         target.require_chain(area)
         lstat_real_dir(area)
-        if not discard_old and _exists(area / "old") and _has_entries(area / "old"):
-            return False
+        if not discard_old and _exists(area / "old"):
+            lstat_real_dir(area / "old")
+            if _has_entries(area / "old"):
+                return False
         # Recheck immediately before the destructive traversal in case the
         # chain changed while the retained-old check was running.
+        if journal is not None:
+            journal.check()
         target.require_chain(area)
         lstat_real_dir(area)
         shutil.rmtree(area)
@@ -2269,47 +2301,93 @@ def _remove_stage_area(target: TestAppTarget, *, discard_old: bool) -> bool:
     return True
 
 
-def _swap_in(target: TestAppTarget, area: Path, addon_ids: Sequence[str]) -> List[Tuple[str, str]]:
-    """Rename live -> old and new -> live for each add-on, all-or-nothing.
+class StageJournal(list):
+    """Rename intent plus directory identities fixed before the first mutation."""
 
-    Each step is recorded BEFORE its rename so an interruption in between is
-    still rolled back (rollback skips steps that never took place).
+    def __init__(self, target: TestAppTarget, area: Path) -> None:
+        super().__init__()
+        paths = set()
+        for leaf in (target.addons_dir, area / "new", area / "old", area / "failed"):
+            target.require_chain(leaf)
+            paths.update((leaf, *leaf.parents))
+        self.identities = []
+        for path in sorted(paths, key=lambda path: (len(path.parts), str(path))):
+            info = lstat_real_dir(path)
+            self.identities.append((path, (info.st_dev, info.st_ino)))
+
+    def check(self) -> None:
+        # Check shallowest first. Never inspect a descendant through a changed
+        # ancestor, even when the replacement is another ordinary directory.
+        try:
+            for path, identity in self.identities:
+                info = lstat_real_dir(path)
+                if (info.st_dev, info.st_ino) != identity:
+                    raise FsProblem("identity_changed")
+        except (FsProblem, OSError):
+            raise HelperError("rollback_ancestor_unsafe") from None
+
+    def sync_parents(self, source: Path, destination: Path) -> None:
+        for parent in (source.parent, destination.parent):
+            self.check()
+            fsync_directory_strict(parent)
+
+
+def _swap_in(target: TestAppTarget, area: Path, addon_ids: Sequence[str],
+             done: Optional[StageJournal] = None) -> StageJournal:
+    """Record intent before each rename; publish both parent entries afterwards.
+
+    When supplied a journal the caller owns rollback through the commit point.
+    Direct callers get the same bounded rollback on failure inside the swap.
     """
     target.require_chain(target.addons_dir)
     target.require_chain(area)
-    done: List[Tuple[str, str]] = []
+    own_journal = done is None
+    if done is None:
+        done = StageJournal(target, area)
     try:
         for addon_id in addon_ids:
+            done.check()
             live = target.addon_dir(addon_id)
             if _live_state(live) == "dir":
+                old = area / "old" / addon_id
                 done.append(("old", addon_id))
-                os.rename(os.fspath(live), os.fspath(area / "old" / addon_id))
+                done.check()
+                os.rename(os.fspath(live), os.fspath(old))
+                done.sync_parents(live, old)
+            new = area / "new" / addon_id
             done.append(("new", addon_id))
-            os.rename(os.fspath(area / "new" / addon_id), os.fspath(live))
+            done.check()
+            os.rename(os.fspath(new), os.fspath(live))
+            done.sync_parents(new, live)
     except BaseException:
-        _rollback(target, area, done)
+        if own_journal:
+            _rollback(target, area, done)
         raise
     return done
 
 
-def _rollback(target: TestAppTarget, area: Path, done: Sequence[Tuple[str, str]]) -> None:
-    """Undo recorded steps newest-first; never deletes, only renames back/aside."""
-    failures = 0
+def _rollback(target: TestAppTarget, area: Path, done: StageJournal) -> None:
+    """Undo intent newest-first, stopping at the first unsafe/failed operation."""
+    done.check()
     for action, addon_id in reversed(done):
+        done.check()
         live = target.addon_dir(addon_id)
+        if action == "new":
+            if _exists(area / "new" / addon_id):
+                continue  # the new tree never left staging
+            source, destination = live, area / "failed" / addon_id
+        else:
+            source, destination = area / "old" / addon_id, live
+            if not _exists(source):
+                continue  # the live tree never moved aside
+        done.check()
         try:
-            if action == "new":
-                if _exists(area / "new" / addon_id):
-                    continue  # the new tree never left the staging area
-                os.rename(os.fspath(live), os.fspath(area / "failed" / addon_id))
-            else:
-                if not _exists(area / "old" / addon_id):
-                    continue  # the live tree never moved aside
-                os.rename(os.fspath(area / "old" / addon_id), os.fspath(live))
-        except OSError:
-            failures += 1
-    if failures:
-        raise HelperError("rollback_failed", failed_steps=failures)
+            os.rename(os.fspath(source), os.fspath(destination))
+            done.sync_parents(source, destination)
+        except BaseException as exc:
+            if isinstance(exc, HelperError) and exc.code == "rollback_ancestor_unsafe":
+                raise
+            raise HelperError("rollback_failed", failed_steps=1) from None
 
 
 def run_stage(
@@ -2457,6 +2535,15 @@ def _backup_live_trees(
             }
     except (OSError, FsProblem):
         raise HelperError("stage_backup_failed") from None
+    # Copied bytes have already been fsynced; publish every backup entry and
+    # the run hierarchy before allowing a live rename.
+    for info in replaced.values():
+        if info["backed_up"]:
+            _sync_tree_directories(Path(info["backup_dir"]))
+    if any(info["backed_up"] for info in replaced.values()):
+        fsync_directory_strict(run_dir / "replaced")
+    fsync_directory_strict(run_dir)
+    fsync_directory_strict(run_dir.parent)
     return replaced
 
 
@@ -2506,6 +2593,8 @@ def _apply_stage(
         raise HelperError("stage_area_exists") from None
     except OSError:
         raise HelperError("stage_area_invalid") from None
+    done = None
+    committed = False
     try:
         if not _same_device(area, target.addons_dir):
             raise HelperError("stage_area_invalid", reason="cross_device")
@@ -2523,25 +2612,45 @@ def _apply_stage(
                 raise HelperError("stage_new_tree_mismatch", addon_id=tree["addon_id"])
         # A verified evidence copy of everything replaced exists before any rename.
         replaced = _backup_live_trees(target, run_dir, addon_ids)
+        _sync_tree_directories(area)
+        fsync_directory_strict(target.portable_data)
         identify(services, require="not_running")  # nothing may have launched meanwhile
-        try:
-            done = _swap_in(target, area, addon_ids)
-        except OSError:
-            raise HelperError("stage_swap_failed") from None  # already rolled back
+        done = StageJournal(target, area)
+        _swap_in(target, area, addon_ids, done)
+        done.check()
         verification = verify_installed(services, manifest, git_repo=None)
         if not verification["installed_equals_manifest"]:
-            _rollback(target, area, done)
             raise HelperError("stage_post_verify_failed")
         _recheck_backups(replaced)
         _check_moved_old(target, replaced, addon_ids)
-    except BaseException:
-        # Keeps the area whenever old/ may still be the only copy of anything.
-        _remove_stage_area(target, discard_old=False)
+        done.check()
+        # Final durable-success boundary: every rename has synced both parents,
+        # evidence is durable and all verification is complete. No subsequent
+        # failure requires rollback; stage cleanup is conservative best effort.
+        fsync_directory_strict(target.addons_dir)
+        fsync_directory_strict(area / "old")
+        done.check()
+        committed = True
+    except BaseException as exc:
+        if done and not committed:
+            try:
+                _rollback(target, area, done)
+            except BaseException:
+                # Never clean a substituted chain or a partially recovered area.
+                raise
+        retain = bool(done) and isinstance(exc, HelperError) and exc.code in {
+            "stage_backup_failed", "rollback_ancestor_unsafe", "rollback_failed"
+        }
+        if not retain:
+            _remove_stage_area(target, discard_old=False, journal=done)
+        if isinstance(exc, OSError) and done is not None:
+            raise HelperError("stage_swap_failed") from None
         raise
     return {
         "post_stage_verify": verification,
         "replaced": replaced,
-        "stage_area_removed": _remove_stage_area(target, discard_old=True),
+        "stage_area_removed": _remove_stage_area(target, discard_old=True, journal=done),
+        "durable_commit": committed,
     }
 
 
@@ -2899,6 +3008,9 @@ class RpcClient:
 
     def _guard_listener(self) -> None:
         """The listener on the port must be exactly the authorized Test.app pid."""
+        identity = identify(self._services, require="running")
+        if identity.pid != self._pid:
+            raise HelperError("listener_pid_mismatch", port=self._port)
         pids = self._services.listener_lookup(self._port)
         if not pids:
             raise HelperError("listener_not_found", port=self._port)
@@ -2910,6 +3022,8 @@ class RpcClient:
         password = self._services.password_prompt(prompt)
         if not isinstance(password, str) or not password:
             raise HelperError("credential_missing")
+        if len(password) < 8:
+            raise HelperError("credential_unsupported")
         token = base64.b64encode(f"{self._username}:{password}".encode("utf-8")).decode("ascii")
         self._auth = "Basic " + token
         self._services.secrets.register(password, minimum=8)
@@ -3073,10 +3187,10 @@ def run_adapter(
     except (ValueError, UnicodeDecodeError):
         raise HelperError("result_malformed", reason="json") from None
     projected, withheld = project_adapter_result(mode, raw)
-    try:
-        after = identify(services).report()["process"]
-    except HelperError as exc:
-        after = {"error": exc.code}
+    after_identity = identify(services, require="running")
+    if after_identity.pid != identity.pid:
+        raise HelperError("listener_pid_mismatch", port=port)
+    after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
     post_run = {
@@ -3109,7 +3223,7 @@ def run_adapter(
         },
         "kodi_addon_view": addon_view,
         "manifest_sha256": manifest_sha256,
-        "ok": True,
+        "ok": bool(projected["ok"] and final["installed_equals_manifest"]),
         "post_run_verification": post_run,
         "process_after": after,
         "result": projected,
@@ -3745,7 +3859,9 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
             git_repo=_git_repo(args, services),
             timeout=timeout,
         )
-        return payload, EXIT_OK if payload["adapter_ok"] else EXIT_ADAPTER_FAILED
+        if not payload["adapter_ok"]:
+            return payload, EXIT_ADAPTER_FAILED
+        return payload, EXIT_OK if payload["ok"] else EXIT_FAILED
     if command == "quit":
         config_rpc = {}
         if args.config:

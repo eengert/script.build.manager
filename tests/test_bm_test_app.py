@@ -2943,14 +2943,14 @@ class TestStage(StageTestCase):
         original_swap = bm._swap_in
         injected_state = []
 
-        def inject_ancestor_symlink(target, area, addon_ids):
+        def inject_ancestor_symlink(target, area, addon_ids, done=None):
             resources.rename(decoy)
             resources.symlink_to(decoy, target_is_directory=True)
             relocated_area = decoy / "Kodi" / "portable_data" / ".bm-stage"
             sentinel = relocated_area / "review-sentinel.txt"
             sentinel.write_text("preserve me")
             injected_state.append((relocated_area.is_dir(), sentinel.exists()))
-            return original_swap(target, area, addon_ids)
+            return original_swap(target, area, addon_ids, done)
 
         with mock.patch.object(bm, "_swap_in", side_effect=inject_ancestor_symlink), \
                 mock.patch.object(bm, "_remove_stage_area", wraps=bm._remove_stage_area) as cleanup:
@@ -2958,7 +2958,7 @@ class TestStage(StageTestCase):
                 self.stage()
 
         self.assertEqual(raised.exception.code, "bundle_path_symlink")
-        cleanup.assert_called_once_with(target, discard_old=False)
+        self.assertEqual(cleanup.call_count, 1)
         relocated_area = decoy / "Kodi" / "portable_data" / ".bm-stage"
         sentinel = relocated_area / "review-sentinel.txt"
         self.assertEqual(injected_state, [(True, True)])
@@ -2985,17 +2985,17 @@ class TestStage(StageTestCase):
                 if existed:
                     install_old(target)
                 original = bm._swap_in
-                def inject(target, area, ids):
+                def inject(target, area, ids, done=None):
                     live = target.addon_dir(bm.BUILD_MANAGER_ID)
                     live.mkdir(exist_ok=True)
                     (live / "race.txt").write_bytes(b"unrecorded live bytes")
-                    return original(target, area, ids)
+                    return original(target, area, ids, done)
                 with mock.patch.object(bm, "_swap_in", side_effect=inject):
                     with self.assertRaises(bm.HelperError) as raised:
                         self.stage()
                 self.assertEqual(raised.exception.code, "stage_backup_failed")
-                old = self.stage_area() / "old" / bm.BUILD_MANAGER_ID
-                self.assertEqual((old / "race.txt").read_bytes(), b"unrecorded live bytes")
+                restored = target.addon_dir(bm.BUILD_MANAGER_ID)
+                self.assertEqual((restored / "race.txt").read_bytes(), b"unrecorded live bytes")
                 run_dir = self.run_dirs()[-1]
                 self.assertTrue((run_dir / "stage_manifest.json").is_file())
                 record = json.loads((run_dir / "stage_result.json").read_text())
@@ -3005,7 +3005,7 @@ class TestStage(StageTestCase):
                 with self.assertRaises(bm.HelperError) as raised:
                     self.stage()
                 self.assertEqual(raised.exception.code, "stage_area_exists")
-                self.assertEqual((old / "race.txt").read_bytes(), b"unrecorded live bytes")
+                self.assertEqual((restored / "race.txt").read_bytes(), b"unrecorded live bytes")
                 self.services.clock.now_ns += 10 * 10 ** 9
 
     def test_dry_run_builds_and_reports_but_changes_nothing(self):
@@ -3553,9 +3553,9 @@ class TestStageFailureInjection(StageTestCase):
             with self.assertRaises(bm.HelperError) as raised:
                 self.apply()
         self.assertEqual(raised.exception.code, "stage_backup_failed")
-        for addon_id in self.ids:
-            self.assertEqual(fingerprint(self.stage_area() / "old" / addon_id), before[addon_id])
-        self.assertTrue(bm.verify_installed(self.services, self.manifest, git_repo=None)["installed_equals_manifest"])
+        self.assertUnchanged(before)
+        self.assertTrue(self.stage_area().exists())
+        self.assertTrue((self.run_dir / "replaced").exists())
 
     def test_remove_stage_area_is_gated_on_old_being_empty(self):
         (self.stage_area() / "old" / "x").mkdir(parents=True)
@@ -3826,7 +3826,8 @@ class TestRun(TripwireTestCase):
 
         world.clock.on_sleep = tamper_then_write
         drifted = world.run("status")
-        self.assertTrue(drifted["ok"] and drifted["adapter_ok"])
+        self.assertFalse(drifted["ok"])
+        self.assertTrue(drifted["adapter_ok"])
         self.assertFalse(drifted["post_run_verification"]["installed_equals_manifest"])
         self.assertEqual(drifted["post_run_verification"]["problems"][bm.BUILD_MANAGER_ID], ["modified_files"])
 
@@ -4129,7 +4130,7 @@ class TestRun(TripwireTestCase):
         self.assertEqual(raised.exception.code, "kodi_exited_before_result")
         self.assertEqual(len(world.clock.sleeps), bm.LIVENESS_EVERY_POLLS - 1)  # checked before the 5th sleep
 
-    def test_process_after_reports_a_restart_or_ambiguity_without_failing(self):
+    def test_process_after_restart_or_ambiguity_fails_closed(self):
         world = self.world()
 
         def restart_and_write(count):
@@ -4137,7 +4138,9 @@ class TestRun(TripwireTestCase):
             world.lister.processes.clear()
 
         world.clock.on_sleep = restart_and_write
-        self.assertEqual(world.run("status")["process_after"]["state"], "not_running")
+        with self.assertRaises(bm.HelperError) as raised:
+            world.run("status")
+        self.assertEqual(raised.exception.code, "test_app_not_running")
         world = self.world("w-multi")
 
         def duplicate_and_write(count):
@@ -4145,7 +4148,9 @@ class TestRun(TripwireTestCase):
             world.lister.run_test_app(world.target, pid=999)
 
         world.clock.on_sleep = duplicate_and_write
-        self.assertEqual(world.run("status")["process_after"], {"error": "multiple_test_app_processes"})
+        with self.assertRaises(bm.HelperError) as raised:
+            world.run("status")
+        self.assertEqual(raised.exception.code, "multiple_test_app_processes")
 
     def test_result_path_must_not_be_a_symlink_or_live_in_a_symlinked_directory(self):
         world = self.world()
@@ -4219,7 +4224,7 @@ class TestRun(TripwireTestCase):
         }
         world.produce_on_sleep(failure)
         payload = world.run("install")
-        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ok"])
         self.assertFalse(payload["adapter_ok"])
         self.assertEqual(payload["result"], failure)
 
@@ -5236,7 +5241,7 @@ class TestCli(TripwireTestCase):
         code, payload, _ = run_cli(
             failing.services, "run", "retry", "--manifest", str(manifest_file), "--rpc-port", "8080", "--no-git-binding"
         )
-        self.assertEqual((code, payload["ok"], payload["adapter_ok"]), (bm.EXIT_ADAPTER_FAILED, True, False))
+        self.assertEqual((code, payload["ok"], payload["adapter_ok"]), (bm.EXIT_ADAPTER_FAILED, False, False))
         stale = RunWorld(self, "cli-run-stale")
         code, payload, _ = run_cli(
             stale.services, "run", "status", "--manifest", str(manifest_file), "--rpc-port", "8080",
@@ -6513,3 +6518,481 @@ class TestQuit(TripwireTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCurrentHelperCredentials(TripwireTestCase):
+    def cli(self, world, name, mode="status"):
+        manifest = self.tmp / (name + '-manifest.json')
+        manifest.write_bytes(bm.manifest_bytes(world.manifest))
+        output = self.tmp / (name + '-output.json')
+        code, payload, text = run_cli(world.services, 'run', mode, '--manifest', str(manifest),
+                                     '--no-git-binding', '--rpc-port', '8080', '--output', str(output))
+        return code, payload, text, output
+
+    def test_short_credentials_are_fixed_errors_before_retry_and_never_leak(self):
+        for secret in ('Z', 'qzv', 'qzxv739'):
+            with self.subTest(length=len(secret)):
+                w = RunWorld(self, 'short-' + str(len(secret)))
+                w.transport.password = secret
+                w.password_to_return = secret
+                w.produce_on_sleep(adapter_payload('status', **{secret: True}))
+                code, payload, text, output = self.cli(w, str(len(secret)))
+                self.assertEqual((code, payload['error']),
+                                 (bm.EXIT_FAILED, {'code': 'credential_unsupported', 'detail': {}}))
+                self.assertEqual(len(w.transport.requests), 1)
+                self.assertNotIn('Authorization', w.transport.requests[0]['headers'])
+                self.assertEqual(len(w.prompts), 1)
+                self.assertNotIn(secret, text)
+                self.assertNotIn(secret, output.read_text())
+
+    def test_minimum_credential_authenticates_normally(self):
+        w = RunWorld(self)
+        w.transport.password = w.password_to_return = 'qzv739mn'
+        w.produce_on_sleep(adapter_payload('status'))
+        code, payload, text, output = self.cli(w, 'supported')
+        self.assertEqual((code, payload['ok']), (0, True))
+        self.assertEqual(len(w.transport.requests), 5)
+        self.assertEqual(len(w.prompts), 1)
+        self.assertNotIn(w.password_to_return, text + output.read_text())
+
+    def test_supported_credential_in_key_or_value_blocks_both_output_channels(self):
+        secret = 'qzv739mn'
+        for kind in ('key', 'value'):
+            with self.subTest(kind=kind):
+                w = RunWorld(self, kind)
+                w.transport.password = w.password_to_return = secret
+                result = (adapter_payload('install', **{secret: True}) if kind == 'key'
+                          else adapter_payload('install', installation_order=[secret]))
+                w.produce_on_sleep(result)
+                code, payload, text, output = self.cli(w, kind, 'install')
+                self.assertEqual((code, payload['error']['code']),
+                                 (bm.EXIT_FAILED, 'output_blocked_secret_detected'))
+                self.assertNotIn(secret, text)
+                self.assertFalse(output.exists())
+
+    def test_rpc_error_message_never_emits_supported_secret(self):
+        w = RunWorld(self)
+        secret = 'qzv739mn'
+        w.transport.password = w.password_to_return = secret
+        w.transport.handler = lambda r: ((401, b'') if 'Authorization' not in r['headers']
+                                        else w.transport.reply(error={'code': -1, 'message': secret}))
+        code, payload, text, output = self.cli(w, 'rpc-error')
+        self.assertEqual((code, payload['error']['code']), (bm.EXIT_FAILED, 'rpc_error'))
+        self.assertEqual(len(w.transport.requests), 2)
+        self.assertNotIn(secret, text + output.read_text())
+
+
+class TestCurrentHelperRpcIdentity(TripwireTestCase):
+    def changed(self, w, kind):
+        exe = w.lister.processes[0].exe
+        if kind == 'foreign':
+            w.lister.processes[:] = [bm.ProcessInfo(w.pid, '/tmp/foreign/Kodi')]
+        elif kind == 'nonportable':
+            w.lister.commands[w.pid] = (exe,)
+        elif kind == 'malformed':
+            w.lister.commands[w.pid] = ()
+        elif kind == 'newpid':
+            w.lister.processes.clear()
+            w.lister.run_test_app(w.target, pid=999)
+
+    def test_same_listener_pid_cannot_hide_identity_changes_between_requests(self):
+        for kind, expected in [('foreign', 'foreign_kodi_process_present'),
+                               ('nonportable', 'test_app_not_portable'),
+                               ('malformed', 'test_app_process_ambiguous'),
+                               ('newpid', 'listener_pid_mismatch')]:
+            with self.subTest(kind=kind):
+                w = RunWorld(self, kind)
+                client = bm.RpcClient(w.services, w.pid, '127.0.0.1', 8080, 'kodi')
+                self.assertEqual(client.call('JSONRPC.Ping', {}), 'pong')
+                self.changed(w, kind)
+                with self.assertRaises(bm.HelperError) as raised:
+                    client.call('Application.Quit', {})
+                self.assertEqual(raised.exception.code, expected)
+                self.assertEqual(len(w.transport.requests), 1)
+
+    def test_identity_refresh_after_401_prevents_authenticated_retry(self):
+        w = RunWorld(self)
+        w.transport.password = 'qzv739mn'
+        def prompt(text):
+            self.changed(w, 'foreign')
+            return 'qzv739mn'
+        w.services.password_prompt = prompt
+        with self.assertRaises(bm.HelperError) as raised:
+            w.run()
+        self.assertEqual(raised.exception.code, 'foreign_kodi_process_present')
+        self.assertEqual(len(w.transport.requests), 1)
+        self.assertNotIn('Authorization', w.transport.requests[0]['headers'])
+
+    def test_short_policy_is_checked_before_retry_identity_or_listener(self):
+        w = RunWorld(self)
+        w.transport.password = 'qzv'
+        def prompt(text):
+            self.changed(w, 'foreign')
+            return 'qzv'
+        w.services.password_prompt = prompt
+        with self.assertRaises(bm.HelperError) as raised:
+            w.run()
+        self.assertEqual(raised.exception.code, 'credential_unsupported')
+        self.assertEqual(len(w.transport.requests), 1)
+        self.assertEqual(sum(kind == 'listener' for kind, _ in w.events), 1)
+
+    def test_multirequest_run_refreshes_census_and_argv_for_every_send(self):
+        w = RunWorld(self)
+        w.produce_on_sleep(adapter_payload('status'))
+        original = w.lister.list_all
+        events = []
+        def census():
+            events.append('identity')
+            return original()
+        w.lister.list_all = census
+        original_post = w.transport.post
+        def post(*args):
+            events.append('send')
+            return original_post(*args)
+        w.transport.post = post
+        w.run()
+        self.assertEqual(events, ['identity', 'identity', 'send', 'identity', 'send',
+                                  'identity', 'send', 'identity', 'send', 'identity'])
+        self.assertEqual(len(w.lister.command_calls), 6)
+        self.assertEqual(len(w.transport.requests), 4)
+
+    def test_quit_never_sends_quit_to_replaced_same_pid_after_ping(self):
+        w = QuitWorld(self)
+        handler = w.transport.default_handler
+        def changed_after_ping(request):
+            reply = handler(request)
+            if request['body']['method'] == 'JSONRPC.Ping':
+                self.changed(w, 'foreign')
+            return reply
+        w.transport.handler = changed_after_ping
+        with self.assertRaises(bm.HelperError) as raised:
+            bm.run_quit(w.services, rpc={"port": 8080}, timeout=30)
+        self.assertEqual(raised.exception.code, 'foreign_kodi_process_present')
+        self.assertEqual(w.methods(), ['JSONRPC.Ping'])
+        self.assertEqual(len(w.transport.requests), 1)
+
+    def test_fresh_adapter_result_cannot_mask_final_invalid_runtime(self):
+        for kind in ('foreign', 'nonportable', 'malformed', 'newpid'):
+            with self.subTest(kind=kind):
+                w = RunWorld(self, 'final-' + kind)
+                def result(n):
+                    w.write_result(adapter_payload('status'))
+                    self.changed(w, kind)
+                w.clock.on_sleep = result
+                with self.assertRaises(bm.HelperError):
+                    w.run()
+                self.assertEqual(len(w.transport.requests), 4)
+
+
+class TestCurrentHelperRunOutcome(TripwireTestCase):
+    def test_cli_separates_adapter_and_qualification_outcomes(self):
+        for kind, exit_code, ok, adapter_ok, problem in (
+                ('success', 0, True, True, []),
+                ('adapter_failure', bm.EXIT_ADAPTER_FAILED, False, False, []),
+                ('changed', bm.EXIT_FAILED, False, True, ['modified_files']),
+                ('missing', bm.EXIT_FAILED, False, True, ['missing_files'])):
+            with self.subTest(kind=kind):
+                w = RunWorld(self, kind)
+                def result(n):
+                    path = w.target.addon_dir(bm.BUILD_MANAGER_ID) / 'service.py'
+                    if kind == 'changed': path.write_text('# drift')
+                    if kind == 'missing': path.unlink()
+                    w.write_result(adapter_payload('status', ok=adapter_ok))
+                w.clock.on_sleep = result
+                manifest = self.tmp / (kind + '.json')
+                manifest.write_bytes(bm.manifest_bytes(w.manifest))
+                code, payload, _ = run_cli(w.services, 'run', 'status', '--manifest', str(manifest),
+                                          '--no-git-binding', '--rpc-port', '8080')
+                self.assertEqual((code, payload['ok'], payload['adapter_ok']), (exit_code, ok, adapter_ok))
+                self.assertEqual(payload['post_run_verification']['problems'][bm.BUILD_MANAGER_ID], problem)
+
+    def test_final_verification_error_is_nonzero(self):
+        w = RunWorld(self)
+        w.produce_on_sleep(adapter_payload('status'))
+        manifest = self.tmp / 'manifest.json'
+        manifest.write_bytes(bm.manifest_bytes(w.manifest))
+        original = bm.verify_installed
+        calls = []
+        def verify(*a, **kw):
+            calls.append(1)
+            if len(calls) == 2: raise bm.HelperError('manifest_unreadable')
+            return original(*a, **kw)
+        with mock.patch.object(bm, 'verify_installed', verify):
+            code, payload, _ = run_cli(w.services, 'run', 'status', '--manifest', str(manifest),
+                                      '--no-git-binding', '--rpc-port', '8080')
+        self.assertEqual((code, payload['ok'], payload['error']['code']),
+                         (bm.EXIT_FAILED, False, 'manifest_unreadable'))
+
+
+class TestCurrentHelperStage(StageTestCase):
+    def setUp(self):
+        super().setUp()
+        self.manifest, self.new_files = stage_inputs()
+        self.run_dir = self.evidence / 'run'
+        self.run_dir.mkdir()
+        install_old(self.target)
+
+    def apply(self):
+        return bm._apply_stage(self.services, self.manifest, self.new_files, self.run_dir, self.ids)
+
+    def test_changed_rollback_boundaries_refuse_all_further_renames(self):
+        for component in ('resources', 'addons', 'area', 'new', 'old', 'failed'):
+            for replacement in ('symlink', 'directory'):
+                with self.subTest(component=component, replacement=replacement):
+                    base = self.tmp / (component + '-' + replacement)
+                    base.mkdir()
+                    target = make_fake_app(base)
+                    install_old(target)
+                    self.services.target = target
+                    run = base / 'evidence'; run.mkdir()
+                    saved = base / 'saved'
+                    original = os.rename
+                    changed = []; redirected = []
+                    def rename(src, dst):
+                        if not changed and str(src).endswith('/new/' + bm.DRIVER_ID):
+                            path = {'resources': target.contents_dir / 'Resources',
+                                    'addons': target.addons_dir, 'area': target.stage_area,
+                                    'new': target.stage_area / 'new', 'old': target.stage_area / 'old',
+                                    'failed': target.stage_area / 'failed'}[component]
+                            original(path, saved)
+                            if replacement == 'symlink': path.symlink_to(saved)
+                            else: shutil.copytree(saved, path, symlinks=True)
+                            changed.append(path)
+                            raise KeyboardInterrupt
+                        if changed: redirected.append((src, dst))
+                        return original(src, dst)
+                    with mock.patch.object(os, 'rename', rename), self.assertRaises(bm.HelperError) as raised:
+                        bm._apply_stage(self.services, self.manifest, self.new_files, run, self.ids)
+                    self.assertEqual(raised.exception.code, 'rollback_ancestor_unsafe')
+                    self.assertEqual(redirected, [])
+                    self.assertTrue(saved.exists())
+                    self.assertTrue((run / 'replaced' / bm.BUILD_MANAGER_ID).exists())
+                    # The stage survives at its original or relocated location.
+                    if component == 'resources': area = saved / 'Kodi' / 'portable_data' / '.bm-stage'
+                    elif component == 'area': area = saved
+                    else: area = target.stage_area
+                    self.assertTrue(area.exists())
+                    old = saved if component == 'old' else area / 'old'
+                    self.assertTrue((old / bm.BUILD_MANAGER_ID).exists())
+
+    def test_post_swap_failures_restore_originals_and_preserve_exception_semantics(self):
+        for step in ('verify_installed', '_recheck_backups', '_check_moved_old'):
+            for exception in (RuntimeError, KeyboardInterrupt):
+                with self.subTest(step=step, exception=exception.__name__):
+                    base = self.tmp / (step + exception.__name__); base.mkdir()
+                    target = make_fake_app(base); install_old(target)
+                    self.services.target = target
+                    before = {i: fingerprint(target.addon_dir(i)) for i in self.ids}
+                    run = base / 'evidence'; run.mkdir()
+                    error = exception('synthetic')
+                    with mock.patch.object(bm, step, side_effect=error), self.assertRaises(exception) as raised:
+                        bm._apply_stage(self.services, self.manifest, self.new_files, run, self.ids)
+                    self.assertIs(raised.exception, error)
+                    self.assertEqual({i: fingerprint(target.addon_dir(i)) for i in self.ids}, before)
+                    self.assertTrue((run / 'replaced').exists())
+
+    def test_interrupt_after_completed_swap_has_journal_and_cli_exit_130(self):
+        before = self.live_fingerprints()
+        original = bm._swap_in
+        def interrupt(*a, **kw):
+            original(*a, **kw)
+            raise KeyboardInterrupt
+        with mock.patch.object(bm, '_swap_in', interrupt), mock.patch.object(bm, '_dispatch',
+                side_effect=lambda a, s: (self.apply(), 0)):
+            code, payload, _ = run_cli(self.services, 'identify')
+        self.assertEqual((code, payload['error']['code']), (130, 'interrupted'))
+        self.assertEqual(self.live_fingerprints(), before)
+        self.assertTrue((self.run_dir / 'replaced').exists())
+
+    def test_rollback_path_failure_retains_stage_old_and_evidence(self):
+        original = os.rename
+        def fail(src, dst):
+            if '/old/' in str(src): raise OSError('injected')
+            return original(src, dst)
+        with mock.patch.object(bm, 'verify_installed', side_effect=KeyboardInterrupt), \
+                mock.patch.object(os, 'rename', fail), self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'rollback_failed')
+        self.assertTrue((self.stage_area() / 'old' / bm.DRIVER_ID).exists())
+        self.assertTrue((self.run_dir / 'replaced' / bm.DRIVER_ID).exists())
+
+    def test_backup_directory_fsync_failure_prevents_any_swap(self):
+        original = bm.fsync_directory_strict
+        def fail(path):
+            if 'replaced' in Path(path).parts: raise bm.HelperError('stage_durability_failed')
+            return original(path)
+        before = self.live_fingerprints()
+        with mock.patch.object(bm, 'fsync_directory_strict', fail), \
+                mock.patch.object(os, 'rename') as rename, self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'stage_durability_failed')
+        rename.assert_not_called()
+        self.assertEqual(self.live_fingerprints(), before)
+        self.assertTrue((self.run_dir / 'replaced').exists())
+
+    def test_success_syncs_backup_bottom_up_and_both_rename_parents_before_commit(self):
+        events = []
+        sync = bm.fsync_directory_strict; rename = os.rename; remove = bm._remove_stage_area
+        def record_sync(path):
+            events.append(('sync', Path(path)))
+            return sync(path)
+        def record_rename(src, dst):
+            events.append(('rename', Path(src), Path(dst)))
+            return rename(src, dst)
+        def cleanup(*args, **kwargs):
+            events.append(('delete', kwargs['discard_old']))
+            return remove(*args, **kwargs)
+        with mock.patch.object(bm, 'fsync_directory_strict', record_sync), \
+                mock.patch.object(os, 'rename', record_rename), mock.patch.object(bm, '_remove_stage_area', cleanup):
+            result = self.apply()
+        self.assertTrue(result['durable_commit'])
+        self.assertEqual(sum(e[0] == 'delete' for e in events), 1)
+        self.assertEqual(events[-1], ('delete', True))
+        first_rename = next(n for n,e in enumerate(events) if e[0] == 'rename')
+        before = [e[1] for e in events[:first_rename] if e[0] == 'sync']
+        for addon in self.ids:
+            backup = self.run_dir / 'replaced' / addon
+            self.assertIn(backup, before)
+            for entry in bm.walk_tree(backup):
+                if entry.kind == 'dir': self.assertLess(before.index(backup / entry.rel), before.index(backup))
+        self.assertLess(before.index(self.run_dir / 'replaced'), before.index(self.run_dir))
+        self.assertLess(before.index(self.run_dir), before.index(self.run_dir.parent))
+        for n, event in enumerate(events):
+            if event[0] == 'rename':
+                self.assertEqual(events[n+1:n+3], [('sync', event[1].parent), ('sync', event[2].parent)])
+        self.assertEqual(sum(e[0] == 'rename' for e in events), 4)
+
+    def test_post_rename_fsync_failure_uses_durable_guarded_rollback(self):
+        before = self.live_fingerprints()
+        events = []; failed = []
+        sync = bm.fsync_directory_strict; rename = os.rename
+        def record_rename(src, dst):
+            events.append(('rename', Path(src), Path(dst)))
+            return rename(src, dst)
+        def faulty(path):
+            events.append(('sync', Path(path)))
+            if not failed and any(e[0] == 'rename' for e in events):
+                failed.append(True)
+                raise bm.HelperError('stage_durability_failed')
+            return sync(path)
+        with mock.patch.object(os, 'rename', record_rename), mock.patch.object(bm, 'fsync_directory_strict', faulty), \
+                self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'stage_durability_failed')
+        self.assertEqual(self.live_fingerprints(), before)
+        rollback = [n for n,e in enumerate(events) if e[0] == 'rename' and '/old/' in str(e[1])]
+        self.assertEqual(len(rollback), 1)
+        n = rollback[0]; e = events[n]
+        self.assertEqual(events[n+1:n+3], [('sync', e[1].parent), ('sync', e[2].parent)])
+        self.assertTrue((self.run_dir / 'replaced').exists())
+
+    def test_commit_fsync_failure_rolls_back_before_old_discard(self):
+        before = self.live_fingerprints()
+        sync = bm.fsync_directory_strict
+        ready = []; failed = []
+        moved = bm._check_moved_old
+        def checked(*a):
+            moved(*a); ready.append(True)
+        def faulty(path):
+            if ready and not failed:
+                failed.append(True)
+                self.assertTrue((self.stage_area() / 'old' / bm.DRIVER_ID).exists())
+                raise bm.HelperError('stage_durability_failed')
+            return sync(path)
+        with mock.patch.object(bm, '_check_moved_old', checked), mock.patch.object(bm, 'fsync_directory_strict', faulty), \
+                self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'stage_durability_failed')
+        self.assertEqual(self.live_fingerprints(), before)
+
+    def test_strict_fsync_open_and_syscall_errors_fail_closed(self):
+        for function in ('open', 'fsync'):
+            with self.subTest(function=function), mock.patch.object(os, function, side_effect=OSError('private')), \
+                    self.assertRaises(bm.HelperError) as raised:
+                bm.fsync_directory_strict(self.evidence)
+            self.assertEqual((raised.exception.code, raised.exception.detail), ('stage_durability_failed', {}))
+
+    def test_cleanup_refuses_symlinked_old_without_inspecting_it(self):
+        area = self.stage_area(); area.mkdir()
+        external = self.tmp / 'external'; external.mkdir()
+        (external / 'sentinel').write_text('preserve')
+        (area / 'old').symlink_to(external)
+        with mock.patch.object(bm, '_has_entries', side_effect=AssertionError('unsafe traversal')):
+            self.assertFalse(bm._remove_stage_area(self.target, discard_old=False))
+        self.assertTrue((external / 'sentinel').exists())
+
+    def test_completed_swap_interrupt_with_changed_ancestor_never_redirects_rollback(self):
+        resources = self.target.contents_dir / 'Resources'
+        saved = self.tmp / 'saved-resources'
+        original = os.rename
+        changes = []; redirected = []
+        def verify(*a, **kw):
+            original(resources, saved)
+            resources.symlink_to(saved)
+            changes.append(True)
+            raise KeyboardInterrupt
+        def rename(src, dst):
+            if changes: redirected.append((src, dst))
+            return original(src, dst)
+        with mock.patch.object(bm, 'verify_installed', verify), mock.patch.object(os, 'rename', rename), \
+                self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'rollback_ancestor_unsafe')
+        self.assertEqual(redirected, [])
+        old = saved / 'Kodi' / 'portable_data' / '.bm-stage' / 'old'
+        for addon in self.ids:
+            self.assertTrue((old / addon).exists())
+            self.assertTrue((self.run_dir / 'replaced' / addon).exists())
+
+    def test_durability_failure_with_substituted_ancestor_preserves_old_without_rollback_rename(self):
+        original = os.rename; sync = bm.fsync_directory_strict
+        resources = self.target.contents_dir / 'Resources'; saved = self.tmp / 'saved-resources'
+        renames = []; changed = []
+        def rename(src, dst):
+            renames.append((src, dst))
+            return original(src, dst)
+        def faulty(path):
+            if renames and not changed:
+                original(resources, saved)
+                resources.symlink_to(saved)
+                changed.append(True)
+                raise bm.HelperError('stage_durability_failed')
+            return sync(path)
+        with mock.patch.object(os, 'rename', rename), mock.patch.object(bm, 'fsync_directory_strict', faulty), \
+                self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'rollback_ancestor_unsafe')
+        self.assertEqual(len(renames), 1)
+        old = saved / 'Kodi' / 'portable_data' / '.bm-stage' / 'old' / bm.BUILD_MANAGER_ID
+        self.assertTrue(old.exists())
+        self.assertTrue((self.run_dir / 'replaced' / bm.BUILD_MANAGER_ID).exists())
+
+    def test_every_rollback_rename_syncs_both_parents(self):
+        before = self.live_fingerprints()
+        events = []; original = os.rename; sync = bm.fsync_directory_strict
+        def rename(src, dst):
+            events.append(('rename', Path(src), Path(dst)))
+            return original(src, dst)
+        def record(path):
+            events.append(('sync', Path(path)))
+            return sync(path)
+        with mock.patch.object(os, 'rename', rename), mock.patch.object(bm, 'fsync_directory_strict', record), \
+                mock.patch.object(bm, 'verify_installed', side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.apply()
+        self.assertEqual(self.live_fingerprints(), before)
+        for n, e in enumerate(events):
+            if e[0] == 'rename':
+                self.assertEqual(events[n+1:n+3], [('sync', e[1].parent), ('sync', e[2].parent)])
+        self.assertEqual(sum(e[0] == 'rename' for e in events), 8)
+
+    def test_rollback_interrupt_is_safe_failure_and_retains_old(self):
+        original = os.rename
+        def rename(src, dst):
+            if '/old/' in str(src): raise KeyboardInterrupt
+            return original(src, dst)
+        with mock.patch.object(os, 'rename', rename), mock.patch.object(bm, 'verify_installed', side_effect=RuntimeError), \
+                self.assertRaises(bm.HelperError) as raised:
+            self.apply()
+        self.assertEqual(raised.exception.code, 'rollback_failed')
+        self.assertTrue((self.stage_area() / 'old' / bm.DRIVER_ID).exists())
+        self.assertTrue((self.run_dir / 'replaced' / bm.DRIVER_ID).exists())
