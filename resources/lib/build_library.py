@@ -582,6 +582,16 @@ class BuildLibrary:
         return StatusTarget(path, selected.device_profile_id, path,
                             library_source=LibrarySource(self.root, selected.entry_id))
 
+    def plan_target(self, entry_id, device_profile_id):
+        """Read-only target for an explicit session selection, independent of saved selection."""
+        from resources.lib.plan import PlanTarget
+        entry = self.get(entry_id)
+        if device_profile_id not in entry.device_profiles:
+            raise _error()
+        path = str(Path(self.root) / "builds" / (entry.entry_id + ".json"))
+        return PlanTarget(path, device_profile_id, path,
+                          library_source=LibrarySource(self.root, entry.entry_id))
+
     def selected_plan_target(self):
         from resources.lib.plan import PlanTarget
         target = self.selected_status_target()

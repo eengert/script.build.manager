@@ -10,13 +10,14 @@ from resources.lib.ui.status_view import (
 )
 
 class NativeDialogs:
-    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None):
+    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None):
         self.addon = addon
         self.dialog = dialog
         self.settle = settle
         self.status_provider = status_provider
         self.create_provider = create_provider
         self.busy = busy
+        self.install_provider = install_provider
         self.main_selection = 0
         self.help_selection = 0
 
@@ -244,6 +245,77 @@ class NativeDialogs:
                 self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32732))
                 self.settle(200)
 
+    # Install presentation keeps all target/review/lifecycle state in the workflow.
+    def install_message(self, string_id):
+        self.dialog.ok(self.text(32101), self.text(string_id))
+        self.settle(200)
+
+    @staticmethod
+    def install_label(value):
+        from resources.lib.status_model import is_plain_name
+        # Catalog identity is internal. Only bounded plain friendly metadata is shown.
+        return value if is_plain_name(value) and value else '—'
+
+    def choose_install_build(self, entries):
+        labels = [self.install_label(e.display_name) + ' ' + self.install_label(e.build_version)
+                  + ' — ' + ', '.join(self.install_label(p) for p in e.device_profiles)
+                  for e in entries]
+        selected = self.select(self.text(32800), labels, 0)
+        return entries[selected] if 0 <= selected < len(entries) else None
+
+    def choose_install_profile(self, profiles):
+        selected = self.select(self.text(32801), [self.install_label(p) for p in profiles], 0)
+        return profiles[selected] if 0 <= selected < len(profiles) else None
+
+    def choose_install_decision(self, prompt):
+        selected = self.select(self.render(prompt.heading),
+            [self.text(CHOICE_LABEL[c]) for c in prompt.choices], 0)
+        return prompt.choices[selected] if 0 <= selected < len(prompt.choices) else None
+
+    def prepare_install(self, prepare):
+        # Visible preparation label; this is retrieval, never an installation claim.
+        self.viewer(self.text(32101), self.text(32803))
+        return self.execute_install(prepare)
+
+    def execute_install(self, execute):
+        if self.busy:
+            self.busy(True)
+        try:
+            return execute()
+        finally:
+            if self.busy:
+                self.busy(False)
+
+    def show_install_review(self, model):
+        self.viewer(self.render(model.title), self.review_body(model))
+
+    def confirm_install(self, entry, profile, model):
+        body = (self.install_label(entry.display_name) + ' ' + self.install_label(entry.build_version)
+                + '\n' + self.text(32801) + ': ' + self.install_label(profile)
+                + '\n\n' + self.review_body(model) + '\n\n' + self.text(32815))
+        focus = 0
+        while True:
+            action = self.select(self.text(32101),
+                [self.text(32806), self.text(32807), self.text(32112), self.text(32113)], focus)
+            if action == 0:
+                self.viewer(self.render(model.title), body)
+            elif action == 1:
+                confirmed = self.dialog.yesno(self.text(32805), body,
+                    nolabel=self.text(32113), yeslabel=self.text(32807), defaultbutton=0)
+                self.settle(200)
+                return bool(confirmed)
+            elif action == 2:
+                self.detail(CONTEXT_HELP[Route.INSTALL])
+            else:
+                return False
+            focus = action
+
+    def install(self):
+        try:
+            self.install_provider().run(self)
+        except Exception:
+            self.install_message(32814)
+
     def run(self):
         while True:
             selected = self.select(self.text(32000),
@@ -259,6 +331,8 @@ class NativeDialogs:
                 self.settle(200)
             elif route == Route.CREATE and self.create_provider is not None:
                 self.create()
+            elif route == Route.INSTALL and self.install_provider is not None:
+                self.install()
             elif route == Route.STATUS:
                 self.status()
             else:

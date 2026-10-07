@@ -131,10 +131,10 @@ class ReviewViewModel:
                    (), '')
 
     @classmethod
-    def from_plan(cls, plan):
+    def from_plan(cls, plan, repository_current=(), fully_listed=False):
         if not isinstance(plan, BuildPlan):
             raise ValueError('unsupported plan')
-        sections, decisions = _sections(plan), ()
+        sections, decisions = _sections(plan, repository_current, fully_listed), ()
         if plan.state is PlanState.DECISION_REQUIRED:
             decisions = tuple(
                 DecisionPrompt(row.addon_id, Text(S_DECISION_HEADING, name=row.label), row.choices)
@@ -150,15 +150,17 @@ def _capped(lines):
     return tuple(lines)
 
 
-def _sections(plan):
+def _sections(plan, repository_current=(), fully_listed=False):
+    def listed_lines(lines):
+        return tuple(lines) if fully_listed else _capped(lines)
     if plan.state is PlanState.RESOLUTION_REQUIRED:
         return (ReviewSection(None, (Text(32606),)),)
     if plan.state is PlanState.NO_CHANGES:
         kept = [Text(SOFTWARE_LINE[r.action], name=r.label) for r in plan.software
                 if r.action is SoftwareAction.ACCEPTED_SKIP]
-        return (ReviewSection(Text(S_ADDONS), _capped([Text(S_ALL_MATCH)] + kept)),)
+        return (ReviewSection(Text(S_ADDONS), listed_lines([Text(S_ALL_MATCH)] + kept)),)
     if plan.state is PlanState.BLOCKED:
-        return (ReviewSection(None, _capped(_blocker_text(b) for b in plan.blockers)),)
+        return (ReviewSection(None, listed_lines(_blocker_text(b) for b in plan.blockers)),)
     if plan.state is PlanState.INCOMPLETE:
         lines = [Text(S_UNCHECKED_ADDON, name=r.label) for r in plan.software
                  if r.action is SoftwareAction.UNAVAILABLE]
@@ -171,15 +173,16 @@ def _sections(plan):
         lines += [Text(GAP_TEXT[g]) for g in plan.gaps if g in GAP_TEXT]
         if not lines:
             lines.append(Text(GAP_TEXT[CheckGap.INSPECTION_FAILED]))
-        return (ReviewSection(None, _capped(lines)),)
+        return (ReviewSection(None, listed_lines(lines)),)
     sections = []
-    listed = [Text(SOFTWARE_LINE[r.action], name=_row_name(r)) for r in plan.software
+    listed = [Text(32621 if r.addon_id in repository_current and r.action is SoftwareAction.INSTALL_EXACT
+                   else SOFTWARE_LINE[r.action], name=_row_name(r)) for r in plan.software
               if r.action in SOFTWARE_LINE]
     current = len([r for r in plan.software if r.action is SoftwareAction.CURRENT])
     if current:
         listed.append(Text(S_CURRENT_ONE) if current == 1 else Text(S_CURRENT_MANY, current))
     if listed:
-        sections.append(ReviewSection(Text(S_ADDONS), _capped(listed)))
+        sections.append(ReviewSection(Text(S_ADDONS), listed_lines(listed)))
     skin = plan.skin
     if skin.kind in SKIN_LINE:
         sections.append(ReviewSection(Text(S_SKIN), (Text(
@@ -199,7 +202,7 @@ def _sections(plan):
 
 def _row_name(row):
     """Name, then the saved version when the line installs one: ``Red Light 2.6.8``."""
-    if row.action is SoftwareAction.INSTALL_EXACT and row.version:
+    if row.action in (SoftwareAction.INSTALL_EXACT, SoftwareAction.INSTALL_REPOSITORY) and row.version:
         return (row.label + ' ' + row.version)[:140]
     return row.label
 

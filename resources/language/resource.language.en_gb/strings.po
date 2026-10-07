@@ -94,7 +94,7 @@ msgid "Create Build is not available in this frontend build yet. You can read ho
 msgstr ""
 
 msgctxt "#32121"
-msgid "Install Build is not available in this frontend build yet. You can read how choosing and applying a build works in Help."
+msgid "Choose a registered local build and one of its declared profiles. Review changes and missing-package choices before confirming Apply Build."
 msgstr ""
 
 msgctxt "#32122"
@@ -238,7 +238,7 @@ msgid "• Everything eligible is included by default. Uncheck add-ons you do no
 msgstr ""
 
 msgctxt "#32302"
-msgid "Install Build sets up a device to match a saved build.\n\nWhat you'll do\n• Pick a build and a device profile\n• Look over the list of changes\n• Choose Apply Build when you're happy\n\nWhat it can change\n• Add-ons to install or update\n• Which add-ons are on or off\n• Your skin\n• Supported settings\n\nGood to know\n• You see the changes before anything happens\n• Other add-ons are left alone\n• If Build Manager can't find a saved add-on, you can add it yourself or stop\n• Kodi may need to be fully closed and reopened\n• Build Manager picks up where it left off afterward"
+msgid "Install Build applies a registered local build.\n\nWhat you will do\n• Choose a build and a declared device profile\n• See the changes before anything happens to Kodi\n• Choose only the offered missing-package options\n• Repository Current saves a package before review and shows its version\n• Skip leaves that add-on out, where allowed\n• Review and confirm Apply Build\n\nGood to know\n• Other add-ons are left alone\n• A changed plan needs your approval again\n• Kodi may need to be fully closed and reopened more than once\n• Restart required is not completion\n• Update / Repair remains unavailable"
 msgstr ""
 
 msgctxt "#32303"
@@ -923,4 +923,76 @@ msgstr ""
 
 msgctxt "#32739"
 msgid "No private settings saved"
+msgstr ""
+
+msgctxt "#32800"
+msgid "Choose a build"
+msgstr ""
+
+msgctxt "#32801"
+msgid "Choose a device profile"
+msgstr ""
+
+msgctxt "#32802"
+msgid "No registered builds are available. Create a build first."
+msgstr ""
+
+msgctxt "#32803"
+msgid "Getting the current repository version… This saves the package for review and does not change Kodi."
+msgstr ""
+
+msgctxt "#32804"
+msgid "The current repository package could not be prepared for review. No build was applied."
+msgstr ""
+
+msgctxt "#32805"
+msgid "Apply this build to this Kodi installation?"
+msgstr ""
+
+msgctxt "#32806"
+msgid "Review changes"
+msgstr ""
+
+msgctxt "#32807"
+msgid "Apply Build"
+msgstr ""
+
+msgctxt "#32808"
+msgid "The reviewed plan changed or could not be verified. Check the new plan and confirm again before applying."
+msgstr ""
+
+msgctxt "#32809"
+msgid "Build applied and verified."
+msgstr ""
+
+msgctxt "#32810"
+msgid "Kodi must be fully closed and reopened to continue this operation. Installation is not complete. More than one restart may be required."
+msgstr ""
+
+msgctxt "#32811"
+msgid "An operation is already in progress or could not be safely checked. A competing installation cannot start."
+msgstr ""
+
+msgctxt "#32812"
+msgid "The existing operation needs attention. Open Build Status for a fresh check. No new installation was started."
+msgstr ""
+
+msgctxt "#32813"
+msgid "Installation was cancelled. No completion is claimed."
+msgstr ""
+
+msgctxt "#32814"
+msgid "The build could not be applied safely. Open Build Status to check whether an operation needs attention."
+msgstr ""
+
+msgctxt "#32815"
+msgid "Automatic updates are temporarily paused while the build is applied. Some managed add-ons may stay off until their configuration is verified. Unmanaged add-ons remain untouched."
+msgstr ""
+
+msgctxt "#32816"
+msgid "Build applied and verified with the reviewed missing-package exceptions. It may differ from the captured build."
+msgstr ""
+
+msgctxt "#32817"
+msgid "This operation needs attention. Changes already made are retained. Open Build Status for a fresh check; the build is not complete."
 msgstr ""

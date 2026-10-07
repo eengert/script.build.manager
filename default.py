@@ -17,10 +17,13 @@ def main():
     try:
         from resources.lib.ui.native_dialogs import NativeDialogs
         from resources.lib.create_workflow import runtime_create_workflow
+        def install_provider():
+            from resources.lib.install_workflow import runtime_install_workflow
+            return runtime_install_workflow()
         def busy(active):
             xbmc.executebuiltin('ActivateWindow(busydialognocancel)' if active else 'Dialog.Close(busydialognocancel)')
         NativeDialogs(addon, xbmcgui.Dialog(), xbmc.sleep, status_provider(xbmc),
-                      create_provider=runtime_create_workflow, busy=busy).run()
+                      create_provider=runtime_create_workflow, busy=busy, install_provider=install_provider).run()
     except Exception:
         # Never expose runtime exceptions or private settings in fallback text.
         xbmcgui.Dialog().ok(addon.getLocalizedString(32126),
