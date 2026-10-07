@@ -223,6 +223,7 @@ ERROR_CODES = frozenset({
     "kodi_exited_before_result", "kodi_quit_rejected", "kodi_quit_timeout",
     # snapshot / privacy
     "private_path_denied", "read_not_allowlisted", "output_blocked_secret_detected",
+    "build_library_state_invalid",
     # generic
     "interrupted", "unexpected_error", "internal_error",
 })
@@ -699,6 +700,18 @@ class TestAppTarget:
     @property
     def bm_data_dir(self) -> Path:
         return self.addon_data_dir / BUILD_MANAGER_ID
+
+    @property
+    def build_library_dir(self) -> Path:
+        return self.bm_data_dir / "build-library"
+
+    @property
+    def build_library_registry(self) -> Path:
+        return self.build_library_dir / "registry.json"
+
+    @property
+    def build_library_selection(self) -> Path:
+        return self.build_library_dir / "selection.json"
 
     @property
     def result_path(self) -> Path:
@@ -3352,6 +3365,8 @@ class ReadGuard:
             return True
         if parent == target.userdata_dir / "Database":
             return _ADDONS_DB_RE.fullmatch(name) is not None
+        if normalized in (target.build_library_registry, target.build_library_selection):
+            return True
         return parent == target.bm_data_dir and name in BM_DATA_READ_FILES
 
     def require(self, path: Path) -> Path:
@@ -3578,6 +3593,106 @@ def census_result_file(target: TestAppTarget, guard: ReadGuard) -> Dict[str, Any
     return report
 
 
+# Public v1 state only; deliberately independent of the product import graph.
+MAX_LIBRARY_STATE_BYTES = 1024 * 1024
+_LIBRARY_ENTRY_RE = re.compile(r"[0-9a-f]{64}")
+_LIBRARY_PROFILE_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}")
+
+
+def _library_read_at(fd: int, name: str) -> Optional[bytes]:
+    """Read a bounded regular leaf relative to a pinned, no-follow directory."""
+    try:
+        before = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_LIBRARY_STATE_BYTES:
+        raise ValueError()
+    leaf = os.open(name, _read_flags(), dir_fd=fd)
+    try:
+        opened = os.fstat(leaf)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError()
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(leaf, min(65536, MAX_LIBRARY_STATE_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_LIBRARY_STATE_BYTES:
+                raise ValueError()
+        after = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+                opened.st_dev, opened.st_ino, total, opened.st_mtime_ns):
+            raise ValueError()
+        return b"".join(chunks)
+    finally:
+        os.close(leaf)
+
+
+def census_build_library(target: TestAppTarget, guard: ReadGuard) -> Dict[str, Any]:
+    registry = {"file_present": False, "sha256": None, "size": None,
+                "entry_count": 0, "entry_ids": []}
+    selection = {"file_present": False, "selected": False, "sha256": None,
+                 "size": None, "entry_id": None, "device_profile_id": None}
+    result = {"root_present": False, "registry": registry, "selection": selection}
+    fd = None
+    try:
+        # Pin every ancestor, so replacement cannot redirect reads to a decoy.
+        fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        for part in target.build_library_dir.parts[1:]:
+            try:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            except FileNotFoundError:
+                target.require_chain(target.build_library_dir)
+                return result
+            os.close(fd)
+            fd = child
+        result["root_present"] = True
+        registry_raw = _library_read_at(fd, guard.require(target.build_library_registry).name)
+        selection_raw = _library_read_at(fd, guard.require(target.build_library_selection).name)
+        target.require_chain(target.build_library_dir)
+        current = os.lstat(target.build_library_dir)
+        pinned = os.fstat(fd)
+        if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino):
+            raise ValueError()
+        entries = {}
+        for projection, raw in ((registry, registry_raw), (selection, selection_raw)):
+            if raw is not None:
+                projection.update(file_present=True, sha256=hashlib.sha256(raw).hexdigest(), size=len(raw))
+        if registry_raw is not None:
+            raw = parse_json_strict(registry_raw)
+            if not isinstance(raw, dict) or set(raw) != {"schema_version", "entries"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+                raise ValueError()
+            entries = raw["entries"]
+            if not isinstance(entries, dict):
+                raise ValueError()
+            for key, metadata in entries.items():
+                if not _LIBRARY_ENTRY_RE.fullmatch(key) or not isinstance(metadata, dict) or set(metadata) != {"build_id", "build_version", "display_name", "device_profiles"}:
+                    raise ValueError()
+                if any(not isinstance(metadata[k], str) for k in ("build_id", "build_version", "display_name")) or not isinstance(metadata["device_profiles"], list) or any(not isinstance(p, str) for p in metadata["device_profiles"]):
+                    raise ValueError()
+            registry.update(entry_count=len(entries), entry_ids=sorted(entries))
+        if selection_raw is not None:
+            raw = parse_json_strict(selection_raw)
+            if raw is not None:
+                if not isinstance(raw, dict) or set(raw) != {"schema_version", "entry_id", "device_profile_id"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+                    raise ValueError()
+                key, profile = raw["entry_id"], raw["device_profile_id"]
+                if not isinstance(key, str) or not _LIBRARY_ENTRY_RE.fullmatch(key) or not isinstance(profile, str) or key not in entries or profile not in entries[key]["device_profiles"]:
+                    raise ValueError()
+                # A narrow identifier grammar excludes paths and arbitrary text.
+                projected = profile if _LIBRARY_PROFILE_RE.fullmatch(profile) else "<unsafe:" + hashlib.sha256(profile.encode("utf-8", "surrogatepass")).hexdigest()[:12] + ">"
+                selection.update(selected=True, entry_id=key, device_profile_id=projected)
+        return result
+    except (OSError, ValueError, TypeError, RecursionError, HelperError, FsProblem):
+        raise HelperError("build_library_state_invalid") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def run_snapshot(
     services: "Services",
     *,
@@ -3596,6 +3711,7 @@ def run_snapshot(
     versions = {entry["id"]: entry["version"] for entry in addons["entries"]}
     payload: Dict[str, Any] = {
         "adapter_result_file": census_result_file(target, guard),
+        "build_library": census_build_library(target, guard),
         "build_manager": {
             "installed": BUILD_MANAGER_ID in versions, "version": versions.get(BUILD_MANAGER_ID),
         },

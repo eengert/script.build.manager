@@ -4716,6 +4716,214 @@ class SnapshotTestCase(TripwireTestCase):
         )
 
 
+
+class TestLibrarySnapshot(SnapshotTestCase):
+    def write_library(self, entries=None, selection=None):
+        self.target.build_library_dir.mkdir(exist_ok=True)
+        entries = entries if entries is not None else {"a" * 64: self.metadata()}
+        self.target.build_library_registry.write_text(json.dumps({"schema_version": 1, "entries": entries}))
+        if selection is not None:
+            self.target.build_library_selection.write_text(json.dumps(selection))
+
+    def metadata(self, profiles=None):
+        return {"build_id": SENTINEL_PRIVATE, "build_version": "1", "display_name": SENTINEL_PRIVATE,
+                "device_profiles": profiles if profiles is not None else ["created-profile"]}
+
+    def selected(self, key="a" * 64, profile="created-profile"):
+        return {"schema_version": 1, "entry_id": key, "device_profile_id": profile}
+
+    def projection(self):
+        return self.snapshot()["build_library"]
+
+    def invalid(self):
+        with self.assertRaises(bm.HelperError) as raised:
+            self.snapshot()
+        self.assertEqual(raised.exception.code, "build_library_state_invalid")
+        self.assertNotIn(SENTINEL_PRIVATE, str(raised.exception))
+
+    def test_missing_root_registry_selection_and_null(self):
+        empty = self.projection()
+        self.assertFalse(empty["root_present"])
+        self.assertFalse(self.target.build_library_dir.exists())
+        self.target.build_library_dir.mkdir()
+        present = self.projection()
+        self.assertTrue(present["root_present"])
+        self.assertEqual(empty["registry"], present["registry"])
+        self.assertFalse(present["selection"]["selected"])
+        self.target.build_library_selection.write_text("null")
+        null = self.projection()["selection"]
+        self.assertTrue(null["file_present"])
+        self.assertFalse(null["selected"])
+        self.assertIsNone(null["entry_id"])
+
+    def test_valid_empty_one_several_sorted_hashes_and_unchanged(self):
+        for entries in ({}, {"a" * 64: self.metadata()},
+                        {k * 64: self.metadata() for k in ("f", "b", "a")}):
+            with self.subTest(count=len(entries)):
+                self.write_library(entries)
+                before = self.target.build_library_registry.read_bytes()
+                mtime = self.target.build_library_registry.stat().st_mtime_ns
+                first = self.projection()
+                self.assertEqual(first["registry"]["entry_ids"], sorted(entries))
+                self.assertEqual(first["registry"]["entry_count"], len(entries))
+                self.assertEqual(first["registry"]["sha256"], hashlib.sha256(before).hexdigest())
+                self.assertEqual(first["registry"]["size"], len(before))
+                self.assertEqual(bm.canonical_json(first), bm.canonical_json(self.projection()))
+                self.assertEqual(before, self.target.build_library_registry.read_bytes())
+                self.assertEqual(mtime, self.target.build_library_registry.stat().st_mtime_ns)
+                self.assertNotIn(SENTINEL_PRIVATE, bm.canonical_json(first))
+
+    def test_valid_selection_hash_size_and_safe_profile(self):
+        for profile in ("created-profile", "unsafe/" + SENTINEL_PRIVATE, "x" * 201, "\ud800"):
+            with self.subTest(profile_length=len(profile)):
+                self.write_library({"a" * 64: self.metadata([profile])}, self.selected(profile=profile))
+                before = self.target.build_library_selection.read_bytes()
+                first = self.projection()["selection"]
+                self.assertTrue(first["selected"])
+                self.assertEqual(first["entry_id"], "a" * 64)
+                self.assertEqual(first["sha256"], hashlib.sha256(before).hexdigest())
+                self.assertEqual(first["size"], len(before))
+                self.assertEqual(first["device_profile_id"], profile if profile == "created-profile" else
+                                 "<unsafe:" + hashlib.sha256(profile.encode("utf-8", "surrogatepass")).hexdigest()[:12] + ">")
+                self.assertEqual(first, self.projection()["selection"])
+                self.assertEqual(before, self.target.build_library_selection.read_bytes())
+
+    def test_selection_cross_checks(self):
+        for selection in (self.selected("b" * 64), self.selected(profile="absent")):
+            with self.subTest(selection=selection):
+                self.write_library(selection=selection)
+                self.invalid()
+
+    def test_invalid_registry_schema_keys_types_json(self):
+        good = {"schema_version": 1, "entries": {"a" * 64: self.metadata()}}
+        cases = [b"{", b'{"schema_version":1,"schema_version":1,"entries":{}}',
+                 b'{"schema_version":1,"entries":{"a":{},"a":{}}}', b"[]", b"null", b"\xff",
+                 b'{"schema_version":1,"entries":{"' + b"a" * 64 + b'":{"build_id":"x","build_id":"y","build_version":"1","display_name":"x","device_profiles":[]}}}']
+        for version in (2, True, 1.0, "1"):
+            cases.append(json.dumps(dict(good, schema_version=version)).encode())
+        cases.extend(json.dumps(x).encode() for x in (dict(good, unknown=1), {"entries": {}},
+                     dict(good, entries=[]), dict(good, entries={"A" * 64: self.metadata()}),
+                     dict(good, entries={"a" * 63: self.metadata()})))
+        for metadata in (None, {}, dict(self.metadata(), unknown=1), dict(self.metadata(), build_id=1),
+                         dict(self.metadata(), build_version=[]), dict(self.metadata(), display_name=False),
+                         dict(self.metadata(), device_profiles="profile"), dict(self.metadata(), device_profiles=[1])):
+            cases.append(json.dumps(dict(good, entries={"a" * 64: metadata})).encode())
+        self.write_library()
+        for raw in cases:
+            with self.subTest(case=cases.index(raw)):
+                self.target.build_library_registry.write_bytes(raw)
+                self.invalid()
+
+    def test_invalid_selection_schema_keys_types_json(self):
+        good = self.selected()
+        cases = [b"{", b'{"schema_version":1,"schema_version":1,"entry_id":"a","device_profile_id":"x"}', b"[]"]
+        for version in (2, True, 1.0, "1"):
+            cases.append(json.dumps(dict(good, schema_version=version)).encode())
+        cases.append(json.dumps(dict(good, extra=1)).encode())
+        for key in good:
+            cases.append(json.dumps({k: v for k, v in good.items() if k != key}).encode())
+        cases.extend(json.dumps(dict(good, **change)).encode() for change in
+                     ({"entry_id": 1}, {"entry_id": "A" * 64}, {"device_profile_id": []}))
+        self.write_library()
+        for raw in cases:
+            with self.subTest(case=cases.index(raw)):
+                self.target.build_library_selection.write_bytes(raw)
+                self.invalid()
+
+    def test_oversized_symlink_fifo_directory_and_unreadable_leaves(self):
+        self.write_library()
+        for path in (self.target.build_library_registry, self.target.build_library_selection):
+            for kind in ("oversized", "symlink", "fifo", "directory", "unreadable"):
+                with self.subTest(leaf=path.name, kind=kind):
+                    self.write_library()
+                    if path.exists():
+                        path.unlink()
+                    if kind == "oversized":
+                        path.write_bytes(b" " * (bm.MAX_LIBRARY_STATE_BYTES + 1))
+                    elif kind == "symlink":
+                        path.symlink_to(self.target.bm_data_dir / "private_overlays" / "overlay.json")
+                    elif kind == "fifo":
+                        os.mkfifo(path)
+                    elif kind == "directory":
+                        path.mkdir()
+                    else:
+                        path.write_bytes(b"null")
+                    if kind == "unreadable":
+                        original = os.open
+                        def denied(name, *args, **kwargs):
+                            if name == path.name and "dir_fd" in kwargs:
+                                raise PermissionError()
+                            return original(name, *args, **kwargs)
+                        with mock.patch.object(bm.os, "open", side_effect=denied):
+                            self.invalid()
+                    else:
+                        self.invalid()
+                    if kind == "directory":
+                        path.rmdir()
+                    else:
+                        path.unlink()
+
+    def test_ancestor_symlink_and_non_directory(self):
+        root = self.target.build_library_dir
+        root.symlink_to(self.target.bm_data_dir / "private_overlays", target_is_directory=True)
+        self.invalid()
+        root.unlink()
+        root.write_text("bad")
+        self.invalid()
+
+    def test_exact_allowlist_and_no_envelope_private_reads(self):
+        self.write_library(selection=self.selected())
+        builds = self.target.build_library_dir / "builds"
+        builds.mkdir()
+        envelope = builds / ("a" * 64 + ".json")
+        envelope.write_text(SENTINEL_PRIVATE)
+        guard = bm.ReadGuard(self.target)
+        for path in (self.target.build_library_registry, self.target.build_library_selection):
+            self.assertEqual(guard.require(path), path)
+        for path in (envelope, self.target.build_library_dir / "library.lock",
+                     self.target.build_library_dir / "packages" / "package.json"):
+            with self.assertRaises(bm.HelperError):
+                guard.require(path)
+        original = os.open
+        opened = []
+        def observed(path, *args, **kwargs):
+            opened.append(os.fspath(path))
+            return original(path, *args, **kwargs)
+        with mock.patch.object(bm.os, "open", side_effect=observed):
+            output = bm.canonical_json(self.snapshot())
+        self.assertNotIn(SENTINEL_PRIVATE, output)
+        self.assertFalse(any("builds" in p or "private_overlays" in p or "addon_data/plugin.video.redlight" in p for p in opened))
+
+    def test_replaced_regular_ancestor_is_refused(self):
+        self.write_library(selection=self.selected())
+        root = self.target.build_library_dir
+        saved = root.with_name("saved-library")
+        original = bm._library_read_at
+        def replaced(fd, name):
+            if name == "selection.json":
+                root.rename(saved)
+                root.mkdir()
+            return original(fd, name)
+        with mock.patch.object(bm, "_library_read_at", side_effect=replaced):
+            self.invalid()
+
+    def test_substituted_ancestor_during_read_cannot_redirect(self):
+        self.write_library(selection=self.selected())
+        root = self.target.build_library_dir
+        saved = root.with_name("saved-library")
+        decoy = root.with_name("decoy-library")
+        decoy.mkdir()
+        (decoy / "registry.json").write_text(SENTINEL_PRIVATE)
+        original = bm._library_read_at
+        def substituted(fd, name):
+            if name == "registry.json":
+                root.rename(saved)
+                root.symlink_to(decoy, target_is_directory=True)
+            return original(fd, name)
+        with mock.patch.object(bm, "_library_read_at", side_effect=substituted):
+            self.invalid()
+
+
 class TestSnapshot(SnapshotTestCase):
     def test_census_reports_the_expected_sanitized_state(self):
         payload = self.snapshot()

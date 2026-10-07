@@ -260,7 +260,35 @@ product.
 
 ## `snapshot`
 
-Reads only: add-on `addon.xml` files, the newest `Addons*.db` (read-only,
+The PUBLIC Build Library baseline reads exactly `build-library/registry.json`
+and `build-library/selection.json` beneath the authorized portable BM data root.
+It reports root/file presence, SHA-256 and byte size, sorted registry entry IDs
+and count, and selected entry/profile identity. Registry metadata is validated
+but never emitted. No build envelopes, packages, private overlays, or Red Light
+addon data are read. This is intended for before/after qualification baselines;
+the helper does not compare snapshots or validate selected bundle semantics.
+
+Only public state schema v1 is supported, with exact key sets, integer version,
+64 lowercase hex entry IDs, string metadata and string-list profiles. Duplicate
+JSON keys are rejected. A selected entry must exist in the registry and its
+profile must occur in that entry's metadata. Safe profile IDs use 1–100 ASCII
+letters, digits, dots, underscores or hyphens; other strings become a stable
+SHA-256 digest marker. Arbitrary metadata strings and paths are never emitted.
+
+An absent root or registry means an empty registry; absent or JSON-null selection
+means no selected build. Existing files retain hash/size even for JSON null.
+Malformed, inconsistent, unreadable, oversized, nonregular or unsafe state fails
+snapshot with `build_library_state_invalid`, without raw values or paths. Each
+file is limited to 1 MiB. Reads pin no-follow directory descriptors for every
+ancestor and open only regular no-follow, nonblocking leaves. Nothing is created,
+repaired, locked, selected or written.
+
+**This helper source change invalidates the previous live-use clearance until
+the new helper blob receives independent review. Live-use clearance is PENDING;
+this version is not cleared.**
+
+
+Other snapshot reads: add-on `addon.xml` files, the newest `Addons*.db` (read-only,
 immutable), two values from `guisettings.xml` (updater policy, skin id; the
 rest is discarded unread), and the four frozen/restart transaction and lock
 files plus the adapter result through the product's bounded status reader. A
