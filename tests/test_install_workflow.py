@@ -421,4 +421,3 @@ class UnresolvedTests(unittest.TestCase):
         self.assertEqual(self.service.preview.call_count, 2)
         self.ui.confirm_install.assert_not_called()
         self.assert_no_execution()
-
