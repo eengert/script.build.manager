@@ -4,6 +4,7 @@ import re
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib import plan as plan_module
@@ -15,11 +16,12 @@ from resources.lib.plan_model import (
 )
 from resources.lib.redlight_resource import REDLIGHT_ADDON_ID
 from resources.lib.status_model import CheckGap
+from resources.lib.status import default_status_owners
 from resources.lib.ui import plan_view
 from resources.lib.ui.native_dialogs import NativeDialogs
 from resources.lib.ui.plan_view import PLAN_TEXT_IDS, ReviewViewModel, Text
 from tests.test_plan import (
-    EXTRA, PLUGIN_TYPE, REPOSITORY, FrozenInstallPolicyMode, PlanBase, PlanHarness,
+    EXTRA, PLUGIN_TYPE, REPOSITORY, REPO_TYPE, FrozenInstallPolicyMode, PlanBase, PlanHarness,
 )
 from tests.test_status import DB_SECRET, DEMO, MODULE, NOW, SECRET, SKIN
 from tests.test_status_ui import STRINGS, Addon
@@ -94,6 +96,54 @@ class ReviewPage(ReviewBase):
             "Restart\n• Kodi will need to be closed and reopened",
         ])
         self.assertEqual(dialog.selects, [])
+
+    def test_disabled_installed_repository_name_flows_into_plan_and_review_text(self):
+        addon_id = "repository.eengert"
+        h = self.current()
+        h.set_graph(extra=[(addon_id, "1.0.0", REPO_TYPE, ())], without=(REPOSITORY,))
+        h.kodi.addons.pop(REPOSITORY)
+        h.deps.installed.pop(REPOSITORY)
+        h.kodi.addons[addon_id] = ("1.0.0", False)
+        h.deps.installed[addon_id] = ("1.0.0", False)
+        h.save_overlay()
+        requests = []
+        name_available = [True]
+
+        def execute_json_rpc(request):
+            body = json.loads(request)
+            requests.append(body)
+            requested_id = body["params"]["addonid"]
+            if requested_id not in h.kodi.addons:
+                return json.dumps({"error": {"code": -32602}})
+            result = {"addonid": requested_id}
+            if requested_id != addon_id or name_available[0]:
+                result["name"] = ("Eengert Repository" if requested_id == addon_id
+                                  else requested_id)
+            return json.dumps({"result": {"addon": result}})
+
+        with patch.dict("sys.modules", {"xbmc": SimpleNamespace(executeJSONRPC=execute_json_rpc)}):
+            production_owners = default_status_owners()
+            service = h.plan_service(status=h.owners(name_resolver=production_owners.name_resolver))
+            with h.instrumented():
+                plan = service.preview(h.plan_target())
+            name_available[0] = False
+            with h.instrumented():
+                fallback_plan = service.preview(h.plan_target())
+        h.assert_untouched()
+
+        row = next(row for row in plan.software if row.addon_id == addon_id)
+        self.assertEqual((row.addon_id, row.action, row.display_name),
+                         (addon_id, SoftwareAction.ENABLE, "Eengert Repository"))
+        dialog = review(lambda _choices: plan)
+        body = dialog.details[0][1]
+        self.assertIn("Enable Eengert Repository", body)
+        self.assertNotIn("Enable repository.eengert", body)
+        self.assertIn(addon_id, {request["params"]["addonid"] for request in requests})
+
+        fallback_row = next(row for row in fallback_plan.software if row.addon_id == addon_id)
+        self.assertEqual((fallback_row.display_name, fallback_row.label), ("", addon_id))
+        fallback_body = review(lambda _choices: fallback_plan).details[0][1]
+        self.assertIn("Enable repository.eengert", fallback_body)
 
     def test_a_blocked_plan_says_what_is_in_the_way_in_simple_words(self):
         h = self.current()

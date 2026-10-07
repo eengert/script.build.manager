@@ -60,7 +60,8 @@ from resources.lib.resolver import ResolvedBuild
 from resources.lib.restart import RestartRequirement
 from resources.lib.session import peek_current_kodi_session_id
 from resources.lib.status import (
-    BuildStatusService, StatusOwners, StatusTarget, _ReadOnlyDependencyBackend, combine_overall,
+    BuildStatusService, StatusOwners, StatusTarget, _ReadOnlyDependencyBackend,
+    combine_overall, default_status_owners,
 )
 from resources.lib.status_model import (
     AreaLevel, BuildStatus, CheckGap, ConfigurationStatus, OperationCode, OperationKind,
@@ -472,6 +473,97 @@ class StatusBase(unittest.TestCase):
             for secret in (SECRET, DB_SECRET, "SENTINEL_BACKEND_ERROR_TEXT"):
                 self.assertNotIn(secret, str(value))
                 self.assertNotIn(secret, repr(value))
+
+
+class ProductionAddonNameResolver(unittest.TestCase):
+    def test_default_owners_supply_a_lazy_read_only_name_resolver(self):
+        owners = default_status_owners()
+        self.assertTrue(callable(owners.name_resolver))
+
+    def test_disabled_installed_addon_name_is_returned_from_json_rpc(self):
+        addon_id = "repository.eengert"
+        installed = {addon_id: {"enabled": False, "name": "Eengert Repository"}}
+        requests = []
+
+        def execute_json_rpc(request):
+            body = json.loads(request)
+            requests.append(body)
+            requested_id = body["params"]["addonid"]
+            metadata = installed.get(requested_id)
+            if metadata is None:
+                return json.dumps({"error": {"code": -32602}})
+            return json.dumps({"result": {"addon": {
+                "addonid": requested_id, "name": metadata["name"]}}})
+
+        with patch.dict("sys.modules", {"xbmc": SimpleNamespace(executeJSONRPC=execute_json_rpc)}):
+            resolver = default_status_owners().name_resolver
+            self.assertEqual(resolver(addon_id), "Eengert Repository")
+
+        self.assertFalse(installed[addon_id]["enabled"])
+        self.assertEqual(requests, [{
+            "jsonrpc": "2.0", "method": "Addons.GetAddonDetails",
+            "params": {"addonid": addon_id, "properties": ["addonid", "name"]},
+            "id": 1,
+        }])
+
+    def test_status_service_uses_the_production_resolver(self):
+        h = Harness(self)
+        h.save_overlay()
+        names = {DEMO: "Demo Video", REDLIGHT_ADDON_ID: "Red Light"}
+
+        def execute_json_rpc(request):
+            body = json.loads(request)
+            addon_id = body["params"]["addonid"]
+            name = names.get(addon_id)
+            if name is None:
+                return json.dumps({"error": {"code": -32602}})
+            return json.dumps({"result": {"addon": {"addonid": addon_id, "name": name}}})
+
+        with patch.dict("sys.modules", {"xbmc": SimpleNamespace(executeJSONRPC=execute_json_rpc)}):
+            owners = default_status_owners()
+            with h.instrumented():
+                status = h.service(name_resolver=owners.name_resolver).check(h.target())
+
+        self.assertEqual(h.touched, [])
+        self.assertEqual(h.config_backend.mutations, [])
+        self.assertEqual(h.deps.mutations, [])
+        self.assertEqual(h.deps.repository_reads, [])
+        items = {item.addon_id: item for item in status.software.items}
+        self.assertEqual(items[DEMO].display_name, "Demo Video")
+        self.assertEqual(items[REDLIGHT_ADDON_ID].display_name, "Red Light")
+
+    def test_lookup_fails_closed_for_unavailable_runtime_bad_response_and_exception(self):
+        resolver = default_status_owners().name_resolver
+        cases = (
+            (None, ""),
+            ({"result": {"addon": {"addonid": "plugin.video.demo"}}}, ""),
+            ({"result": {"addon": {"addonid": "plugin.video.other", "name": "Other"}}}, ""),
+            ({"result": {"addon": {"addonid": "plugin.video.demo", "name": 17}}}, ""),
+        )
+        for response, expected in cases:
+            with self.subTest(response=response):
+                module = SimpleNamespace(executeJSONRPC=lambda _: json.dumps(response))
+                with patch.dict("sys.modules", {"xbmc": module}):
+                    self.assertEqual(resolver("plugin.video.demo"), expected)
+
+        def broken(_request):
+            raise RuntimeError("SENTINEL_RUNTIME_EXCEPTION_TEXT")
+
+        with patch.dict("sys.modules", {"xbmc": SimpleNamespace(executeJSONRPC=broken)}):
+            result = resolver("plugin.video.demo")
+        self.assertEqual(result, "")
+        self.assertNotIn("SENTINEL_RUNTIME_EXCEPTION_TEXT", result)
+
+        with patch.dict("sys.modules", {"xbmc": None}):
+            self.assertEqual(resolver("plugin.video.demo"), "")
+
+    def test_invalid_addon_id_is_not_sent_to_kodi(self):
+        calls = []
+        module = SimpleNamespace(executeJSONRPC=lambda request: calls.append(request) or "{}")
+        with patch.dict("sys.modules", {"xbmc": module}):
+            resolver = default_status_owners().name_resolver
+            self.assertEqual(resolver("../repository.eengert"), "")
+        self.assertEqual(calls, [])
 
 
 # -- the 17 required scenarios --------------------------------------------------------

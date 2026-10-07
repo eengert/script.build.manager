@@ -817,6 +817,41 @@ def _runtime_profile_root() -> str:
     return xbmcvfs.translatePath("special://profile/")
 
 
+def _resolve_installed_addon_name(addon_id: str) -> str:
+    """Read an installed add-on's name, including when it is disabled.
+
+    ``xbmcaddon.Addon(id)`` rejects disabled add-ons in the supported Kodi
+    runtime. Addons.GetAddonDetails is a read-only JSON-RPC lookup that accepts
+    installed disabled add-ons as well. Keep Kodi modules lazy so this owner is
+    still constructible in offline tools and tests.
+    """
+    addon_id = _safe_id(addon_id)
+    if not addon_id:
+        return ""
+    try:
+        import json  # noqa: PLC0415
+        import xbmc  # noqa: PLC0415
+
+        request = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "Addons.GetAddonDetails",
+            "params": {"addonid": addon_id, "properties": ["addonid", "name"]},
+            "id": 1,
+        })
+        response = json.loads(xbmc.executeJSONRPC(request))
+    except Exception:
+        return ""
+
+    if not isinstance(response, dict):
+        return ""
+    result = response.get("result")
+    addon = result.get("addon") if isinstance(result, dict) else None
+    if not isinstance(addon, dict) or addon.get("addonid") != addon_id:
+        return ""
+    name = addon.get("name")
+    return name if isinstance(name, str) else ""
+
+
 def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> StatusOwners:
     """Production read-only collaborators, constructed without touching Kodi state."""
     # Imported here: the adapter module is only needed when a build declares it.
@@ -852,6 +887,7 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
         session_id=peek_current_kodi_session_id,
         clock=_utc_now,
         log=log or (lambda message: None),
+        name_resolver=_resolve_installed_addon_name,
     )
 
 
