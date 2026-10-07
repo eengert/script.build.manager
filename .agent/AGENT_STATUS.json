@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "Library bridge NB-1 through NB-5: correction candidate complete offline",
-  "reason": "STOP per task; no independent re-review, frontend implementation or runtime qualification",
-  "last_commit": "dc7f25683b6f26367fc59abd0c352d8f6f9b8827",
+  "status": "blocked",
+  "task": "Bounded Install Build frontend: missing pre-Apply repository resolution/review binding",
+  "reason": "STOP per explicit missing frontend-safe backend operation condition; no product changes",
+  "last_commit": "4edc54ab1b19b033e93f6f2596291eaa9bdb6339",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T16:41:52Z",
+  "updated_at": "2026-10-07T16:58:31Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
