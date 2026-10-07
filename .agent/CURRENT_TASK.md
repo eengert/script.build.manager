@@ -1,8 +1,8 @@
 # Current Task
 
-- Task: BM-UI-REPO-PREP-B1-B2 — correct only encoded DTD rejection and final dependency artifact validation.
-- State: COMPLETE OFFLINE; STOP after correction report.
-- Product: `7c3d03d959c4b4ce4315574da91f3332789943cf` on `agent/codex`.
-- Evidence: 356 related / 3000 full tests PASS; diff check PASS.
-- Next: separately assigned independent correction-delta review.
-- No frontend/runtime/Kodi/device/protected integration/push/release/publication work.
+- Task: Install Build frontend using the complete accepted backend chain.
+- State: COMPLETE OFFLINE; STOP after implementation report.
+- Product: `c5d2a441e7694dbeccdc7bb605f3307302b24969` on `agent/codex`.
+- Evidence: 24 new methods / 689 related / 3024 full tests PASS; diff check PASS.
+- Next: separately assigned independent review; no review or runtime qualification started.
+- No real Kodi/Test.app/profile/device access, Agent Handoff switch, push, protected integration, release or publication.

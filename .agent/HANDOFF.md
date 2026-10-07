@@ -1,16 +1,18 @@
-# Handoff — BM-UI-REPO-PREP-B1-B2
+# Handoff — Install Build frontend
 
-- State: correction complete OFFLINE; STOP for separately assigned independent re-review.
-- Starting state: clean agent/codex at 32718b8fc63eb475290910cb8f99df76149b6915.
-- Product correction: 7c3d03d959c4b4ce4315574da91f3332789943cf.
-- Changed: resources/lib/repository_preparation.py, resources/lib/frozen_install.py, tests/test_repository_preparation.py. Five new test methods.
-- Beta admission: fixes two demonstrated Repository Current blockers to exit item 8.
-- Before: UTF-16/BOM/LE/BE entity index reached READY; required dependency corrupted during final LibraryInstallTarget.load caused needs_attention and persisted transaction/updater guard.
-- B1: TreeBuilder.doctype rejects decoded DTD before internal subset/entity processing. UTF-8/16/BOM/LE/BE rejected; ordinary declarations accepted directly and through preparation. Captured repository DTD rejects before download. UTF-32 unsupported and rejected. Safe metadata/index result mapping retained.
-- B2: shared execution-material validator runs before and after final library reload/prepared binding: exact profile/policy identity, frozen validation with approved Skip, saved-package dependency reconstruction, complete graph validation, hold/private compatibility and overlay identity. Results must equal reviewed execution material before transaction creation.
-- Behavioral proof: dependency and prepared target corruption at final reload produce failed, no transaction, zero updater/install/activation calls, no fetch. Restored artifacts complete offline despite changed remote package; prepared resolver call forbidden.
-- Validation: 356 related tests PASS; 30 preparation tests PASS; full package-aware discovery 3000 PASS (145.516s); git diff --check PASS. Initial sandbox full run 2999 tests had only denied process-listing/loopback failures; final unchanged product source rerun with fixture permissions passed. The extra ordinary-encoding test was added during the initial run and is included in final 3000.
-- Not done: independent re-review, frontend, runtime/Test.app, normal Kodi/profile, household devices, Agent Handoff switch, G5/G6, release/publication, push or matrix merge. No restart ownership change or subsystem redesign. Existing accepted areas preserved; no claim of new live qualification.
-- Smallest next step: separately assigned independent B1/B2 correction-delta review.
-- Human input: assignment of that review; none needed to finish this correction.
+- State: COMPLETE OFFLINE; STOP after implementation report. No independent review or runtime qualification begun.
+- Starting state: clean agent/codex at d4b14ce0cad61f56b4ad47519c8bc61158a6c34a. Read-only Agent Handoff status confirmed current agent Codex; no switch.
+- Beta admission: advances exit item 8 by making native Install usable through the reviewed backend chain; beta qualification is not claimed.
+- Product commit: c5d2a441e7694dbeccdc7bb605f3307302b24969.
+- Product files: default.py; resources/lib/install_workflow.py; resources/lib/build_library.py; resources/lib/ui/native_dialogs.py; resources/lib/ui/plan_view.py; resources/language/resource.language.en_gb/strings.po; tests/test_install_workflow.py; docs/INSTALL_WORKFLOW.md.
+- Architecture: workflow retains exact target/review/prepared identity; NativeDialogs presents selection/decisions/full review/confirmation/results; default.py composes lazily. Execution/preparation owners are deferred until needed.
+- Selection: read-only arbitrary-entry plan_target validates declared profile and never reads or writes saved selection. Friendly name/version/profiles only.
+- Plan: only offered choices; Cancel exits, Skip remains bound; Repository Current preparation followed by fresh preview with actual version and fallback meaning. All review rows/exceptions shown.
+- Apply: explicit confirmation with Back default; validate exact target/review. Stale/unverifiable requires fresh review and another approval. CURRENT derives exact LibraryInstallTarget then install_target with prepared_resolution unchanged, explicit ResolutionChoice mapping, interactive=False, and no policy/path override or post-Apply fetch.
+- Results: localized stable outcomes only; complete/with exceptions distinct from restart/active/attention/cancel/failure. Pending operation observation prevents competing install. Existing frozen/BM-020/startup owners retain lifecycle responsibility.
+- Validation: 24 new focused methods PASS; 689 focused/related tests PASS; final full package-aware discovery 3024 PASS in 140.433s; git diff --check PASS. Initial sandbox full run had only process-listing/loopback denials in existing disposable harness fixtures; unchanged source rerun with permitted fixture access passed.
+- Behavioral evidence: real disposable native selection -> Plan decisions -> repository preparation -> fresh resolved-version review -> validation -> frozen exact saved-package execution; prepared identity unchanged and resolver/refetch forbidden after Apply. Create/Status/Settings/Help regressions green; Update / Repair stays unavailable.
+- Not done: Test.app/runtime/remote-focus/restart-UI qualification, normal Kodi/profile/device access, Update / Repair, G5/G6, imports/exports, new lifecycle owner, package/release/publication, push, matrix integration, independent review, ai-supervisor or CUA.
+- Smallest next step: separately assigned independent review of this product commit; runtime qualification requires its own bounded task. None begun.
+- Human input: none required to complete this implementation. Separate assignment required for further work.
 - Usage/model/effort: unavailable; no inferred telemetry.
