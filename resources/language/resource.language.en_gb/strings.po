@@ -986,7 +986,7 @@ msgid "The build could not be applied safely. Open Build Status to check whether
 msgstr ""
 
 msgctxt "#32815"
-msgid "Automatic updates are temporarily paused while the build is applied. Some managed add-ons may stay off until their configuration is verified. Unmanaged add-ons remain untouched."
+msgid "Temporary protection and a full Kodi restart may be required."
 msgstr ""
 
 msgctxt "#32816"

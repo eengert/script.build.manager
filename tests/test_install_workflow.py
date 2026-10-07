@@ -249,8 +249,16 @@ class NativeTests(unittest.TestCase):
         ui = self.ui(d)
         self.assertFalse(ui.confirm_install(e, 'desk', ReviewViewModel.from_plan(plan())))
         self.assertEqual(d.calls[0][2], 0)
-        self.assertEqual(d.questions[0][1]['defaultbutton'], 0)
-        self.assertIn('Friendly 1.2.0', d.questions[0][0][1])
+        args, kwargs = d.questions[0]
+        body = args[1]
+        # Build Manager leaves Kodi's documented safe No-button default intact.
+        self.assertNotIn('defaultbutton', kwargs)
+        self.assertEqual(kwargs['nolabel'], Addon().getLocalizedString(32113))
+        self.assertEqual(kwargs['yeslabel'], Addon().getLocalizedString(32807))
+        self.assertIn('Friendly 1.2.0', body)
+        self.assertIn('desk', body)
+        self.assertIn('Install Demo 2.0.0', body)
+        self.assertIn('Temporary protection and a full Kodi restart may be required.', body)
         self.assertEqual(d.calls[1][2], 2)
         self.assertNotIn('a'*64, json.dumps(d.questions))
 

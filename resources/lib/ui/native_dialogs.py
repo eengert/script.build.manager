@@ -301,7 +301,7 @@ class NativeDialogs:
                 self.viewer(self.render(model.title), body)
             elif action == 1:
                 confirmed = self.dialog.yesno(self.text(32805), body,
-                    nolabel=self.text(32113), yeslabel=self.text(32807), defaultbutton=0)
+                    nolabel=self.text(32113), yeslabel=self.text(32807))
                 self.settle(200)
                 return bool(confirmed)
             elif action == 2:
