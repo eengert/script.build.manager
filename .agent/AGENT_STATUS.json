@@ -1,30 +1,40 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION: PASS offline; STOP for independent review",
-  "reason": "Live-use clearance PENDING independent correction-delta review; no runtime qualification",
-  "last_commit": "24e0332c15eb27942f0901d405d7138af966d2c7",
+  "task": "WF-native-ui-capability-blocker-policy: complete; local guidance commit bf49ded770a9c548ac725ff226111f2616c55dd3",
+  "reason": "Documentation-only; product/runtime qualification unchanged. BM-UI-003C helper correction still requires independent review before Test.app qualification.",
+  "last_commit": "bf49ded770a9c548ac725ff226111f2616c55dd3",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T01:02:18Z",
+  "updated_at": "2026-10-07T13:54:51Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
-    "task": "BM-UI-002C frozen plan/review identity and read-only preview (G3): PASS offline; not live-proven",
-    "reason": null,
-    "last_commit": "045935e",
+    "task": "BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION: PASS offline; STOP for independent review",
+    "reason": "Live-use clearance PENDING independent correction-delta review; no runtime qualification",
+    "last_commit": "24e0332c15eb27942f0901d405d7138af966d2c7",
     "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
     "next_agent": null,
-    "updated_at": "2026-10-06T17:59:45Z",
+    "updated_at": "2026-10-07T01:02:18Z",
     "previous_task_record": {
-      "active_agent": "claude",
+      "active_agent": "codex",
       "status": "idle",
-      "task": "BM-UI-002B read-only Build Status (G2): PASS offline; not live-proven",
+      "task": "BM-UI-002C frozen plan/review identity and read-only preview (G3): PASS offline; not live-proven",
       "reason": null,
-      "last_commit": null,
+      "last_commit": "045935e",
       "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
       "next_agent": null,
-      "updated_at": "2026-10-06T15:45:00Z"
+      "updated_at": "2026-10-06T17:59:45Z",
+      "previous_task_record": {
+        "active_agent": "claude",
+        "status": "idle",
+        "task": "BM-UI-002B read-only Build Status (G2): PASS offline; not live-proven",
+        "reason": null,
+        "last_commit": null,
+        "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
+        "next_agent": null,
+        "updated_at": "2026-10-06T15:45:00Z"
+      }
     }
   }
 }

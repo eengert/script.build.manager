@@ -1,6 +1,9 @@
 # Current Task
 
-BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION: PASS offline; completed and stopped.
+WF-native-ui-capability-blocker-policy: complete; focused guidance commit `bf49ded770a9c548ac725ff226111f2616c55dd3`.
 
-Substantive commit 24e0332c15eb27942f0901d405d7138af966d2c7; helper blob 35bf742047bbc7656634ab508cfef0ae61a4a096.
-Live-use clearance PENDING independent review. Next: independent review of this correction; only after PASS restart BM-UI-003C Test.app qualification.
+Starting identity was branch `agent/codex`, HEAD `a8fd230dc21fbd53813513843358f543eb9ccc97`, clean, 20 commits ahead of `origin/agent/codex`. Only `.orchestrator/WORKFLOW.md` changed in the guidance commit.
+
+Validation: reviewed the focused diff and safety boundaries; `git diff --check` passed. No tests were run because this is documentation-only. No product/helper/test/runtime/Test.app/device/external-application changes; no push.
+
+Next product step remains independent review of `BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION`; resume its Test.app qualification only after that review passes.
