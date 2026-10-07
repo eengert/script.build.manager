@@ -185,6 +185,52 @@ class LibrarySource:
         return BuildLibrary(self.root)._load(self.entry_id)
 
 
+@dataclass(frozen=True)
+class LibraryInstallTarget:
+    """Durable exact entry/profile selector; never follows current selection.
+
+    Only identity is persisted. Every load goes through registry/envelope
+    authority and returns all three content owners from one verified snapshot.
+    Paths are internal selectors, not presentation data or configuration values.
+    """
+    source: LibrarySource
+    device_profile_id: str
+
+    def __post_init__(self):
+        if not isinstance(self.source, LibrarySource) or not isinstance(self.source.root, str):
+            raise _error()
+        BuildLibrary(self.source.root)
+        if not isinstance(self.source.entry_id, str) or not _KEY.fullmatch(self.source.entry_id):
+            raise _error()
+        if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
+            raise _error()
+
+    def load(self):
+        loaded = self.source.load()
+        if self.device_profile_id not in loaded[0].device_profiles:
+            raise _error()
+        return loaded
+
+    def to_dict(self):
+        return {"mode": "library", "root": self.source.root,
+                "entry_id": self.source.entry_id, "device_profile_id": self.device_profile_id}
+
+    @classmethod
+    def from_dict(cls, value):
+        if (not isinstance(value, dict)
+                or set(value) != {"mode", "root", "entry_id", "device_profile_id"}
+                or value["mode"] != "library"):
+            raise _error()
+        return cls(LibrarySource(value["root"], value["entry_id"]), value["device_profile_id"])
+
+    @classmethod
+    def from_plan_target(cls, target):
+        """Bind the exact source reviewed by Plan, without rereading selection."""
+        result = cls(target.library_source, target.device_profile_id)
+        result.load()
+        return result
+
+
 def _validate_bundle(bundle):
     if not isinstance(bundle, dict) or set(bundle) != {"schema_version", "manifest", "frozen", "packages"}:
         raise _error()

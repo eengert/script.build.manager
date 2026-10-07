@@ -20,6 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
 
+from resources.lib.build_library import LibraryInstallTarget
 from resources.lib.addon_state import AddonStateReconciler
 from resources.lib.addons import AddonManager, KodiRuntimeAddonBackend
 from resources.lib.config import (
@@ -108,9 +109,15 @@ class ReconcileRequest:
     install_resolutions: Tuple[InstallResolutionRecord, ...] = ()
     source_software_fingerprint: str = ""
     frozen_transaction_id: str = ""
+    library_target: Optional[LibraryInstallTarget] = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.manifest_path, str) or not self.manifest_path:
+        if self.library_target is not None:
+            if (not isinstance(self.library_target, LibraryInstallTarget)
+                    or self.device_profile_id != self.library_target.device_profile_id
+                    or self.manifest_path != ""):
+                raise ValueError("library request identity is invalid")
+        if not isinstance(self.manifest_path, str) or (not self.manifest_path and self.library_target is None):
             raise ValueError("manifest_path must be a non-empty string")
         if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
             raise ValueError("device_profile_id must be a non-empty string")
@@ -145,6 +152,8 @@ class ReconcileRequest:
             "manifest_path": self.manifest_path,
             "device_profile_id": self.device_profile_id,
         }
+        if self.library_target is not None:
+            payload["library_target"] = self.library_target.to_dict()
         if self.install_resolutions:
             payload["install_resolutions"] = [
                 record.to_dict()
@@ -801,7 +810,15 @@ class BuildManager:
             )
 
         try:
-            manifest = self._owners.manifest_loader(request.manifest_path)
+            library_frozen = None
+            config_loader = self._owners.config_loader
+            if request.library_target is not None:
+                manifest, library_frozen, config_loader = request.library_target.load()
+                if (request.source_software_fingerprint
+                        and library_frozen.fingerprint() != request.source_software_fingerprint):
+                    raise ValueError("library frozen identity differs from request")
+            else:
+                manifest = self._owners.manifest_loader(request.manifest_path)
         except Exception as exc:
             return None, self._failed(request, ReconcilePhase.LOAD, "MANIFEST_LOAD_FAILED", exc)
 
@@ -819,7 +836,7 @@ class BuildManager:
             return None, self._failed(request, ReconcilePhase.RESOLVE, "RESOLUTION_FAILED", exc)
 
         try:
-            effective = self._owners.config_loader.resolve(desired.config)
+            effective = config_loader.resolve(desired.config)
             private_prepared = None
             if desired.private_overlay is not None:
                 manager = self._owners.private_overlay_manager
@@ -883,6 +900,7 @@ class BuildManager:
                 if (
                     request.frozen_transaction_id != transaction.transaction_id
                     or request.manifest_path != transaction.configuration_manifest_path
+                    or request.library_target != getattr(transaction, "library_target", None)
                     or request.device_profile_id != transaction.device_profile_id
                     or request.source_software_fingerprint != transaction.manifest_fingerprint
                     or tuple(request.install_resolutions) != tuple(transaction.resolution_records)
@@ -957,9 +975,12 @@ class BuildManager:
                         frozen_manifest_loader = getattr(
                             self._owners, "frozen_manifest_loader", None
                         )
-                        if not callable(frozen_manifest_loader):
+                        if library_frozen is None and not callable(frozen_manifest_loader):
                             raise ValueError("frozen dependency graph loader is unavailable")
-                        frozen_manifest = frozen_manifest_loader(transaction.manifest_path)
+                        frozen_manifest = (
+                            library_frozen if request.library_target is not None
+                            else frozen_manifest_loader(transaction.manifest_path)
+                        )
                         dependency_sources = _verified_python_dependency_sources(
                             frozen_manifest=frozen_manifest,
                             transaction=transaction,

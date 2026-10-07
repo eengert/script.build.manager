@@ -393,6 +393,14 @@ class BuildPlanService:
                 self._log_failure("configuration", exc)
         try:
             material[IdentityComponent.BUILD] = fingerprint_resolved_build(desired, effective)
+            if target.library_source is not None:
+                # Entry/root are part of approval even when two sources resolve
+                # identically for this profile. Only their digest is public.
+                material[IdentityComponent.BUILD] = {
+                    "resolved": material[IdentityComponent.BUILD],
+                    "library": {"root": target.library_source.root,
+                                "entry_id": target.library_source.entry_id},
+                }
         except Exception as exc:
             self._log_failure("build-identity", exc)
             gaps.append(CheckGap.BUILD_UNREADABLE)

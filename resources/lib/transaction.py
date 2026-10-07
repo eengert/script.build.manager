@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Iterator, Optional
 
+from resources.lib.build_library import LibraryError
 from resources.lib.build_manager import ReconcileRequest, ReconcileResult
 from resources.lib.frozen_resolution import InstallResolutionRecord, FrozenResolutionError
 from resources.lib.readonly_io import ReadOnlyStateError, UnsafeStateFile, read_regular_file
@@ -28,6 +29,7 @@ from resources.lib.restart import RestartRequirement
 
 ADDON_ID = "script.build.manager"
 SCHEMA_VERSION = 1
+LIBRARY_SCHEMA_VERSION = 2
 TRANSACTION_FILENAME = "restart_transaction.json"
 LOCK_FILENAME = "restart_transaction.lock"
 _FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -120,7 +122,9 @@ class RestartTransaction:
     private_overlay_fingerprint: str = ""
     private_overlay_required: bool = False
 
-    schema_version = SCHEMA_VERSION
+    @property
+    def schema_version(self):
+        return LIBRARY_SCHEMA_VERSION if self.request.library_target is not None else SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         _valid_uuid(self.transaction_id, "transaction_id")
@@ -162,7 +166,7 @@ class RestartTransaction:
     def to_dict(self) -> dict:
         """Return only stable selectors and typed transaction metadata."""
         return {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "transaction_id": self.transaction_id,
             "phase": self.phase.value,
             "request": self.request.to_dict(),
@@ -200,7 +204,7 @@ class RestartTransaction:
             raise TransactionCorrupt("transaction fields are not exactly supported")
         if not required.issubset(value):
             raise TransactionCorrupt("transaction is missing required fields")
-        if value["schema_version"] != SCHEMA_VERSION:
+        if type(value["schema_version"]) is not int or value["schema_version"] not in (SCHEMA_VERSION, LIBRARY_SCHEMA_VERSION):
             raise TransactionUnsupportedSchema(
                 f"unsupported transaction schema {value['schema_version']!r}"
             )
@@ -211,10 +215,13 @@ class RestartTransaction:
             or not request_fields.issubset(request_value)
             or set(request_value) - request_fields - {
                 "install_resolutions", "source_software_fingerprint",
-                "frozen_transaction_id"
+                "frozen_transaction_id", "library_target"
             }
         ):
             raise TransactionCorrupt("transaction request is not a safe selector object")
+        if ((value["schema_version"] == LIBRARY_SCHEMA_VERSION)
+                != ("library_target" in request_value)):
+            raise TransactionCorrupt("transaction source mode does not match its schema")
         try:
             raw_resolutions = request_value.get("install_resolutions", [])
             if not isinstance(raw_resolutions, list):
@@ -222,7 +229,13 @@ class RestartTransaction:
             install_resolutions = tuple(
                 InstallResolutionRecord.from_dict(item) for item in raw_resolutions
             )
+            from resources.lib.build_library import LibraryInstallTarget
+            library_target = (
+                LibraryInstallTarget.from_dict(request_value["library_target"])
+                if "library_target" in request_value else None
+            )
             request = ReconcileRequest(
+                library_target=library_target,
                 manifest_path=request_value["manifest_path"],
                 device_profile_id=request_value["device_profile_id"],
                 install_resolutions=install_resolutions,
@@ -251,7 +264,7 @@ class RestartTransaction:
             )
         except TransactionError:
             raise
-        except (KeyError, TypeError, ValueError, FrozenResolutionError) as exc:
+        except (KeyError, TypeError, ValueError, FrozenResolutionError, LibraryError) as exc:
             raise TransactionCorrupt("transaction contains an invalid field") from exc
 
     def with_phase(self, phase: TransactionPhase) -> "RestartTransaction":

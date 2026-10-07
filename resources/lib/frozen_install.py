@@ -35,6 +35,7 @@ from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
+from resources.lib.build_library import LibraryInstallTarget, LibraryError
 from resources.lib.build_manager import ActionFailureDiagnostic, ReconcileRequest
 from resources.lib.skin import SkinFailureCode
 from resources.lib.private_resource import ResourceInitializationStage
@@ -130,7 +131,7 @@ class FrozenLifecycleStage(str, Enum):
     FINAL_ACTIVATION_AWAITING_RESTART = "final_activation_awaiting_restart"
 
 
-_TRANSACTION_SCHEMA = 3
+_TRANSACTION_SCHEMA = 4
 _TRANSACTION_FILENAME = "frozen_install_transaction.json"
 _LOCK_FILENAME = "frozen_install_transaction.lock"
 _MAX_CODE = 96
@@ -223,13 +224,19 @@ class FrozenInstallTransaction:
     activation_hold_ids: Tuple[str, ...] = ()
     activation_hold_released: bool = True
     lifecycle_restart_count: int = 0
+    library_target: Optional[LibraryInstallTarget] = None
 
     def __post_init__(self) -> None:
         _valid_uuid(self.transaction_id, "transaction_id")
         _valid_uuid(self.originating_kodi_session_id, "originating_kodi_session_id")
         if not isinstance(self.build_id, str) or not self.build_id:
             raise FrozenInstallValidationError("build_id must be non-empty")
-        if not isinstance(self.manifest_path, str) or not self.manifest_path:
+        if self.library_target is not None:
+            if (not isinstance(self.library_target, LibraryInstallTarget)
+                    or self.library_target.device_profile_id != self.device_profile_id
+                    or self.manifest_path != "" or self.configuration_manifest_path != ""):
+                raise FrozenInstallValidationError("library transaction identity is invalid")
+        if not isinstance(self.manifest_path, str) or (not self.manifest_path and self.library_target is None):
             raise FrozenInstallValidationError("manifest_path must be non-empty")
         if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
             raise FrozenInstallValidationError("device_profile_id must be non-empty")
@@ -295,6 +302,7 @@ class FrozenInstallTransaction:
     def to_dict(self) -> dict:
         return {
             "schema_version": _TRANSACTION_SCHEMA,
+            "library_target": self.library_target.to_dict() if self.library_target is not None else None,
             "transaction_id": self.transaction_id,
             "build_id": self.build_id,
             "manifest_path": self.manifest_path,
@@ -341,23 +349,31 @@ class FrozenInstallTransaction:
             "install_plan_fingerprint", "policies", "resolution_records",
             "resolution_fingerprint", "resolved_software_fingerprint",
             "configuration_manifest_path", "lifecycle_stage", "activation_hold_ids",
-            "activation_hold_released", "lifecycle_restart_count",
+            "activation_hold_released", "lifecycle_restart_count", "library_target",
         }
         if set(value) - required - optional or not required.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction fields are unsupported")
-        if value["schema_version"] not in (1, 2, _TRANSACTION_SCHEMA):
+        if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2, 3, _TRANSACTION_SCHEMA):
             raise FrozenInstallPersistenceError("unsupported frozen transaction schema")
-        if value["schema_version"] in (2, _TRANSACTION_SCHEMA) and not {
+        if value["schema_version"] in (2, 3, _TRANSACTION_SCHEMA) and not {
             "install_plan_fingerprint", "policies", "resolution_records",
             "resolution_fingerprint", "resolved_software_fingerprint",
         }.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction is missing resolution metadata")
-        if value["schema_version"] == _TRANSACTION_SCHEMA and not {
+        if value["schema_version"] in (3, _TRANSACTION_SCHEMA) and not {
             "configuration_manifest_path", "lifecycle_stage", "activation_hold_ids",
             "activation_hold_released", "lifecycle_restart_count",
         }.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction is missing lifecycle metadata")
+        if value["schema_version"] == _TRANSACTION_SCHEMA and "library_target" not in value:
+            raise FrozenInstallPersistenceError("frozen transaction is missing source metadata")
+        if value["schema_version"] != _TRANSACTION_SCHEMA and value.get("library_target") is not None:
+            raise FrozenInstallPersistenceError("legacy transaction cannot declare a library source")
         try:
+            library_target = (
+                LibraryInstallTarget.from_dict(value["library_target"])
+                if value.get("library_target") is not None else None
+            )
             policies = tuple(
                 FrozenInstallPolicy(
                     addon_id=item["addon_id"],
@@ -371,6 +387,7 @@ class FrozenInstallTransaction:
                 for item in value.get("resolution_records", [])
             )
             return cls(
+                library_target=library_target,
                 transaction_id=value["transaction_id"],
                 build_id=value["build_id"],
                 manifest_path=value["manifest_path"],
@@ -404,7 +421,7 @@ class FrozenInstallTransaction:
                 ),
                 lifecycle_restart_count=value.get("lifecycle_restart_count", 0),
             )
-        except (KeyError, TypeError, ValueError, FrozenInstallError, FrozenResolutionError) as exc:
+        except (KeyError, TypeError, ValueError, FrozenInstallError, FrozenResolutionError, LibraryError) as exc:
             if isinstance(exc, FrozenInstallError):
                 raise
             raise FrozenInstallPersistenceError("frozen transaction contains invalid fields") from exc
@@ -509,7 +526,7 @@ def _is_held_quiescence_retry_snapshot(
         and bool(transaction.manifest_fingerprint)
         and bool(transaction.install_plan_fingerprint)
         and bool(transaction.resolution_fingerprint)
-        and bool(transaction.configuration_manifest_path)
+        and bool(transaction.configuration_manifest_path or transaction.library_target)
         and bool(transaction.private_overlay_id)
         and bool(transaction.private_overlay_fingerprint)
     )
@@ -1609,6 +1626,17 @@ def _overlay_failure_transaction_updates(overlay: object) -> dict:
     }
 
 
+def load_transaction_manifest(transaction, manifest_loader=_default_manifest_loader):
+    """Reopen an exact durable source; never interpret a library as a path."""
+    if getattr(transaction, "library_target", None) is not None:
+        manifest = transaction.library_target.load()[1]
+        if (manifest.build_id != transaction.build_id
+                or manifest.fingerprint() != transaction.manifest_fingerprint):
+            raise FrozenInstallValidationError("library transaction content identity changed")
+        return manifest
+    return manifest_loader(transaction.manifest_path)
+
+
 class FrozenInstallCoordinator:
     """Coordinate exact software, existing configuration, restart, and release."""
 
@@ -1647,6 +1675,36 @@ class FrozenInstallCoordinator:
         from resources.lib.resolver import resolve_manifest
         manifest = load_manifest_file(configuration_manifest_path)
         return resolve_manifest(manifest, device_profile_id)
+
+    def _transaction_profile(self, transaction):
+        if transaction.library_target is not None:
+            from resources.lib.resolver import resolve_manifest
+            manifest, _, _ = transaction.library_target.load()
+            return resolve_manifest(manifest, transaction.device_profile_id)
+        return self._configuration_profile(
+            transaction.configuration_manifest_path, transaction.device_profile_id
+        )
+
+    def install_target(
+        self, target: LibraryInstallTarget, *,
+        install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
+        resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
+        interactive: bool = False,
+        transaction_access: Optional[object] = None,
+    ) -> FrozenInstallResult:
+        """Product entry point for an exact library selection reviewed by Plan.
+
+        Source paths/loaders cannot be supplied in library mode. Policies and
+        approved resolution_choices (or the existing decider) retain normal
+        frozen-install semantics; omitted approved choices never prompt implicitly.
+        """
+        if not isinstance(target, LibraryInstallTarget):
+            return FrozenInstallResult("failed", code="LIBRARY_TARGET_INVALID",
+                                       message="library install target is invalid")
+        return self.install(None, manifest_path="", device_profile_id=target.device_profile_id,
+                            library_target=target, install_policies=install_policies,
+                            resolution_choices=resolution_choices, interactive=interactive,
+                            transaction_access=transaction_access)
 
     def _check_private_ownership_compatibility(self, desired, records):
         if desired is None:
@@ -1848,11 +1906,34 @@ class FrozenInstallCoordinator:
         install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
         interactive: bool = True,
         transaction_access: Optional[object] = None,
+        library_target: Optional[LibraryInstallTarget] = None,
+        resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
     ) -> FrozenInstallResult:
+        configuration_runner = self.configuration_runner
         try:
-            desired_profile = self._configuration_profile(
-                configuration_manifest_path, device_profile_id
-            )
+            if library_target is not None:
+                if (not isinstance(library_target, LibraryInstallTarget)
+                        or device_profile_id != library_target.device_profile_id
+                        or manifest_path or configuration_manifest_path):
+                    raise FrozenInstallValidationError("library install identity is invalid")
+                from resources.lib.resolver import resolve_manifest
+                public, loaded_frozen, _ = library_target.load()
+                if manifest is not None and manifest.fingerprint() != loaded_frozen.fingerprint():
+                    raise FrozenInstallValidationError("library install frozen manifest differs")
+                manifest = loaded_frozen
+                desired_profile = resolve_manifest(public, device_profile_id)
+                if configuration_runner is None:
+                    from resources.lib.restart_coordinator import RestartCoordinator
+                    configuration_runner = RestartCoordinator().reconcile
+            else:
+                desired_profile = self._configuration_profile(configuration_manifest_path, device_profile_id)
+            if resolution_choices is not None:
+                if (not isinstance(resolution_choices, Mapping)
+                        or any(not isinstance(key, str) or not isinstance(choice, ResolutionChoice)
+                               for key, choice in resolution_choices.items())
+                        or set(resolution_choices) - {node.addon_id for node in manifest.addons}):
+                    raise FrozenInstallValidationError("approved resolution choices are invalid")
+                resolution_choices = dict(resolution_choices)
             policies = tuple(
                 install_policies if install_policies is not None
                 else getattr(desired_profile, "frozen_install_policies", ())
@@ -1861,12 +1942,12 @@ class FrozenInstallCoordinator:
                 manifest, self.artifact_store, policies
             )
             hold_ids = self._activation_hold_ids(plan, desired_profile)
-            if hold_ids and (not configuration_manifest_path or self.configuration_runner is None):
+            if hold_ids and (not (configuration_manifest_path or library_target) or configuration_runner is None):
                 raise FrozenInstallValidationError(
                     "pre-activation resources require a durable configuration runner"
                 )
             session_id = _valid_uuid(self.session_id_provider(), "current_session_id")
-        except (FrozenInstallError, FrozenResolutionError, CaptureError, ValueError) as exc:
+        except (FrozenInstallError, FrozenResolutionError, CaptureError, ValueError, LibraryError) as exc:
             return FrozenInstallResult(
                 "failed",
                 code=getattr(exc, "code", "FROZEN_MANIFEST_INVALID"),
@@ -1883,6 +1964,8 @@ class FrozenInstallCoordinator:
                 active.manifest_fingerprint == manifest.fingerprint()
                 and active.install_plan_fingerprint == install_plan_fingerprint(manifest, policies)
                 and active.configuration_manifest_path == (configuration_manifest_path or manifest_path)
+                and active.library_target == library_target
+                and active.device_profile_id == device_profile_id
             ):
                 if session_id == active.originating_kodi_session_id:
                     return FrozenInstallResult(
@@ -1956,7 +2039,9 @@ class FrozenInstallCoordinator:
                 repository_id=row.repository_id if row.fallback_eligible else "",
                 skip_allowed=row.skip_eligible,
             )
-            if not interactive:
+            if (resolution_choices is not None and node.addon_id not in resolution_choices) or (
+                resolution_choices is None and not interactive
+            ):
                 return FrozenInstallResult(
                     "user_resolution_required",
                     code="USER_RESOLUTION_REQUIRED",
@@ -1964,11 +2049,11 @@ class FrozenInstallCoordinator:
                     recoverability=plan.summary,
                 )
             try:
-                choice = (
-                    self.resolution_decider(prompt)
-                    if self.resolution_decider is not None
-                    else _kodi_resolution_choice(prompt)
-                )
+                if resolution_choices is not None:
+                    choice = resolution_choices[node.addon_id]
+                else:
+                    choice = (self.resolution_decider(prompt) if self.resolution_decider is not None
+                              else _kodi_resolution_choice(prompt))
                 if choice is not None and not isinstance(choice, ResolutionChoice):
                     choice = ResolutionChoice(choice)
             except Exception:
@@ -2074,6 +2159,8 @@ class FrozenInstallCoordinator:
             )
 
         try:
+            if library_target is not None:
+                library_target.load()
             if active_resume:
                 transaction = active
                 original = transaction.original_update_policy
@@ -2081,6 +2168,7 @@ class FrozenInstallCoordinator:
                 original = AddonUpdatePolicy(self.policy_backend.get_policy())
                 transaction = FrozenInstallTransaction(
                     transaction_id=str(uuid.uuid4()),
+                    library_target=library_target,
                     build_id=manifest.build_id,
                     manifest_path=manifest_path,
                     device_profile_id=device_profile_id,
@@ -2339,11 +2427,12 @@ class FrozenInstallCoordinator:
                 ),
                 configuration_manifest_path=configuration_manifest_path or manifest_path,
             )
-            if self.configuration_runner is not None:
+            if configuration_runner is not None:
                 request_path = configuration_manifest_path or manifest_path
                 request = ReconcileRequest(
                     request_path,
                     device_profile_id,
+                    library_target=library_target,
                     install_resolutions=tuple(sorted(
                         record_map.values(), key=lambda record: record.addon_id
                     )),
@@ -2351,9 +2440,9 @@ class FrozenInstallCoordinator:
                     frozen_transaction_id=(transaction.transaction_id if hold_ids else ""),
                 )
                 if transaction_access is None:
-                    result = self.configuration_runner(request)
+                    result = configuration_runner(request)
                 else:
-                    result = self.configuration_runner(
+                    result = configuration_runner(
                         request, transaction_access=transaction_access
                     )
                 transaction, awaiting = self._handle_configuration_result(transaction, result)
@@ -2624,7 +2713,7 @@ class FrozenInstallCoordinator:
             )
 
         try:
-            manifest = self.manifest_loader(current.manifest_path)
+            manifest = load_transaction_manifest(current, self.manifest_loader)
             if (
                 manifest.build_id != current.build_id
                 or manifest.fingerprint() != current.manifest_fingerprint
@@ -2656,16 +2745,13 @@ class FrozenInstallCoordinator:
                 manifest, current, allow_uninstalled=True
             )
             if (
-                not current.configuration_manifest_path
+                not (current.configuration_manifest_path or current.library_target)
                 or plan.install_plan_fingerprint != current.install_plan_fingerprint
             ):
                 raise FrozenInstallValidationError(
                     "held retry configuration or plan identity changed"
                 )
-            desired_profile = self._configuration_profile(
-                current.configuration_manifest_path,
-                current.device_profile_id,
-            )
+            desired_profile = self._transaction_profile(current)
             if desired_profile is None:
                 raise FrozenInstallValidationError(
                     "held retry configuration profile is unavailable"
@@ -2856,15 +2942,12 @@ class FrozenInstallCoordinator:
             guard = AddonUpdateGuard(self.policy_backend)
             # Post-restart: verify only, never write (see update_guard).
             guard.verify_quarantined()
-            manifest = self.manifest_loader(transaction.manifest_path)
+            manifest = load_transaction_manifest(transaction, self.manifest_loader)
             if transaction.lifecycle_stage is FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART:
                 plan, records, _resolution_manifest = self._restore_resolution(
                     manifest, transaction, allow_uninstalled=True
                 )
-                desired_profile = self._configuration_profile(
-                    transaction.configuration_manifest_path,
-                    transaction.device_profile_id,
-                )
+                desired_profile = self._transaction_profile(transaction)
                 held_ids = self._activation_hold_ids(plan, desired_profile)
                 readiness_ids = self._registry_readiness_ids(desired_profile)
                 if (
@@ -2911,6 +2994,7 @@ class FrozenInstallCoordinator:
                 return self.install(
                     manifest,
                     manifest_path=transaction.manifest_path,
+                    library_target=transaction.library_target,
                     device_profile_id=transaction.device_profile_id,
                     configuration_manifest_path=transaction.configuration_manifest_path,
                     install_policies=transaction.policies,
@@ -3688,6 +3772,7 @@ def ensure_frozen_resume_registry_ready(
     if (
         getattr(restart_transaction, "request", None) != request
         or getattr(request, "manifest_path", "") != transaction.configuration_manifest_path
+        or getattr(request, "library_target", None) != getattr(transaction, "library_target", None)
         or getattr(request, "device_profile_id", "") != transaction.device_profile_id
         or source_fingerprint != transaction.manifest_fingerprint
         or not getattr(preview, "success", False)
@@ -3710,7 +3795,7 @@ def ensure_frozen_resume_registry_ready(
         )
 
     try:
-        manifest = manifest_loader(transaction.manifest_path)
+        manifest = load_transaction_manifest(transaction, manifest_loader)
         active_artifact_store = artifact_store or ArtifactStore(
             default_frozen_install_root() / "frozen-artifacts"
         )
@@ -3726,9 +3811,12 @@ def ensure_frozen_resume_registry_ready(
         plan, records, _resolution_manifest = coordinator._restore_resolution(
             manifest, transaction
         )
-        desired_profile = coordinator._configuration_profile(
-            transaction.configuration_manifest_path,
-            transaction.device_profile_id,
+        desired_profile = (
+            coordinator._transaction_profile(transaction)
+            if getattr(transaction, "library_target", None) is not None
+            else coordinator._configuration_profile(
+                transaction.configuration_manifest_path, transaction.device_profile_id
+            )
         )
         held_ids = coordinator._activation_hold_ids(plan, desired_profile)
         overlay_identity = coordinator._private_overlay_metadata(
