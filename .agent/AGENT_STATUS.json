@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "WF-native-ui-capability-blocker-policy: complete; local guidance commit bf49ded770a9c548ac725ff226111f2616c55dd3",
-  "reason": "Documentation-only; product/runtime qualification unchanged. BM-UI-003C helper correction still requires independent review before Test.app qualification.",
-  "last_commit": "bf49ded770a9c548ac725ff226111f2616c55dd3",
+  "status": "blocked",
+  "task": "First bounded Install Build frontend slice",
+  "reason": "Stopped per task: missing durable reviewed-library-target to frozen install/configuration/resume bridge",
+  "last_commit": "74ebefbe28ed3befa8bc9e7ca0c34d88cf0b944b",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T13:54:51Z",
+  "updated_at": "2026-10-07T14:58:55Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",

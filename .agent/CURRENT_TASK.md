@@ -1,9 +1,9 @@
 # Current Task
 
-WF-native-ui-capability-blocker-policy: complete; focused guidance commit `bf49ded770a9c548ac725ff226111f2616c55dd3`.
+First bounded Install Build frontend slice — STOPPED before product mutation.
 
-Starting identity was branch `agent/codex`, HEAD `a8fd230dc21fbd53813513843358f543eb9ccc97`, clean, 20 commits ahead of `origin/agent/codex`. Only `.orchestrator/WORKFLOW.md` changed in the guidance commit.
+Baseline: agent/codex @ 74ebefbe28ed3befa8bc9e7ca0c34d88cf0b944b, clean.
 
-Validation: reviewed the focused diff and safety boundaries; `git diff --check` passed. No tests were run because this is documentation-only. No product/helper/test/runtime/Test.app/device/external-application changes; no push.
+Blocker: library-owned reviewed target has no durable frozen install/configuration/resume bridge. See HANDOFF.md for offline reproduction and 155 passing tests.
 
-Next product step remains independent review of `BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION`; resume its Test.app qualification only after that review passes.
+Next: separately authorize the smallest backend bridge; do not begin frontend implementation or runtime qualification.

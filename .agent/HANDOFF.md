@@ -1,15 +1,26 @@
-# Handoff
+# Install Build frontend — stopped at product capability boundary
 
-## Task / outcome
-WF-native-ui-capability-blocker-policy: complete. Added durable guidance to prevent inferring a required tool from a behavioral UI requirement and to require evidence before reporting a missing-tool blocker.
+## Task and baseline
+- Requested first bounded Install Build frontend slice; no authoritative BM-UI-004 ID assigned.
+- Advances macOS Beta exit item 8; expected outcome was an executable native Install path.
+- Reconciled branch agent/codex, HEAD 74ebefbe28ed3befa8bc9e7ca0c34d88cf0b944b, clean.
+- Live Agent Handoff: current agent codex; both endpoints clean.
 
-## Identity / changes
-Worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`. Starting HEAD `a8fd230dc21fbd53813513843358f543eb9ccc97`, clean and 20 commits ahead of `origin/agent/codex`. Focused guidance commit `bf49ded770a9c548ac725ff226111f2616c55dd3` changes only `.orchestrator/WORKFLOW.md`; current branch is 21 commits ahead. This handoff and its task records are endpoint-specific bookkeeping.
+## Result / exact blocker
+No product source changed. Stop condition: existing APIs do not bridge the reviewed library-owned target into durable frozen installation/configuration/resume.
 
-The new policy treats native UI control and capture as behavioral requirements, names the exact authorized/proven shell-mediated Test.app mechanism (PID/window identity, foreground-PID check, guarded input, window-only capture), and requires checking accepted alternatives and reconciling contradictory recent evidence before broad tooling investigation. It keeps CUA/Remote Desktop incidents separate unless Build Manager depends on them.
+BuildLibrary.selected_plan_target supplies LibrarySource plus compatibility path fields pointing to one bundled envelope (schema_version, manifest, frozen, packages). BuildPlanService consumes LibrarySource.load(), including its owned configuration loader. FrozenInstallCoordinator.install instead reloads configuration_manifest_path with load_manifest_file; its default resume loader parses manifest_path as a standalone FrozenBuildManifest. Neither accepts the library envelope. Configuration ReconcileRequest is path-based and its default configuration loader uses the global package root, not the library-owned package snapshot. Passing the envelope path cannot preserve the reviewed content into execution/resume. UI-side extraction or custom replacement of configuration/resume orchestration would bypass the requested product-owner boundary.
 
-## Validation
-Reviewed the focused diff against current Test.app safety rules; `git diff --check` passed. No tests were run because the change is documentation-only. No product, helper, test, runtime, Test.app, Kodi, device, or external-application state changed. Nothing was pushed.
+## Evidence
+Disposable tests.test_build_library.LibraryTests fixture: register/select/load library source and owned configuration PASS; FrozenInstallCoordinator._configuration_profile rejects selected compatibility path with ManifestValidationError; _default_manifest_loader rejects it with FrozenInstallValidationError. Only exception class names printed.
+python3 -m unittest tests.test_build_library tests.test_plan -q: 155 tests PASS (7.763s).
+No new behavior/tests; no final product candidate; full suite and additional subsystems not run.
 
-## Scope boundary / next step
-No Test.app qualification was attempted under this guidance-only task. The existing `BM-UI-003C-HELPER-STABLE-BASELINE-CORRECTION` still requires independent correction-delta review; resume its Test.app qualification only after PASS. Manual relay is needed to arrange that separate review. The new guidance remains local to this endpoint; no matrix integration, endpoint synchronization, or publication was authorized.
+## Smallest next step
+Separately authorize a product-owned, durable library install-target bridge: revalidate exact library entry/profile, carry its manifest/frozen/config packages into existing installation/configuration and restart/resume owners, and preserve approved review choices. Require offline round-trip and changed-input rejection tests before frontend wiring. No UI-side freshness approximation or transport implementation.
+
+## Preserved boundaries
+Create unchanged; Install remains unavailable; Update / Repair remains unavailable. No Test.app, normal Kodi, real profile, household device, runtime qualification, restart, independent review, push, release, or publication. Only .agent task bookkeeping changed.
+
+## Usage
+GPT-6 session identity; exact tier and effort unavailable. Start/end/delta unavailable per repository Codex guidance.
