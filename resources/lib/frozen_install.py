@@ -1629,7 +1629,10 @@ def _overlay_failure_transaction_updates(overlay: object) -> dict:
 def load_transaction_manifest(transaction, manifest_loader=_default_manifest_loader):
     """Reopen an exact durable source; never interpret a library as a path."""
     if getattr(transaction, "library_target", None) is not None:
-        manifest = transaction.library_target.load()[1]
+        try:
+            manifest = transaction.library_target.load()[1]
+        except LibraryError as exc:
+            raise FrozenInstallValidationError("library transaction source unavailable") from exc
         if (manifest.build_id != transaction.build_id
                 or manifest.fingerprint() != transaction.manifest_fingerprint):
             raise FrozenInstallValidationError("library transaction content identity changed")
@@ -1679,7 +1682,10 @@ class FrozenInstallCoordinator:
     def _transaction_profile(self, transaction):
         if transaction.library_target is not None:
             from resources.lib.resolver import resolve_manifest
-            manifest, _, _ = transaction.library_target.load()
+            try:
+                manifest, _, _ = transaction.library_target.load()
+            except LibraryError as exc:
+                raise FrozenInstallValidationError("library transaction profile unavailable") from exc
             return resolve_manifest(manifest, transaction.device_profile_id)
         return self._configuration_profile(
             transaction.configuration_manifest_path, transaction.device_profile_id
@@ -1687,22 +1693,21 @@ class FrozenInstallCoordinator:
 
     def install_target(
         self, target: LibraryInstallTarget, *,
-        install_policies: Optional[Sequence[FrozenInstallPolicy]] = None,
         resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
         interactive: bool = False,
         transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
         """Product entry point for an exact library selection reviewed by Plan.
 
-        Source paths/loaders cannot be supplied in library mode. Policies and
-        approved resolution_choices (or the existing decider) retain normal
+        Source paths/loaders cannot be supplied in library mode. Policies come
+        from the verified library profile. Approved resolution_choices retain normal
         frozen-install semantics; omitted approved choices never prompt implicitly.
         """
         if not isinstance(target, LibraryInstallTarget):
             return FrozenInstallResult("failed", code="LIBRARY_TARGET_INVALID",
                                        message="library install target is invalid")
         return self.install(None, manifest_path="", device_profile_id=target.device_profile_id,
-                            library_target=target, install_policies=install_policies,
+                            library_target=target,
                             resolution_choices=resolution_choices, interactive=interactive,
                             transaction_access=transaction_access)
 
@@ -1916,6 +1921,18 @@ class FrozenInstallCoordinator:
                         or device_profile_id != library_target.device_profile_id
                         or manifest_path or configuration_manifest_path):
                     raise FrozenInstallValidationError("library install identity is invalid")
+                # Source conflicts can be rejected without opening the incoming
+                # content, including a selector with an unauthoritative root.
+                active_source = self._safe_inspect()
+                if active_source is not None and (
+                    active_source.library_target != library_target
+                    or active_source.device_profile_id != device_profile_id
+                ):
+                    return FrozenInstallResult(
+                        "failed", transaction=active_source,
+                        code="ACTIVE_TRANSACTION_CONFLICT",
+                        message="another frozen lifecycle transaction is active",
+                    )
                 from resources.lib.resolver import resolve_manifest
                 public, loaded_frozen, _ = library_target.load()
                 if manifest is not None and manifest.fingerprint() != loaded_frozen.fingerprint():
@@ -1935,7 +1952,7 @@ class FrozenInstallCoordinator:
                     raise FrozenInstallValidationError("approved resolution choices are invalid")
                 resolution_choices = dict(resolution_choices)
             policies = tuple(
-                install_policies if install_policies is not None
+                install_policies if install_policies is not None and library_target is None
                 else getattr(desired_profile, "frozen_install_policies", ())
             )
             plan = validate_frozen_install_plan(
@@ -2009,6 +2026,8 @@ class FrozenInstallCoordinator:
                 if (
                     active.manifest_fingerprint == plan.manifest.fingerprint()
                     and active.install_plan_fingerprint == plan.install_plan_fingerprint
+                    and active.library_target == library_target
+                    and (library_target is None or active.device_profile_id == device_profile_id)
                 ):
                     return FrozenInstallResult(
                         "needs_attention" if active.phase is FrozenInstallPhase.NEEDS_ATTENTION else "active",

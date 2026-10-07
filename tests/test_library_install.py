@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from resources.lib.artifacts import ArtifactStore
-from resources.lib.build_library import LibraryInstallTarget, LibrarySource, LibraryError
+from resources.lib.build_library import LibraryInstallTarget, LibrarySource, LibraryError, isolated_library_install_authority
 from resources.lib.build_manager import BuildManager, BuildManagerOwners, ReconcileRequest
 from resources.lib.config import ConfigPackageLoader, ConfigurationManager
 from resources.lib.dependencies import DependencyClosure
@@ -43,6 +43,9 @@ class LibraryInstallTests(unittest.TestCase):
         self.fixture = library_fixture.LibraryTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
+        authority = isolated_library_install_authority(self.fixture.library)
+        authority.__enter__()
+        self.addCleanup(authority.__exit__, None, None, None)
         self.base = self.fixture.base
         self.artifacts = ArtifactStore(self.base / "artifacts")
         self.store = FrozenInstallStore(self.base / "frozen-state")
@@ -414,3 +417,194 @@ class LibraryInstallTests(unittest.TestCase):
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
         self.assertTrue(self.backend.installed[DEMO].enabled)
         self.assertIsNone(self.store.inspect())
+
+    def test_production_root_pinning_and_explicit_isolation_authority(self):
+        from resources.lib import build_library as lib
+        target = self.target()
+        alternate = self.base / "alternate-library"
+        shutil.copytree(self.fixture.root, alternate)
+        raw = target.to_dict()
+        tampered = {**raw, "root": str(alternate)}
+        # Remove the fixture's explicitly injected authority to exercise production.
+        token = lib._isolated_install_root.set(None)
+        try:
+            with patch.object(lib, "default_build_library", return_value=self.fixture.library):
+                self.assertEqual(LibraryInstallTarget.from_dict(raw), target)
+                with self.assertRaises(LibraryError): LibraryInstallTarget.from_dict(tampered)
+                redirected = replace(target, source=LibrarySource(str(alternate), target.source.entry_id))
+                with patch.object(LibrarySource, "load", side_effect=forbidden):
+                    with self.assertRaises(LibraryError): redirected.load()
+                with isolated_library_install_authority(lib.BuildLibrary(alternate)):
+                    self.assertEqual(LibraryInstallTarget.from_dict(tampered).load()[1], target.source.load()[1])
+                with self.assertRaises(LibraryError): LibraryInstallTarget.from_dict(tampered)
+        finally:
+            lib._isolated_install_root.reset(token)
+
+    def test_tampered_root_cannot_redirect_durable_restart_or_resume(self):
+        target = self.target(); first = self.awaiting(target)
+        alternate = self.base / "alternate-library"
+        shutil.copytree(self.fixture.root, alternate)
+        raw = first.transaction.to_dict()
+        raw["library_target"]["root"] = str(alternate)
+        with self.assertRaises(Exception): FrozenInstallTransaction.from_dict(raw)
+        restart_raw = self.restart_store.inspect().to_dict()
+        restart_raw["request"]["library_target"]["root"] = str(alternate)
+        with self.assertRaises(TransactionCorrupt): RestartTransaction.from_dict(restart_raw)
+        self.store.transaction_path.write_text(json.dumps(raw))
+        before = (list(self.config.mutations), list(self.policy.calls))
+        result = self.coordinator(session=SESSION_B).resume_after_restart()
+        self.assertIn(result.outcome, ("failed", "needs_attention"))
+        self.assertEqual(before, (self.config.mutations, self.policy.calls))
+
+    def test_library_execution_cannot_loosen_exact_required_policy(self):
+        from resources.lib.frozen_resolution import FrozenInstallPolicy, FrozenInstallPolicyMode
+        missing = self.with_missing_addon()
+        self.fixture.raw["device_profiles"]["desk"]["frozen_install_policies"][0]["policy"] = "exact_required"
+        self.fixture.write_sources(); target = self.target()
+        override = (FrozenInstallPolicy(missing, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY_OR_SKIP),)
+        with self.assertRaises(TypeError):
+            self.coordinator().install_target(target, install_policies=override)
+        result = self.coordinator().install_target(target, resolution_choices={missing: ResolutionChoice.SKIP})
+        self.assertEqual(result.outcome, "failed")
+        # Even the lower-level library entry cannot use a caller override.
+        result = self.coordinator().install(None, manifest_path="", device_profile_id="desk",
+            library_target=target, install_policies=override, resolution_choices={missing: ResolutionChoice.SKIP})
+        self.assertEqual(result.outcome, "failed")
+        self.assert_no_mutation()
+        result = self.coordinator(runner=lambda request: SimpleNamespace(outcome="complete")).install(
+            self.fixture.frozen, manifest_path="/offline-frozen.json", device_profile_id="desk",
+            install_policies=override, resolution_choices={missing: ResolutionChoice.SKIP})
+        self.assertEqual(result.outcome, "complete", (result.code, result.message))
+        self.assertEqual(next(r for r in result.resolution_manifest.records if r.addon_id == missing).resolution,
+                         InstallResolution.SKIPPED)
+
+    def test_equivalent_active_requires_exact_library_source_and_profile(self):
+        entry = self.fixture.register()
+        self.fixture.library.select(entry.entry_id, "desk")
+        target = LibraryInstallTarget.from_plan_target(self.fixture.library.selected_plan_target())
+        self.fixture.raw["build"]["version"] = "2.0.0"
+        self.fixture.write_sources(); other_entry = self.fixture.register()
+        other = replace(target, source=LibrarySource(str(self.fixture.root), other_entry.entry_id))
+        first = self.awaiting(target)
+        before = (list(self.config.mutations), list(self.policy.calls))
+        self.assertEqual(self.coordinator().install_target(target).outcome, "active")
+        for incoming in (other, replace(target, device_profile_id="other")):
+            with self.subTest(incoming=incoming):
+                self.assertEqual(self.coordinator().install_target(incoming).code, "ACTIVE_TRANSACTION_CONFLICT")
+        alternate = self.base / "alternate-library"; shutil.copytree(self.fixture.root, alternate)
+        redirected = replace(target, source=LibrarySource(str(alternate), target.source.entry_id))
+        with patch.object(LibrarySource, "load", side_effect=forbidden):
+            self.assertEqual(self.coordinator().install_target(redirected).code, "ACTIVE_TRANSACTION_CONFLICT")
+        result = self.coordinator().install(self.fixture.frozen, manifest_path="/offline.json", device_profile_id="desk")
+        self.assertEqual(result.code, "ACTIVE_TRANSACTION_CONFLICT")
+        self.assertEqual(self.store.inspect(), first.transaction)
+        self.assertEqual(before, (self.config.mutations, self.policy.calls))
+
+    def held_library(self):
+        from resources.lib.frozen_install import FrozenInstalledAddon
+        owner = "plugin.video.redlight"
+        metadata = self.artifacts.import_zip(_zip(owner, "2.6.8"), expected_addon_id=owner, expected_version="2.6.8")
+        self.fixture.frozen = replace(self.fixture.frozen, addons=self.fixture.frozen.addons + (
+            AddonCaptureNode(owner, "2.6.8", "xbmc.python.pluginsource", True,
+                            ProvenanceStatus.UNKNOWN, artifact=metadata),))
+        self.fixture.raw["addons"].append({"addon_id": owner, "state": "enabled"})
+        self.fixture.raw["private_overlay"] = {"type": "local_file", "overlay_id": "held", "required": True}
+        self.fixture.raw["config"]["structured_private_resources"] = [redlight_declaration().safe_dict()]
+        self.fixture.write_sources()
+        self.store = FrozenInstallStore(self.base / "held-profile" / "addon_data" / "script.build.manager")
+        self.policy = FakePolicy(AddonUpdatePolicy.AUTOMATIC)
+        self.backend.installed[owner] = FrozenInstalledAddon(owner, "2.6.8", True)
+        target = self.target()
+        meta = PrivateOverlayMetadata("held", "sha256:" + "3" * 64, True, True)
+        provider = lambda profile, fingerprint: (meta.overlay_id, meta.fingerprint, meta.required)
+        requests = []
+        def runner(request, *, transaction_access=None):
+            requests.append(request)
+            private = SimpleNamespace(succeeded=True, resource_results=(SimpleNamespace(succeeded=True),))
+            reconcile = SimpleNamespace(success=True, private_overlay=meta, action_results=(
+                SimpleNamespace(owner_result=SimpleNamespace(private_result=private)),))
+            return SimpleNamespace(outcome="complete", reconcile_result=reconcile)
+        coordinator = self.coordinator(runner=runner, private_overlay_metadata_provider=provider)
+        first = coordinator.install_target(target)
+        self.assertEqual(first.outcome, "awaiting_restart", (first.code, first.message))
+        self.assertEqual(first.transaction.lifecycle_stage, FrozenLifecycleStage.QUIESCENCE_AWAITING_RESTART)
+        return target, meta, provider, runner, requests, first.transaction
+
+    def test_held_library_outage_restore_supported_retry_reloads_manifest_and_profile(self):
+        target, meta, provider, runner, requests, initial = self.held_library()
+        envelope = self.fixture.envelope(target.source.entry_id); saved = envelope.read_bytes(); envelope.unlink()
+        coordinator = self.coordinator(session=SESSION_B, runner=runner, private_overlay_metadata_provider=provider)
+        result = coordinator.resume_after_restart()
+        self.assertEqual((result.outcome, result.code), ("needs_attention", "FROZEN_MANIFEST_INVALID"))
+        held = self.store.inspect()
+        self.assertEqual(held.activation_hold_ids, initial.activation_hold_ids)
+        self.assertFalse(held.activation_hold_released)
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.NEVER_CHECK)
+        self.assertFalse(self.backend.installed["plugin.video.redlight"].enabled)
+        self.assertEqual(requests, [])
+        self.assertEqual(coordinator.abandon().code, "HELD_LIFECYCLE_CANNOT_BE_ABANDONED")
+        # Retry while absent stays eligible and fails at the source validation boundary.
+        retry_store = TransactionStore(str(self.base / "held-profile"))
+        retry = coordinator.retry_held_quiescence(expected_transaction=held, restart_store=retry_store)
+        self.assertEqual(retry.code, "FROZEN_HELD_RETRY_VALIDATION_FAILED")
+        self.assertEqual(self.store.inspect(), held)
+        envelope.write_bytes(saved)
+        with patch.object(FrozenInstallCoordinator, "_configuration_profile", side_effect=forbidden):
+            retry = coordinator.retry_held_quiescence(expected_transaction=held, restart_store=retry_store)
+        self.assertEqual(retry.outcome, "complete", (retry.code, retry.message))
+        self.assertEqual(requests[0].library_target, target)
+        self.assertTrue(self.backend.installed["plugin.video.redlight"].enabled)
+        self.assertEqual(self.policy.policy, AddonUpdatePolicy.AUTOMATIC)
+        self.assertIsNone(self.store.inspect())
+
+    def test_profile_source_outage_uses_retryable_validation_semantics(self):
+        from resources.lib.frozen_install import FrozenInstallValidationError
+        target, _, provider, runner, _, initial = self.held_library()
+        self.fixture.envelope(target.source.entry_id).unlink()
+        with self.assertRaises(FrozenInstallValidationError):
+            self.coordinator()._transaction_profile(initial)
+
+    def test_active_held_resume_rejects_different_target_or_profile(self):
+        target, _, _, _, _, initial = self.held_library()
+        # Register a second exact graph with different public build metadata.
+        (self.fixture.packages / "shared").mkdir(parents=True)
+        self.fixture.raw["build"]["version"] = "2.0.0"
+        self.fixture.write_sources()
+        other_entry = self.fixture.register()
+        different_entry = replace(target, source=LibrarySource(target.source.root, other_entry.entry_id))
+        for incoming in (replace(target, device_profile_id="other"), different_entry):
+            result = self.coordinator(session=SESSION_B).install_target(incoming)
+            self.assertEqual(result.code, "ACTIVE_TRANSACTION_CONFLICT")
+        self.assertEqual(self.store.inspect(), initial)
+
+    def test_library_empty_legacy_paths_and_bm020_source_schema_tie(self):
+        target = self.target(); first = self.awaiting(target)
+        for field in ("manifest_path", "configuration_manifest_path"):
+            with self.subTest(field=field), self.assertRaises(Exception):
+                FrozenInstallTransaction.from_dict({**first.transaction.to_dict(), field: "/legacy.json"})
+        restart = self.restart_store.inspect().to_dict()
+        with self.assertRaises(TransactionCorrupt): RestartTransaction.from_dict({**restart, "schema_version": 1})
+        without = json.loads(json.dumps(restart)); without["request"].pop("library_target")
+        with self.assertRaises(TransactionCorrupt): RestartTransaction.from_dict(without)
+        with self.assertRaises(TransactionCorrupt):
+            RestartTransaction.from_dict({**restart, "request": {**restart["request"], "manifest_path": "/legacy.json"}})
+
+    def test_registry_readiness_rejects_other_library_selector_before_loading(self):
+        target, meta, provider, runner, _, initial = self.held_library()
+        request = ReconcileRequest("", "desk", library_target=replace(
+            target, source=LibrarySource(target.source.root, "b" * 64)),
+                                   source_software_fingerprint=initial.manifest_fingerprint,
+                                   frozen_transaction_id=initial.transaction_id)
+        preview = SimpleNamespace(request=request, success=True, private_overlay=meta)
+        result = ensure_frozen_resume_registry_ready(SimpleNamespace(request=request), preview, SESSION_B,
+            store=self.store, policy_backend=self.policy, manifest_loader=forbidden)
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.code, "FROZEN_RESUME_IDENTITY_MISMATCH")
+
+    def test_build_manager_rejects_library_frozen_fingerprint_mismatch(self):
+        target = self.target()
+        request = ReconcileRequest("", "desk", library_target=target, source_software_fingerprint="a" * 64)
+        result = self.manager().preview(request)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure.code, "MANIFEST_LOAD_FAILED")
+        self.assert_no_mutation()

@@ -12,8 +12,9 @@ with a mapping of add-on IDs to existing `ResolutionChoice` values when explicit
 missing-artifact decisions were approved. Target execution defaults to
 noninteractive. An incomplete approved-choice mapping returns
 `user_resolution_required`; it does not open an implicit decision dialog.
-Profile policies default to the library-owned resolved profile. Existing explicit
-policy overrides and resolution deciders remain supported.
+Profile policies come exclusively from the library-owned resolved profile;
+`install_target` has no policy override. Standalone `install` retains explicit
+policy overrides, and existing resolution deciders remain supported.
 
 The selector persists only:
 
@@ -21,6 +22,11 @@ The selector persists only:
 - the absolute library root;
 - the registered content-addressed entry ID;
 - the device profile ID.
+
+Durable deserialization and every target load authenticate the root against
+`default_build_library()` for the active Kodi profile. Offline tests can inject
+a scoped `isolated_library_install_authority(BuildLibrary(root))`; serialized
+records cannot establish that authority. The schema and selector shape are unchanged.
 
 The root is an internal local selector. Do not render it in frontend diagnostics.
 No manifest, package payload, private overlay value, temporary file, or Python
@@ -53,7 +59,11 @@ not readable by older product versions.
 Missing, corrupt, unregistered, changed, or profile-invalid entries fail closed.
 An initial failure creates no install transaction or runtime mutation. A resume
 failure retains quarantine/holds and records needs attention for explicit
-recovery. Quiescence retry, configuration-awaiting-restart registry readiness,
+recovery. Library load outages at the durable manifest/profile boundaries use
+`FROZEN_MANIFEST_INVALID`, preserving eligibility for the existing held retry
+after the exact source is restored. Equivalent-active library reuse requires
+the same root, entry and profile as well as the existing fingerprints.
+Quiescence retry, configuration-awaiting-restart registry readiness,
 and final frozen resume use the same durable source. Private-resource behavior
 remains owned by the existing private/configuration owners.
 

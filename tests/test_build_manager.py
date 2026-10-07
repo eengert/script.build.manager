@@ -602,6 +602,40 @@ class TestBuildManager(unittest.TestCase):
                 unrelated = BuildManager(owners.owners).preview(
                     replace(request, frozen_transaction_id="")
                 )
+                # Exercise the same held-stage flow with the durable library
+                # selector. Global frozen loading must never supply its graph.
+                from resources.lib.build_library import LibraryInstallTarget, LibrarySource
+                target = LibraryInstallTarget(LibrarySource("/offline/library", "a" * 64), "dev")
+                transaction.library_target = target
+                transaction.configuration_manifest_path = ""
+                transaction.manifest_path = ""
+                library_request = replace(request, manifest_path="", library_target=target)
+                def forbidden_loader(*args):
+                    raise AssertionError("standalone/global graph loader used in library mode")
+                library_owners = replace(owners.owners, manifest_loader=forbidden_loader,
+                                         frozen_manifest_loader=forbidden_loader)
+                with patch.object(LibraryInstallTarget, "load", return_value=(
+                    owners.manifest, frozen_manifest, owners.owners.config_loader
+                )):
+                    library_prepared, library_failure = BuildManager(library_owners)._prepare(library_request)
+                    wrong_selector = replace(target, source=LibrarySource(target.source.root, "b" * 64))
+                    mismatched = BuildManager(library_owners).preview(
+                        replace(library_request, library_target=wrong_selector))
+                    # Keep the incoming fingerprint valid for the library, but
+                    # change the active held transaction's fingerprint to prove
+                    # the held-stage identity check itself rejects the request.
+                    transaction.manifest_fingerprint = "b" * 64
+                    wrong_fingerprint = BuildManager(library_owners).preview(library_request)
+                self.assertIsNone(library_failure)
+                self.assertEqual(
+                    library_prepared.owner_contexts[owner_id].python_dependency_sources,
+                    prepared.owner_contexts[owner_id].python_dependency_sources,
+                )
+                self.assertFalse(mismatched.success)
+                self.assertEqual(mismatched.failure.code, "PREFLIGHT_FAILED")
+                self.assertFalse(wrong_fingerprint.success)
+                self.assertEqual(wrong_fingerprint.failure.code, "PREFLIGHT_FAILED")
+
         self.assertTrue(preview.success)
         self.assertFalse(any(
             action.kind == ENABLE_ADDON for action in preview.planned_actions

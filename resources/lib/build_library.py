@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager, ExitStack
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import json
@@ -185,6 +186,36 @@ class LibrarySource:
         return BuildLibrary(self.root)._load(self.entry_id)
 
 
+_isolated_install_root = ContextVar("isolated_library_install_root", default=None)
+
+
+@contextmanager
+def isolated_library_install_authority(library):
+    """Explicit scoped authority for offline tests/disposable profile isolation.
+
+    Durable records never establish authority themselves. Production callers
+    omit this scope and use the active Kodi profile's default_build_library().
+    """
+    if not isinstance(library, BuildLibrary):
+        raise _error()
+    token = _isolated_install_root.set(library.root)
+    try:
+        yield
+    finally:
+        _isolated_install_root.reset(token)
+
+
+def _authenticate_install_root(root):
+    authority = _isolated_install_root.get()
+    if authority is None:
+        try:
+            authority = default_build_library().root
+        except Exception as exc:
+            raise _error() from exc
+    if root != authority:
+        raise _error()
+
+
 @dataclass(frozen=True)
 class LibraryInstallTarget:
     """Durable exact entry/profile selector; never follows current selection.
@@ -206,6 +237,7 @@ class LibraryInstallTarget:
             raise _error()
 
     def load(self):
+        _authenticate_install_root(self.source.root)
         loaded = self.source.load()
         if self.device_profile_id not in loaded[0].device_profiles:
             raise _error()
@@ -221,7 +253,9 @@ class LibraryInstallTarget:
                 or set(value) != {"mode", "root", "entry_id", "device_profile_id"}
                 or value["mode"] != "library"):
             raise _error()
-        return cls(LibrarySource(value["root"], value["entry_id"]), value["device_profile_id"])
+        result = cls(LibrarySource(value["root"], value["entry_id"]), value["device_profile_id"])
+        _authenticate_install_root(result.source.root)
+        return result
 
     @classmethod
     def from_plan_target(cls, target):
