@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "Current Test.app helper six-blocker correction: PASS offline; STOP for independent correction-delta review",
-  "reason": "Helper not cleared for live use; independent review required before BM-UI-003C qualification",
-  "last_commit": "f6892d02bcb107619d2bff389026ffc3a6b89847",
+  "task": "BM-UI-003C helper library baseline projection: PASS offline; STOP for independent review",
+  "reason": "Live-use clearance PENDING independent review; runtime qualification prohibited in this task",
+  "last_commit": "4ceed8bdf2ccc76abd8f4484d7615ba5fc7edb64",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-07T00:18:48Z",
+  "updated_at": "2026-10-07T00:44:57Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
