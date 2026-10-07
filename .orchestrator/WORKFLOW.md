@@ -106,6 +106,21 @@ In manual mode, the exact prompt must authorize the required operation and prese
 
 If an operation would require exposing a password/token or broadening beyond Test.app, stop and return to ChatGPT.
 
+### Capability requirements and blocker proof
+
+Treat acceptance criteria as behavioral requirements. A requirement for native UI control, deterministic Test.app interaction, native window capture, or UI validation does not imply that a particular product, tool, or API is required. In particular, “native UI control” does not mean that the dedicated Codex Computer Use/CUA service is required unless current authoritative guidance explicitly says so.
+
+Before reporting a task blocked because a tool, API, provider feature, or capability appears unavailable:
+
+1. Name the exact acceptance criterion that cannot be met.
+2. Check current repository guidance and recent accepted evidence for the last-proven mechanism.
+3. Determine whether that mechanism is still authorized, operational, safe, and sufficient for the criterion. Use it when it is.
+4. If no such alternative works, demonstrate why the required mechanism cannot be established safely and report the failure evidence.
+
+For Test.app UI validation, the established shell-mediated macOS mechanism remains valid when it is operational and safe: establish the exact authorized Test.app PID; identify its exact window with CoreGraphics `CGWindowListCopyWindowInfo`; target the app with AppleScript/System Events; verify the foreground PID before guarded keyboard input; and capture/inspect only that window with `screencapture -x -l <window-id>` where practical. Fail closed on ambiguous process/window identity or global UI input. Dedicated Codex Computer Use/CUA is not a prerequisite unless a future authoritative task or repository rule explicitly requires it.
+
+Report a missing-tool blocker only when the capability is required by the acceptance criteria, no currently authorized and proven alternative satisfies it, safe establishment of the required mechanism has been shown to fail, and the report identifies the exact unmet criterion and evidence. When a proposed blocker conflicts with recent successful execution of the same class of task, reconcile that discrepancy before starting a broad tooling or infrastructure investigation. Do not launch desktop-app rollback, provider/tool repair, or capability-restoration work merely because an agent inferred a new dependency. Keep defects in Codex Computer Use/CUA, Remote Desktop, or other execution conveniences separate from Build Manager qualification unless Build Manager actually depends on them.
+
 ## Real devices
 
 Do not mutate Family Room Apple TV, Bonus Room Apple TV, Nvidia Shield, Fire TV, or any other household device unless Eric explicitly authorizes a named mutation for that exact device.
