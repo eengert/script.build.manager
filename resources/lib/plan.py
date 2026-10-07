@@ -51,6 +51,7 @@ from resources.lib.build_identity import (
 )
 from resources.lib.build_manager import fingerprint_resolved_build
 from resources.lib.build_library import LibrarySource
+from resources.lib.repository_preparation import PreparedRepositoryResolution, bind_prepared
 from resources.lib.config import ConfigTargetCheck
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import (
@@ -148,6 +149,8 @@ class PlanTarget:
     ``library_source`` supplies one revalidated library-owned snapshot including
     configuration packages. Its effective content still participates in the
     accepted build/review fingerprint; no path substitutes for build identity.
+    ``prepared_resolution`` is a separate pre-Apply package binding, never a
+    completed install outcome. It must match this source/profile and choices.
     """
 
     configuration_manifest_path: str
@@ -156,8 +159,13 @@ class PlanTarget:
     install_resolution: Optional[FrozenInstallResolutionManifest] = None
     choices: Tuple[Tuple[str, DecisionChoice], ...] = ()
     library_source: Optional[LibrarySource] = None
+    prepared_resolution: Optional[PreparedRepositoryResolution] = None
 
     def __post_init__(self) -> None:
+        if self.prepared_resolution is not None and not isinstance(
+            self.prepared_resolution, PreparedRepositoryResolution
+        ):
+            raise ValueError("prepared_resolution must be a prepared repository resolution")
         if self.library_source is not None and not isinstance(self.library_source, LibrarySource):
             raise ValueError("library_source must be a LibrarySource")
         for name in ("configuration_manifest_path", "device_profile_id", "software_manifest_path"):
@@ -373,6 +381,18 @@ class BuildPlanService:
             check_frozen_identity(desired.build.id, frozen)
             records = bind_resolutions(desired.build.id, frozen, target.install_resolution,
                                        policies=desired.frozen_install_policies)
+            if target.prepared_resolution is not None:
+                try:
+                    prepared_records = bind_prepared(
+                        target.prepared_resolution, target.library_source, target.device_profile_id,
+                        desired, frozen, config_loader, self._o.artifact_store)
+                    if (set(r.addon_id for r in records) & set(r.addon_id for r in prepared_records)
+                            or any(dict(target.choices).get(r.addon_id) is not DecisionChoice.INSTALL_CURRENT
+                                   for r in prepared_records)):
+                        raise ValueError
+                    records += prepared_records
+                except Exception as exc:
+                    raise IdentityMismatch(IdentityCode.RESOLUTION_INVALID) from exc
         except IdentityMismatch as exc:
             self._log("Build plan rejected the selected build's inputs (%s)" % exc.code.value)
             gaps.append(
@@ -622,6 +642,7 @@ class BuildPlanService:
             "install_plan": plan_digest, "policy": policy_digest,
             "resolution": None if resolution is None else [
                 resolution.resolution_fingerprint, resolution.resulting_software_fingerprint],
+            "prepared": None if target.prepared_resolution is None else target.prepared_resolution.to_dict(),
             "choices": sorted([a, c.value] for a, c in choices.items()),
             "outcomes": sorted(outcomes),
         }
@@ -654,7 +675,7 @@ class BuildPlanService:
             for aid in managed)
 
         # 4. choices that cannot be honoured, found now rather than after the guard is engaged
-        self._check_choices(desired, frozen, sw, blockers)
+        self._check_choices(desired, frozen, sw, blockers, prior)
         if not blockers or all(b.code in (BlockerCode.OPERATION_PENDING,
                                           BlockerCode.OPERATION_NEEDS_ATTENTION) for b in blockers):
             self._validate_graph(desired, frozen, policies, sw, blockers, prior)
@@ -676,7 +697,7 @@ class BuildPlanService:
         except Exception:
             return False
 
-    def _check_choices(self, desired, frozen, sw: _Software, blockers) -> None:
+    def _check_choices(self, desired, frozen, sw: _Software, blockers, records) -> None:
         """The conflicts the installer and reconciler would raise only after mutation began."""
         if desired.skin is not None and desired.skin.addon_id in sw.skipped:
             blockers.append(PlanBlocker(BlockerCode.CHOICE_CONFLICTS_WITH_BUILD, desired.skin.addon_id,
@@ -690,6 +711,8 @@ class BuildPlanService:
             return
         changes = {aid: None for aid in sw.skipped}
         changes.update({aid: sw.target_version.get(aid) for aid in sw.repository})
+        changes.update({aid: record.resolved_version for aid, record in records.items()
+                        if record.resolution is InstallResolution.REPOSITORY_CURRENT})
         for aid, version in sorted(changes.items()):
             try:
                 validate_private_overlay_resolution_compatibility(
@@ -721,7 +744,9 @@ class BuildPlanService:
             blockers.append(PlanBlocker(BlockerCode.SOFTWARE_PLAN_INVALID))
             return
         if sw.hold_ids:
-            for aid in sorted(sw.repository):      # "pre-activation lifecycle requires exact dependency metadata"
+            repository_ids = sw.repository | {aid for aid, record in records.items()
+                                               if record.resolution is InstallResolution.REPOSITORY_CURRENT}
+            for aid in sorted(repository_ids):     # preserve the held lifecycle's exact-only constraint
                 blockers.append(PlanBlocker(BlockerCode.CHOICE_CONFLICTS_WITH_BUILD, aid, self._name(aid)))
 
     @staticmethod

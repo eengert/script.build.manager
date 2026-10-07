@@ -1696,6 +1696,7 @@ class FrozenInstallCoordinator:
         resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
         interactive: bool = False,
         transaction_access: Optional[object] = None,
+        prepared_resolution=None,
     ) -> FrozenInstallResult:
         """Product entry point for an exact library selection reviewed by Plan.
 
@@ -1709,7 +1710,8 @@ class FrozenInstallCoordinator:
         return self.install(None, manifest_path="", device_profile_id=target.device_profile_id,
                             library_target=target,
                             resolution_choices=resolution_choices, interactive=interactive,
-                            transaction_access=transaction_access)
+                            transaction_access=transaction_access,
+                            prepared_resolution=prepared_resolution)
 
     def _check_private_ownership_compatibility(self, desired, records):
         if desired is None:
@@ -1913,6 +1915,7 @@ class FrozenInstallCoordinator:
         transaction_access: Optional[object] = None,
         library_target: Optional[LibraryInstallTarget] = None,
         resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
+        prepared_resolution=None,
     ) -> FrozenInstallResult:
         configuration_runner = self.configuration_runner
         try:
@@ -1934,7 +1937,7 @@ class FrozenInstallCoordinator:
                         message="another frozen lifecycle transaction is active",
                     )
                 from resources.lib.resolver import resolve_manifest
-                public, loaded_frozen, _ = library_target.load()
+                public, loaded_frozen, library_loader = library_target.load()
                 if manifest is not None and manifest.fingerprint() != loaded_frozen.fingerprint():
                     raise FrozenInstallValidationError("library install frozen manifest differs")
                 manifest = loaded_frozen
@@ -1958,6 +1961,19 @@ class FrozenInstallCoordinator:
             plan = validate_frozen_install_plan(
                 manifest, self.artifact_store, policies
             )
+            prepared_records = ()
+            if prepared_resolution is not None:
+                if library_target is None:
+                    raise FrozenInstallValidationError("preparation requires a library target")
+                from resources.lib.repository_preparation import bind_prepared
+                prepared_records = bind_prepared(
+                    prepared_resolution, library_target.source, device_profile_id,
+                    desired_profile, manifest, library_loader, self.artifact_store)
+                if (resolution_choices is None or any(
+                    resolution_choices.get(r.addon_id) is not ResolutionChoice.INSTALL_CURRENT
+                    for r in prepared_records
+                )):
+                    raise FrozenInstallValidationError("preparation differs from approved choices")
             hold_ids = self._activation_hold_ids(plan, desired_profile)
             if hold_ids and (not (configuration_manifest_path or library_target) or configuration_runner is None):
                 raise FrozenInstallValidationError(
@@ -2040,7 +2056,7 @@ class FrozenInstallCoordinator:
 
         records: Dict[str, InstallResolutionRecord] = (
             {record.addon_id: record for record in active.resolution_records}
-            if active_resume else {}
+            if active_resume else {r.addon_id: r for r in prepared_records}
         )
         rows = {row.addon_id: row for row in plan.summary.addons}
         effective = {policy.addon_id: policy for policy in policies}
@@ -2048,6 +2064,8 @@ class FrozenInstallCoordinator:
             if active_resume:
                 break
             row = rows[node.addon_id]
+            if node.addon_id in records:
+                continue
             if row.exact_artifact_available:
                 records[node.addon_id] = default_exact_record(node)
                 continue
@@ -2092,6 +2110,11 @@ class FrozenInstallCoordinator:
                     recoverability=plan.summary,
                 )
             if choice is ResolutionChoice.INSTALL_CURRENT:
+                if library_target is not None:
+                    return FrozenInstallResult(
+                        "failed", code="PREPARATION_REQUIRED",
+                        message="repository package preparation and a fresh review are required",
+                        recoverability=plan.summary)
                 if not policy.repository_fallback_allowed or not row.repository_known:
                     return FrozenInstallResult(
                         "failed", code="FROZEN_RESOLUTION_NOT_PERMITTED",
@@ -2141,6 +2164,15 @@ class FrozenInstallCoordinator:
             resolved_plan = validate_frozen_install_plan(
                 manifest, self.artifact_store, policies, skipped=tuple(skipped)
             )
+            extra_dependencies = {
+                aid: stored_repository_dependencies(self.artifact_store, record, resolved_plan, records, skipped)
+                for aid, record in records.items()
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT and record.resolved_version
+            }
+            if extra_dependencies:
+                resolved_plan = validate_frozen_install_plan(
+                    manifest, self.artifact_store, policies, skipped=tuple(skipped),
+                    extra_dependencies=extra_dependencies)
             hold_ids = self._activation_hold_ids(resolved_plan, desired_profile)
             if hold_ids and any(
                 record.resolution is InstallResolution.REPOSITORY_CURRENT
@@ -2179,7 +2211,11 @@ class FrozenInstallCoordinator:
 
         try:
             if library_target is not None:
-                library_target.load()
+                boundary_public, boundary_frozen, boundary_loader = library_target.load()
+                if prepared_resolution is not None:
+                    boundary_desired = resolve_manifest(boundary_public, device_profile_id)
+                    bind_prepared(prepared_resolution, library_target.source, device_profile_id,
+                                  boundary_desired, boundary_frozen, boundary_loader, self.artifact_store)
             if active_resume:
                 transaction = active
                 original = transaction.original_update_policy
@@ -2273,11 +2309,12 @@ class FrozenInstallCoordinator:
                         "pre-existing resource owner was disabled; restart Kodi before configuration",
                     )
 
+            plan = resolved_plan
             # Install only the exact repository and its exact required
             # prerequisites before querying a current package from that repo.
             repository_ids = {
                 record.repository_id for record in records.values()
-                if record.resolution is InstallResolution.REPOSITORY_CURRENT
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT and not record.resolved_version
             }
             prelude_ids = self._repository_prerequisites(
                 plan.strict_plan, repository_ids, records, rows
@@ -2339,7 +2376,8 @@ class FrozenInstallCoordinator:
                 if repository is None or not repository.enabled or repository.broken:
                     raise FrozenInstallValidationError("captured repository is not installed and enabled")
             for addon_id, record in tuple(record_map.items()):
-                if record.resolution is not InstallResolution.REPOSITORY_CURRENT:
+                if (record.resolution is not InstallResolution.REPOSITORY_CURRENT
+                        or record.resolved_version):
                     continue
                 package = self.installer.resolve_repository_current(
                     addon_id, record.repository_id
@@ -2371,7 +2409,11 @@ class FrozenInstallCoordinator:
                 )
                 transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
 
-            extra_dependencies = {}
+            extra_dependencies = {
+                aid: stored_repository_dependencies(self.artifact_store, record, plan, record_map, skipped)
+                for aid, record in record_map.items()
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT and record.resolved_version
+            }
             for addon_id, package in packages.items():
                 extra_dependencies[addon_id] = _repository_package_required_dependencies(
                     package, plan, record_map, skipped
