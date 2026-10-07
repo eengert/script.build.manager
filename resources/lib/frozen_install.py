@@ -2160,9 +2160,9 @@ class FrozenInstallCoordinator:
             addon_id for addon_id, record in records.items()
             if record.resolution is InstallResolution.SKIPPED
         )
-        try:
+        def validate_execution_material(checked_manifest, checked_desired, checked_policies):
             resolved_plan = validate_frozen_install_plan(
-                manifest, self.artifact_store, policies, skipped=tuple(skipped)
+                checked_manifest, self.artifact_store, checked_policies, skipped=tuple(skipped)
             )
             extra_dependencies = {
                 aid: stored_repository_dependencies(self.artifact_store, record, resolved_plan, records, skipped)
@@ -2171,9 +2171,9 @@ class FrozenInstallCoordinator:
             }
             if extra_dependencies:
                 resolved_plan = validate_frozen_install_plan(
-                    manifest, self.artifact_store, policies, skipped=tuple(skipped),
+                    checked_manifest, self.artifact_store, checked_policies, skipped=tuple(skipped),
                     extra_dependencies=extra_dependencies)
-            hold_ids = self._activation_hold_ids(resolved_plan, desired_profile)
+            hold_ids = self._activation_hold_ids(resolved_plan, checked_desired)
             if hold_ids and any(
                 record.resolution is InstallResolution.REPOSITORY_CURRENT
                 for record in records.values()
@@ -2181,11 +2181,11 @@ class FrozenInstallCoordinator:
                 raise FrozenInstallValidationError(
                     "pre-activation lifecycle requires exact dependency metadata"
                 )
-            self._check_private_ownership_compatibility(desired_profile, tuple(records.values()))
+            self._check_private_ownership_compatibility(checked_desired, tuple(records.values()))
             if hold_ids:
                 private_overlay_id, private_overlay_fingerprint, private_overlay_required = (
                     self._private_overlay_metadata(
-                        desired_profile, manifest.fingerprint()
+                        checked_desired, checked_manifest.fingerprint()
                     )
                 )
                 if not private_overlay_id or not private_overlay_fingerprint:
@@ -2202,6 +2202,12 @@ class FrozenInstallCoordinator:
                     )
             else:
                 private_overlay_id, private_overlay_fingerprint, private_overlay_required = "", "", False
+            return (resolved_plan, hold_ids, private_overlay_id,
+                    private_overlay_fingerprint, private_overlay_required)
+
+        try:
+            (resolved_plan, hold_ids, private_overlay_id, private_overlay_fingerprint,
+             private_overlay_required) = validate_execution_material(manifest, desired_profile, policies)
         except Exception as exc:
             return FrozenInstallResult(
                 "failed", code=getattr(exc, "code", "FROZEN_RESOLUTION_INVALID"),
@@ -2212,10 +2218,19 @@ class FrozenInstallCoordinator:
         try:
             if library_target is not None:
                 boundary_public, boundary_frozen, boundary_loader = library_target.load()
+                boundary_desired = resolve_manifest(boundary_public, device_profile_id)
                 if prepared_resolution is not None:
-                    boundary_desired = resolve_manifest(boundary_public, device_profile_id)
                     bind_prepared(prepared_resolution, library_target.source, device_profile_id,
                                   boundary_desired, boundary_frozen, boundary_loader, self.artifact_store)
+                boundary_policies = tuple(boundary_desired.frozen_install_policies)
+                if (boundary_frozen.fingerprint() != manifest.fingerprint()
+                        or boundary_desired != desired_profile or boundary_policies != policies):
+                    raise FrozenInstallValidationError("library execution identity changed")
+                boundary_material = validate_execution_material(
+                    boundary_frozen, boundary_desired, boundary_policies)
+                if boundary_material != (resolved_plan, hold_ids, private_overlay_id,
+                                         private_overlay_fingerprint, private_overlay_required):
+                    raise FrozenInstallValidationError("resolved execution material changed")
             if active_resume:
                 transaction = active
                 original = transaction.original_update_policy

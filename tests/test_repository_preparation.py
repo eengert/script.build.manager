@@ -120,6 +120,63 @@ class RepositoryPreparationTests(unittest.TestCase):
                 LibraryInstallTarget.from_plan_target(target), prepared_resolution=target.prepared_resolution,
                 resolution_choices={a: ResolutionChoice(c.value) for a, c in target.choices})
 
+    def test_encoded_dtd_index_fails_closed(self):
+        target = self.target()
+        for encoding in ('utf-8', 'utf-16', 'utf-16le', 'utf-16be'):
+            with self.subTest(encoding=encoding):
+                self.index = ('<!DOCTYPE addons [<!ENTITY version "2.0.0">]>'
+                              f'<addons><addon id="{DEMO}" version="&version;"/></addons>').encode(encoding)
+                result = self.prepare(target)
+                self.assertEqual(result.code, prep.PreparationCode.INDEX_INVALID)
+                self.assertIsNone(result.prepared)
+
+    def test_encoded_ordinary_index_declaration_prepares_exact_identity(self):
+        target = self.target()
+        for encoding in ('utf-8', 'utf-16', 'utf-16le', 'utf-16be'):
+            declaration = 'UTF-16' if encoding.startswith('utf-16') else 'UTF-8'
+            with self.subTest(encoding=encoding):
+                self.index = (f'<?xml version="1.0" encoding="{declaration}"?>'
+                              f'<addons><addon id="{DEMO}" version="2.0.0"/></addons>').encode(encoding)
+                result = self.prepare(target)
+                self.assertEqual(result.code, prep.PreparationCode.READY)
+                record, = result.prepared.records
+                self.assertEqual((record.addon_id, record.resolved_version), (DEMO, '2.0.0'))
+                self.assertEqual(self.store.read_bytes(record.artifact_sha256), self.package)
+
+    def test_final_boundary_artifact_corruption_fails_before_mutation(self):
+        target = self.prepared()
+        h = self.harness()
+        review = self.preview(h, target).review
+        self.assertEqual(self.validate(h, target, review).freshness, ReviewFreshness.CURRENT)
+        dependency = next(n for n in self.nodes if n.addon_id == LATE_DEPENDENCY)
+        for digest in (dependency.artifact.sha256, target.prepared_resolution.records[0].artifact_sha256):
+            with self.subTest(digest=digest):
+                path = self.store.artifact_path(digest)
+                original_bytes = path.read_bytes()
+                original_load = LibraryInstallTarget.load
+                calls = []
+                def load(bound):
+                    value = original_load(bound)
+                    calls.append(bound)
+                    if len(calls) == 3:
+                        path.write_bytes(b'corrupt')
+                    return value
+                with patch.object(LibraryInstallTarget, 'load', load), \
+                     patch.object(self.f.backend, 'install_exact', side_effect=forbidden), \
+                     patch.object(self.f.backend, 'set_addon_enabled', side_effect=forbidden), \
+                     patch.object(self.f.policy, 'set_policy', side_effect=forbidden), \
+                     patch.object(self.f.store, 'create', side_effect=forbidden):
+                    result = self.apply(target)
+                path.write_bytes(original_bytes)
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(result.outcome, 'failed', result)
+                self.assertIsNone(self.f.store.inspect())
+                self.f.assert_no_mutation()
+                self.assertEqual(len(self.downloads), 2)
+        self.package = b'remote changed'
+        self.assertEqual(self.apply(target).outcome, 'complete')
+        self.assertEqual(len(self.downloads), 2)
+
     def test_unprepared_choice_has_no_review(self):
         target = self.target()
         plan = self.preview(self.harness(), target)
@@ -381,6 +438,33 @@ class RepositoryPreparationTests(unittest.TestCase):
 
 
 class CapturedRepositoryMetadataTests(unittest.TestCase):
+    def test_parser_rejects_encoded_dtd_and_accepts_ordinary_declarations(self):
+        for encoding in ('utf-8', 'utf-16', 'utf-16le', 'utf-16be', 'iso-8859-1'):
+            declaration = 'UTF-16' if encoding.startswith('utf-16') else encoding
+            prefix = f'<?xml version="1.0" encoding="{declaration}"?>'
+            with self.subTest(encoding=encoding):
+                normal = (prefix + '<addons><addon version="2.0.0"/></addons>').encode(encoding)
+                self.assertEqual(prep._xml(normal).find('addon').get('version'), '2.0.0')
+                for subset in ('', '[<!ENTITY value "ENTITY_SENTINEL">]'):
+                    hostile = (prefix + '<!DOCTYPE addons ' + subset +
+                               '><addons>&value;</addons>').encode(encoding)
+                    with self.assertRaises(ValueError): prep._xml(hostile)
+        # ElementTree does not support UTF-32 here; it must still fail closed.
+        for encoding in ('utf-32', 'utf-32le', 'utf-32be'):
+            with self.assertRaises(Exception):
+                prep._xml('<!DOCTYPE addons [<!ENTITY x "sentinel">]><addons>&x;</addons>'.encode(encoding))
+
+    def test_encoded_captured_repository_dtd_never_supplies_url_or_package(self):
+        original = _zip(REPOSITORY, '1.0.0', repository=True)
+        for encoding in ('utf-8', 'utf-16', 'utf-16le', 'utf-16be'):
+            def change(xml):
+                text = xml.decode().replace(INDEX_URL, '&url;')
+                return ('<!DOCTYPE addon [<!ENTITY url "' + INDEX_URL + '">]>' + text).encode(encoding)
+            with self.subTest(encoding=encoding), self.assertRaises(prep.PreparationError) as error:
+                prep._fetch_package(rewrite_xml(original, change), REPOSITORY, DEMO, forbidden)
+            self.assertEqual(error.exception.code, prep.PreparationCode.METADATA_UNSUPPORTED)
+            self.assertNotIn(INDEX_URL, str(error.exception))
+
     def test_unsafe_and_unsupported_metadata_does_not_download(self):
         original = _zip(REPOSITORY, '1.0.0', repository=True)
         for changed in [

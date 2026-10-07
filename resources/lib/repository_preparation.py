@@ -161,10 +161,15 @@ def bind_prepared(prepared, source, profile, desired, frozen, loader, store):
         raise PreparationError(PreparationCode.TARGET_INVALID) from exc
 
 
+class _NoDTDTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name, pubid, system):
+        # The parser decodes the declaration before this callback and invokes
+        # it before processing the internal subset or expanding any entities.
+        raise ValueError("DTD declarations are unsupported")
+
+
 def _xml(data):
-    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
-        raise ValueError
-    return ET.fromstring(data)
+    return ET.fromstring(data, parser=ET.XMLParser(target=_NoDTDTreeBuilder()))
 
 
 def _fetch_package(repository_data, repository_id, addon_id, download):
