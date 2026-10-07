@@ -502,7 +502,7 @@ class ProductionAddonNameResolver(unittest.TestCase):
         self.assertFalse(installed[addon_id]["enabled"])
         self.assertEqual(requests, [{
             "jsonrpc": "2.0", "method": "Addons.GetAddonDetails",
-            "params": {"addonid": addon_id, "properties": ["addonid", "name"]},
+            "params": {"addonid": addon_id, "properties": ["name"]},
             "id": 1,
         }])
 
@@ -536,8 +536,10 @@ class ProductionAddonNameResolver(unittest.TestCase):
         resolver = default_status_owners().name_resolver
         cases = (
             (None, ""),
+            ({"error": {"code": -32602}}, ""),
             ({"result": {"addon": {"addonid": "plugin.video.demo"}}}, ""),
             ({"result": {"addon": {"addonid": "plugin.video.other", "name": "Other"}}}, ""),
+            ({"result": {"addon": []}}, ""),
             ({"result": {"addon": {"addonid": "plugin.video.demo", "name": 17}}}, ""),
         )
         for response, expected in cases:

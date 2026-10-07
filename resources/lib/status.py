@@ -835,7 +835,7 @@ def _resolve_installed_addon_name(addon_id: str) -> str:
         request = json.dumps({
             "jsonrpc": "2.0",
             "method": "Addons.GetAddonDetails",
-            "params": {"addonid": addon_id, "properties": ["addonid", "name"]},
+            "params": {"addonid": addon_id, "properties": ["name"]},
             "id": 1,
         })
         response = json.loads(xbmc.executeJSONRPC(request))

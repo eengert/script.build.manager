@@ -139,6 +139,8 @@ class ReviewPage(ReviewBase):
         self.assertIn("Enable Eengert Repository", body)
         self.assertNotIn("Enable repository.eengert", body)
         self.assertIn(addon_id, {request["params"]["addonid"] for request in requests})
+        self.assertTrue(all(request["params"]["properties"] == ["name"]
+                            for request in requests))
 
         fallback_row = next(row for row in fallback_plan.software if row.addon_id == addon_id)
         self.assertEqual((fallback_row.display_name, fallback_row.label), ("", addon_id))
