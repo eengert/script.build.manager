@@ -33,20 +33,24 @@ Update / Repair remains unavailable.
 
 A successful library Install records the exact entry/profile and completed
 resolution fingerprint through the existing frozen lifecycle owner. After final
-validation, it persists resolution evidence, restores the updater and writes a
-bounded Build Library `applied-publication.json` intent. It then clears the exact
-COMPLETE frozen transaction, publishes schema-2 `applied.json`, verifies its bytes
-and acknowledges the intent. While intent remains, the prior verified association
-(or none) stays authoritative even after candidate bytes have been replaced.
+validation, it persists resolution evidence, restores the updater and creates a
+bounded PENDING journal from the exact still-live durable COMPLETE transaction.
+It then clears that transaction, publishes schema-2 `applied.json`, verifies its
+bytes, and atomically advances the journal to ACKNOWLEDGED. Success requires the
+ACK file and directory durability barriers. Readback after failed fsync cannot
+prove completion. PENDING masks candidate bytes with the previous verified
+association (or none); ACKNOWLEDGED exposes the exact candidate and is nonblocking.
 
-Publication failures retain the intent, or the exact COMPLETE transaction when
-intent creation failed before replacement. The existing frozen startup/resume
-owner retries identity publication without software/configuration mutation or
-current selection. Remaining transaction identity and exact resolution binding
-must match. Unresolved or invalid intent blocks Install and appears as attention
-in startup, Status and Plan. Filesystem post-replacement/unlink ambiguity is
-reconciled against actual state; successful acknowledgement does not leave false
-attention with no durable identity.
+Failures retain PENDING, visible ambiguous ACK, or the exact COMPLETE transaction
+when initial creation failed. The existing frozen startup/resume owner revalidates
+and re-fsyncs evidence without software/configuration mutation or current selection.
+Recovery of an observed journal never recreates it if another owner consumed it.
+An already completed candidate resolves idempotently; superseded recovery is a
+successful no-op, leaving newer authority untouched. Another pending identity
+conflicts without mutation. Retained terminal journals do not intercept another
+active/restart owner. Optional cleanup follows positively durable ACK and is never
+the success proof; cleanup ambiguity or reappearing ACK cannot reverse authority.
+Invalid or unresolved pending evidence remains attention and blocks Install.
 
 Accepted Skip and Repository Current choices remain attached to associated
 Status/Plan through the exact completed resolution manifest. `awaiting_restart`,

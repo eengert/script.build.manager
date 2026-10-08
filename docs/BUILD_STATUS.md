@@ -82,7 +82,11 @@ Accepted Skip remains current/no changes; Repository Current compares against th
 accepted resolved version. Missing/corrupt/unbindable resolution makes the target
 unavailable rather than dropping the resolution. Pending publication exposes the
 previous verified association and operation attention, even after candidate bytes
-replace `applied.json`; invalid intent also reports attention. A merely selected
+replace `applied.json`. ACKNOWLEDGED journals expose the exact candidate, must
+agree with `applied.json`, and are terminal/nonblocking. Malformed or contradictory
+journals report attention. Inspection remains creation-free and never fsyncs,
+acknowledges or cleans terminal evidence. Stale superseded recovery leaves the
+newer completed authority unchanged. A merely selected
 build cannot redirect publication recovery or its completed resolution.
 
 Stored resolutions must also match `frozen_resolution.install_plan_fingerprint()`

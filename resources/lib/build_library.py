@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager, ExitStack
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -204,22 +204,31 @@ class AppliedPublication:
     transaction_id: str
     candidate: AppliedBuildAssociation
     previous: AppliedBuildAssociation | None
+    state: str = "pending"
+
+    def same_identity(self, other):
+        return (isinstance(other, AppliedPublication)
+                and replace(self, state="pending") == replace(other, state="pending"))
 
     def to_dict(self):
-        return {"schema_version": 1, "transaction_id": self.transaction_id,
-                "candidate": self.candidate.to_dict(),
+        return {"schema_version": 2, "transaction_id": self.transaction_id,
+                "candidate": self.candidate.to_dict(), "state": self.state,
                 "previous": self.previous.to_dict() if self.previous else None}
 
     @classmethod
     def from_dict(cls, raw):
         if (not isinstance(raw, dict)
-                or set(raw) != {"schema_version", "transaction_id", "candidate", "previous"}
-                or type(raw["schema_version"]) is not int or raw["schema_version"] != 1
+                or type(raw.get("schema_version")) is not int
+                or raw["schema_version"] not in (1, 2)
+                or set(raw) != ({"schema_version", "transaction_id", "candidate", "previous"}
+                               | ({"state"} if raw["schema_version"] == 2 else set()))
+                or raw.get("state", "pending") not in ("pending", "acknowledged")
                 or not isinstance(raw["transaction_id"], str)
                 or str(uuid.UUID(raw["transaction_id"])) != raw["transaction_id"]):
             raise _error()
         return cls(raw["transaction_id"], AppliedBuildAssociation.from_dict(raw["candidate"]),
-                   None if raw["previous"] is None else AppliedBuildAssociation.from_dict(raw["previous"]))
+                   None if raw["previous"] is None else AppliedBuildAssociation.from_dict(raw["previous"]),
+                   raw.get("state", "pending"))
 
 
 class _OwnedPackages(ConfigPackageLoader):
@@ -624,12 +633,29 @@ class BuildLibrary:
         except Exception:
             return None
 
-    def pending_publication(self) -> AppliedPublication | None:
-        """Creation-free inspection. Malformed/unsafe intent is never idle."""
+    def publication_journal(self) -> AppliedPublication | None:
+        """Creation-free journal observation, including terminal evidence."""
         try:
             with _directory(self.root) as fd:
                 return self._publication_at(fd)
         except FileNotFoundError:
+            return None
+        except Exception:
+            raise _error() from None
+
+    def pending_publication(self) -> AppliedPublication | None:
+        """Only PENDING blocks Install; contradictory terminal state fails closed."""
+        journal = self.publication_journal()
+        if journal is None or journal.state == "pending":
+            return journal
+        try:
+            with _directory(self.root) as fd:
+                current = self._publication_at(fd)
+                if current is None or current.state == "pending":
+                    return current
+                if self._applied_at(fd) != current.candidate:
+                    raise _error()
+            self._resolution(current.candidate)
             return None
         except Exception:
             raise _error() from None
@@ -654,87 +680,176 @@ class BuildLibrary:
                          policies=desired.frozen_install_policies)
         return resolution
 
+    @staticmethod
+    def _applied_at(fd):
+        data = _read_at(fd, "applied.json", STATE_LIMIT)
+        return None if data is None else AppliedBuildAssociation.from_dict(_json(data))
+
     def current_applied_association(self, *, resolution_store=None) -> AppliedBuildAssociation | None:
-        """Pending intent masks even an already replaced candidate record."""
+        """PENDING masks candidate; ACKNOWLEDGED remains terminal across restart."""
         try:
             with _directory(self.root) as fd:
-                pending = self._publication_at(fd)
-                if pending is not None:
-                    applied = pending.previous
+                journal = self._publication_at(fd)
+                if journal is not None and journal.state == "pending":
+                    applied = journal.previous
                 else:
-                    data = _read_at(fd, "applied.json", STATE_LIMIT)
-                    applied = None if data is None else AppliedBuildAssociation.from_dict(_json(data))
-                    # A writer can persist an intent between our first intent
-                    # read and the applied read. Never expose its candidate.
-                    pending = self._publication_at(fd)
-                    if pending is not None:
-                        applied = pending.previous
+                    applied = self._applied_at(fd)
+                    # Recheck publication authority if it changed during the
+                    # applied read; inspection never acknowledges or cleans it.
+                    journal = self._publication_at(fd)
+                    if journal is not None:
+                        if journal.state == "pending":
+                            applied = journal.previous
+                        elif applied != journal.candidate:
+                            raise _error()
             if applied is not None:
                 self._resolution(applied, resolution_store)
             return applied
         except Exception:
             return None
 
-    @_safe_publication_write
-    def _prepare_applied_publication(self, target, fingerprint, transaction_id, *, resolution_store):
-        """Persist bounded completion identity before frozen ownership is cleared."""
-        if not isinstance(target, LibraryInstallTarget) or target.source.root != self.root:
-            raise _error()
-        _authenticate_install_root(self.root)
+    def _completed_publication_identity(self, transaction, store):
+        from resources.lib.frozen_install import FrozenInstallTransaction, FrozenInstallPhase
+        if (not isinstance(transaction, FrozenInstallTransaction)
+                or transaction.phase is not FrozenInstallPhase.COMPLETE
+                or transaction.library_target is None
+                or transaction.library_target.source.root != self.root
+                or store.read_snapshot(store.root) != transaction):
+            raise LibraryConflict("completed_publication_owner_changed")
         candidate = AppliedBuildAssociation.from_dict({
-            "schema_version": 2, "entry_id": target.source.entry_id,
-            "device_profile_id": target.device_profile_id, "resolution_fingerprint": fingerprint})
-        self._resolution(candidate, resolution_store)
-        with self._writer() as fd:
-            pending = self._publication_at(fd)
-            if pending is not None:
-                if pending.transaction_id != transaction_id or pending.candidate != candidate:
-                    raise LibraryConflict("applied_publication_pending")
-                os.fsync(fd)
-                return pending
-            previous = self.current_applied_association(resolution_store=resolution_store)
-            pending = AppliedPublication.from_dict(AppliedPublication(transaction_id, candidate, previous).to_dict())
-            _atomic(fd, "applied-publication.json", _encode(pending.to_dict()))
-            return pending
+            "schema_version": 2, "entry_id": transaction.library_target.source.entry_id,
+            "device_profile_id": transaction.device_profile_id,
+            "resolution_fingerprint": transaction.resolution_fingerprint})
+        resolution = self._resolution(candidate, store)
+        if (transaction.build_id != resolution.build_id
+                or transaction.manifest_fingerprint != resolution.source_software_fingerprint
+                or transaction.install_plan_fingerprint != resolution.install_plan_fingerprint
+                or transaction.resolved_software_fingerprint != resolution.resulting_software_fingerprint
+                or tuple(sorted(transaction.resolution_records, key=lambda r: r.addon_id)) != resolution.records):
+            raise LibraryConflict("completed_publication_identity_changed")
+        return candidate
 
     @_safe_publication_write
-    def _record_applied_completion(self, pending, *, resolution_store):
-        """Publish idempotently, then acknowledge. Never take a frozen lock here."""
+    def _create_applied_publication(self, transaction, *, resolution_store):
+        """Creation authority is the exact live durable COMPLETE owner only.
+
+        Frozen read_snapshot is lock-free. Check it before, inside and after
+        publication under the library writer lock; never nest persistence locks.
+        Recovery of an observed journal must use _validate_applied_publication.
+        """
         _authenticate_install_root(self.root)
-        self._resolution(pending.candidate, resolution_store)
+        candidate = self._completed_publication_identity(transaction, resolution_store)
         with self._writer() as fd:
+            candidate = self._completed_publication_identity(transaction, resolution_store)
             current = self._publication_at(fd)
-            if current is None and _read_at(fd, "applied.json", STATE_LIMIT) == _encode(pending.candidate.to_dict()):
+            if current is not None and current.state == "pending":
+                if current.transaction_id != transaction.transaction_id or current.candidate != candidate:
+                    raise LibraryConflict("applied_publication_pending")
                 os.fsync(fd)
-                return
-            if current != pending:
-                raise LibraryConflict("applied_publication_changed")
-            # Revalidate library content inside its own writer lock. Resolution
-            # reads take no persistence lock; no frozen/library lock nesting.
-            self._resolution(pending.candidate, resolution_store)
-            data = _encode(pending.candidate.to_dict())
+                return current
+            if current is not None:
+                if self._applied_at(fd) != current.candidate:
+                    raise _error()
+                self._resolution(current.candidate, resolution_store)
+                os.fsync(fd)  # confirm preceding terminal state before advancing
+                if current.transaction_id == transaction.transaction_id:
+                    if current.candidate != candidate:
+                        raise _error()
+                    return current
+            previous = self.current_applied_association(resolution_store=resolution_store)
+            journal = AppliedPublication.from_dict(AppliedPublication(
+                transaction.transaction_id, candidate, previous).to_dict())
+            # A final lock-free owner check covers work done loading the prior
+            # association. Other publication owners require this writer lock to
+            # validate an intent before clearing its frozen transaction.
+            self._completed_publication_identity(transaction, resolution_store)
+            _atomic(fd, "applied-publication.json", _encode(journal.to_dict()))
+            if resolution_store.read_snapshot(resolution_store.root) != transaction:
+                # Only this newly created, unacknowledged record is withdrawn;
+                # preserve the preceding terminal journal if one existed.
+                if current is None:
+                    os.unlink("applied-publication.json", dir_fd=fd)
+                    os.fsync(fd)
+                else:
+                    _atomic(fd, "applied-publication.json", _encode(current.to_dict()))
+                raise LibraryConflict("completed_publication_owner_changed")
+            return journal
+
+    def _publication_authority_at(self, fd, observed, resolution_store):
+        current = self._publication_at(fd)
+        if current is not None and current.same_identity(observed):
+            self._resolution(current.candidate, resolution_store)
+            if current.state == "acknowledged" and self._applied_at(fd) != current.candidate:
+                raise _error()
+            os.fsync(fd)  # positive barrier for a visible, previously ambiguous write
+            return "current", current
+        if current is not None and current.state == "pending":
+            raise LibraryConflict("applied_publication_changed")
+        applied = self._applied_at(fd)
+        if applied is None or (current is not None and applied != current.candidate):
+            raise _error()
+        self._resolution(applied, resolution_store)
+        if applied == observed.candidate:
+            os.fsync(fd)
+            return "complete", None
+        # A newer completed authority supersedes this observed publication.
+        # In particular, never recreate an absent old intent or touch applied.
+        return "superseded", None
+
+    @_safe_publication_write
+    def _validate_applied_publication(self, observed, *, resolution_store):
+        """Validate/re-fsync existing authority only. Never create or replace it."""
+        _authenticate_install_root(self.root)
+        with self._writer() as fd:
+            return self._publication_authority_at(fd, observed, resolution_store)
+
+    @_safe_publication_write
+    def _record_applied_completion(self, observed, *, resolution_store):
+        """Serialized exact publication, with a positive terminal ACK barrier."""
+        _authenticate_install_root(self.root)
+        with self._writer() as fd:
+            disposition, current = self._publication_authority_at(fd, observed, resolution_store)
+            if disposition != "current":
+                return disposition
+            if current.state == "acknowledged":
+                return "complete"  # validation above positively re-fsynced ACK
+            data = _encode(current.candidate.to_dict())
             if _read_at(fd, "applied.json", STATE_LIMIT) != data:
                 _atomic(fd, "applied.json", data)
             os.fsync(fd)
-            self._resolution(pending.candidate, resolution_store)
+            self._resolution(current.candidate, resolution_store)
             if _read_at(fd, "applied.json", STATE_LIMIT) != data:
                 raise _error()
-            try:
-                self._acknowledge_publication(fd)
-            except Exception:
-                # unlink may have completed before directory fsync raised.
-                # With no intent and exact committed bytes, publication is done.
-                if (self._publication_at(fd) is not None
-                        or _read_at(fd, "applied.json", STATE_LIMIT) != data):
-                    raise
-            if (_read_at(fd, "applied.json", STATE_LIMIT) != data
-                    or self._publication_at(fd) is not None):
-                raise _error()
+            # Never suppress a failed ACK durability barrier using readback.
+            # Visible ACK after an ambiguous failure is revalidated/re-fsynced
+            # by recovery before complete may be returned.
+            self._acknowledge_publication(fd, current)
+            return "complete"
 
     @staticmethod
-    def _acknowledge_publication(fd):
-        os.unlink("applied-publication.json", dir_fd=fd)
-        os.fsync(fd)
+    def _acknowledge_publication(fd, journal):
+        acknowledged = replace(journal, state="acknowledged")
+        _atomic(fd, "applied-publication.json", _encode(acknowledged.to_dict()))
+
+    @_safe_publication_write
+    def _cleanup_acknowledged_publication(self, observed, *, resolution_store):
+        """Optional terminal GC; removal is never the proof of completion."""
+        _authenticate_install_root(self.root)
+        with self._writer() as fd:
+            current = self._publication_at(fd)
+            if current is None or not current.same_identity(observed):
+                return False
+            if current.state != "acknowledged":
+                raise LibraryConflict("applied_publication_not_acknowledged")
+            self._publication_authority_at(fd, current, resolution_store)
+            # ACK was positively durable before unlink. A reappearing ACK after
+            # cleanup ambiguity remains terminal and cannot expose previous.
+            try:
+                os.unlink("applied-publication.json", dir_fd=fd)
+                os.fsync(fd)
+            except OSError:
+                return False
+            return True
 
     def associated_status_target(self, *, resolution_store=None):
         from resources.lib.status import StatusTarget

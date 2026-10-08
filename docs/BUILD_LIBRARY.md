@@ -173,40 +173,59 @@ creation-free and use no-follow traversal for association and resolution evidenc
 
 ## Durable completion publication
 
-The existing frozen completion owner persists the completed resolution, restores
-the updater, then atomically writes `applied-publication.json` before clearing the
-COMPLETE frozen transaction. Strict directory durability barriers cover the
-resolution directory, frozen root and surviving intent before lifecycle cleanup.
-The intent has schema 1 and exactly these fields:
-`schema_version`, `transaction_id` (UUID), `candidate` (schema-2 association), and
-`previous` (previous verified schema-2 association or null). It carries no paths,
-URLs, private values, raw resolution records, messages or backend payloads.
+The existing frozen completion owner persists the exact completed resolution and
+restores the updater before creating a publication. `_create_applied_publication()`
+requires the exact still-live durable COMPLETE transaction, including its typed
+library target and source/plan/resolution/result identities. Lock-free frozen
+snapshots are checked before, inside and after creation under the existing bounded
+library writer lock. A changed owner rejects creation; a post-write change withdraws
+only the new pending record and preserves preceding terminal evidence. Frozen and
+library persistence locks are never held together.
 
-While intent exists, readers expose its previous verified association, or `None`,
-even if `applied.json` already contains candidate bytes. A second intent read
-covers a publisher starting between the initial intent read and applied read.
+The bounded `applied-publication.json` journal has schema 2 and exactly these fields:
+`schema_version`, `transaction_id` (UUID), `candidate` (schema-2 association),
+`previous` (verified schema-2 association or null), and `state` (`pending` or
+`acknowledged`). Existing schema-1 publication journals are explicitly PENDING.
+The journal carries no paths, URLs, private values, raw resolution records,
+messages or backend payloads. Applied association schema 2 is unchanged.
+
+PENDING masks candidate bytes with the previous verified association, or `None`.
 The owner authenticates the original library target and binds the exact resolution;
-any remaining frozen transaction must match the intent's transaction UUID, target,
-COMPLETE phase, source/plan/resolution/result fingerprints and semantic records.
-Only then is frozen ownership cleared. The candidate is atomically published and
-read back, with directory fsync, before intent acknowledgement (unlink and fsync).
-No frozen and library persistence locks are held together.
+any remaining frozen transaction must match the journal's UUID, target, COMPLETE
+phase, fingerprints and semantic records before lifecycle cleanup. Strict directory
+barriers cover frozen storage and the existing journal. The owner then atomically
+publishes and verifies `applied.json`, and atomically advances the journal to
+ACKNOWLEDGED (file fsync, replace, directory fsync). Only a successful positive ACK
+barrier permits `complete`. Failed fsync is never suppressed by visible readback.
 
-`run_frozen_install_startup()` and frozen resume retry this same publication
-operation before runtime-owner construction. They do not reinstall software,
-reapply configuration, choose a build or consult current selection. An intent
-write failing before replacement leaves the exact COMPLETE transaction; startup
-can recreate intent after reading back the original updater policy and loading
-the already persisted resolution. Missing or changed evidence keeps attention
-and durable identity. Pending/malformed intent blocks Install and surfaces as
-non-idle attention in startup and Status (therefore Plan).
+ACKNOWLEDGED exposes the exact candidate, must agree with `applied.json`, and does
+not block Install. Normal completion retains one bounded terminal journal; a later
+live COMPLETE owner may replace it with the next PENDING journal. Optional terminal
+cleanup first positively re-fsyncs ACK; unlink failure or unlink-fsync ambiguity
+cannot reverse authority. Reappearing ACK after crash is harmless terminal evidence.
+Readers validate but never write, acknowledge, clean, create directories or locks.
+Malformed or contradictory journals fail closed, without selection fallback.
 
-Crashes with intent + transaction, intent alone, or intent + replaced applied
-bytes all recover idempotently. Post-replacement errors leave intent masking the
-candidate until retry. If frozen clear raises after unlink, the owner reconciles
-actual state. If acknowledgement raises after unlink but exact applied bytes are
-present, it reports completion rather than dangling attention with no identity.
-An already acknowledged exact candidate is also idempotent for a stale owner.
+Recovery uses `_validate_applied_publication()` for its exact observed identity.
+This operation can revalidate/re-fsync existing evidence, but never creates or
+replaces a missing journal. If another owner completed the same candidate, recovery
+is idempotently complete; if a different completed association superseded it,
+recovery returns a successful `superseded` no-op. Another PENDING identity conflicts
+without changing it. These decisions are serialized again before applied publication,
+so stale B recovery cannot recreate B after a later C Install. No timestamp ordering
+or resolution lookup fallback supplies authority.
+
+`run_frozen_install_startup()` and frozen resume recover before runtime-owner
+construction, without software/configuration mutation or consulting selection.
+Only a still-live exact COMPLETE transaction can supply initial creation when no
+pending intent was established. Retained ACK does not intercept a different active
+or restart transaction. Pending/invalid state stays non-idle and blocks Install.
+
+Crashes before or after PENDING replacement, frozen cleanup, applied replacement,
+and ACK transition remain recoverable. Visible ACK after a failed directory barrier
+requires a fresh positive re-fsync before recovery reports complete. Restored PENDING
+continues masking the candidate until recovery acknowledges it; restored ACK stays
+terminal. Failed terminal cleanup does not affect a previously proven completion.
 
 Selection, registration, capture, noncomplete outcomes and legacy path installs
 never establish an association. Schema-4 restart target ownership is unchanged;

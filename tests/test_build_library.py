@@ -101,8 +101,26 @@ class LibraryTests(unittest.TestCase):
         with lib.isolated_library_install_authority(self.library):
             target.load()
             store, resolution = self.completed_resolution(entry, profile)
-            pending = self.library._prepare_applied_publication(
-                target, resolution.resolution_fingerprint, str(uuid.uuid4()), resolution_store=store)
+            from resources.lib.frozen_install import FrozenInstallTransaction, FrozenInstallPhase
+            from resources.lib.update_guard import AddonUpdatePolicy
+            desired = resolve_manifest(target.load()[0], profile)
+            transaction = FrozenInstallTransaction(
+                transaction_id=str(uuid.uuid4()), build_id=resolution.build_id,
+                manifest_path="", device_profile_id=profile,
+                manifest_fingerprint=resolution.source_software_fingerprint,
+                phase=FrozenInstallPhase.COMPLETE,
+                originating_kodi_session_id=str(uuid.uuid4()),
+                original_update_policy=AddonUpdatePolicy.NOTIFY_ONLY,
+                created_at="2026-10-08T00:00:00+00:00", updated_at="2026-10-08T00:00:00+00:00",
+                install_plan_fingerprint=resolution.install_plan_fingerprint,
+                policies=desired.frozen_install_policies, resolution_records=resolution.records,
+                resolution_fingerprint=resolution.resolution_fingerprint,
+                resolved_software_fingerprint=resolution.resulting_software_fingerprint,
+                library_target=target)
+            store.create(transaction)
+            pending = self.library._create_applied_publication(transaction, resolution_store=store)
+            store.clear_expected(transaction_id=transaction.transaction_id,
+                                 expected_phase=FrozenInstallPhase.COMPLETE)
             self.library._record_applied_completion(pending, resolution_store=store)
         return self.library.current_applied_association()
 
@@ -183,7 +201,11 @@ class LibraryTests(unittest.TestCase):
     def test_applied_atomic_replace_failure_retains_prior_and_removes_stage(self):
         entry = self.register(); self.record_applied(entry)
         before = (self.root / "applied.json").read_bytes()
-        with patch.object(lib.os, "replace", side_effect=OSError("replace failed")):
+        original = lib.os.replace
+        def fail_applied(source, destination, **kwargs):
+            if destination == "applied.json": raise OSError("replace failed")
+            return original(source, destination, **kwargs)
+        with patch.object(lib.os, "replace", side_effect=fail_applied):
             with self.assertRaises(LibraryError): self.record_applied(entry, "other")
         self.assertEqual((self.root / "applied.json").read_bytes(), before)
         self.assertEqual(list(self.root.glob(".stage-*")), [])
