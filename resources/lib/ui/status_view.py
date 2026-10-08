@@ -24,6 +24,16 @@ S_SKIN_BUILD, S_SKIN_ACTIVE, S_SKIN_NONE = 32500, 32501, 32502
 S_CFG_TOTAL, S_CFG_DIFFERING, S_CFG_UNREADABLE, S_CFG_NONE = 32510, 32511, 32512, 32513
 S_PRIVATE_LINE, S_PRIVATE_NONE = 32525, 32526           # "• %s: %s"
 S_PROTECTION, S_CHECKED_AT = 32534, 32540
+# Applied and saved-selection context (32550-32561). Existing identifiers never change.
+S_APPLIED_LABEL, S_SELECTED_LABEL = 32550, 32551         # "Applied build" / "Selected build"
+S_BUILD_NAME = 32552                                     # "%s": "<name> <version>"
+S_NOT_APPLIED_STATE, S_NO_BUILD_APPLIED = 32553, 32554   # "None applied yet" / sentence
+S_BUILD_UNREADABLE = 32555                               # "Could not be read"
+S_APPLIED_UNREADABLE = 32556
+S_DEVICE_PROFILE = 32557                                 # "Device profile: %s"
+S_CHECKS_FOR_APPLIED = 32558
+S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE = 32559, 32560
+S_SELECTED_UNREADABLE = 32561
 
 OVERALL_LABEL = {
     OverallStatus.CURRENT: 32430, OverallStatus.CHANGES_NEEDED: 32431,
@@ -78,7 +88,10 @@ STATUS_TEXT_IDS = frozenset(
      S_ADDONS_PLURAL, S_ADDONS_ONE, S_BULLET_ADDONS_PLURAL, S_BULLET_ADDONS_ONE, S_MORE_ITEMS,
      S_ITEM_LINE, S_ALL_ADDONS_MATCH, S_ADDONS_NOT_USED, S_SKIN_BUILD, S_SKIN_ACTIVE,
      S_SKIN_NONE, S_CFG_TOTAL, S_CFG_DIFFERING, S_CFG_UNREADABLE, S_CFG_NONE, S_PRIVATE_LINE,
-     S_PRIVATE_NONE, S_PROTECTION, S_CHECKED_AT, 32103, 32112]
+     S_PRIVATE_NONE, S_PROTECTION, S_CHECKED_AT, 32103, 32112,
+     S_APPLIED_LABEL, S_SELECTED_LABEL, S_BUILD_NAME, S_NOT_APPLIED_STATE, S_NO_BUILD_APPLIED,
+     S_BUILD_UNREADABLE, S_APPLIED_UNREADABLE, S_DEVICE_PROFILE, S_CHECKS_FOR_APPLIED,
+     S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE, S_SELECTED_UNREADABLE]
     + list(OVERALL_LABEL.values()) + list(OVERALL_SENTENCE.values())
     + list(AREA_STATE.values()) + list(GAP_TEXT.values()) + list(ITEM_STATE.values())
     + list(PRIVATE_KIND.values()) + list(OPERATION_TEXT.values())
@@ -147,10 +160,48 @@ class StatusViewModel:
             raise ValueError('unsupported status')
         overall = StatusRow(Text(S_OVERALL), Text(OVERALL_LABEL[status.overall]),
                             _overall_detail(status))
-        return cls(status.overall, OVERALL_SEMANTIC[status.overall],
-                   (overall, _addons_row(status), _skin_row(status),
-                    _settings_row(status), _private_row(status)),
+        rows = (overall,)
+        if status.presentation is not None:
+            rows += _build_rows(status.presentation)
+        rows += (_addons_row(status), _skin_row(status),
+                 _settings_row(status), _private_row(status))
+        return cls(status.overall, OVERALL_SEMANTIC[status.overall], rows,
                    status.checked_time_label())
+
+
+def _name_and_version(build):
+    return build.name + ' ' + build.version
+
+
+def _build_rows(presentation):
+    """Applied build first, then the saved selection only when it is not the applied build.
+
+    The applied row is the only one whose health the page reports. The selected
+    row always says it is not applied.
+    """
+    rows = []
+    if presentation.applied is not None:
+        detail = [Text(S_DEVICE_PROFILE, name=presentation.applied.profile)] if presentation.applied.profile else []
+        detail.append(Text(S_CHECKS_FOR_APPLIED))
+        rows.append(StatusRow(Text(S_APPLIED_LABEL),
+                              Text(S_BUILD_NAME, name=_name_and_version(presentation.applied)),
+                              tuple(detail)))
+    elif presentation.applied_unreadable:
+        rows.append(StatusRow(Text(S_APPLIED_LABEL), Text(S_BUILD_UNREADABLE),
+                              (Text(S_APPLIED_UNREADABLE),)))
+    else:
+        rows.append(StatusRow(Text(S_APPLIED_LABEL), Text(S_NOT_APPLIED_STATE),
+                              (Text(S_NO_BUILD_APPLIED),)))
+    if presentation.selected is not None:
+        detail = [Text(S_BUILD_NAME, name=_name_and_version(presentation.selected))]
+        if presentation.selected.profile:
+            detail.append(Text(S_DEVICE_PROFILE, name=presentation.selected.profile))
+        detail.append(Text(S_SELECTED_NOTE))
+        rows.append(StatusRow(Text(S_SELECTED_LABEL), Text(S_SELECTED_NOT_APPLIED), tuple(detail)))
+    elif presentation.selection_unreadable:
+        rows.append(StatusRow(Text(S_SELECTED_LABEL), Text(S_BUILD_UNREADABLE),
+                              (Text(S_SELECTED_UNREADABLE),)))
+    return tuple(rows)
 
 
 def _drift_count(status):

@@ -246,9 +246,68 @@ class OperationStatus:
                  "operation kind and code disagree")
 
 
+def _is_label(value: object, limit: int) -> bool:
+    # Path separators are refused so a label can never read as a filesystem path.
+    return (isinstance(value, str) and 0 < len(value) <= limit
+            and value == value.strip() and is_plain_name(value)
+            and "/" not in value and "\\" not in value)
+
+
+@dataclass(frozen=True)
+class BuildIdentity:
+    """Presentation-only label of one library build: friendly name, version, profile.
+
+    Never a status or plan target and never a comparison input. It carries no
+    entry identifier, path, fingerprint, transaction or private value.
+    """
+
+    name: str
+    version: str
+    profile: str = ""
+
+    def __post_init__(self) -> None:
+        _require(_is_label(self.name, 64), "unsupported build name")
+        _require(_is_label(self.version, 32), "unsupported build version")
+        _require(self.profile == "" or _is_label(self.profile, 64),
+                 "unsupported device profile label")
+
+
+@dataclass(frozen=True)
+class BuildPresentation:
+    """Applied and saved-selection context shown beside Build Status.
+
+    ``applied`` is the verified applied association, the only build whose health
+    is checked. ``selected`` is the saved user selection, present only when it
+    differs from the applied build. It is informational and is never described as
+    applied, current or healthy. ``*_unreadable`` mean "exists but cannot be shown
+    safely"; no reason or internal detail is kept.
+    """
+
+    applied: Optional[BuildIdentity] = None
+    applied_unreadable: bool = False
+    selected: Optional[BuildIdentity] = None
+    selection_unreadable: bool = False
+
+    def __post_init__(self) -> None:
+        _require(self.applied is None or isinstance(self.applied, BuildIdentity),
+                 "unsupported applied build identity")
+        _require(self.selected is None or isinstance(self.selected, BuildIdentity),
+                 "unsupported selected build identity")
+        _require(type(self.applied_unreadable) is bool and type(self.selection_unreadable) is bool,
+                 "unsupported build presentation flag")
+        _require(not (self.applied is not None and self.applied_unreadable),
+                 "applied build cannot be both shown and unreadable")
+        _require(not (self.selected is not None and self.selection_unreadable),
+                 "selected build cannot be both shown and unreadable")
+
+
 @dataclass(frozen=True)
 class BuildStatus:
-    """Result of one fresh, read-only check."""
+    """Result of one fresh, read-only check.
+
+    ``presentation`` is optional context for the page. ``None`` means the
+    page shows no build identity rows, which keeps status-only callers unchanged.
+    """
 
     overall: OverallStatus
     checked_at: str
@@ -259,12 +318,15 @@ class BuildStatus:
     private: PrivateStatus
     operation: OperationStatus
     gaps: Tuple[CheckGap, ...] = ()
+    presentation: Optional[BuildPresentation] = None
 
     def __post_init__(self) -> None:
         _require(isinstance(self.overall, OverallStatus), "unsupported overall status")
         _require(isinstance(self.checked_at, str) and _TIMESTAMP.fullmatch(self.checked_at) is not None,
                  "unsupported check time")
         _require(type(self.build_selected) is bool, "unsupported build selection flag")
+        _require(self.presentation is None or isinstance(self.presentation, BuildPresentation),
+                 "unsupported build presentation")
         for value, kind in ((self.software, SoftwareStatus), (self.skin, SkinStatus),
                             (self.configuration, ConfigurationStatus),
                             (self.private, PrivateStatus), (self.operation, OperationStatus)):

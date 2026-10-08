@@ -573,6 +573,54 @@ msgctxt "#32542"
 msgid "The saved install record does not belong to this build, so nothing was checked against it."
 msgstr ""
 
+msgctxt "#32550"
+msgid "Applied build"
+msgstr ""
+
+msgctxt "#32551"
+msgid "Selected build"
+msgstr ""
+
+msgctxt "#32552"
+msgid "%s"
+msgstr ""
+
+msgctxt "#32553"
+msgid "None applied yet"
+msgstr ""
+
+msgctxt "#32554"
+msgid "No build has been applied on this device yet."
+msgstr ""
+
+msgctxt "#32555"
+msgid "Could not be read"
+msgstr ""
+
+msgctxt "#32556"
+msgid "The details of the applied build could not be read safely."
+msgstr ""
+
+msgctxt "#32557"
+msgid "Device profile: %s"
+msgstr ""
+
+msgctxt "#32558"
+msgid "The checks below are for this applied build."
+msgstr ""
+
+msgctxt "#32559"
+msgid "Saved selection, not applied"
+msgstr ""
+
+msgctxt "#32560"
+msgid "Selecting a build does not apply it. Only the applied build is checked."
+msgstr ""
+
+msgctxt "#32561"
+msgid "The saved selection could not be read safely. It is not applied and does not change this status."
+msgstr ""
+
 msgctxt "#32600"
 msgid "Review Changes"
 msgstr ""

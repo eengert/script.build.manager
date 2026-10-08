@@ -14,12 +14,13 @@ from resources.lib import build_library as lib
 from resources.lib.build_library import BuildLibrary, LibraryConflict, LibraryError
 from resources.lib.frozen import FrozenBuildManifest, CaptureStatus
 from resources.lib.resolver import resolve_manifest
-from resources.lib.status import BuildStatusService, default_status_target, StatusTarget
+from resources.lib.status import (BuildStatusService, StatusTarget, build_presentation,
+    check_build_status, default_build_presentation, default_status_target)
 from resources.lib.plan import BuildPlanService, PlanTarget, default_plan_target
 from resources.lib.plan_model import DecisionChoice
-from resources.lib.status_model import CheckGap
+from resources.lib.status_model import BuildIdentity, BuildPresentation, CheckGap
 from tests.test_plan import PlanHarness
-from tests.test_status import DEMO, SECRET, DB_SECRET
+from tests.test_status import DEMO, SECRET, DB_SECRET, snapshot_tree
 
 
 class LibraryTests(unittest.TestCase):
@@ -846,3 +847,222 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(LibraryError):
             self.library.select(entry.entry_id, "desk")
         self.assertIsNone(self.library.current_selection())
+
+    # -- Build Status presentation: applied build and saved selection (Item 8) ----------
+
+    def record_second_build(self):
+        """A second, distinct build (version 2.0.0). The applied association is untouched."""
+        self.raw["build"]["version"] = "2.0.0"
+        self.write_sources()
+        return self.register()
+
+    def test_selection_state_classifies_none_selected_and_invalid_read_only(self):
+        self.assertEqual(self.library.selection_state(), ("none", None))
+        self.assertFalse(self.root.exists())                    # never creates the library
+        entry = self.register()
+        self.assertEqual(self.library.selection_state(), ("none", None))
+        selected = self.library.select(entry.entry_id, "desk")
+        path = self.root / "selection.json"
+        before = path.read_bytes()
+        self.assertEqual(self.library.selection_state(), ("selected", selected))
+        self.assertEqual(self.library.current_selection(), selected)
+        self.assertEqual(path.read_bytes(), before)              # read-only
+        self.library.clear_selection()
+        self.assertEqual(self.library.selection_state(), ("none", None))
+        valid = {"schema_version": 1, "entry_id": entry.entry_id, "device_profile_id": "desk"}
+        for changes in ({"device_profile_id": "missing"}, {"entry_id": "b" * 64},
+                        {"entry_id": "../escape"}, {"schema_version": 2}):
+            with self.subTest(changes=changes):
+                path.write_text(json.dumps({**valid, **changes}))
+                self.assertEqual(self.library.selection_state(), ("invalid", None))
+                self.assertIsNone(self.library.current_selection())
+        path.write_text("invalid")
+        self.assertEqual(self.library.selection_state(), ("invalid", None))
+        path.write_text(json.dumps(valid))
+        self.assertEqual(self.library.selection_state()[0], "selected")
+        self.envelope(entry.entry_id).unlink()                   # selected build became unreadable
+        self.assertEqual(self.library.selection_state(), ("invalid", None))
+        self.assertIsNone(self.library.current_selection())
+
+    def test_presentation_applied_only_names_the_applied_build_and_no_selection(self):
+        entry = self.register()
+        self.record_applied(entry)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("Demo", "1.0.0", "desk")))
+
+    def test_presentation_selection_of_the_applied_build_is_not_duplicated(self):
+        entry = self.register()
+        self.record_applied(entry)
+        self.library.select(entry.entry_id, "desk")
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("Demo", "1.0.0", "desk")))
+
+    def test_presentation_applied_a_and_selected_b_are_distinct_and_health_stays_on_a(self):
+        a = self.register()
+        self.record_applied(a)
+        b = self.record_second_build()
+        self.library.select(b.entry_id, "other")
+        target = self.library.associated_status_target()
+        presentation = build_presentation(self.library, target)
+        self.assertEqual(presentation, BuildPresentation(
+            applied=BuildIdentity("Demo", "1.0.0", "desk"),
+            selected=BuildIdentity("Demo", "2.0.0", "other")))
+        self.assertEqual((target.library_source.entry_id, target.device_profile_id), (a.entry_id, "desk"))
+
+    def test_presentation_selection_without_applied_is_context_only(self):
+        b = self.register()
+        self.library.select(b.entry_id, "desk")
+        self.assertIsNone(self.library.associated_status_target())
+        presentation = build_presentation(self.library, None)
+        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("Demo", "1.0.0", "desk")))
+        with patch('resources.lib.build_library.default_build_library', return_value=self.library):
+            self.assertIsNone(default_status_target())          # no selection fallback
+
+    def test_presentation_nothing_applied_or_selected_is_empty_and_truthful(self):
+        self.assertEqual(build_presentation(self.library, None), BuildPresentation())
+
+    def test_presentation_invalid_or_stale_selection_fails_closed_and_leaves_applied_alone(self):
+        a = self.register()
+        self.record_applied(a)
+        self.library.select(a.entry_id, "other")
+        target = self.library.associated_status_target()
+        selection = self.root / "selection.json"
+        for data in (b"{",
+                     json.dumps({"schema_version": 1, "entry_id": a.entry_id, "device_profile_id": "removed"}).encode(),
+                     json.dumps({"schema_version": 1, "entry_id": "c" * 64, "device_profile_id": "desk"}).encode()):
+            with self.subTest(data=data[:24]):
+                selection.write_bytes(data)
+                self.assertEqual(build_presentation(self.library, target),
+                                 BuildPresentation(applied=BuildIdentity("Demo", "1.0.0", "desk"),
+                                                   selection_unreadable=True))
+                self.assertEqual(self.library.associated_status_target(), target)
+
+    def test_presentation_pending_publication_never_presents_the_candidate_as_applied(self):
+        import uuid
+        a = self.register()
+        applied = self.record_applied(a)
+        b = self.record_second_build()
+        self.library.select(b.entry_id, "other")
+        candidate = lib.AppliedBuildAssociation(b.entry_id, "other", "c" * 64)
+        journal = lib.AppliedPublication(str(uuid.uuid4()), candidate, applied, "pending")
+        (self.root / "applied-publication.json").write_bytes(lib._encode(journal.to_dict()))
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(
+            applied=BuildIdentity("Demo", "1.0.0", "desk"),
+            selected=BuildIdentity("Demo", "2.0.0", "other")))
+        # With no previous association, the pending candidate is only a selection.
+        journal = lib.AppliedPublication(str(uuid.uuid4()), candidate, None, "pending")
+        (self.root / "applied-publication.json").write_bytes(lib._encode(journal.to_dict()))
+        self.assertIsNone(self.library.associated_status_target())
+        self.assertEqual(build_presentation(self.library, None),
+                         BuildPresentation(selected=BuildIdentity("Demo", "2.0.0", "other")))
+
+    def test_presentation_unreadable_names_are_reported_without_internal_detail(self):
+        a = self.register()
+        self.record_applied(a)
+        self.library.select(a.entry_id, "other")
+        target = self.library.associated_status_target()
+
+        class Unreadable:
+            def get(self, key):
+                raise LibraryError("internal detail /private/path")
+            def selection_state(self):
+                return ("invalid", None)
+
+        self.assertEqual(build_presentation(Unreadable(), target),
+                         BuildPresentation(applied_unreadable=True, selection_unreadable=True))
+
+        b = self.record_second_build()
+        applied_entry, selected_entry, library = a.entry_id, b.entry_id, self.library
+
+        class SelectedUnreadable:
+            def get(self, key):
+                if key == applied_entry:
+                    return library.get(key)
+                raise LibraryError("selected build unreadable")
+            def selection_state(self):
+                return ("selected", lib.SelectedBuild(selected_entry, "other"))
+
+        self.assertEqual(build_presentation(SelectedUnreadable(), target),
+                         BuildPresentation(applied=BuildIdentity("Demo", "1.0.0", "desk"),
+                                           selection_unreadable=True))
+
+    def test_presentation_requires_the_verified_applied_association(self):
+        b = self.register()
+        self.library.select(b.entry_id, "desk")
+        with self.assertRaises(ValueError):
+            build_presentation(self.library, self.library.selected_status_target())
+
+    def test_presentation_is_read_only_and_never_writes_or_uses_the_network(self):
+        a = self.register()
+        self.record_applied(a)
+        b = self.record_second_build()
+        self.library.select(b.entry_id, "other")
+        before = snapshot_tree(self.base / "bm")
+        with patch.object(BuildLibrary, "select", side_effect=AssertionError("select")), \
+                patch.object(BuildLibrary, "clear_selection", side_effect=AssertionError("clear")), \
+                patch.object(BuildLibrary, "register", side_effect=AssertionError("register")), \
+                patch.object(socket, "socket", side_effect=AssertionError("network")):
+            presentation = build_presentation(self.library, self.library.associated_status_target())
+            with patch('resources.lib.build_library.default_build_library', return_value=self.library):
+                production = default_build_presentation(self.library.associated_status_target())
+        self.assertEqual(presentation, production)
+        self.assertEqual(snapshot_tree(self.base / "bm"), before)
+
+    def test_presentation_exposes_only_names_versions_and_profile_labels(self):
+        a = self.register()
+        applied = self.record_applied(a)
+        self.library.select(a.entry_id, "other")
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        text = repr(presentation)
+        for hidden in (a.entry_id, applied.resolution_fingerprint, str(self.root), str(self.base),
+                       "safe-overlay", "transaction", SECRET, DB_SECRET):
+            self.assertNotIn(hidden, text)
+
+    def test_selection_never_changes_applied_health_or_becomes_its_target(self):
+        a = self.register()
+        self.record_applied(a)
+        harness = PlanHarness(self, with_private=False, with_resource=False)
+        owners = harness.owners(resolver=resolve_manifest)
+        target = self.library.associated_status_target()
+
+        def health(status):
+            return (status.overall, status.gaps, status.build_selected, status.software,
+                    status.skin, status.configuration, status.private)
+
+        applied_only = health(BuildStatusService(owners).check(target))
+        b = self.record_second_build()
+        self.library.select(b.entry_id, "other")
+        self.assertEqual(health(BuildStatusService(owners).check(self.library.associated_status_target())),
+                         applied_only)
+        (self.root / "selection.json").write_text("invalid")
+        self.assertEqual(health(BuildStatusService(owners).check(self.library.associated_status_target())),
+                         applied_only)
+        self.assertEqual(self.library.associated_status_target(), target)
+
+    def test_production_presentation_fallbacks_never_claim_a_selection_or_hide_an_applied_build(self):
+        a = self.register()
+        self.record_applied(a)
+        self.library.select(a.entry_id, "other")
+        target = self.library.associated_status_target()
+        with patch('resources.lib.build_library.default_build_library', side_effect=LibraryError("gone")):
+            self.assertEqual(default_build_presentation(target), BuildPresentation(applied_unreadable=True))
+            self.assertEqual(default_build_presentation(None), BuildPresentation())
+
+    def test_check_build_status_attaches_presentation_and_keeps_applied_health(self):
+        from resources.lib import status as status_module
+        a = self.register()
+        self.record_applied(a)
+        b = self.record_second_build()
+        self.library.select(b.entry_id, "other")
+        harness = PlanHarness(self, with_private=False, with_resource=False)
+        owners = harness.owners(resolver=resolve_manifest)
+        with patch('resources.lib.build_library.default_build_library', return_value=self.library), \
+                patch.object(status_module, "default_status_owners", return_value=owners):
+            status = check_build_status()
+        expected = BuildStatusService(owners).check(self.library.associated_status_target())
+        self.assertEqual((status.overall, status.gaps, status.build_selected),
+                         (expected.overall, expected.gaps, expected.build_selected))
+        self.assertEqual(status.presentation, BuildPresentation(
+            applied=BuildIdentity("Demo", "1.0.0", "desk"),
+            selected=BuildIdentity("Demo", "2.0.0", "other")))

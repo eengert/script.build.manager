@@ -4,18 +4,20 @@ import re
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from resources.lib.status_model import (
-    AreaLevel, BuildStatus, CheckGap, ConfigurationStatus, OperationCode, OperationKind,
-    OperationStatus, OverallStatus, PrivateItem, PrivateItemKind, PrivateStatus, SkinStatus,
-    SoftwareItem, SoftwareItemState, SoftwareStatus,
+    AreaLevel, BuildIdentity, BuildPresentation, BuildStatus, CheckGap, ConfigurationStatus,
+    OperationCode, OperationKind, OperationStatus, OverallStatus, PrivateItem, PrivateItemKind,
+    PrivateStatus, SkinStatus, SoftwareItem, SoftwareItemState, SoftwareStatus,
 )
 from resources.lib.status import BuildStatusService
 from resources.lib.ui import status_view
 from resources.lib.ui.controller import ROUTES, Route
+from resources.lib.ui.models import Semantic
 from resources.lib.ui.native_dialogs import NativeDialogs
 from resources.lib.ui.status_view import StatusViewModel, STATUS_TEXT_IDS, Text
 from tests.test_status import (
@@ -324,7 +326,7 @@ class Language(unittest.TestCase):
     def test_every_status_string_exists_and_is_plain(self):
         for identifier in sorted(STATUS_TEXT_IDS):
             self.assertIn(identifier, STRINGS, identifier)
-        for identifier in range(32401, 32541):
+        for identifier in range(32401, 32562):
             if identifier not in STRINGS:
                 continue
             lowered = STRINGS[identifier].lower()
@@ -332,8 +334,8 @@ class Language(unittest.TestCase):
                 self.assertNotIn(term, lowered, (identifier, term))
 
     def test_the_status_blocks_are_all_used(self):
-        defined = {i for i in STRINGS if 32401 <= i <= 32540}
-        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32541)))
+        defined = {i for i in STRINGS if 32401 <= i <= 32561}
+        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32562)))
 
     def test_every_view_text_renders_without_falling_back_to_a_raw_template(self):
         ui = NativeDialogs(Addon(), Dialog([]), lambda ms: None)
@@ -460,6 +462,128 @@ class Entry(unittest.TestCase):
         self.assertEqual(snapshot_tree(profile), pending_before)
         self.assertEqual(h.logs, ["Build Status check: incomplete",
                                   "Build Status check: restart_required"])
+
+
+class AppliedAndSelected(unittest.TestCase):
+    """Build Status shows the applied build and the saved selection apart. Health stays on the applied build."""
+
+    MOVIES = BuildIdentity("Movies Pack", "1.2.0", "desk")
+    OTHER = BuildIdentity("Movies Pack", "2.0.0", "other")
+
+    def page(self, base=None, **presentation):
+        base = base or status()
+        return StatusViewModel.from_status(replace(base, presentation=BuildPresentation(**presentation)))
+
+    def texts(self, model):
+        ui = NativeDialogs(Addon(), Dialog([]), lambda ms: None)
+        return [ui.row_text(row) for row in model.rows], [
+            [ui.render(t) for t in row.detail] for row in model.rows], ui
+
+    def test_applied_only_names_the_applied_build_and_invents_no_selection(self):
+        model = self.page(applied=self.MOVIES)
+        rows, details, _ = self.texts(model)
+        self.assertEqual(rows[1], "Applied build: Movies Pack 1.2.0")
+        self.assertEqual(details[1], ["Device profile: desk", "The checks below are for this applied build."])
+        self.assertFalse(any(row.startswith("Selected build") for row in rows))
+        self.assertEqual(len(rows), 6)
+
+    def test_applied_a_and_selected_b_stay_distinct_and_health_still_derives_from_a(self):
+        plain = StatusViewModel.from_status(status())
+        model = self.page(applied=self.MOVIES, selected=self.OTHER)
+        rows, details, _ = self.texts(model)
+        self.assertEqual(rows[1], "Applied build: Movies Pack 1.2.0")
+        self.assertEqual(rows[2], "Selected build: Saved selection, not applied")
+        self.assertEqual(details[2], ["Movies Pack 2.0.0", "Device profile: other",
+                                      "Selecting a build does not apply it. Only the applied build is checked."])
+        self.assertNotIn("Current", rows[2])
+        self.assertEqual(model.overall, plain.overall)
+        self.assertEqual(model.rows[0], plain.rows[0])            # the Overall row is unchanged
+        self.assertEqual(model.rows[3:], plain.rows[1:])          # every health row is unchanged
+
+    def test_applied_and_selected_the_same_build_shows_no_second_row(self):
+        model = self.page(applied=self.MOVIES)
+        rows, _, _ = self.texts(model)
+        self.assertEqual(sum(row.startswith(("Applied build", "Selected build")) for row in rows), 1)
+
+    def test_selected_only_is_context_and_can_never_read_as_healthy(self):
+        base = not_checked()
+        model = self.page(base=base, selected=self.OTHER)
+        rows, details, ui = self.texts(model)
+        self.assertIs(model.overall, OverallStatus.INCOMPLETE)
+        self.assertNotEqual(model.semantic, Semantic.VERIFIED)
+        self.assertEqual(rows[1], "Applied build: None applied yet")
+        self.assertEqual(details[1], ["No build has been applied on this device yet."])
+        self.assertEqual(rows[2], "Selected build: Saved selection, not applied")
+        self.assertNotIn("Current", "\n".join(rows[1:3]))
+
+    def test_nothing_applied_and_nothing_selected_keeps_the_truthful_empty_state(self):
+        rows, details, _ = self.texts(self.page())
+        self.assertEqual(rows[1], "Applied build: None applied yet")
+        self.assertEqual(details[1], ["No build has been applied on this device yet."])
+        self.assertEqual(len(rows), 6)                            # Applied row, but no Selected row
+        self.assertFalse(any(row.startswith("Selected build") for row in rows))
+
+    def test_invalid_selection_fails_closed_with_no_internal_detail(self):
+        model = self.page(applied=self.MOVIES, selection_unreadable=True)
+        rows, details, _ = self.texts(model)
+        self.assertEqual(rows[2], "Selected build: Could not be read")
+        self.assertEqual(details[2], ["The saved selection could not be read safely. It is not applied and does not change this status."])
+        self.assertEqual(rows[1], "Applied build: Movies Pack 1.2.0")
+
+    def test_unreadable_applied_build_is_reported_plainly(self):
+        rows, details, _ = self.texts(self.page(applied_unreadable=True))
+        self.assertEqual(rows[1], "Applied build: Could not be read")
+        self.assertEqual(details[1], ["The details of the applied build could not be read safely."])
+
+    def test_a_status_without_presentation_keeps_the_original_five_rows(self):
+        rows, _, ui = self.texts(StatusViewModel.from_status(status()))
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(ui.render(StatusViewModel.from_status(status()).rows[1].label), "Add-ons")
+
+    def test_identity_labels_are_plain_bounded_and_never_paths(self):
+        for name, version, profile in (("", "1", ""), ("Movies [B]", "1", ""), ("A$B", "1", ""),
+                                       ("A\nB", "1", ""), ("/Users/x/build", "1", ""),
+                                       ("Movies\\x", "1", ""), (" Movies", "1", ""),
+                                       ("M" * 65, "1", ""), ("Movies", "1" * 33, ""),
+                                       ("Movies", "1", "a/b")):
+            with self.subTest(name=name, version=version, profile=profile):
+                with self.assertRaises(ValueError):
+                    BuildIdentity(name, version, profile)
+        self.assertEqual(BuildIdentity("Movies Pack", "1.2.0", "desk").profile, "desk")
+
+    def test_presentation_rows_never_render_identifiers_or_paths(self):
+        model = self.page(applied=self.MOVIES, selected=self.OTHER)
+        rows, details, _ = self.texts(model)
+        rendered = "\n".join(rows + [line for lines in details for line in lines])
+        self.assertNotIn("/", rendered)
+        self.assertIsNone(re.search(r"[0-9a-f]{32,}", rendered))
+        self.assertNotIn("transaction", rendered.lower())
+        self.assertNotIn(SECRET, rendered)
+
+    def test_status_view_imports_only_the_presentation_contract(self):
+        import ast
+        tree = ast.parse((ROOT / "resources/lib/ui/status_view.py").read_text())
+        modules = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                modules.add(node.module)
+            elif isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+        self.assertEqual(modules, {"dataclasses", "resources.lib.status_model", "resources.lib.ui.models"})
+
+    def test_the_native_status_page_lists_applied_then_selected_and_secret_blind(self):
+        presentation = BuildPresentation(applied=self.MOVIES, selected=self.OTHER)
+        provider = lambda: replace(status(), presentation=presentation)
+        _, dialog, _ = open_status(provider)
+        labels = rows(dialog)
+        self.assertEqual(labels[1], "Applied build: Movies Pack 1.2.0")
+        self.assertEqual(labels[2], "Selected build: Saved selection, not applied")
+        _, detail_dialog, _ = open_status(provider, 2)
+        self.assertEqual(detail_dialog.details[0][1],
+                         "Movies Pack 2.0.0\nDevice profile: other\n"
+                         "Selecting a build does not apply it. Only the applied build is checked.")
+        status_rows = rows(dialog)
+        self.assertNotIn("/", "\n".join(status_rows))              # the Status rows never show a path
 
 
 if __name__ == "__main__":

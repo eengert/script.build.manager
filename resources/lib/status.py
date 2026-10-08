@@ -85,6 +85,8 @@ from resources.lib.session import peek_current_kodi_session_id
 from resources.lib.startup import StartupClassification, classify_startup_transaction
 from resources.lib.status_model import (
     AreaLevel,
+    BuildIdentity,
+    BuildPresentation,
     BuildStatus,
     CheckGap,
     ConfigurationStatus,
@@ -922,6 +924,62 @@ def default_status_target() -> Optional[StatusTarget]:
         return None
 
 
+def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresentation:
+    """Applied and saved-selection identities for display. Never a comparison input.
+
+    ``target`` is the verified applied association, the same authority the health
+    check uses; it alone decides what counts as applied. The saved selection is
+    read separately, read-only, and shown only as context. Anything that cannot be
+    named safely is reported as unreadable, with no internal detail.
+    """
+    applied = None
+    applied_unreadable = False
+    applied_key = None
+    if target is not None:
+        if target.applied_association is None:
+            raise ValueError("presentation needs the verified applied association")
+        applied_key = (target.applied_association.entry_id, target.device_profile_id)
+        try:
+            entry = library.get(target.applied_association.entry_id)
+            applied = BuildIdentity(entry.display_name, entry.build_version, target.device_profile_id)
+        except Exception:
+            applied_unreadable = True
+    selected = None
+    selection_unreadable = False
+    state, saved = library.selection_state()
+    if state == "invalid":
+        selection_unreadable = True
+    elif state == "selected" and (saved.entry_id, saved.device_profile_id) != applied_key:
+        try:
+            entry = library.get(saved.entry_id)
+            if saved.device_profile_id not in entry.device_profiles:
+                raise ValueError("selection profile is not in the build")
+            selected = BuildIdentity(entry.display_name, entry.build_version, saved.device_profile_id)
+        except Exception:
+            selection_unreadable = True
+    return BuildPresentation(applied, applied_unreadable, selected, selection_unreadable)
+
+
+def default_build_presentation(target: Optional[StatusTarget]) -> BuildPresentation:
+    """Production presentation. If an applied build exists but cannot be named, say so.
+
+    Without a verified applied association the page says nothing was applied,
+    which is the status engine's own statement. A selection that cannot be read
+    is never shown as selected.
+    """
+    from resources.lib.build_library import default_build_library
+    try:
+        return build_presentation(default_build_library(), target)
+    except Exception:
+        return BuildPresentation(applied_unreadable=target is not None)
+
+
 def check_build_status(*, log: Optional[Callable[[str], None]] = None) -> BuildStatus:
-    """One fresh read-only check of this device, for the Build Status route."""
-    return BuildStatusService(default_status_owners(log=log)).check(default_status_target())
+    """One fresh read-only check of this device, for the Build Status route.
+
+    Health is evaluated only against the verified applied association. The
+    presentation adds the applied and saved-selection identities for display.
+    """
+    target = default_status_target()
+    status = BuildStatusService(default_status_owners(log=log)).check(target)
+    return replace(status, presentation=default_build_presentation(target))

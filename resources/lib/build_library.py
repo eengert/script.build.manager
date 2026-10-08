@@ -617,21 +617,47 @@ class BuildLibrary:
         except Exception:
             raise _error() from None
 
-    def current_selection(self):
+    def _selection_at(self, fd):
+        """Read-only classification of the saved selection: ``none``, ``selected`` or ``invalid``.
+
+        A cleared selection (``null``) and a missing file are both ``none``. Anything
+        that does not validate against the registry and profile is ``invalid``.
+        """
+        data = _read_at(fd, "selection.json", STATE_LIMIT)
+        if data is None:
+            return "none", None
+        try:
+            raw = _json(data)
+        except Exception:
+            return "invalid", None
+        if raw is None:
+            return "none", None
+        if not isinstance(raw, dict) or set(raw) != {"schema_version", "entry_id", "device_profile_id"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+            return "invalid", None
+        try:
+            manifest, _, _ = self._load_at(fd, raw["entry_id"], self._registry(fd))
+        except Exception:
+            return "invalid", None
+        if raw["device_profile_id"] not in manifest.device_profiles:
+            return "invalid", None
+        return "selected", SelectedBuild(raw["entry_id"], raw["device_profile_id"])
+
+    def selection_state(self):
+        """``(state, selection)`` for presentation only; never a status or plan target.
+
+        Read-only: it never creates the library, never writes, and never repairs.
+        """
         try:
             with _directory(self.root) as fd:
-                data = _read_at(fd, "selection.json", STATE_LIMIT)
-                if data is None:
-                    return None
-                raw = _json(data)
-                if not isinstance(raw, dict) or set(raw) != {"schema_version", "entry_id", "device_profile_id"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
-                    return None
-                manifest, _, _ = self._load_at(fd, raw["entry_id"], self._registry(fd))
-                if raw["device_profile_id"] not in manifest.device_profiles:
-                    return None
-                return SelectedBuild(raw["entry_id"], raw["device_profile_id"])
+                return self._selection_at(fd)
+        except FileNotFoundError:
+            return "none", None
         except Exception:
-            return None
+            return "invalid", None
+
+    def current_selection(self):
+        state, selected = self.selection_state()
+        return selected if state == "selected" else None
 
     def publication_journal(self) -> AppliedPublication | None:
         """Creation-free journal observation, including terminal evidence."""
