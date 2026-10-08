@@ -10,13 +10,15 @@ from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
+from resources.lib import frozen_install
 from resources.lib import repository_preparation as prep
 from resources.lib.artifacts import ArtifactStore
 from resources.lib.build_library import LibraryInstallTarget
 from resources.lib.frozen import AddonCaptureNode, ProvenanceStatus
 from resources.lib.frozen_install import FrozenInstalledAddon, FrozenInstallTransaction
 from resources.lib.frozen_resolution import (
-    InstallResolution, InstallResolutionRecord, ResolutionChoice, ResolutionState, default_exact_record,
+    AddonRecoverability, FrozenInstallResolutionManifest, InstallResolution, InstallResolutionRecord,
+    Recoverability, ResolutionChoice, ResolutionState, default_exact_record, resolved_software_fingerprint,
 )
 from resources.lib.manifest import FrozenInstallPolicyMode
 from resources.lib.plan import PlanTarget
@@ -43,6 +45,18 @@ class StaleAssociation:
 
     def current_applied_association(self, **kwargs):
         return replace(self._library.current_applied_association(**kwargs), entry_id="f" * 64)
+
+
+class TamperedAssociation(StaleAssociation):
+    """The library authority, except that its applied association names a tampered outcome."""
+
+    def __init__(self, library, resolution_fingerprint):
+        super().__init__(library)
+        self._resolution_fingerprint = resolution_fingerprint
+
+    def current_applied_association(self, **kwargs):
+        return replace(self._library.current_applied_association(**kwargs),
+                       resolution_fingerprint=self._resolution_fingerprint)
 
 
 def installable_records(frozen, record_for):
@@ -194,6 +208,47 @@ class PriorExactOutcomeTests(unittest.TestCase):
             target, interactive=False, prior_resolution=prior,
             resolution_choices={DEMO: ResolutionChoice.SKIP}))
 
+    def tampered_exact_prior(self, prior):
+        """A prior whose exact record names another saved build of the same add-on and version.
+
+        The manifest stays internally coherent: its resulting-software fingerprint is
+        recomputed, and the resolution fingerprint follows from the records. Only the
+        terminal-record rule can see that the record's artifact is not the captured one.
+        """
+        record = next(r for r in prior.records if r.addon_id == DEMO)
+        # Same add-on and version, different bytes: the requirement only makes the build distinct.
+        other = self.f.artifacts.import_zip(
+            _zip(DEMO, record.resolved_version, requires=((LATE_DEPENDENCY, '3.0.0'),)),
+            expected_addon_id=DEMO, expected_version=record.resolved_version)
+        captured = next(node for node in self.f.fixture.frozen.addons if node.addon_id == DEMO).artifact
+        self.assertNotEqual(other.sha256, captured.sha256)
+        records = tuple(
+            replace(r, artifact_sha256=other.sha256, artifact_size=other.size) if r.addon_id == DEMO else r
+            for r in prior.records)
+        return FrozenInstallResolutionManifest(
+            build_id=prior.build_id,
+            source_software_fingerprint=prior.source_software_fingerprint,
+            install_plan_fingerprint=prior.install_plan_fingerprint,
+            resulting_software_fingerprint=resolved_software_fingerprint(self.f.fixture.frozen, records),
+            records=records)
+
+    def test_a_prior_exact_outcome_naming_another_artifact_is_refused_before_mutation(self):
+        """Binds to this build and to the applied association, so only the terminal rule can refuse it."""
+        target, prior = self.installed_prior()
+        tampered = self.tampered_exact_prior(prior)
+        del self.f.backend.installed[DEMO]
+        with patch('resources.lib.build_library.authoritative_build_library',
+                   return_value=TamperedAssociation(self.f.fixture.library, tampered.resolution_fingerprint)), \
+                patch.object(self.f.backend, 'install_exact', side_effect=forbidden), \
+                patch.object(self.f.backend, 'resolve_repository_current', side_effect=forbidden), \
+                patch('resources.lib.frozen_install._check_terminal_record',
+                      wraps=frozen_install._check_terminal_record) as terminal_rule:
+            result = self.f.coordinator().install_target(target, interactive=False, prior_resolution=tampered)
+        self.assertEqual(result.outcome, 'failed', (result.code, result.message))
+        self.assertIn(DEMO, [call.args[0] for call in terminal_rule.call_args_list])
+        self.assertIsNone(self.f.store.inspect())
+        self.assertNotIn(DEMO, self.f.backend.installed)
+
 
 class PriorRepositoryOutcomeTests(unittest.TestCase):
     """A recorded repository-current outcome, reused as its saved bytes with the network forbidden."""
@@ -326,6 +381,32 @@ class PriorRepositoryOutcomeTests(unittest.TestCase):
         legacy = persisted.to_dict()
         legacy.pop('prior_resolution_fingerprint')
         self.assertEqual(FrozenInstallTransaction.from_dict(legacy).prior_resolution_fingerprint, '')
+
+
+class TerminalExactStateTests(unittest.TestCase):
+    """The shared terminal-record rule for an EXACT record that is not yet INSTALLED.
+
+    Prior reuse cannot present such a record: the manifest parser refuses unfinished
+    records before binding. The rule is tested where it is enforced, shared with the
+    restart path, so it stays observable if the parser ever stops refusing them.
+    """
+
+    def setUp(self):
+        self.f = library_install.LibraryInstallTests()
+        self.f.setUp()
+        self.addCleanup(self.f.doCleanups)
+        self.node = next(node for node in self.f.fixture.frozen.addons if node.addon_id == DEMO)
+        self.row = AddonRecoverability(DEMO, self.node.version, Recoverability.EXACT_FROZEN, True)
+        self.selected = default_exact_record(self.node)
+
+    def test_a_completed_exact_record_that_is_not_installed_is_rejected(self):
+        with self.assertRaises(frozen_install.FrozenInstallValidationError):
+            frozen_install._check_terminal_record(DEMO, self.selected, self.node, self.row, ())
+        installed = replace(self.selected, state=ResolutionState.INSTALLED)
+        frozen_install._check_terminal_record(DEMO, installed, self.node, self.row, ())
+
+    def test_the_restart_path_accepts_an_uninstalled_exact_record(self):
+        frozen_install._check_terminal_record(DEMO, self.selected, self.node, self.row, (), allow_uninstalled=True)
 
 
 if __name__ == '__main__':
