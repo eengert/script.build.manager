@@ -1,12 +1,11 @@
 # Current Task
 
-- Task: BUILD MANAGER TEST.APP DEFAULT BACKGROUND LAUNCH GUIDANCE (no assigned ID).
-- State: COMPLETE. Updated the durable launch default and current manual launch/relaunch examples.
-- Start: `agent/claude` at `ce17a39`, worktree clean. The task's expected `cc0911d` baseline had advanced only through `.agent/CURRENT_TASK.md`, `.agent/HANDOFF.md`, and `.agent/USAGE_HISTORY.md` bookkeeping.
-- Files: `.orchestrator/PROJECT.md`, `.orchestrator/WORKFLOW.md`, `.orchestrator/DECISIONS.md` (D-007), `docs/BM_TEST_APP_HELPER.md`, `docs/FROZEN_BUILD_INSTALL.md`.
-- Durable command: `open -g "/Applications/Kodi Build Manager Test.app" --args -p`; `-p` remains mandatory. Foreground activation is allowed only when a specific validation task requires it.
-- Commit: `a9af2bb1dbbb580f93620ceb336d89bfa2132f0e` (`Use background launch for Test.app validation`).
-- Validation: `git diff --check` passed; current tracked guidance has no remaining recommended foreground command. No product tests or app launch were needed for this docs-only task.
-- Boundaries: no product/runtime source, tests, Test.app, Kodi/profile/device, MCP extension, push, merge, or Agent Handoff activity. `.agent/AGENT_STATUS.json` was not changed.
-- Next: no further action for this task; any integration or additional validation requires a separate decision.
+- Task: BUILD MANAGER PACKAGE METADATA REFRESH (no assigned ID).
+- State: COMPLETE, local product commit only; no push.
+- Start: `agent/claude` at `2eefb452e6deee4ec123b403670784aaa281b6f4`, worktree clean; expected HEAD matched and recent commits were bookkeeping/docs only.
+- Files: `addon.xml` (`<news>`, `en_US` and `en_GB` descriptions); new `tests/test_addon_metadata.py`.
+- Commit: `6105282b5340ba15f0ca4b231ce1e27c42d3cb81` (`Refresh Build Manager package metadata`).
+- Validation: focused metadata test 3/3 after fix (2 of 3 failed before the fix); addon.xml parses and passes `xmllint --noout`; `git diff --check` clean; no obsolete phrases remain in addon.xml.
+- Boundaries: version left at 0.1.0; no workflow, engine, Build Library, Update / Repair, Status, localized-string, Test.app, MCP, icon, or Agent Handoff changes; no Kodi, profile, device, or push activity.
+- Next: none for this task. Human decision on the summary line is listed in HANDOFF.md.
 - Usage: see the appended row in `.agent/USAGE_HISTORY.md`.
