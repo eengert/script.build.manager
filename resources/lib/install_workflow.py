@@ -9,6 +9,50 @@ from resources.lib.status_model import OperationKind
 from resources.lib.ui.plan_view import ReviewViewModel
 
 
+def settle_library_plan(ui, service, preparation, target):
+    """Fresh previews until no missing-package decision or unprepared package remains.
+
+    Returns ``(target, plan, model)`` for a plan the user may review, or ``None``
+    once the user stopped or a provider answer could not be honored; the message
+    for that outcome has already been shown. Decisions narrow only the choices the
+    plan permits, and preparation only retrieves a package. Neither applies
+    anything, and the caller must review the resulting fresh plan.
+    """
+    while True:
+        plan = service.preview(target)
+        model = ReviewViewModel.from_plan(plan, fully_listed=True, repository_current=tuple(
+            aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT))
+        if plan.state is PlanState.DECISION_REQUIRED:
+            if not model.decisions:
+                ui.install_message(32814)
+                return None
+            for prompt in model.decisions:
+                # A provider ignoring a prior answer cannot spin or bypass review.
+                if prompt.addon_id in dict(target.choices):
+                    ui.install_message(32814)
+                    return None
+                choice = ui.choose_install_decision(prompt)
+                if choice is None or choice is DecisionChoice.CANCEL:
+                    return None
+                if choice not in prompt.choices:
+                    ui.install_message(32814)
+                    return None
+                target = target.with_choice(prompt.addon_id, choice)
+            continue
+        if plan.state is PlanState.RESOLUTION_REQUIRED:
+            if target.prepared_resolution is not None or not any(
+                    c is DecisionChoice.INSTALL_CURRENT for _, c in target.choices):
+                ui.install_message(32804)
+                return None
+            result = ui.prepare_install(lambda: preparation.prepare(target))
+            if result.code is not PreparationCode.READY:
+                ui.install_message(32804)
+                return None
+            target = replace(target, prepared_resolution=result.prepared)
+            continue
+        return target, plan, model
+
+
 class InstallWorkflow:
     def __init__(self, library, plan, preparation, coordinator_provider, operation_provider):
         self.library = library
@@ -35,37 +79,10 @@ class InstallWorkflow:
             return
         target = self.library.plan_target(entry.entry_id, profile)
         while True:
-            plan = self.plan.preview(target)
-            model = ReviewViewModel.from_plan(plan, fully_listed=True, repository_current=tuple(
-                aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT))
-            if plan.state is PlanState.DECISION_REQUIRED:
-                if not model.decisions:
-                    ui.install_message(32814)
-                    return
-                for prompt in model.decisions:
-                    # A provider ignoring a prior answer cannot spin or bypass review.
-                    if prompt.addon_id in dict(target.choices):
-                        ui.install_message(32814)
-                        return
-                    choice = ui.choose_install_decision(prompt)
-                    if choice is None or choice is DecisionChoice.CANCEL:
-                        return
-                    if choice not in prompt.choices:
-                        ui.install_message(32814)
-                        return
-                    target = target.with_choice(prompt.addon_id, choice)
-                continue
-            if plan.state is PlanState.RESOLUTION_REQUIRED:
-                if target.prepared_resolution is not None or not any(
-                        c is DecisionChoice.INSTALL_CURRENT for _, c in target.choices):
-                    ui.install_message(32804)
-                    return
-                result = ui.prepare_install(lambda: self.preparation.prepare(target))
-                if result.code is not PreparationCode.READY:
-                    ui.install_message(32804)
-                    return
-                target = replace(target, prepared_resolution=result.prepared)
-                continue
+            settled = settle_library_plan(ui, self.plan, self.preparation, target)
+            if settled is None:
+                return
+            target, plan, model = settled
             if plan.state is not PlanState.CHANGES_READY:
                 ui.show_install_review(model)
                 return
@@ -95,11 +112,14 @@ def result_message(result, target):
             'user_resolution_required': 32814}.get(result.outcome, 32814)
 
 
-def runtime_install_workflow():
-    """Called only when Install opens; constructing execution owners waits for Apply."""
-    from resources.lib.build_library import default_build_library
+def runtime_library_services():
+    """Read-only plan owners plus lazily composed execution owners.
+
+    Only the plan owners are built here. The coordinator is a factory and the
+    preparation owner is created when a preparation is requested, so nothing
+    mutates until Apply.
+    """
     from resources.lib.plan import BuildPlanService, default_plan_owners
-    from resources.lib.status import BuildStatusService
     from resources.lib.repository_preparation import RepositoryPreparationService
     from resources.lib.frozen_install import (FrozenInstallCoordinator, FrozenInstallStore,
         KodiRuntimeFrozenArtifactBackend, default_frozen_install_root, _default_policy_backend)
@@ -115,5 +135,13 @@ def runtime_install_workflow():
         def prepare(self, target):
             return RepositoryPreparationService(
                 ArtifactStore(default_frozen_install_root() / 'frozen-artifacts')).prepare(target)
-    return InstallWorkflow(default_build_library(), BuildPlanService(owners), Preparation(),
-        coordinator, lambda: BuildStatusService(owners.status).inspect_operation([]))
+    return owners, BuildPlanService(owners), Preparation(), coordinator
+
+
+def runtime_install_workflow():
+    """Called only when Install opens; constructing execution owners waits for Apply."""
+    from resources.lib.build_library import default_build_library
+    from resources.lib.status import BuildStatusService
+    owners, plan, preparation, coordinator = runtime_library_services()
+    return InstallWorkflow(default_build_library(), plan, preparation, coordinator,
+        lambda: BuildStatusService(owners.status).inspect_operation([]))

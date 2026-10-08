@@ -253,7 +253,9 @@ class NativeTests(unittest.TestCase):
         workflow.run.assert_called_once()
         d = NativeDialog([2,0,-1,-1])
         self.ui(d, lambda: workflow).run()
-        self.assertIn('not available', d.details[0][1])
+        # Without a repair provider the route falls back to the corrected page copy; the
+        # real Update / Repair workflow is covered by tests/test_update_repair_workflow.py.
+        self.assertIn('could not be opened', d.details[0][1])
         self.assertEqual(workflow.run.call_count, 1)
 
     def test_safe_composition_failure(self):

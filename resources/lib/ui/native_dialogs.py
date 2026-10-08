@@ -5,12 +5,13 @@ from resources.lib.ui.help_content import SECTIONS
 from resources.lib.ui.models import PageModel, Semantic, SEMANTIC_LABELS
 from resources.lib.ui.plan_view import CHOICE_LABEL, ReviewViewModel, S_CONFIRMATION_SUMMARY
 from resources.lib.ui.plan_view import Text as PlanText
+from resources.lib.ui import repair_view as repair
 from resources.lib.ui.status_view import (
     S_CHECK_AGAIN, S_CHECKED_AT, S_CLOSE, S_ROW, StatusViewModel,
 )
 
 class NativeDialogs:
-    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None):
+    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None, repair_provider=None):
         self.addon = addon
         self.dialog = dialog
         self.settle = settle
@@ -18,6 +19,7 @@ class NativeDialogs:
         self.create_provider = create_provider
         self.busy = busy
         self.install_provider = install_provider
+        self.repair_provider = repair_provider
         self.main_selection = 0
         self.help_selection = 0
 
@@ -322,6 +324,91 @@ class NativeDialogs:
                 return False
             focus = action
 
+    # Update / Repair presentation. The workflow owns every decision and transition.
+
+    def repair(self):
+        try:
+            self.repair_provider().run(self)
+        except Exception:
+            self.repair_message(repair.S_NOT_APPLIED)
+
+    def repair_message(self, string_id):
+        self.dialog.ok(self.text(repair.S_TITLE), self.text(string_id))
+        self.settle(200)
+
+    def repair_prepare(self, prepare):
+        # Visible preparation label; retrieval only, never an Update or Repair claim.
+        self.viewer(self.text(repair.S_TITLE), self.text(repair.S_PREPARE))
+        return self.execute_install(prepare)
+
+    def repair_choose_action(self, summary):
+        """Read-only applied and desired revisions, then the next step.
+
+        Returns 'check' or 'revision'; None means the user went back.
+        """
+        details = [(self.text(repair.S_APPLIED_ROW) % (summary.applied_name, summary.applied_version, summary.profile),
+                    self.text(repair.S_APPLIED_DETAIL) % (summary.applied_name, summary.applied_version, summary.profile))]
+        if summary.changed:
+            details.append((self.text(repair.S_DESIRED_ROW) % (summary.desired_name, summary.desired_version),
+                            self.text(repair.S_DESIRED_DETAIL) % (summary.desired_name, summary.desired_version)))
+        actions = ((repair.S_CHECK_FOR_CHANGES, 'check'), (repair.S_CHOOSE_REVISION, 'revision'),
+                   (repair.S_HELP, 'help'), (repair.S_BACK, 'back'))
+        count, focus = len(details), 0
+        while True:
+            rows = [label for label, _ in details] + [self.text(string_id) for string_id, _ in actions]
+            selected = self.select(self.text(repair.S_TITLE), rows, preselect=focus)
+            if 0 <= selected < count:
+                self.viewer(self.text(repair.S_TITLE), details[selected][1])
+            elif count <= selected < count + len(actions):
+                action = actions[selected - count][1]
+                if action in ('check', 'revision'):
+                    return action
+                if action == 'help':
+                    self.detail(CONTEXT_HELP[Route.REPAIR])
+                else:
+                    return None
+            else:
+                return None
+            focus = selected
+
+    def choose_repair_revision(self, entries, applied_entry_id):
+        labels = [self.install_label(e.display_name) + ' ' + self.install_label(e.build_version)
+                  + (' ' + self.text(repair.S_APPLIED_MARK) if e.entry_id == applied_entry_id else '')
+                  for e in entries]
+        selected = self.select(self.text(repair.S_REVISION_HEADING), labels, 0)
+        return entries[selected] if 0 <= selected < len(entries) else None
+
+    def repair_show(self, model, notes=()):
+        """A review with no Apply: blocked, incomplete, or a limit that stops Apply."""
+        parts = [self.review_body(model)] + [self.text(string_id) for string_id in notes]
+        self.viewer(self.render(model.title), '\n\n'.join(part for part in parts if part))
+
+    def repair_show_healthy(self, model):
+        parts = (self.text(repair.S_HEALTHY_BODY), self.review_body(model))
+        self.viewer(self.text(repair.S_HEALTHY_TITLE), '\n\n'.join(part for part in parts if part))
+
+    def repair_approve(self, summary, model):
+        """Reviewed changes only. Apply Changes must be chosen, then explicitly confirmed."""
+        self.viewer(self.render(model.title), self.review_body(model))
+        selected = self.select(self.render(model.title),
+            [self.text(repair.S_APPLY_CHANGES), self.text(repair.S_BACK)], preselect=1)
+        if selected != 0:
+            return False
+        confirmed = self.dialog.yesno(self.text(repair.S_CONFIRM_APPLY),
+            self.repair_confirmation_body(summary, model),
+            nolabel=self.text(repair.S_BACK), yeslabel=self.text(repair.S_APPLY_CHANGES))
+        self.settle(200)
+        return bool(confirmed)
+
+    def repair_confirmation_body(self, summary, model):
+        change = model.confirmation_summary
+        if change.single_change is not None:
+            change_line = self.render(change.single_change)
+        else:
+            change_line = self.text(S_CONFIRMATION_SUMMARY) % (change.change_count, change.accepted_skip_count)
+        return '\n'.join((summary.desired_name + ' ' + summary.desired_version, summary.profile,
+                          change_line, self.text(repair.S_CONFIRM_RESTART)))
+
     def install(self):
         try:
             self.install_provider().run(self)
@@ -345,6 +432,8 @@ class NativeDialogs:
                 self.create()
             elif route == Route.INSTALL and self.install_provider is not None:
                 self.install()
+            elif route == Route.REPAIR and self.repair_provider is not None:
+                self.repair()
             elif route == Route.STATUS:
                 self.status()
             else:

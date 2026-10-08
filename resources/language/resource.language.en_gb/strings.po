@@ -98,7 +98,7 @@ msgid "Choose a registered local build and one of its declared profiles. Review 
 msgstr ""
 
 msgctxt "#32122"
-msgid "Update / Repair is not available in this frontend build yet. Help explains how it finds and fixes what doesn't match."
+msgid "Update / Repair could not be opened in this session. Help explains how it finds and fixes what doesn't match. No build operation was started."
 msgstr ""
 
 msgctxt "#32124"
@@ -238,11 +238,11 @@ msgid "• Everything eligible is included by default. Uncheck add-ons you do no
 msgstr ""
 
 msgctxt "#32302"
-msgid "Install Build applies a registered local build.\n\nWhat you will do\n• Choose a build and a declared device profile\n• See the changes before anything happens to Kodi\n• Choose only the offered missing-package options\n• Repository Current saves a package before review and shows its version\n• Skip leaves that add-on out, where allowed\n• Review and confirm Apply Build\n\nGood to know\n• Other add-ons are left alone\n• A changed plan needs your approval again\n• Kodi may need to be fully closed and reopened more than once\n• Restart required is not completion\n• Update / Repair remains unavailable"
+msgid "Install Build applies a registered local build.\n\nWhat you will do\n• Choose a build and a declared device profile\n• See the changes before anything happens to Kodi\n• Choose only the offered missing-package options\n• Repository Current saves a package before review and shows its version\n• Skip leaves that add-on out, where allowed\n• Review and confirm Apply Build\n\nGood to know\n• Other add-ons are left alone\n• A changed plan needs your approval again\n• Kodi may need to be fully closed and reopened more than once\n• Restart required is not completion\n• Update / Repair works from the build already applied to a device"
 msgstr ""
 
 msgctxt "#32303"
-msgid "Update / Repair fixes a device that no longer matches its build.\n\nWhat it does\n• Checks what is different\n• Fixes only the parts that need it\n• Does not reinstall everything\n\nWhat you'll do\n• Choose Review Changes\n• Look at the list\n• Apply the fixes you want\n\nGood to know\n• Your other add-ons are left alone\n• If nothing is different, nothing changes\n• Some settings may need a restart before they are finished"
+msgid "Update / Repair checks a device against the build applied to it.\n\nWhat it does\n• Checks what is different\n• Fixes only the parts that need it\n• Does not reinstall everything\n\nWhat you'll do\n• Choose Check for Changes\n• Look at the list\n• Apply the changes you want\n\nGood to know\n• Your other add-ons are left alone\n• If nothing is different, nothing changes\n• Changing an installed add-on to another version is not supported yet\n• Repairing a broken add-on is not supported yet\n• Some settings may need a restart before they are finished"
 msgstr ""
 
 msgctxt "#32304"
@@ -999,4 +999,72 @@ msgstr ""
 
 msgctxt "#32817"
 msgid "This operation needs attention. Changes already made are retained. Open Build Status for a fresh check; the build is not complete."
+msgstr ""
+
+msgctxt "#32900"
+msgid "This Kodi installation does not have a verified applied build yet. Use Install Build first. No change was made."
+msgstr ""
+
+msgctxt "#32901"
+msgid "Applied: %s %s for %s"
+msgstr ""
+
+msgctxt "#32902"
+msgid "Desired: %s %s"
+msgstr ""
+
+msgctxt "#32903"
+msgid "Check for Changes"
+msgstr ""
+
+msgctxt "#32904"
+msgid "Choose Different Revision…"
+msgstr ""
+
+msgctxt "#32905"
+msgid "Apply Changes"
+msgstr ""
+
+msgctxt "#32906"
+msgid "Apply these changes to this Kodi installation?"
+msgstr ""
+
+msgctxt "#32907"
+msgid "No other revision of this build supports this device profile. No change was made."
+msgstr ""
+
+msgctxt "#32908"
+msgid "Choose a revision of this build"
+msgstr ""
+
+msgctxt "#32909"
+msgid "(applied)"
+msgstr ""
+
+msgctxt "#32910"
+msgid "Current / Healthy"
+msgstr ""
+
+msgctxt "#32911"
+msgid "No changes needed. Everything Build Manager checked matches the applied build. Nothing was changed."
+msgstr ""
+
+msgctxt "#32912"
+msgid "Update / Repair can't change an installed add-on to a different version yet. Nothing was changed."
+msgstr ""
+
+msgctxt "#32913"
+msgid "Update / Repair can't repair a broken add-on yet. Nothing was changed."
+msgstr ""
+
+msgctxt "#32914"
+msgid "A repository package saved for this build can't be applied by Update / Repair yet. Nothing was changed."
+msgstr ""
+
+msgctxt "#32915"
+msgid "Applied build: %s %s\nDevice profile: %s\n\nBuild Manager verified this build as applied to this Kodi installation. Check for Changes compares Kodi with it. Nothing changes until you review and apply changes."
+msgstr ""
+
+msgctxt "#32916"
+msgid "Desired revision: %s %s\n\nChoosing a revision changes only this session. The applied build stays the same until a completed apply is verified."
 msgstr ""
