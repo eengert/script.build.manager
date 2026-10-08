@@ -1,29 +1,30 @@
-# Handoff — Update / Repair Build supported workflow
+# Handoff — Update / Repair recorded-resolution correction
 
-- State: STOPPED offline candidate. Product commit 866080e (local; not pushed; not merged). It is not ready for independent review as the complete supported workflow until a product decision is made on repository-current packages for applied builds.
-- Start: clean agent/claude at 6b5f43c97c4531425b451a2c5d2447fe2411ea91. Accepted product ancestor 62a3f9062df8b41c1a64df6012b476b7f8626482; the 6b5f43c..HEAD delta was four .agent files only. Active agent in .agent/AGENT_STATUS.json was claude. The live Agent Handoff controller was not run, because this task prohibits Agent Handoff operations.
-- Done (866080e):
-  - REPAIR now invokes a real workflow, injected in default.py like Install. Constructing it builds no mutating owner.
-  - No verified applied association: the page says so and points to Install Build. Nothing is planned or started, and saved selection is never used.
-  - Overview shows the applied build and offers Check for Changes, Choose Different Revision..., Help, and Back.
-  - Check for Changes uses BuildPlanService.preview on the exact desired target. NO_CHANGES shows Current / Healthy and offers no Apply.
-  - Apply Changes is offered only for a reviewed CHANGES_READY plan. It requires explicit confirmation and validate() CURRENT immediately before LibraryInstallTarget.from_plan_target() and FrozenInstallCoordinator.install_target(interactive=False). A stale or unverifiable review applies nothing and requires a new review.
-  - Decisions are limited to what the plan offers, and Cancel does no work. An ignored answer cannot spin or bypass review. Preparation is retrieval only and requires a fresh review.
-  - DIFFERENT_VERSION_INSTALLED and INSTALLED_ADDON_BROKEN are visible blockers with no Apply. G6 is not implemented or worked around.
-  - Choose Different Revision lists only the same build_id that supports the applied profile. It changes only the session target. It writes nothing and previews nothing until Check for Changes runs. Completion uses the existing publication path.
-  - Install's decision and preparation loop is now settle_library_plan(), shared with Update / Repair. Install's call sequences are unchanged, and its tests pass.
-  - Corrected 32122, 32302 and 32303 copy and added 32900-32916. No stale "unavailable" Update / Repair copy remains in the product path.
-- Stop: two repository-current limits. A product decision is needed.
-  1. Applied builds cannot use repository-current packages for Update / Repair. RepositoryPreparationService.prepare refuses any target that carries an install_resolution. Associated targets always carry one, so preparation returns TARGET_INVALID and the user sees the safe "could not be prepared" message. The task forbids broadening repository resolution without authority, so this was not changed.
-  2. A recorded repository-current record on an applied build cannot be bound to execution. The installer asks for a fresh choice for every non-exact add-on, and recorded records are not bound into execution. Apply is therefore refused before mutation, and the review shows note 32914. Checks still run. Recorded accepted skips are carried as SKIP and do work.
-  Decision options for ChatGPT and Eric: (a) accept the refusal for beta and document it as a limit; or (b) authorize an engine-owned binding for recorded repository records and applied-target preparation, which needs its own review.
-- Files: default.py; resources/lib/install_workflow.py; resources/lib/update_repair_workflow.py (new); resources/lib/ui/repair_view.py (new); resources/lib/ui/native_dialogs.py; resources/language/resource.language.en_gb/strings.po; tests/test_update_repair_workflow.py (new, 29 tests); tests/test_install_workflow.py (one assertion moved to the corrected fallback copy); docs/UPDATE_REPAIR_WORKFLOW.md (new); docs/TESTING.md (one row).
-- Validation: focused suite (new file plus Install, Foundation, Plan UI, Status UI, Create, Plan, Status) passes except the two pre-existing import-policy failures. Full suite on the candidate: 3132 run; 3126 pass; the same two failures and four errors as the git-backed starting HEAD (3103 run). Compile, git diff --check, non-ASCII scan, string-ID definition check, and UI import policy checks pass for the changed modules.
-- Live-proven: none. Everything is unit-tested with injected fakes. No Test.app, normal Kodi, profile, device, MCP, or push activity.
-- Not updated: .agent/AGENT_STATUS.json, which is controller-owned under D-026 and not edited by hand. BUILD_MANAGER_PROJECT_PLAN.md and AGENTS.md are unchanged.
-- Out of scope, noticed (not fixed):
-  - resources/lib/ui/plan_view.py imports typing, which fails two pre-existing ImportPolicy tests (test_no_engine_imports, test_the_presentation_modules_import_no_engine). Both fail identically at the starting HEAD.
-  - tests/test_bm_test_app_keychain.py: 4 errors (TypeError in tools/bm_test_app.py resolve_commit with the fixture commit). Also pre-existing at the starting HEAD.
-  - Five tests skip in the git-archive copy of HEAD but run in the worktree; this is environmental.
-- Next: product decision on the two repository-current limits. Then independent review of 866080e. The runtime Test.app step needs a separate, explicit authorization.
+- State: READY FOR REVIEW, offline. Correction commit 326e52d (local; not pushed; not merged). It supersedes the STOPPED candidate 866080e: the repository-current refusal is removed, and an applied outcome is now reused exactly.
+- Start: clean agent/claude at 91d9dc39c1559840b0f2a1b97aea33d23cb8254f; parent product candidate 866080ef9d687879fdcb02efa480e34ae34dff99. Active agent in .agent/AGENT_STATUS.json: claude (read locally; the live Agent Handoff controller was not run).
+- Product question, proven: a published applied outcome records a terminal resolution for every installable add-on. The executor's install-order loop records each one at completion, and restart restoration checks that coverage. The plan consults recorded records first, so Check for Changes never asks for a new decision or a new repository package on the applied revision. Only a partial bound outcome reaches a decision, and publication never produces one. Documented and pinned by tests.
+- Root cause of the earlier refusal: library install() never seeded records from the applied resolution. It prompted for every non-exact installable add-on, including installed healthy repository-current ones, so the reviewed plan could never be bound to execution.
+- Product (326e52d):
+  - FrozenInstallCoordinator.install_target / install take prior_resolution (keyword, library only, no prepared resolution). Accepts only a FrozenInstallResolutionManifest.
+  - Bound before any mutation: bind_resolutions against this build, frozen manifest and current policies; the verified applied association must still be this entry, profile and resolution fingerprint; every record must pass _check_terminal_record, the rule set restart restoration also uses; repository-current saved bytes and dependencies are checked by the existing validate_execution_material path; installed managed add-ons must match the recorded version and be healthy (G6 stays blocked); skipped records must not be installed.
+  - Records are seeded from the bound prior. Install-stage code installs repository-current outcomes from stored bytes and never calls resolve_repository_current for a resolved record.
+  - Transaction durably records prior_resolution_fingerprint (optional field, schema 4 kept, defaults to empty for older files). Equivalence and resume compare it, so a different prior is a different operation.
+  - plan.py: a recorded package is checked for installed add-ons too. A gone package blocks with PACKAGE_MISSING, because execution needs those bytes.
+  - Update / Repair passes install_resolution whole. Session answers are the only choices. The recorded-repository refusal, its note 32914, and the recorded-skip mapping are removed. Docs rewritten.
+- Install workflow: unchanged behaviour (prior defaults to None); its existing tests pass.
+- Validation:
+  - tests/test_recorded_resolution.py: 16 new offline tests, all pass. They cover the decision invariant (complete and partial), installed-package-gone blocking, exact reuse (healthy, missing saved bytes, unbound tamper, stale association, G6 different version, broken, choices refused), repository reuse with network forbidden (healthy, missing from saved bytes, saved bytes missing, truncated), and durable identity (interrupted reuse keeps the prior, a different prior conflicts, same prior is equivalent, legacy files default to empty).
+  - tests/test_update_repair_workflow.py: 29, all pass. Two accepted expectations updated for the whole-resolution hand-off: the recorded-repository test and the recorded-skip test.
+  - Focused engine and workflow run: frozen install, resolution, build library, applied publication, resume, restart, install workflow, update/repair workflow, repository preparation, library install: 373 pass.
+  - Full suite: 3148 run; failures 2, errors 4, all six pre-existing (two plan_view import-policy failures, four keychain fixture errors). No new failures.
+  - compile, git diff --check, string IDs (262 entries, no duplicates, all referenced IDs defined), non-ASCII scan, UI import policy: clean apart from the pre-existing plan_view typing import.
+- Live-proven: none. Everything is offline with fake installers and the real library, artifact and frozen stores. No Test.app, normal Kodi, profile, device, MCP or push activity.
+- Residual limits:
+  - Restart: the restart identity test uses an interrupted reuse, not a real restart. Real restart resume of a reused outcome is not exercised end to end.
+  - Update / Repair workflow tests use fakes. The engine tests exercise the real binding and lifecycle.
+  - A partial bound outcome can still reach DECISION_REQUIRED, which then ends safely at repository preparation. Publication never produces one, and the docs say so.
+  - G6 replacement and broken-add-on repair are not implemented, by design.
+- Out of scope, noticed (not fixed): resources/lib/ui/plan_view.py imports typing (two pre-existing ImportPolicy tests); tests/test_bm_test_app_keychain.py has four pre-existing fixture errors (TypeError in tools/bm_test_app.py resolve_commit).
+- Not updated: .agent/AGENT_STATUS.json (controller-owned under D-026; not hand-edited).
+- Next: independent review of 326e52d. Runtime validation needs a separate, explicit authorization.
 - Usage: see the last row of .agent/USAGE_HISTORY.md.
