@@ -1,5 +1,7 @@
 """Package metadata checks: addon.xml describes the currently available workflows."""
 from pathlib import Path
+import hashlib
+import struct
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -8,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # Early foundation-stage claims that are no longer true.
 OBSOLETE_CLAIMS = ('not available yet', 'still being built', 'arrives with')
 WORKFLOWS = ('Create Build', 'Install Build', 'Update / Repair')
+
+# Exact approved artwork (matrix a33a3f8); the SHA pin is intentional.
+ICON_PATH = 'resources/images/icon.png'
+ICON_SHA256 = '207c44a0474e7e370cf6d210c7646ce243c704a0694ef422c12bd51401628d23'
 
 class AddonMetadataTests(unittest.TestCase):
     @classmethod
@@ -41,6 +47,14 @@ class AddonMetadataTests(unittest.TestCase):
         self.assertTrue(all(name in self.news for name in WORKFLOWS))
         for text in self.descriptions.values():
             self.assertTrue(all(name in text for name in WORKFLOWS))
+
+    def test_packaged_icon_is_approved_512_png(self):
+        self.assertEqual(self.metadata.findtext('assets/icon'), ICON_PATH)
+        data = (ROOT / ICON_PATH).read_bytes()
+        self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+        self.assertEqual(data[12:16], b'IHDR')
+        self.assertEqual(struct.unpack('>II', data[16:24]), (512, 512))
+        self.assertEqual(hashlib.sha256(data).hexdigest(), ICON_SHA256)
 
 if __name__ == '__main__':
     unittest.main()
