@@ -1057,10 +1057,6 @@ msgctxt "#32913"
 msgid "Update / Repair can't repair a broken add-on yet. Nothing was changed."
 msgstr ""
 
-msgctxt "#32914"
-msgid "A repository package saved for this build can't be applied by Update / Repair yet. Nothing was changed."
-msgstr ""
-
 msgctxt "#32915"
 msgid "Applied build: %s %s\nDevice profile: %s\n\nBuild Manager verified this build as applied to this Kodi installation. Check for Changes compares Kodi with it. Nothing changes until you review and apply changes."
 msgstr ""

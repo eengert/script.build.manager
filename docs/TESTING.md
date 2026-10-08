@@ -34,7 +34,8 @@ The test suite covers:
 | `test_status_ui.py` | Native Build Status page: plain language, secret-blind, Check Again (BM-UI-002B) | 32 |
 | `test_plan.py` | Read-only frozen-build plan: states, blockers, decisions, review identity, stale-plan checks, zero-mutation, privacy (BM-UI-002C) | 81 |
 | `test_plan_ui.py` | Native Review Changes page: plain language, review-only, secret-blind (BM-UI-002C) | 20 |
-| `test_update_repair_workflow.py` | Update / Repair: applied-association start, no-op, reviewed Apply with validate-before-execute, decisions and preparation, G6 blockers, pending states, different revision, route and presentation safety | 28 |
+| `test_update_repair_workflow.py` | Update / Repair: applied-association start, no-op, reviewed Apply with validate-before-execute, decisions and preparation, G6 blockers, pending states, different revision, route and presentation safety | 29 |
+| `test_recorded_resolution.py` | Prior accepted outcomes: decision invariant of applied outcomes, exact and recorded-repository reuse without network, fail-closed binding, G6 refusal, durable prior identity and equivalence | 16 |
 
 ## Disposable Kodi harness
 

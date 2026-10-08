@@ -58,36 +58,24 @@ class _Session:
             changed=desired.entry_id != applied.entry_id)
 
 
-def _recorded(target, resolution):
-    """Whether the applied association records an outcome of this kind."""
+def _accepted_exceptions(target):
+    """Whether the applied outcome carries an accepted skip, which is an exception too."""
     if target.install_resolution is None:
         return False
-    return any(record.resolution is resolution for record in target.install_resolution.records)
+    return any(record.resolution is InstallResolution.SKIPPED for record in target.install_resolution.records)
 
 
-def _limit_notes(plan, target):
-    """Supported-scope limits. A non-empty result means no Apply is offered."""
-    notes = [view.NOTE_FOR_BLOCKER[b.code] for b in plan.blockers if b.code in view.NOTE_FOR_BLOCKER]
-    if plan.state is PlanState.CHANGES_READY and _recorded(target, InstallResolution.REPOSITORY_CURRENT):
-        # The installer needs a fresh package choice for this record and the reviewed
-        # plan cannot bind it. Refuse before Apply rather than failing after it.
-        notes.append(view.S_NOTE_RECORDED_PACKAGE)
-    return tuple(dict.fromkeys(notes))
+def _limit_notes(plan):
+    """Supported-scope limits. A non-empty result means no Apply is offered. Only the
+    blockers Update / Repair cannot change yet (G6) qualify; a recorded outcome never does."""
+    return tuple(dict.fromkeys(
+        view.NOTE_FOR_BLOCKER[b.code] for b in plan.blockers if b.code in view.NOTE_FOR_BLOCKER))
 
 
-def _execution_choices(target):
-    """Exactly the choices the installer receives: recorded accepted skips plus the
-    answers reviewed in this session. Nothing else is inferred."""
-    choices = {}
-    if target.install_resolution is not None:
-        for record in target.install_resolution.records:
-            if record.resolution is InstallResolution.SKIPPED:
-                choices[record.addon_id] = ResolutionChoice.SKIP
-    for addon_id, choice in target.choices:
-        if addon_id in choices:
-            raise ValueError("a recorded skip cannot also be answered")
-        choices[addon_id] = ResolutionChoice(choice.value)
-    return choices
+def _session_choices(target):
+    """The answers reviewed in this visit. A recorded outcome is never answered again:
+    the prior accepted resolution is handed to the engine whole, and it binds there."""
+    return {addon_id: ResolutionChoice(choice.value) for addon_id, choice in target.choices}
 
 
 class UpdateRepairWorkflow:
@@ -139,7 +127,7 @@ class UpdateRepairWorkflow:
             if plan.state is PlanState.NO_CHANGES:
                 ui.repair_show_healthy(model)
                 return None
-            notes = _limit_notes(plan, target)
+            notes = _limit_notes(plan)
             if plan.state is not PlanState.CHANGES_READY or notes:
                 ui.repair_show(model, notes)
                 return None
@@ -153,13 +141,14 @@ class UpdateRepairWorkflow:
                 ui.repair_message(view.S_STALE)
                 continue  # fresh preview and a new explicit approval, never silent approval
             install_target = LibraryInstallTarget.from_plan_target(target)
-            choices = _execution_choices(target)
+            choices = _session_choices(target)
             result = ui.execute_install(lambda: self.coordinator_provider().install_target(
                 install_target, prepared_resolution=target.prepared_resolution,
+                prior_resolution=target.install_resolution,
                 resolution_choices=choices, interactive=False))
             message = result_message(result, target)
-            if result.outcome == 'complete' and choices:
-                # Recorded accepted skips are exceptions too, not only answers from this session.
+            if result.outcome == 'complete' and (choices or _accepted_exceptions(target)):
+                # Accepted skips carried from the applied outcome are exceptions too.
                 message = view.S_COMPLETE_WITH_EXCEPTIONS
             ui.repair_message(message)
             return result

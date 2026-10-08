@@ -49,16 +49,55 @@ Pending restart, needs-attention, and unavailable operation states arrive as `BL
 4. The exact `LibraryInstallTarget.from_plan_target()` runs through
    `FrozenInstallCoordinator.install_target()` with `interactive=False`. The prepared
    resolution is carried exactly as Install carries it.
-5. `resolution_choices` contain the answers reviewed in this visit plus each accepted skip
-   recorded for the applied build. A recorded skip is carried as `SKIP` and reported as an
-   exception.
+5. The applied outcome is passed whole as `prior_resolution`: the same validated
+   `FrozenInstallResolutionManifest` the reviewed plan used. The answers reviewed in this visit
+   are passed as `resolution_choices`. A published applied outcome covers every installable
+   add-on, so it never needs a new answer. A reused accepted skip is reported as an exception.
 
 Completion is reported from the frozen lifecycle's outcome. Update / Repair never writes the
 applied association. A `complete` outcome means the frozen publication path has recorded the
 new association. Restart-required, active, needs-attention, cancelled, and user-resolution
 outcomes are not success.
 
-## Supported-scope limits (G6 and related)
+## Applied outcome reuse
+
+A prior accepted outcome is evidence of what was accepted, never permission to fetch a newer
+package. `FrozenInstallCoordinator.install_target(prior_resolution=...)` binds it again, library
+installs only, before any mutation:
+
+- It must bind exactly to this build, frozen manifest, and current install policies
+  (`bind_resolutions`). The source, plan, and resulting-software fingerprints must match.
+- It must still be the verified applied association for this library entry and device profile
+  at execution time. A changed association is refused.
+- Every record must satisfy the terminal rules that restart restoration uses:
+  - exact: the captured artifact identity, in the installed state;
+  - repository-current: the recorded repository, the exact saved package, and its dependency
+    semantics. The saved bytes are required and must match. The repository is never queried,
+    and a newer package is never fetched;
+  - skipped: still skipped, with the skip policy and no installed copy.
+- An installed managed add-on must already match its recorded version and be healthy. A
+  different installed version or a broken installed add-on is refused (G6 stays blocked).
+- The transaction durably records the prior fingerprint. A retry or resume with a different
+  prior outcome is a different operation and is refused, never treated as equivalent.
+
+Check for Changes reads the same recorded outcome. A recorded package that is gone, or whose
+bytes do not match, blocks with `PACKAGE_MISSING` even when the add-on is installed, because
+execution needs those bytes.
+
+## Decision invariant
+
+A published applied outcome records a terminal resolution for every installable add-on. The
+executor records each one at completion, and restart restoration checks that coverage.
+Check for Changes therefore never asks for a new decision or a new repository package on the
+applied revision. `RepositoryPreparationService` keeps refusing targets that carry an applied
+resolution, and nothing widens it. Only a partial bound outcome, which publication never
+produces, can reach a decision. The plan tests in `tests/test_recorded_resolution.py` document
+that boundary.
+
+Different revisions carry no prior outcome. They keep the ordinary decision, preparation, and
+fresh-review path.
+
+## Supported-scope limits (G6)
 
 These are blocked before Apply and are never worked around:
 
@@ -66,13 +105,6 @@ These are blocked before Apply and are never worked around:
   Repair cannot change installed versions yet.
 - A broken installed managed add-on (`INSTALLED_ADDON_BROKEN`). Update / Repair cannot repair
   it yet.
-- A repository package recorded for the applied build. The installer needs a fresh package
-  choice for that record, and the reviewed plan cannot bind it, so Apply is refused. Checks
-  still run and show Current / Healthy when nothing needs changing.
-
-Known residual limit: `RepositoryPreparationService.prepare()` refuses a target that already
-carries an applied install resolution. Choosing the repository-current package for a missing
-add-on on an applied build therefore stops with the safe "could not be prepared" message.
 
 ## Not in this workflow
 

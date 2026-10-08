@@ -26,7 +26,6 @@ S_HEALTHY_TITLE = 32910           # Current / Healthy
 S_HEALTHY_BODY = 32911
 S_NOTE_DIFFERENT_VERSION = 32912  # G6: a different installed version cannot be replaced yet
 S_NOTE_BROKEN = 32913             # G6: a broken installed add-on cannot be repaired yet
-S_NOTE_RECORDED_PACKAGE = 32914   # saved repository package cannot be applied yet
 S_APPLIED_DETAIL = 32915          # applied build details (help-style viewer)
 S_DESIRED_DETAIL = 32916          # desired revision details (help-style viewer)
 

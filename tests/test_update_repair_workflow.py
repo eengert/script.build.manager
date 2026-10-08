@@ -157,10 +157,11 @@ class RepairWorkflowTests(unittest.TestCase):
         self.ui.repair_show_healthy.assert_called_once()
         self.assert_no_apply()
 
-    def test_recorded_repository_package_blocks_apply_even_when_only_enablement_changes(self):
+    def test_recorded_repository_outcome_is_reused_as_the_exact_prior_resolution(self):
+        applied_resolution = resolution(('plugin.demo', InstallResolution.REPOSITORY_CURRENT))
         self.applied = PlanTarget('/private/manifest', 'other', '/private/frozen',
                                   library_source=self.applied.library_source,
-                                  install_resolution=resolution(('plugin.demo', InstallResolution.REPOSITORY_CURRENT)))
+                                  install_resolution=applied_resolution)
         self.library.associated_plan_target.return_value = self.applied
         self.service.preview.return_value = plan(PlanState.NO_CHANGES)
         self.run_flow()
@@ -168,10 +169,13 @@ class RepairWorkflowTests(unittest.TestCase):
         self.assert_no_apply()
         self.service.preview.return_value = plan(PlanState.CHANGES_READY)
         self.ui.repair_choose_action.side_effect = ['check', None]
-        self.run_flow()
-        notes = self.ui.repair_show.call_args.args[1]
-        self.assertEqual(notes, (repair.S_NOTE_RECORDED_PACKAGE,))
-        self.assert_no_apply()
+        derive = self.run_flow()
+        self.ui.repair_show.assert_not_called()
+        self.ui.repair_approve.assert_called_once()
+        self.service.validate.assert_called_once_with(self.applied, self.service.preview.return_value.review)
+        self.coordinator.install_target.assert_called_once_with(
+            derive.return_value, prepared_resolution=None, prior_resolution=applied_resolution,
+            resolution_choices={}, interactive=False)
 
     def test_changes_ready_is_reviewed_confirmed_validated_then_executed_exactly(self):
         events = []
@@ -185,7 +189,8 @@ class RepairWorkflowTests(unittest.TestCase):
         self.service.validate.assert_called_once_with(self.applied, self.service.preview.return_value.review)
         derive.assert_called_once_with(self.applied)
         self.coordinator.install_target.assert_called_once_with(
-            derive.return_value, prepared_resolution=None, resolution_choices={}, interactive=False)
+            derive.return_value, prepared_resolution=None, prior_resolution=None,
+            resolution_choices={}, interactive=False)
         self.ui.repair_message.assert_called_with(32809)
 
     def test_declined_or_unconfirmed_changes_never_validate_or_execute(self):
@@ -317,14 +322,16 @@ class RepairWorkflowTests(unittest.TestCase):
                 self.ui.repair_show.assert_called_once()
                 self.assert_no_apply()
 
-    def test_recorded_accepted_skip_is_carried_as_skip_and_reported_as_exception(self):
+    def test_recorded_accepted_skip_is_passed_whole_as_the_prior_outcome_and_reported_as_exception(self):
+        applied_resolution = resolution(('plugin.skipped', InstallResolution.SKIPPED))
         self.applied = PlanTarget('/private/manifest', 'other', '/private/frozen',
                                   library_source=self.applied.library_source,
-                                  install_resolution=resolution(('plugin.skipped', InstallResolution.SKIPPED)))
+                                  install_resolution=applied_resolution)
         self.library.associated_plan_target.return_value = self.applied
         self.run_flow()
-        self.assertEqual(self.coordinator.install_target.call_args.kwargs['resolution_choices'],
-                         {'plugin.skipped': ResolutionChoice.SKIP})
+        kwargs = self.coordinator.install_target.call_args.kwargs
+        self.assertIs(kwargs['prior_resolution'], applied_resolution)
+        self.assertEqual(kwargs['resolution_choices'], {})
         self.ui.repair_message.assert_called_with(32816)
 
     def test_different_revision_uses_same_build_and_profile_only(self):

@@ -101,6 +101,12 @@ class FrozenInstallPersistenceError(FrozenInstallError):
     code = "FROZEN_TRANSACTION_PERSISTENCE_FAILED"
 
 
+class FrozenPriorResolutionError(FrozenInstallValidationError):
+    """A prior accepted outcome cannot be reused for this exact operation."""
+
+    code = "PRIOR_RESOLUTION_INVALID"
+
+
 class FrozenInstallStateUnreadable(FrozenInstallPersistenceError):
     """The durable record could not be read at all (I/O), as opposed to being invalid."""
 
@@ -226,6 +232,10 @@ class FrozenInstallTransaction:
     activation_hold_released: bool = True
     lifecycle_restart_count: int = 0
     library_target: Optional[LibraryInstallTarget] = None
+    # Resolution fingerprint of the prior accepted outcome this transaction was seeded
+    # from. Empty means no prior outcome. Identity-bearing: a request or resume with a
+    # different prior is a different operation.
+    prior_resolution_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         _valid_uuid(self.transaction_id, "transaction_id")
@@ -276,6 +286,11 @@ class FrozenInstallTransaction:
             value = getattr(self, field)
             if value and not _FINGERPRINT.fullmatch(value):
                 raise FrozenInstallValidationError(f"{field} is invalid")
+        if not isinstance(self.prior_resolution_fingerprint, str) or (
+            self.prior_resolution_fingerprint
+            and not _FINGERPRINT.fullmatch(self.prior_resolution_fingerprint)
+        ):
+            raise FrozenInstallValidationError("prior_resolution_fingerprint is invalid")
         if len({policy.addon_id for policy in self.policies}) != len(self.policies):
             raise FrozenInstallValidationError("transaction policies contain duplicates")
         if len({record.addon_id for record in self.resolution_records}) != len(self.resolution_records):
@@ -331,6 +346,7 @@ class FrozenInstallTransaction:
             "activation_hold_ids": list(self.activation_hold_ids),
             "activation_hold_released": self.activation_hold_released,
             "lifecycle_restart_count": self.lifecycle_restart_count,
+            "prior_resolution_fingerprint": self.prior_resolution_fingerprint,
         }
 
     @classmethod
@@ -351,6 +367,7 @@ class FrozenInstallTransaction:
             "resolution_fingerprint", "resolved_software_fingerprint",
             "configuration_manifest_path", "lifecycle_stage", "activation_hold_ids",
             "activation_hold_released", "lifecycle_restart_count", "library_target",
+            "prior_resolution_fingerprint",
         }
         if set(value) - required - optional or not required.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction fields are unsupported")
@@ -410,6 +427,7 @@ class FrozenInstallTransaction:
                 policies=policies,
                 resolution_records=resolutions,
                 resolution_fingerprint=value.get("resolution_fingerprint", ""),
+                prior_resolution_fingerprint=value.get("prior_resolution_fingerprint", ""),
                 resolved_software_fingerprint=value.get("resolved_software_fingerprint", ""),
                 configuration_manifest_path=value.get("configuration_manifest_path", ""),
                 lifecycle_stage=FrozenLifecycleStage(
@@ -1284,6 +1302,46 @@ def stored_repository_dependencies(store, record, plan, records, skipped) -> Tup
     return _repository_package_required_dependencies(package, plan, records, skipped)
 
 
+def _check_terminal_record(addon_id, record, node, row, policies, *, allow_uninstalled=False):
+    """Rules a terminal resolution record must satisfy before it is trusted.
+
+    Shared by restart restoration and prior-outcome reuse so the two cannot drift.
+    """
+    if record.captured_version != node.version:
+        raise FrozenInstallValidationError("durable resolution changed captured version")
+    if record.resolution is InstallResolution.EXACT:
+        if (
+            not row.exact_artifact_available
+            or node.artifact is None
+            or record.resolved_version != node.version
+            or record.artifact_sha256 != node.artifact.sha256
+            or record.artifact_size != node.artifact.size
+            or record.state not in (
+                (
+                    ResolutionState.INSTALLED,
+                    ResolutionState.RESOLVED,
+                    ResolutionState.SELECTED,
+                )
+                if allow_uninstalled else (ResolutionState.INSTALLED,)
+            )
+        ):
+            raise FrozenInstallValidationError("durable exact resolution is inconsistent")
+    elif record.resolution is InstallResolution.REPOSITORY_CURRENT:
+        policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
+        if (
+            not policy.repository_fallback_allowed
+            or record.repository_id != row.repository_id
+            or not record.resolved_version
+            or not record.artifact_sha256
+            or record.state is not ResolutionState.INSTALLED
+        ):
+            raise FrozenInstallValidationError("durable repository resolution is inconsistent")
+    elif record.resolution is InstallResolution.SKIPPED:
+        policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
+        if not policy.skip_allowed or record.state is not ResolutionState.SKIPPED:
+            raise FrozenInstallValidationError("durable skip resolution is inconsistent")
+
+
 @dataclass(frozen=True)
 class FrozenInstalledAddon:
     addon_id: str
@@ -1765,6 +1823,7 @@ class FrozenInstallCoordinator:
         interactive: bool = False,
         transaction_access: Optional[object] = None,
         prepared_resolution=None,
+        prior_resolution=None,
     ) -> FrozenInstallResult:
         """Product entry point for an exact library selection reviewed by Plan.
 
@@ -1779,7 +1838,55 @@ class FrozenInstallCoordinator:
                             library_target=target,
                             resolution_choices=resolution_choices, interactive=interactive,
                             transaction_access=transaction_access,
-                            prepared_resolution=prepared_resolution)
+                            prepared_resolution=prepared_resolution,
+                            prior_resolution=prior_resolution)
+
+    def _bind_prior_resolution(
+        self, library, library_target, device_profile_id, manifest, policies, plan,
+        resolution_choices, prepared_resolution, prior_resolution,
+    ):
+        """Bind a prior accepted terminal outcome to this exact applied library target.
+
+        Returns ``(records, fingerprint)``. The prior outcome is evidence of what was
+        accepted before. It is never permission to fetch a newer package: a recorded
+        repository package is reused only as its exact saved bytes, and nothing here
+        queries a repository. Every check runs before the first mutation.
+        """
+        from resources.lib.build_identity import IdentityMismatch, bind_resolutions
+        if library_target is None or prepared_resolution is not None:
+            raise FrozenPriorResolutionError("a prior resolution needs a library target and no preparation")
+        if not isinstance(prior_resolution, FrozenInstallResolutionManifest):
+            raise FrozenPriorResolutionError("prior resolution is not a resolution manifest")
+        try:
+            records = bind_resolutions(manifest.build_id, manifest, prior_resolution, policies=policies)
+        except IdentityMismatch as exc:
+            raise FrozenPriorResolutionError("prior resolution does not bind to this build") from exc
+        fingerprint = prior_resolution.resolution_fingerprint
+        applied = library.current_applied_association() if library is not None else None
+        if (applied is None or applied.entry_id != library_target.source.entry_id
+                or applied.device_profile_id != device_profile_id
+                or applied.resolution_fingerprint != fingerprint):
+            raise FrozenPriorResolutionError("prior resolution is no longer the applied association")
+        if resolution_choices and set(resolution_choices) & {record.addon_id for record in records}:
+            raise FrozenPriorResolutionError("a recorded outcome cannot also be answered")
+        rows = {row.addon_id: row for row in plan.summary.addons}
+        for record in records:
+            row = rows.get(record.addon_id)
+            if row is None or record.addon_id not in plan.nodes:
+                raise FrozenPriorResolutionError("prior resolution names an add-on outside this build")
+            node = plan.nodes[record.addon_id]
+            _check_terminal_record(record.addon_id, record, node, row, policies)
+            current = self.installer.get_addon_details(record.addon_id)
+            if record.resolution is InstallResolution.SKIPPED:
+                if current is not None:
+                    raise FrozenPriorResolutionError("a recorded skip is now installed")
+                continue
+            # Replacing a different installed version or repairing a broken add-on is G6,
+            # which stays blocked. A matching healthy add-on needs no software change.
+            target_version = record.resolved_version or node.version
+            if current is not None and (current.broken or current.version != target_version):
+                raise FrozenPriorResolutionError("an installed managed add-on differs from the recorded outcome")
+        return tuple(sorted(records, key=lambda item: item.addon_id)), fingerprint
 
     def _check_private_ownership_compatibility(self, desired, records):
         if desired is None:
@@ -1984,6 +2091,7 @@ class FrozenInstallCoordinator:
         library_target: Optional[LibraryInstallTarget] = None,
         resolution_choices: Optional[Mapping[str, ResolutionChoice]] = None,
         prepared_resolution=None,
+        prior_resolution=None,
     ) -> FrozenInstallResult:
         configuration_runner = self.configuration_runner
         try:
@@ -2052,6 +2160,12 @@ class FrozenInstallCoordinator:
                     for r in prepared_records
                 )):
                     raise FrozenInstallValidationError("preparation differs from approved choices")
+            prior_records, prior_fingerprint = (
+                self._bind_prior_resolution(
+                    library, library_target, device_profile_id, manifest, policies, plan,
+                    resolution_choices, prepared_resolution, prior_resolution,
+                ) if prior_resolution is not None else ((), "")
+            )
             hold_ids = self._activation_hold_ids(plan, desired_profile)
             if hold_ids and (not (configuration_manifest_path or library_target) or configuration_runner is None):
                 raise FrozenInstallValidationError(
@@ -2077,6 +2191,7 @@ class FrozenInstallCoordinator:
                 and active.configuration_manifest_path == (configuration_manifest_path or manifest_path)
                 and active.library_target == library_target
                 and active.device_profile_id == device_profile_id
+                and active.prior_resolution_fingerprint == prior_fingerprint
             ):
                 if session_id == active.originating_kodi_session_id:
                     return FrozenInstallResult(
@@ -2122,6 +2237,7 @@ class FrozenInstallCoordinator:
                     and active.install_plan_fingerprint == plan.install_plan_fingerprint
                     and active.library_target == library_target
                     and (library_target is None or active.device_profile_id == device_profile_id)
+                    and active.prior_resolution_fingerprint == prior_fingerprint
                 ):
                     return FrozenInstallResult(
                         "needs_attention" if active.phase is FrozenInstallPhase.NEEDS_ATTENTION else "active",
@@ -2134,7 +2250,7 @@ class FrozenInstallCoordinator:
 
         records: Dict[str, InstallResolutionRecord] = (
             {record.addon_id: record for record in active.resolution_records}
-            if active_resume else {r.addon_id: r for r in prepared_records}
+            if active_resume else {r.addon_id: r for r in (*prepared_records, *prior_records)}
         )
         rows = {row.addon_id: row for row in plan.summary.addons}
         effective = {policy.addon_id: policy for policy in policies}
@@ -2330,6 +2446,7 @@ class FrozenInstallCoordinator:
                     policies=tuple(sorted(policies, key=lambda item: item.addon_id)),
                     resolution_records=tuple(sorted(records.values(), key=lambda item: item.addon_id)),
                     resolution_fingerprint=resolution_fingerprint(tuple(records.values())),
+                    prior_resolution_fingerprint=prior_fingerprint,
                     configuration_manifest_path=configuration_manifest_path or manifest_path,
                     private_overlay_id=private_overlay_id,
                     private_overlay_fingerprint=private_overlay_fingerprint,
@@ -2676,42 +2793,13 @@ class FrozenInstallCoordinator:
             for addon_id, record in record_map.items():
                 node = plan.nodes[addon_id]
                 row = rows[addon_id]
-                if record.captured_version != node.version:
-                    raise FrozenInstallValidationError("durable resolution changed captured version")
-                if record.resolution is InstallResolution.EXACT:
-                    if (
-                        not row.exact_artifact_available
-                        or node.artifact is None
-                        or record.resolved_version != node.version
-                        or record.artifact_sha256 != node.artifact.sha256
-                        or record.artifact_size != node.artifact.size
-                        or record.state not in (
-                            (
-                                ResolutionState.INSTALLED,
-                                ResolutionState.RESOLVED,
-                                ResolutionState.SELECTED,
-                            )
-                            if allow_uninstalled else (ResolutionState.INSTALLED,)
-                        )
-                    ):
-                        raise FrozenInstallValidationError("durable exact resolution is inconsistent")
-                elif record.resolution is InstallResolution.REPOSITORY_CURRENT:
-                    policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
-                    if (
-                        not policy.repository_fallback_allowed
-                        or record.repository_id != row.repository_id
-                        or not record.resolved_version
-                        or not record.artifact_sha256
-                        or record.state is not ResolutionState.INSTALLED
-                    ):
-                        raise FrozenInstallValidationError("durable repository resolution is inconsistent")
+                _check_terminal_record(
+                    addon_id, record, node, row, policies, allow_uninstalled=allow_uninstalled
+                )
+                if record.resolution is InstallResolution.REPOSITORY_CURRENT:
                     extra_dependencies[addon_id] = stored_repository_dependencies(
                         self.artifact_store, record, plan, record_map, frozenset(skipped)
                     )
-                elif record.resolution is InstallResolution.SKIPPED:
-                    policy = effective_policy(addon_id, {item.addon_id: item for item in policies})
-                    if not policy.skip_allowed or record.state is not ResolutionState.SKIPPED:
-                        raise FrozenInstallValidationError("durable skip resolution is inconsistent")
             plan = validate_frozen_install_plan(
                 manifest,
                 self.artifact_store,

@@ -562,7 +562,9 @@ class BuildPlanService:
                 kind = "skip_recorded"
             elif record is not None:
                 kind, version = "recorded", record.resolved_version or node.version
-                recorded_ok = self._recorded_package(record) if installed is None else None
+                # Installed or not, the saved outcome must still be provable: execution reuses
+                # exactly these bytes and their dependency semantics, and never a fresh package.
+                recorded_ok = self._recorded_package(record)
                 artifacts.append(["recorded", aid, record.artifact_sha256, recorded_ok])
             elif row.exact_artifact_available:
                 kind = "exact"
@@ -623,6 +625,9 @@ class BuildPlanService:
                 self._log_failure("details", exc)
                 detail = None
             broken[aid] = None if detail is None else bool(detail.broken)
+            if kind == "recorded" and not recorded_ok:
+                block(aid, SoftwareAction.PACKAGE_MISSING, BlockerCode.PACKAGE_MISSING)
+                continue
             if detail is None or not installed.version:
                 gaps.append(CheckGap.SOFTWARE_UNAVAILABLE)
                 put(aid, SoftwareAction.UNAVAILABLE)
