@@ -1,11 +1,11 @@
 # Current Task
 
-- Task: BUILD MANAGER UPDATE / REPAIR RECORDED RESOLUTION COVERAGE (bounded offline test completion; no assigned ID).
-- State: READY FOR INDEPENDENT REVIEW. Coverage completion commit 53f2219 (local; not pushed). No production code changed.
-- Start: clean agent/claude at 48bfd56f85d5a56e63a348ff9cba0825c74d2e3e; correction 326e52d an ancestor.
-- Result: recorded SKIPPED outcomes reused end to end, including the negative installed-skip refusal. The real quiescence, new-session active_resume branch and its prior-identity fences are covered. Mutation checks confirm the fences bind to the production comparison.
-- Validation: lifecycle module 8 run OK. Focused regression set 483 run with only the pre-existing import-policy failure. Full suite 3156 run; failures 2 and errors 4, all six pre-existing.
-- Preserved: applied-publication authority, normal Install semantics, G6 blocks, bind_resolutions, transaction identity, and the restart count.
-- Boundaries: no push, no matrix, no Agent Handoff operation, no Test.app, no normal Kodi, profile, device or MCP access.
-- Next: independent review of 326e52d and 53f2219; runtime validation needs a separately authorized task.
-- Usage: see the last row of .agent/USAGE_HISTORY.md.
+- Task: BUILD MANAGER UPDATE / REPAIR TEST.APP NO-OP QUALIFICATION (bounded live runtime check; no assigned ID).
+- State: NOT PASS. The UI validation was stopped at the visible-pointer rule. Staging and no-mutation evidence are complete.
+- Start: `agent/claude` at `723c254b737446975e8c77e12b0ce7a62951ddbf`, worktree clean.
+- Staged: exact candidate `53f221986b6c76d5d13652421ac62f999c0c6aab` via `tools/bm_test_app.py stage`. Explicit Git-bound verify passed.
+- Result: launch and observe reached the exact portable target. A macOS pointer was visible in the observe image, so the UI phases were not run. Graceful quit and stopped observation succeeded. Applied association, publication, resolution, selection, library, transactions, and updater policy are unchanged.
+- Validation: no test suite run in this task (runtime-only). Evidence in `.qualification-evidence/update-repair-noop-20261008T203627Z/`.
+- Boundaries: no push, no matrix, no Agent Handoff operation, no normal Kodi/profile/device access, no direct JSON-RPC, no Computer Control, no product commit.
+- Next: re-run the UI phases only under a fresh explicit task, after the pointer is cleared from the Test.app window.
+- Usage: see the last row of `.agent/USAGE_HISTORY.md`.

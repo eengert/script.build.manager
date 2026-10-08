@@ -1,31 +1,18 @@
-# Handoff — Update / Repair recorded-resolution coverage
+# Handoff — Update / Repair Test.app no-op qualification
 
-- State: READY FOR INDEPENDENT REVIEW, offline. Coverage completion commit 53f2219 (local; not pushed; not merged). It closes the two regression gaps named in the correction handoff. No production code changed.
-- Start: clean agent/claude at 48bfd56f85d5a56e63a348ff9cba0825c74d2e3e; correction 326e52d present as an ancestor. Active agent in .agent/AGENT_STATUS.json: claude (read locally; the live controller was not run).
-- Gap 1, recorded SKIP end to end (tests/test_recorded_resolution_lifecycle.py, RecordedSkipEndToEndTests): an applied library build with an accepted skip for an add-on that has no artifact. Unrelated drift (a managed add-on missing) is repaired with a reuse of the prior outcome, using the real coordinator.
-  - Only the drifted add-on is installed. The skipped add-on gets no install, no repository resolution and no new choice (resolution_decider forbidden).
-  - The resulting records are identical to the prior, including SKIPPED. The resulting resolution fingerprint and the applied association are preserved.
-  - Negative: the skipped add-on is now installed. The engine refuses with PRIOR_RESOLUTION_INVALID before any mutation, with no transaction, no install, no enable change and no removal.
-- Gap 2, real restart and resume (RestartPriorResolutionTests): a held pre-activation owner drives the real lifecycle.
-  - First install stops at QUIESCENCE_AWAITING_RESTART with no prior. A resume in a new session completes and publishes the association.
-  - A prior-seeded reconciliation stops at QUIESCENCE with the prior fingerprint persisted and lifecycle_restart_count 1. The durable file round-trips through FrozenInstallTransaction.from_dict.
-  - Same prior, same session: SAME_SESSION, no runner call, not a resume.
-  - Same prior, new session: active_resume. Configuration runs once more (runner calls +1), the transaction clears, the owner is enabled, and the association is published with the same fingerprint.
-  - Omitted prior, new session: ACTIVE_TRANSACTION_CONFLICT. Durable bytes, installed state, runner calls, policy calls and configuration mutations are unchanged.
-  - Different durable prior identity: the recorded fingerprint is rewritten to a different well-formed value. The request's valid applied prior conflicts with ACTIVE_TRANSACTION_CONFLICT, with no mutation. No second real valid prior exists for this target without a second completed operation, so this fence is exercised through the durable identity, and the report says so.
-  - Legacy empty prior: the durable file is written without the field, which loads as empty. A request carrying a prior conflicts with ACTIVE_TRANSACTION_CONFLICT, with no mutation.
-- Mutation evidence, in a scratch copy only: removing the quiescence prior comparison fails the three fence tests (omitted, different, legacy). Removing the installed-skip refusal fails the negative skip test. Both comparisons are what the tests bind to.
-- Validation:
-  - tests/test_recorded_resolution_lifecycle.py: 8 run, all OK.
-  - Focused regression set (new module, test_recorded_resolution, test_update_repair_workflow, frozen install, frozen resolution, resume, restart, restart coordinator, build library, applied publication, plan, install workflow, library install, repository preparation): 483 run. Only the pre-existing plan_view import-policy failure.
-  - Full suite: 3156 run. Failures 2, errors 4, all six pre-existing (two plan_view import-policy failures, four keychain fixture errors). No new failures.
-  - py_compile, git diff --check, non-ASCII, trailing whitespace and unused-import checks: clean.
-- Live-proven: none. Offline with fake installer, fake Kodi state, fake policy and configuration over the real library, artifact, frozen and transaction stores. No Test.app, normal Kodi, profile, device, MCP or push activity.
-- Residual limits:
-  - Real process restart is simulated by the injected session boundary. No Kodi process restart was exercised.
-  - The different-identity fence uses a durable identity mismatch, because a second real valid prior cannot be produced for the same applied target without a second completed operation.
-  - Test expectations for the restart path use the runner and private-overlay fakes from the library suite.
-- Out of scope, noticed (not fixed): resources/lib/ui/plan_view.py imports typing (two pre-existing ImportPolicy tests); tests/test_bm_test_app_keychain.py has four pre-existing fixture errors.
-- Not updated: .agent/AGENT_STATUS.json (controller-owned under D-026; not hand-edited).
-- Next: independent review of 326e52d together with 53f2219. Runtime validation needs a separate, explicit authorization.
-- Usage: see the last row of .agent/USAGE_HISTORY.md.
+- State: NOT PASS. Stage, Git-bound verify, pre/post no-mutation checks, MCP launch/observe/quit and the stopped observation all passed. The Update / Repair UI validation did not run: the exact-window observation after launch showed a visible external pointer, which the task treats as contaminated evidence (STOP, no compensating navigation).
+- Start: `agent/claude` at `723c254b737446975e8c77e12b0ce7a62951ddbf`, worktree clean, helper SHA `7688234891be407baab86e786ffee21e68ce3b811cc31a18bbc71d901305fb8b` matched, Test.app `not_running`.
+- Staged exact candidate `53f221986b6c76d5d13652421ac62f999c0c6aab` once via `tools/bm_test_app.py stage`. Dry-run bound to it. Stage manifest SHA-256 `e48cecf4129401c18add07b738f9bb6900b3b1c921b900137fee0627bca2e391`. Explicit Git-bound `verify` passed (`installed_equals_candidate` true). The stage's own post-check reports `installed_equals_candidate` false by construction (no Git binding); the explicit verify is authoritative.
+- Post-stage baseline (stopped): applied association valid (`applied.json` schema-2 canonical, publication `acknowledged` and equal to the applied candidate, resolution manifest valid and recomputes to the applied fingerprint); selection present and selected for the associated profile; build library 1 entry; frozen and restart transactions absent (lock files only); BM 0.1.0 and driver 0.0.15 enabled; `repository.eengert` 1.0.0 installed and enabled; updater_policy `AUTOMATIC`.
+- MCP: `test_app_launch` returned `running_portable` / `exact_target` with an exact-window image. `test_app_observe` returned `running_portable` / `exact_target`, but the image showed a macOS arrow pointer at the window's top-left corner. STOP: no navigation, no Build Manager menu, no Update / Repair page, no Check for Changes. `test_app_quit` returned `stopped` (approved graceful exit, not force-terminated); `test_app_observe` returned `stopped` with no relaunch.
+- Post-run no-mutation: applied inspection identical on every field to pre-stage and post-stage. Helper snapshot differs only by the 29 ignored `__pycache__` files Kodi wrote into the installed BM add-on on import. Build Manager's own `userdata/addon_data/script.build.manager` tree has no changes. Other changes are Kodi-owned (temp, Database, peripheral_data, guisettings/profiles on quit, two other add-ons' data) and identified in the evidence report rather than ignored.
+- Not done: menu order, overview, Check for Changes, Current / Healthy wording, Apply-absence check, Apply Changes, Different Revision.
+- Evidence: `.qualification-evidence/update-repair-noop-20261008T203627Z/` (gitignored). Summary in `runtime-qualification-report.md`. Inspector reused from 62a3f906 evidence (SHA-256 `195b7204…`, read-only). Metadata census tool written in this run (`tools-used/census_tree.py`, SHA-256 `fefd7890…`).
+- Usage start reading was not captured before staging. Recorded as unknown in USAGE_HISTORY.md.
+- Live-proven: stage into the portable Test.app, Git-bound verify, launch into the exact portable target, graceful quit, stopped-state observation, and no applied-state mutation. NOT live-proven: any Build Manager UI, Update / Repair overview, or Check for Changes behavior.
+- Human decisions before retrying:
+  1. Move the pointer off the Test.app window (or otherwise ensure none is visible), then re-run the UI phases. This requires a fresh, explicitly authorized task; the Test.app is currently stopped.
+  2. Decide whether the no-mutation criteria should name the Kodi-written `__pycache__` in the installed add-on explicitly. The helper already excludes it from manifest verification.
+- Out of scope, noticed (not fixed): none new in this task. Previous out-of-scope items (plan_view ImportPolicy tests, keychain fixture errors) still stand.
+- Not updated: `.agent/AGENT_STATUS.json` (controller-owned under D-026).
+- Usage: last row of `.agent/USAGE_HISTORY.md`.
