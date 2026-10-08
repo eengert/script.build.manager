@@ -96,7 +96,11 @@ Authorized target:
 
 It must run in portable mode:
 
-`open "/Applications/Kodi Build Manager Test.app" --args -p`
+`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
+
+The `-p` flag is mandatory. Background launch with `-g` is the normal/default
+behavior; a specific validation task may explicitly require foreground
+activation.
 
 Never access normal `/Applications/Kodi.app` or `/Users/eengert/Library/Application Support/Kodi`.
 

@@ -42,7 +42,11 @@ Only sanitized metadata/identity/fingerprints may be recorded. Actual private va
 
 ## D-007 — macOS live validation uses only the authorized portable Test.app
 
-The authorized target is `/Applications/Kodi Build Manager Test.app`, launched with `-p`.
+The authorized target is `/Applications/Kodi Build Manager Test.app`, launched
+in portable mode with the mandatory `-p` flag. The durable default command is
+`open -g "/Applications/Kodi Build Manager Test.app" --args -p`, which keeps
+Test.app in the background. A specific validation task may explicitly require
+foreground activation.
 
 Normal `/Applications/Kodi.app` and the normal profile under `~/Library/Application Support/Kodi` are prohibited for this validation.
 

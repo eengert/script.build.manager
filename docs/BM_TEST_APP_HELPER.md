@@ -331,12 +331,15 @@ independent review of this correction.
 
 ## Typical sequence
 
+Use this normal/default background launch command; `-p` is mandatory. A
+specific validation task may explicitly require foreground activation.
+
 ```text
 identify
 stage --candidate <sha> --config <cfg> --dry-run            # inspect the manifest
 stage --candidate <sha> --config <cfg> --evidence-dir <dir>
 verify --manifest <dir>/stage-.../stage_manifest.json
-(start the Test.app yourself: open ".../Kodi Build Manager Test.app" --args -p)
+open -g "/Applications/Kodi Build Manager Test.app" --args -p
 run status --manifest ... --config <cfg>
 run install | retry | recover --manifest ... --config <cfg>
 quit --config <cfg>                                          # graceful stop; see the restart sequence below
@@ -355,7 +358,7 @@ Restart the Test.app like this:
 quit --config <cfg>                       # graceful Application.Quit; proves not_running
 snapshot --manifest ...                   # persisted guisettings: settings.updater_policy
                                           #   REQUIRE "NEVER_CHECK"; anything else is a HARD STOP
-(relaunch: open ".../Kodi Build Manager Test.app" --args -p)
+open -g "/Applications/Kodi Build Manager Test.app" --args -p
 identify                                  # one portable process
 (the Build Manager service continues with a verify-only resume)
 run status --manifest ... --config <cfg>  # or snapshot, to observe the outcome
