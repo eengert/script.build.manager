@@ -118,10 +118,13 @@ class LibraryTests(unittest.TestCase):
                 resolved_software_fingerprint=resolution.resulting_software_fingerprint,
                 library_target=target)
             store.create(transaction)
+            transaction = store.transition_expected(transaction_id=transaction.transaction_id,
+                expected_phase=FrozenInstallPhase.COMPLETE,
+                new_phase=FrozenInstallPhase.PUBLICATION_PENDING)
             pending = self.library._create_applied_publication(transaction, resolution_store=store)
-            store.clear_expected(transaction_id=transaction.transaction_id,
-                                 expected_phase=FrozenInstallPhase.COMPLETE)
             self.library._record_applied_completion(pending, resolution_store=store)
+            store._clear_publication_expected(transaction_id=transaction.transaction_id,
+                                              publication=pending)
         return self.library.current_applied_association()
 
     def test_applied_durable_distinct_selection_and_bridges(self):

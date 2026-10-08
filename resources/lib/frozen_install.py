@@ -118,6 +118,7 @@ class FrozenInstallPhase(str, Enum):
     VALIDATING = "validating"
     NEEDS_ATTENTION = "needs_attention"
     COMPLETE = "complete"
+    PUBLICATION_PENDING = "publication_pending"
 
 
 class FrozenLifecycleStage(str, Enum):
@@ -740,6 +741,12 @@ class FrozenInstallStore:
                 raise FrozenInstallStateConflict("frozen transaction identity changed")
             if current.phase is not expected_phase:
                 raise FrozenInstallStateConflict("frozen transaction phase changed")
+            if current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
+                raise FrozenInstallStateConflict("publication fence cannot be transitioned")
+            if new_phase is FrozenInstallPhase.PUBLICATION_PENDING and (
+                    current.phase is not FrozenInstallPhase.COMPLETE
+                    or current.library_target is None or not current.resolution_fingerprint):
+                raise FrozenInstallStateConflict("publication fence requires completed library identity")
             updated = current.with_phase(
                 new_phase,
                 originating_kodi_session_id=originating_kodi_session_id,
@@ -800,6 +807,8 @@ class FrozenInstallStore:
                 return False
             if current.transaction_id != transaction_id or current.phase is not expected_phase:
                 raise FrozenInstallStateConflict("frozen transaction changed before clear")
+            if current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
+                raise FrozenInstallStateConflict("publication fence requires publication completion")
             try:
                 self.transaction_path.unlink()
                 self._fsync_directory()
@@ -807,8 +816,52 @@ class FrozenInstallStore:
                 raise FrozenInstallPersistenceError("could not clear frozen transaction") from exc
             return True
 
+    def _confirm_publication_owner(self, expected):
+        """Positively establish an exact visible fence after write ambiguity."""
+        with self.locked():
+            current = self._read_unlocked()
+            if current != expected or current.phase is not FrozenInstallPhase.PUBLICATION_PENDING:
+                raise FrozenInstallStateConflict("publication fence owner changed")
+            self._fsync_directory()
+            return current
+
+    def _clear_publication_expected(self, *, transaction_id, publication):
+        """Transfer fenced ownership only to independent durable exact journal.
+
+        Read/fsync the journal while holding the frozen lock, never a library
+        writer lock. Ordinary clear/transition APIs cannot discard the fence.
+        """
+        from resources.lib.build_library import BuildLibrary, _directory
+        with self.locked():
+            current = self._read_unlocked()
+            if current is None:
+                return False
+            if (current.transaction_id != transaction_id
+                    or current.phase is not FrozenInstallPhase.PUBLICATION_PENDING
+                    or current.library_target is None
+                    or publication.transaction_id != current.transaction_id
+                    or publication.candidate.entry_id != current.library_target.source.entry_id
+                    or publication.candidate.device_profile_id != current.device_profile_id
+                    or publication.candidate.resolution_fingerprint != current.resolution_fingerprint):
+                raise FrozenInstallStateConflict("publication fence identity changed")
+            library = BuildLibrary(current.library_target.source.root)
+            with _directory(library.root) as fd:
+                journal = library._publication_at(fd)
+                if (journal is None or not journal.same_identity(publication)
+                        or journal.state != "acknowledged"
+                        or library._applied_at(fd) != journal.candidate):
+                    raise FrozenInstallStateConflict("independent publication evidence is absent")
+                library._resolution(journal.candidate, self)
+                os.fsync(fd)  # positive journal durability before ownership transfer
+            self.transaction_path.unlink()
+            self._fsync_directory()
+            return True
+
     def clear(self) -> bool:
         with self.locked():
+            current = self._read_unlocked()
+            if current is not None and current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
+                raise FrozenInstallStateConflict("publication fence requires publication completion")
             try:
                 self.transaction_path.unlink()
                 self._fsync_directory()
@@ -3156,6 +3209,11 @@ class FrozenInstallCoordinator:
         transaction = self._safe_inspect()
         if transaction is None:
             return FrozenInstallResult("complete", message="no frozen transaction is active")
+        if transaction.phase is FrozenInstallPhase.PUBLICATION_PENDING:
+            return FrozenInstallResult(
+                "needs_attention", transaction=transaction,
+                code="PUBLICATION_CANNOT_BE_ABANDONED",
+                message="durable publication ownership requires publication recovery")
         if transaction.activation_hold_ids and not transaction.activation_hold_released:
             return FrozenInstallResult(
                 "needs_attention",
@@ -3518,11 +3576,15 @@ class FrozenInstallCoordinator:
                 from resources.lib.build_library import BuildLibrary
                 target = transaction.library_target
                 library = BuildLibrary(target.source.root)
+                transaction = self.store.transition_expected(
+                    transaction_id=transaction.transaction_id,
+                    expected_phase=FrozenInstallPhase.COMPLETE,
+                    new_phase=FrozenInstallPhase.PUBLICATION_PENDING)
                 publication = library._create_applied_publication(
                     transaction, resolution_store=self.store)
             except Exception:
-                # COMPLETE and its exact resolution remain durable even if the
-                # intent write failed before replacement. Do not regress phase.
+                # The fence (or COMPLETE if fencing lost ownership) stays
+                # recoverable. Never regress publication ownership to attention.
                 return FrozenInstallResult(
                     "needs_attention", transaction=transaction,
                     code="APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
@@ -3642,7 +3704,8 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
         if publication is None and (observed is None or (
                 observed.state == "acknowledged" and transaction is not None
                 and transaction.transaction_id != observed.transaction_id)):
-            if (transaction is None or transaction.phase is not FrozenInstallPhase.COMPLETE
+            if (transaction is None or transaction.phase not in {
+                    FrozenInstallPhase.COMPLETE, FrozenInstallPhase.PUBLICATION_PENDING}
                     or transaction.library_target is None):
                 # A retained terminal journal must not intercept another frozen
                 # Install's active/restart owner. It is read-only terminal state.
@@ -3651,6 +3714,11 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
                 raise FrozenInstallStateConflict("completed updater restoration is unverified")
             if transaction.library_target.source.root != library.root:
                 raise FrozenInstallStateConflict("completed library authority changed")
+            if transaction.phase is FrozenInstallPhase.COMPLETE:
+                transaction = target.transition_expected(
+                    transaction_id=transaction.transaction_id,
+                    expected_phase=FrozenInstallPhase.COMPLETE,
+                    new_phase=FrozenInstallPhase.PUBLICATION_PENDING)
             observed = library._create_applied_publication(transaction, resolution_store=target)
         disposition, current = library._validate_applied_publication(observed, resolution_store=target)
         if disposition != "current":
@@ -3668,10 +3736,17 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
         observed = current
         transaction = target.inspect()
         if transaction is not None:
-            if observed.state == "acknowledged" and transaction.transaction_id != observed.transaction_id:
-                return resolved("superseded")
+            if transaction.transaction_id != observed.transaction_id:
+                if observed.state == "acknowledged":
+                    return resolved("superseded")
+                raise FrozenInstallStateConflict("publication transaction identity changed")
+            if transaction.phase is FrozenInstallPhase.COMPLETE:
+                transaction = target.transition_expected(
+                    transaction_id=transaction.transaction_id,
+                    expected_phase=FrozenInstallPhase.COMPLETE,
+                    new_phase=FrozenInstallPhase.PUBLICATION_PENDING)
             if (transaction.transaction_id != observed.transaction_id
-                    or transaction.phase is not FrozenInstallPhase.COMPLETE
+                    or transaction.phase is not FrozenInstallPhase.PUBLICATION_PENDING
                     or transaction.library_target != selector
                     or transaction.resolution_fingerprint != resolution.resolution_fingerprint
                     or transaction.resolved_software_fingerprint != resolution.resulting_software_fingerprint
@@ -3679,16 +3754,21 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
                     or transaction.install_plan_fingerprint != resolution.install_plan_fingerprint
                     or tuple(sorted(transaction.resolution_records, key=lambda r: r.addon_id)) != resolution.records):
                 raise FrozenInstallStateConflict("publication does not match completed transaction")
+        _sync_publication_storage(target)
+        disposition = library._record_applied_completion(observed, resolution_store=target)
+        if disposition == "complete" and transaction is not None:
             try:
-                target.clear_expected(transaction_id=observed.transaction_id,
-                                      expected_phase=FrozenInstallPhase.COMPLETE)
+                target._clear_publication_expected(transaction_id=observed.transaction_id,
+                                                   publication=observed)
             except Exception:
                 if target.inspect() is not None:
                     raise
             if target.inspect() is not None:
-                raise FrozenInstallStateConflict("publication lifecycle cleanup is incomplete")
+                # Another owner may already have finished and started new work.
+                disposition, _ = library._validate_applied_publication(observed, resolution_store=target)
+                if disposition == "current":
+                    raise FrozenInstallStateConflict("publication lifecycle cleanup is incomplete")
         _sync_publication_storage(target)
-        disposition = library._record_applied_completion(observed, resolution_store=target)
         return resolved(disposition, resolution if disposition == "complete" else None)
     except Exception:
         return FrozenInstallResult("needs_attention", transaction=transaction,
@@ -3723,7 +3803,7 @@ def ensure_frozen_install_guard(
         return FrozenStartupPrecondition(False, code="FROZEN_TRANSACTION_INSPECTION_FAILED", message="active frozen transaction could not be inspected")
     if transaction is None:
         return FrozenStartupPrecondition(True)
-    if transaction.phase is FrozenInstallPhase.COMPLETE and transaction.library_target is not None:
+    if transaction.phase in {FrozenInstallPhase.COMPLETE, FrozenInstallPhase.PUBLICATION_PENDING} and transaction.library_target is not None:
         return FrozenStartupPrecondition(False, transaction, "APPLIED_PUBLICATION_PENDING",
                                          "completed association publication requires recovery")
     backend = policy_backend or _default_policy_backend()

@@ -68,7 +68,7 @@ class PublicationTests(unittest.TestCase):
         previous = self.x.seed_prior_association() if prior else None
         target = self.x.target()
         if boundary == "A":
-            owner, method = FrozenInstallStore, "clear_expected"
+            owner, method = FrozenInstallStore, "_clear_publication_expected"
         elif boundary == "B":
             owner, method = BuildLibrary, "_record_applied_completion"
         else:
@@ -82,17 +82,16 @@ class PublicationTests(unittest.TestCase):
             with self.subTest(boundary=boundary):
                 if boundary != "A": self.setUp()
                 prior, target = self.staged(boundary)
-                pending = self.library.pending_publication()
-                self.assertIsNotNone(pending)
+                pending = self.library.publication_journal()
                 self.assertEqual(pending.previous, prior)
-                self.assertEqual(self.library.current_applied_association(), prior)
-                self.assertEqual(self.x.store.inspect() is not None, boundary == "A")
+                self.assertEqual(self.library.current_applied_association(), pending.candidate if boundary == "A" else prior)
+                self.assertIsNotNone(self.x.store.inspect())
                 self.library.select(target.source.entry_id, "other")
                 before = self.snapshot()
                 with patch.object(lib, "_atomic", wraps=lib._atomic) as writes:
                     result = self.recover()
                 self.assertEqual(sum(call.args[1] == "applied.json" for call in writes.call_args_list),
-                                 0 if boundary == "C" else 1)
+                                 0 if boundary == "A" else 1)
                 self.assert_complete(target, result)
                 self.assertEqual(before, self.snapshot())
                 committed = (Path(self.library.root) / "applied.json").read_bytes()
@@ -116,9 +115,9 @@ class PublicationTests(unittest.TestCase):
                 with patch.object(lib, "_atomic", side_effect=fail):
                     result = self.install(target)
                 self.assertEqual(result.outcome, "needs_attention")
-                self.assertIsNone(self.x.store.inspect())
-                self.assertIsNotNone(self.library.pending_publication())
-                self.assertEqual(self.library.current_applied_association(), prior)
+                self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
+                self.assertEqual(self.library.pending_publication() is not None, not after)
+                self.assertEqual(self.library.current_applied_association(), self.library.publication_journal().candidate if after else prior)
                 visible = json.loads((Path(self.library.root) / "applied.json").read_text())
                 self.assertEqual(visible["entry_id"], target.source.entry_id if after else prior.entry_id)
                 before = self.snapshot()
@@ -144,9 +143,9 @@ class PublicationTests(unittest.TestCase):
                 with patch.object(BuildLibrary, "_acknowledge_publication", side_effect=interrupt), self.assertRaises(ProcessInterrupted):
                     self.install(target)
                 if after:
-                    self.assertIsNone(self.library.pending_publication())
+                    self.assertIsNotNone(self.library.pending_publication())
                     self.assertEqual(self.library.publication_journal().state, "acknowledged")
-                    self.assertEqual(self.library.current_applied_association().entry_id, target.source.entry_id)
+                    self.assertEqual(self.library.current_applied_association(), prior)
                     self.assertEqual(self.recover().outcome, "complete")
                 else:
                     self.assertEqual(self.library.current_applied_association(), prior)
@@ -172,11 +171,11 @@ class PublicationTests(unittest.TestCase):
         self.assert_complete(target, self.recover())
 
     def test_clear_post_unlink_failure_reconciles_actual_state(self):
-        target = self.x.target(); original = FrozenInstallStore.clear_expected
+        target = self.x.target(); original = FrozenInstallStore._clear_publication_expected
         def ambiguous(store, **kwargs):
             original(store, **kwargs)
             raise OSError("post clear fsync")
-        with patch.object(FrozenInstallStore, "clear_expected", new=ambiguous):
+        with patch.object(FrozenInstallStore, "_clear_publication_expected", new=ambiguous):
             result = self.install(target)
         self.assert_complete(target, result)
 
@@ -194,14 +193,14 @@ class PublicationTests(unittest.TestCase):
                 with patch.object(lib, "_atomic", side_effect=fail):
                     result = self.install(target)
                 self.assertEqual(result.outcome, "needs_attention")
-                self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.COMPLETE)
+                self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
                 self.assertEqual(self.library.current_applied_association(), prior)
                 before = self.snapshot()
                 self.assert_complete(target, self.recover())
                 self.assertEqual(before, self.snapshot())
 
     def test_active_transaction_must_match_intent_before_cleanup(self):
-        prior, target = self.staged("A")
+        prior, target = self.staged("B")
         original = self.x.store.transaction_path.read_bytes()
         raw = json.loads(original); raw["transaction_id"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         self.x.store.transaction_path.write_text(json.dumps(raw))
@@ -457,12 +456,12 @@ with isolated_library_install_authority(library):
                 frozen_precondition=lambda: ensure_frozen_install_guard(store=self.x.store, policy_backend=self.x.policy))
         self.assertEqual(status.classification.value, "needs_attention")
         self.assertEqual(status.code, "APPLIED_PUBLICATION_PENDING")
-        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.COMPLETE)
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
         before = self.snapshot()
         self.assert_complete(target, self.recover())
         self.assertEqual(before, self.snapshot())
 
-    def test_change_after_applied_write_before_acknowledgement_is_masked(self):
+    def test_change_after_materialization_keeps_ACK_but_invalid_source_fails_closed(self):
         prior = self.x.seed_prior_association(); target = self.x.target()
         envelope = self.x.fixture.envelope(target.source.entry_id)
         saved = envelope.read_bytes(); original = lib._atomic
@@ -472,13 +471,14 @@ with isolated_library_install_authority(library):
         with patch.object(lib, "_atomic", side_effect=change_after_write):
             result = self.install(target)
         self.assertEqual(result.outcome, "needs_attention")
-        self.assertEqual(self.library.current_applied_association(), prior)
-        self.assertIsNotNone(self.library.pending_publication())
+        self.assertIsNone(self.library.current_applied_association())
+        from resources.lib.build_library import LibraryError
+        with self.assertRaises(LibraryError): self.library.pending_publication()
         envelope.write_bytes(saved)
         self.assert_complete(target, self.recover())
 
     def test_durability_failure_before_clear_retains_both_owners(self):
-        prior, target = self.staged("A")
+        prior, target = self.staged("B")
         from resources.lib import frozen_install
         before = self.snapshot()
         with patch.object(frozen_install, "_sync_publication_storage", side_effect=OSError("fsync unavailable")):
@@ -599,7 +599,7 @@ class PublicationAuthorityTests(unittest.TestCase):
         self.assertTrue(failures, "actual acknowledgement durability barrier was not reached")
         self.assertNotEqual(result.outcome, "complete")
         self.assertEqual(self.library.publication_journal().state, "acknowledged")
-        self.assertIsNone(self.x.store.inspect())
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
         self.assert_complete(target, self.recover())
         self.assert_complete(target, self.recover())
         self.assertEqual(self.snapshot(), before)
@@ -665,8 +665,9 @@ class PublicationAuthorityTests(unittest.TestCase):
         self.staged("A")
         transaction = self.x.store.inspect()
         journal = self.library.publication_journal()
-        self.x.store.clear_expected(transaction_id=transaction.transaction_id,
-            expected_phase=FrozenInstallPhase.COMPLETE)
+        self.library._record_applied_completion(self.library.publication_journal(), resolution_store=self.x.store)
+        self.x.store._clear_publication_expected(transaction_id=transaction.transaction_id,
+            publication=self.library.publication_journal())
         for changed in (False, True):
             with self.subTest(changed=changed):
                 if changed:
@@ -674,42 +675,42 @@ class PublicationAuthorityTests(unittest.TestCase):
                         transaction_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
                 with self.assertRaises(LibraryConflict):
                     self.library._create_applied_publication(transaction, resolution_store=self.x.store)
-                self.assertEqual(self.library.publication_journal(), journal)
+                self.assertTrue(self.library.publication_journal().same_identity(journal))
 
     def test_two_creation_identities_cannot_steal_existing_pending(self):
         from resources.lib.build_library import LibraryConflict
-        self.staged("A")
+        self.staged("B")
         transaction = self.x.store.inspect()
         pending = self.library.pending_publication()
-        self.x.store.clear_expected(transaction_id=transaction.transaction_id,
-            expected_phase=FrozenInstallPhase.COMPLETE)
+        self.library._record_applied_completion(self.library.publication_journal(), resolution_store=self.x.store)
+        self.x.store._clear_publication_expected(transaction_id=transaction.transaction_id,
+            publication=self.library.publication_journal())
         other = replace(transaction, transaction_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
         self.x.store.create(other)
+        (Path(self.library.root) / "applied-publication.json").write_text(json.dumps(pending.to_dict()))
         for attempted in (other, transaction):
             with self.assertRaises(LibraryConflict):
                 self.library._create_applied_publication(attempted, resolution_store=self.x.store)
             self.assertEqual(self.library.pending_publication(), pending)
         self.assertEqual(self.x.store.inspect(), other)
 
-    def test_creation_revalidates_owner_after_write_and_restores_preceding_ACK(self):
-        from resources.lib.build_library import LibraryConflict
-        previous = self.x.seed_prior_association()
-        prior_journal = self.library.publication_journal()
+    def test_fence_preserves_owner_during_journal_write(self):
         target = self.x.target()
         with patch.object(BuildLibrary, "_create_applied_publication", side_effect=ProcessInterrupted), self.assertRaises(ProcessInterrupted):
             self.install(target)
         transaction = self.x.store.inspect()
         original = lib._atomic
-        def disappear(fd, name, data):
-            original(fd, name, data)
-            if name == "applied-publication.json" and json.loads(data)["state"] == "pending":
-                # Fault injection at the exact cross-owner revalidation boundary.
-                self.x.store.transaction_path.unlink()
-        with patch.object(lib, "_atomic", side_effect=disappear), self.assertRaises(LibraryConflict):
+        def attempt_clear(fd, name, data):
+            from resources.lib.frozen_install import FrozenInstallStateConflict
+            with self.assertRaises(FrozenInstallStateConflict): self.x.store.clear()
+            with self.assertRaises(FrozenInstallStateConflict):
+                self.x.store.clear_expected(transaction_id=transaction.transaction_id,
+                    expected_phase=transaction.phase)
+            return original(fd, name, data)
+        with patch.object(lib, "_atomic", side_effect=attempt_clear):
             self.library._create_applied_publication(transaction, resolution_store=self.x.store)
-        self.assertEqual(self.library.publication_journal(), prior_journal)
-        self.assertEqual(self.library.current_applied_association(), previous)
-        self.assertIsNone(self.library.pending_publication())
+        self.assertEqual(self.x.store.inspect(), transaction)
+        self.assert_complete(target, self.recover())
 
     def test_real_pending_directory_barrier_failure_keeps_COMPLETE_and_masks_candidate(self):
         import stat
@@ -727,7 +728,7 @@ class PublicationAuthorityTests(unittest.TestCase):
         with patch.object(lib.os, "fsync", side_effect=fail_pending):
             self.assertEqual(self.install(target).outcome, "needs_attention")
         self.assertTrue(failures)
-        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.COMPLETE)
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
         self.assertEqual(self.library.current_applied_association(), previous)
         self.assertIsNotNone(self.library.pending_publication())
         before = self.snapshot()
@@ -802,7 +803,7 @@ class PublicationAuthorityTests(unittest.TestCase):
         with patch.object(BuildLibrary, "_create_applied_publication", side_effect=ProcessInterrupted), self.assertRaises(ProcessInterrupted):
             self.install(c)
         self.assertEqual(self.library.publication_journal().candidate.entry_id, b.source.entry_id)
-        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.COMPLETE)
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
         before = self.snapshot()
         self.assert_complete(c, self.recover())
         self.assert_complete(c, self.recover())
@@ -835,7 +836,6 @@ class PublicationAuthorityTests(unittest.TestCase):
             self.x.store.transaction_path.unlink()
             return applied
         with patch.object(BuildLibrary, "current_applied_association", new=owner_disappears), \
-             patch.object(FrozenInstallStore, "locked", side_effect=AssertionError("nested frozen lock")), \
              patch.object(lib, "_atomic", side_effect=AssertionError("obsolete creation")), \
              self.assertRaises(LibraryConflict):
             self.library._create_applied_publication(transaction, resolution_store=self.x.store)
@@ -875,3 +875,310 @@ class PublicationAuthorityTests(unittest.TestCase):
         self.assert_complete(target, self.recover())
         self.assertEqual(self.library.publication_journal().state, "acknowledged")
         self.assertEqual(self.snapshot(), before)
+
+class PublicationFenceTests(unittest.TestCase):
+    def setUp(self):
+        PublicationTests.setUp(self)
+        self._status = self.services()[0]
+    snapshot = PublicationTests.snapshot
+    install = PublicationTests.install
+    recover = PublicationTests.recover
+    staged = PublicationTests.staged
+    assert_complete = PublicationTests.assert_complete
+    services = PublicationTests.services
+
+    def test_supported_abandon_cannot_remove_owner_before_pending_atomic_failure(self):
+        import stat
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        original_atomic = lib._atomic
+        original_fsync = lib.os.fsync
+        outcomes = []
+        def interleave(fd, name, data):
+            if name == "applied-publication.json" and json.loads(data)["state"] == "pending":
+                outcomes.append(self.x.coordinator().abandon())
+            return original_atomic(fd, name, data)
+        def fail_pending(fd):
+            journal = self.library.publication_journal()
+            if stat.S_ISDIR(os.fstat(fd).st_mode) and journal is not None and journal.state == "pending":
+                raise OSError("actual pending directory barrier failure")
+            return original_fsync(fd)
+        with patch.object(lib, "_atomic", side_effect=interleave), patch.object(lib.os, "fsync", side_effect=fail_pending):
+            result = self.install(target)
+        before = self.snapshot()
+        recovered = self.recover()
+        self.assertEqual(outcomes[0].outcome, "needs_attention")
+        self.assertEqual(result.outcome, "needs_attention")
+        self.assert_complete(target, recovered)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_failed_ACK_barrier_keeps_previous_nonidle_and_blocks_install(self):
+        import stat
+        previous, target = self.staged("B")
+        original = lib.os.fsync
+        def fail_ACK(fd):
+            journal = self.library.publication_journal()
+            if stat.S_ISDIR(os.fstat(fd).st_mode) and journal is not None and journal.state == "acknowledged":
+                raise OSError("actual ACK directory barrier failure")
+            return original(fd)
+        before = self.snapshot()
+        with patch.object(lib.os, "fsync", side_effect=fail_ACK):
+            self.assertEqual(self.recover().outcome, "needs_attention")
+            self.assertEqual(self.recover().outcome, "needs_attention")
+            self.assertEqual(self.library.current_applied_association(), previous)
+            self.assertIsNotNone(self.library.pending_publication())
+            self.assertFalse(ensure_frozen_install_guard(store=self.x.store, policy_backend=self.x.policy).allowed)
+            self.assert_public_state(previous, unresolved=True)
+            self.assertFalse(self.install(target).succeeded)
+        self.assert_complete(target, self.recover())
+        self.assert_public_state(self.library.publication_journal().candidate, unresolved=False)
+        self.assertEqual(self.snapshot(), before)
+
+    def assert_public_state(self, expected, *, unresolved):
+        from resources.lib.status_model import OperationKind
+        status = self._status
+        status = BuildStatusService(replace(status._o,
+            publication_snapshot=self.library.pending_publication,
+            frozen_snapshot=lambda: FrozenInstallStore.read_snapshot(self.x.store.root),
+            restart_snapshot=lambda: None))
+        result = status.check(self.library.associated_status_target())
+        self.assertEqual(self.library.current_applied_association(), expected)
+        self.assertEqual(result.operation.kind is OperationKind.NEEDS_ATTENTION, unresolved)
+        self.assertEqual(ensure_frozen_install_guard(store=self.x.store,
+            policy_backend=self.x.policy).allowed, not unresolved)
+
+    def fresh_process(self):
+        script = """import sys
+from pathlib import Path
+from types import SimpleNamespace
+from resources.lib.build_library import BuildLibrary, isolated_library_install_authority
+from resources.lib.frozen_install import FrozenInstallStore, recover_applied_publication
+store = FrozenInstallStore(Path(sys.argv[2]))
+library = BuildLibrary(sys.argv[1])
+with isolated_library_install_authority(library):
+    tx = store.inspect()
+    policy = SimpleNamespace(get_policy=lambda: tx.original_update_policy if tx else None)
+    result = recover_applied_publication(store=store, library=library, policy_backend=policy)
+    assert result.succeeded, result
+"""
+        result = subprocess.run([sys.executable, "-c", script, self.library.root, str(self.x.store.root)],
+            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def fence_without_journal(self):
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        with patch.object(BuildLibrary, "_create_applied_publication", side_effect=ProcessInterrupted), self.assertRaises(ProcessInterrupted):
+            self.install(target)
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
+        return previous, target
+
+    def test_abandon_wins_COMPLETE_before_fence_no_B_journal(self):
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        original = FrozenInstallStore.transition_expected
+        abandoned = []
+        def race(store, **kwargs):
+            if kwargs["new_phase"] is FrozenInstallPhase.PUBLICATION_PENDING:
+                abandoned.append(self.x.coordinator().abandon())
+            return original(store, **kwargs)
+        with patch.object(FrozenInstallStore, "transition_expected", new=race):
+            self.assertEqual(self.install(target).outcome, "needs_attention")
+        self.assertEqual(abandoned[0].outcome, "complete")
+        self.assertIsNone(self.x.store.inspect())
+        self.assertEqual(self.library.current_applied_association(), previous)
+        self.assertNotEqual(self.library.publication_journal().candidate.entry_id, target.source.entry_id)
+        self.recover()
+        self.assertEqual(self.library.current_applied_association(), previous)
+
+    def test_fence_crash_before_journal_refuses_all_supported_discard_and_new_install(self):
+        from resources.lib.frozen_install import FrozenInstallStateConflict
+        previous, target = self.fence_without_journal()
+        transaction = self.x.store.inspect()
+        before = self.snapshot()
+        self.assertEqual(self.x.coordinator().abandon(acknowledge_restore_failure=True).outcome, "needs_attention")
+        for action in (lambda: self.x.store.clear(),
+                lambda: self.x.store.clear_expected(transaction_id=transaction.transaction_id, expected_phase=transaction.phase),
+                lambda: self.x.store.transition_expected(transaction_id=transaction.transaction_id,
+                    expected_phase=transaction.phase, new_phase=FrozenInstallPhase.NEEDS_ATTENTION),
+                lambda: self.x.store.create(replace(transaction, transaction_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")),
+                lambda: self.x.store._clear_publication_expected(transaction_id=transaction.transaction_id,
+                    publication=self.library.publication_journal())):
+            with self.assertRaises(FrozenInstallStateConflict): action()
+        self.assertFalse(self.install(target).succeeded)
+        self.assertEqual(self.x.store.inspect(), transaction)
+        self.assert_public_state(previous, unresolved=True)
+        self.assertEqual(self.snapshot(), before)
+        self.fresh_process()
+        self.assertIsNone(self.x.store.inspect())
+        candidate = self.library.publication_journal().candidate
+        self.assert_public_state(candidate, unresolved=False)
+        self.assert_complete(target, self.recover())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_legacy_COMPLETE_must_fence_before_initial_journal(self):
+        previous, target = self.fence_without_journal()
+        transaction = self.x.store.inspect()
+        # Explicit legacy persisted-state fixture, not a product transition.
+        self.x.store.transaction_path.write_text(json.dumps(replace(transaction, phase=FrozenInstallPhase.COMPLETE).to_dict()))
+        phases = []
+        original = BuildLibrary._create_applied_publication
+        def observe(library, owner, **kwargs):
+            phases.append(self.x.store.inspect().phase)
+            return original(library, owner, **kwargs)
+        before = self.snapshot()
+        with patch.object(BuildLibrary, "_create_applied_publication", new=observe):
+            self.assert_complete(target, self.recover())
+        self.assertEqual(phases, [FrozenInstallPhase.PUBLICATION_PENDING])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_fenced_pending_replacement_failure_before_visibility_fresh_process(self):
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        original = lib.os.replace
+        def fail(source, destination, **kwargs):
+            if destination == "applied-publication.json": raise OSError("pending replace")
+            return original(source, destination, **kwargs)
+        with patch.object(lib.os, "replace", side_effect=fail):
+            self.assertEqual(self.install(target).outcome, "needs_attention")
+        self.assertEqual(self.x.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
+        self.assert_public_state(previous, unresolved=True)
+        before = self.snapshot()
+        self.fresh_process()
+        self.assert_public_state(self.library.publication_journal().candidate, unresolved=False)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_ACK_first_crash_and_applied_failures_recover_without_replay(self):
+        import stat
+        for stage in ("before_applied", "replace", "directory_fsync", "terminal"):
+            with self.subTest(stage=stage):
+                if stage != "before_applied": self.setUp()
+                previous, target = self.staged("B")
+                journal_path = Path(self.library.root) / "applied-publication.json"
+                old_applied = (Path(self.library.root) / "applied.json").read_bytes()
+                before = self.snapshot()
+                if stage == "before_applied":
+                    original = BuildLibrary._acknowledge_publication
+                    def crash(fd, journal):
+                        original(fd, journal)
+                        self.assertEqual((Path(self.library.root) / "applied.json").read_bytes(), old_applied)
+                        raise ProcessInterrupted()
+                    with patch.object(BuildLibrary, "_acknowledge_publication", side_effect=crash), self.assertRaises(ProcessInterrupted):
+                        self.recover()
+                elif stage == "replace":
+                    original = lib.os.replace
+                    def fail(source, destination, **kwargs):
+                        if destination == "applied.json": raise OSError("applied replace")
+                        return original(source, destination, **kwargs)
+                    with patch.object(lib.os, "replace", side_effect=fail):
+                        self.assertEqual(self.recover().outcome, "needs_attention")
+                        self.assertEqual(self.recover().outcome, "needs_attention")
+                elif stage == "directory_fsync":
+                    original = lib.os.fsync
+                    def fail(fd):
+                        if (stat.S_ISDIR(os.fstat(fd).st_mode)
+                                and self.library.current_applied_association() != previous):
+                            raise OSError("applied materialization barrier")
+                        return original(fd)
+                    with patch.object(lib.os, "fsync", side_effect=fail):
+                        self.assertEqual(self.recover().outcome, "needs_attention")
+                else:
+                    self.assert_complete(target, self.recover())
+                self.assertEqual(json.loads(journal_path.read_text())["state"], "acknowledged")
+                candidate = self.library.publication_journal().candidate
+                self.assert_public_state(candidate if stage in ("directory_fsync", "terminal") else previous,
+                    unresolved=stage != "terminal")
+                self.assertEqual(self.snapshot(), before)
+                self.fresh_process()
+                self.assert_public_state(candidate, unresolved=False)
+                self.assert_complete(target, self.recover())
+                self.assertEqual(self.snapshot(), before)
+
+    def test_status_ambiguous_ACK_is_creation_free(self):
+        previous, target = self.staged("B")
+        original = BuildLibrary._acknowledge_publication
+        def crash(fd, journal):
+            original(fd, journal)
+            raise ProcessInterrupted()
+        with patch.object(BuildLibrary, "_acknowledge_publication", side_effect=crash), self.assertRaises(ProcessInterrupted):
+            self.recover()
+        root = self.x.fixture.base
+        before = {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        from resources.lib.status_model import OperationKind
+        status = self._status
+        status = BuildStatusService(replace(status._o, publication_snapshot=self.library.pending_publication,
+            frozen_snapshot=lambda: FrozenInstallStore.read_snapshot(self.x.store.root), restart_snapshot=lambda: None))
+        with patch.object(lib.os, "fsync", side_effect=forbidden), \
+             patch.object(BuildLibrary, "_writer", side_effect=forbidden), \
+             patch.object(Path, "mkdir", side_effect=forbidden):
+            result = status.check(self.library.associated_status_target())
+            self.assertEqual(result.operation.kind, OperationKind.NEEDS_ATTENTION)
+            self.assertEqual(self.library.current_applied_association(), previous)
+            self.assertIsNotNone(self.library.pending_publication())
+        self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        self.assert_complete(target, self.recover())
+
+    def test_visible_fence_after_failed_store_barrier_must_be_confirmed_before_journal(self):
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        original = FrozenInstallStore._fsync_directory
+        def fail_fence(store):
+            if FrozenInstallStore.read_snapshot(store.root).phase is FrozenInstallPhase.PUBLICATION_PENDING:
+                raise OSError("fence directory ambiguity")
+            return original(store)
+        with patch.object(FrozenInstallStore, "_fsync_directory", new=fail_fence):
+            self.assertEqual(self.install(target).outcome, "needs_attention")
+            self.assertEqual(self.recover().outcome, "needs_attention")
+            self.assertNotEqual(self.library.publication_journal().candidate.entry_id, target.source.entry_id)
+            self.assert_public_state(previous, unresolved=True)
+        before = self.snapshot()
+        self.fresh_process()
+        self.assert_complete(target, self.recover())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_legacy_PENDING_candidate_is_masked_before_ambiguous_ACK(self):
+        import stat
+        for prior in (True, False):
+            with self.subTest(prior=prior):
+                if not prior: self.setUp()
+                previous, target = self.staged("B", prior=prior)
+                journal = self.library.publication_journal()
+                # Earlier product ordering could leave masked candidate bytes.
+                (Path(self.library.root) / "applied.json").write_text(json.dumps(journal.candidate.to_dict()))
+                original = lib.os.fsync
+                def fail(fd):
+                    if stat.S_ISDIR(os.fstat(fd).st_mode) and self.library.publication_journal().state == "acknowledged":
+                        raise OSError("ACK barrier")
+                    return original(fd)
+                before = self.snapshot()
+                with patch.object(lib.os, "fsync", side_effect=fail):
+                    self.assertEqual(self.recover().outcome, "needs_attention")
+                    self.assert_public_state(previous, unresolved=True)
+                    self.assertEqual(self.recover().outcome, "needs_attention")
+                self.fresh_process()
+                self.assert_complete(target, self.recover())
+                self.assertEqual(self.snapshot(), before)
+
+    def test_publication_persistence_locks_are_never_nested(self):
+        from contextlib import contextmanager
+        original_writer = BuildLibrary._writer
+        original_locked = FrozenInstallStore.locked
+        active = {"library": False, "frozen": False}
+        @contextmanager
+        def writer(library):
+            self.assertFalse(active["frozen"])
+            with original_writer(library) as fd:
+                active["library"] = True
+                try: yield fd
+                finally: active["library"] = False
+        @contextmanager
+        def locked(store):
+            self.assertFalse(active["library"])
+            with original_locked(store) as value:
+                active["frozen"] = True
+                try: yield value
+                finally: active["frozen"] = False
+        target = self.x.target()
+        with patch.object(BuildLibrary, "_writer", new=writer), patch.object(FrozenInstallStore, "locked", new=locked):
+            self.assert_complete(target, self.install(target))
+            self.assert_complete(target, self.recover())

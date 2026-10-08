@@ -32,25 +32,31 @@ this frontend neither resumes manually nor modifies their durable records.
 Update / Repair remains unavailable.
 
 A successful library Install records the exact entry/profile and completed
-resolution fingerprint through the existing frozen lifecycle owner. After final
-validation, it persists resolution evidence, restores the updater and creates a
-bounded PENDING journal from the exact still-live durable COMPLETE transaction.
-It then clears that transaction, publishes schema-2 `applied.json`, verifies its
-bytes, and atomically advances the journal to ACKNOWLEDGED. Success requires the
-ACK file and directory durability barriers. Readback after failed fsync cannot
-prove completion. PENDING masks candidate bytes with the previous verified
-association (or none); ACKNOWLEDGED exposes the exact candidate and is nonblocking.
+resolution through the existing frozen lifecycle owner. After final validation,
+resolution persistence and updater restoration, the owner atomically fences its
+exact COMPLETE transaction as PUBLICATION_PENDING. Abandon, generic clear and
+phase transitions cannot discard this fence; another Install cannot replace it.
+The owner then creates durable PENDING evidence, positively acknowledges the
+journal BEFORE publishing candidate applied bytes, verifies/durably materializes
+the candidate, and clears the fence only against matching independent ACK/applied
+evidence. Frozen and library writer locks are never held together.
 
-Failures retain PENDING, visible ambiguous ACK, or the exact COMPLETE transaction
-when initial creation failed. The existing frozen startup/resume owner revalidates
-and re-fsyncs evidence without software/configuration mutation or current selection.
-Recovery of an observed journal never recreates it if another owner consumed it.
-An already completed candidate resolves idempotently; superseded recovery is a
-successful no-op, leaving newer authority untouched. Another pending identity
-conflicts without mutation. Retained terminal journals do not intercept another
-active/restart owner. Optional cleanup follows positively durable ACK and is never
-the success proof; cleanup ambiguity or reappearing ACK cannot reverse authority.
-Invalid or unresolved pending evidence remains attention and blocks Install.
+PENDING masks candidate with previous or none. Visible ACK plus previous applied
+is unresolved: readers retain previous, Status is non-idle and Install is blocked.
+Failed ACK durability cannot report complete or newly expose candidate bytes.
+Fresh recovery positively re-fsyncs ACK before materialization. ACK plus matching
+candidate establishes association authority; a materialization durability failure
+retains ACK and the frozen fence for recovery. Optional terminal journal cleanup
+requires independently durable matching applied state, and cleanup ambiguity
+cannot reverse authority.
+
+Crash before journal creation recovers from the exact durable fence, without
+software/configuration replay or selection. Existing COMPLETE records first acquire
+the same fence. Recovery of an observed journal never recreates it after loss;
+same-candidate completion is idempotent and newer authority supersedes stale owners.
+Invalid or unresolved publication remains attention/non-idle until its owner
+recovers. Retained terminal evidence does not intercept a different active/restart
+owner. Read-only Status never fences, fsyncs, materializes or cleans evidence.
 
 Accepted Skip and Repository Current choices remain attached to associated
 Status/Plan through the exact completed resolution manifest. `awaiting_restart`,

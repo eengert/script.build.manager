@@ -132,7 +132,7 @@ STATUS_KEYS = frozenset({
 })
 STATUS_FROZEN_PHASES = frozenset({
     "preparing", "installing_software", "configuring", "awaiting_restart",
-    "resuming", "validating", "needs_attention", "complete",
+    "resuming", "validating", "needs_attention", "complete", "publication_pending",
 })
 STATUS_LIFECYCLE_STAGES = frozenset({
     "none", "installing_software", "quiescence_awaiting_restart", "configuring",

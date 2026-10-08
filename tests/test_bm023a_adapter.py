@@ -2837,6 +2837,15 @@ print(json.dumps(status))
         self.assertIn("repair_frozen_install_source", source)
         self.assertIn('if mode != "status":\n            FROZEN_INSTALL_SOURCE_RECORD', source)
 
+    def test_publication_fence_status_label_is_read_only(self):
+        self.write_state(_frozen_transaction(phase=FrozenInstallPhase.PUBLICATION_PENDING))
+        before = _tree_snapshot(self.root)
+        status = self.read()
+        self.assertEqual(status["frozen_transaction_state"], "present")
+        self.assertEqual(status["frozen_phase"], "publication_pending")
+        self.assertEqual(self.read(), status)
+        self.assertEqual(_tree_snapshot(self.root), before)
+
     def test_allowlists_cover_status_labels(self):
         self.assertIn("READ_STATUS", bm023a_adapter_support.ADAPTER_STAGES)
         self.assertIn("read_adapter_status", bm023a_adapter_support.ADAPTER_CALLABLES)

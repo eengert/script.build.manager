@@ -120,7 +120,7 @@ class LibraryInstallTests(unittest.TestCase):
                 coordinator = self.coordinator()
                 if stage == "resolution": owner, method = coordinator.store, "save_resolution_manifest"
                 elif stage == "updater": owner, method = self.policy, "set_policy"
-                elif stage == "clear": owner, method = coordinator.store, "clear_expected"
+                elif stage == "clear": owner, method = coordinator.store, "_clear_publication_expected"
                 else:
                     from resources.lib.build_library import BuildLibrary
                     owner, method = BuildLibrary, "_record_applied_completion"
@@ -134,8 +134,12 @@ class LibraryInstallTests(unittest.TestCase):
                 with self.isolated(), patch.object(owner, method, side_effect=effect):
                     result = coordinator.install_target(target, interactive=False)
                 self.assertEqual(result.outcome, "needs_attention", (result.code, result.message))
-                self.assertEqual(self.fixture.library.current_applied_association(), prior)
-                self.assertEqual((self.fixture.root / "applied.json").read_bytes(), before)
+                if stage == "clear":
+                    self.assertEqual(self.fixture.library.current_applied_association().entry_id, target.source.entry_id)
+                    self.assertEqual(self.store.inspect().phase, FrozenInstallPhase.PUBLICATION_PENDING)
+                else:
+                    self.assertEqual(self.fixture.library.current_applied_association(), prior)
+                    self.assertEqual((self.fixture.root / "applied.json").read_bytes(), before)
 
     def target(self):
         entry = self.fixture.register()

@@ -653,8 +653,11 @@ class BuildLibrary:
                 current = self._publication_at(fd)
                 if current is None or current.state == "pending":
                     return current
-                if self._applied_at(fd) != current.candidate:
-                    raise _error()
+                applied = self._applied_at(fd)
+                if applied != current.candidate:
+                    if applied != current.previous:
+                        raise _error()
+                    return current  # visible ACK is unresolved until materialized
             self._resolution(current.candidate)
             return None
         except Exception:
@@ -701,7 +704,9 @@ class BuildLibrary:
                         if journal.state == "pending":
                             applied = journal.previous
                         elif applied != journal.candidate:
-                            raise _error()
+                            if applied != journal.previous:
+                                raise _error()
+                            applied = journal.previous
             if applied is not None:
                 self._resolution(applied, resolution_store)
             return applied
@@ -711,7 +716,7 @@ class BuildLibrary:
     def _completed_publication_identity(self, transaction, store):
         from resources.lib.frozen_install import FrozenInstallTransaction, FrozenInstallPhase
         if (not isinstance(transaction, FrozenInstallTransaction)
-                or transaction.phase is not FrozenInstallPhase.COMPLETE
+                or transaction.phase is not FrozenInstallPhase.PUBLICATION_PENDING
                 or transaction.library_target is None
                 or transaction.library_target.source.root != self.root
                 or store.read_snapshot(store.root) != transaction):
@@ -731,13 +736,18 @@ class BuildLibrary:
 
     @_safe_publication_write
     def _create_applied_publication(self, transaction, *, resolution_store):
-        """Creation authority is the exact live durable COMPLETE owner only.
+        """Create only from a durable frozen publication fence.
 
-        Frozen read_snapshot is lock-free. Check it before, inside and after
-        publication under the library writer lock; never nest persistence locks.
-        Recovery of an observed journal must use _validate_applied_publication.
+        The fence cannot be abandoned or normally cleared/transitioned. Frozen
+        lock-free checks inside the library lock reject obsolete observations;
+        the fence, rather than compensating snapshot checks, preserves ownership
+        through journal write/crash ambiguity. Never nest persistence locks.
         """
         _authenticate_install_root(self.root)
+        try:
+            resolution_store._confirm_publication_owner(transaction)
+        except Exception:
+            raise LibraryConflict("completed_publication_owner_changed") from None
         candidate = self._completed_publication_identity(transaction, resolution_store)
         with self._writer() as fd:
             candidate = self._completed_publication_identity(transaction, resolution_store)
@@ -764,23 +774,16 @@ class BuildLibrary:
             # validate an intent before clearing its frozen transaction.
             self._completed_publication_identity(transaction, resolution_store)
             _atomic(fd, "applied-publication.json", _encode(journal.to_dict()))
-            if resolution_store.read_snapshot(resolution_store.root) != transaction:
-                # Only this newly created, unacknowledged record is withdrawn;
-                # preserve the preceding terminal journal if one existed.
-                if current is None:
-                    os.unlink("applied-publication.json", dir_fd=fd)
-                    os.fsync(fd)
-                else:
-                    _atomic(fd, "applied-publication.json", _encode(current.to_dict()))
-                raise LibraryConflict("completed_publication_owner_changed")
             return journal
 
     def _publication_authority_at(self, fd, observed, resolution_store):
         current = self._publication_at(fd)
         if current is not None and current.same_identity(observed):
             self._resolution(current.candidate, resolution_store)
-            if current.state == "acknowledged" and self._applied_at(fd) != current.candidate:
-                raise _error()
+            if current.state == "acknowledged":
+                applied = self._applied_at(fd)
+                if applied not in (current.candidate, current.previous):
+                    raise _error()
             os.fsync(fd)  # positive barrier for a visible, previously ambiguous write
             return "current", current
         if current is not None and current.state == "pending":
@@ -811,8 +814,19 @@ class BuildLibrary:
             disposition, current = self._publication_authority_at(fd, observed, resolution_store)
             if disposition != "current":
                 return disposition
-            if current.state == "acknowledged":
-                return "complete"  # validation above positively re-fsynced ACK
+            # ACK is the durable commit evidence; applied is its materialization.
+            # Never publish candidate bytes until a positive ACK barrier succeeds.
+            if current.state == "pending":
+                # Older write ordering could leave candidate bytes masked by
+                # PENDING. Restore the materialized previous state before ACK
+                # so an ambiguous ACK replacement cannot look terminal.
+                if self._applied_at(fd) == current.candidate and current.previous != current.candidate:
+                    if current.previous is None:
+                        os.unlink("applied.json", dir_fd=fd)
+                        os.fsync(fd)
+                    else:
+                        _atomic(fd, "applied.json", _encode(current.previous.to_dict()))
+                self._acknowledge_publication(fd, current)
             data = _encode(current.candidate.to_dict())
             if _read_at(fd, "applied.json", STATE_LIMIT) != data:
                 _atomic(fd, "applied.json", data)
@@ -820,10 +834,6 @@ class BuildLibrary:
             self._resolution(current.candidate, resolution_store)
             if _read_at(fd, "applied.json", STATE_LIMIT) != data:
                 raise _error()
-            # Never suppress a failed ACK durability barrier using readback.
-            # Visible ACK after an ambiguous failure is revalidated/re-fsynced
-            # by recovery before complete may be returned.
-            self._acknowledge_publication(fd, current)
             return "complete"
 
     @staticmethod
@@ -842,6 +852,9 @@ class BuildLibrary:
             if current.state != "acknowledged":
                 raise LibraryConflict("applied_publication_not_acknowledged")
             self._publication_authority_at(fd, current, resolution_store)
+            if self._applied_at(fd) != current.candidate:
+                return False  # unresolved ACK still owns materialization
+            os.fsync(fd)  # applied must be independently durable before ACK removal
             # ACK was positively durable before unlink. A reappearing ACK after
             # cleanup ambiguity remains terminal and cannot expose previous.
             try:

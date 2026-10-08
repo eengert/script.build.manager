@@ -83,8 +83,12 @@ accepted resolved version. Missing/corrupt/unbindable resolution makes the targe
 unavailable rather than dropping the resolution. Pending publication exposes the
 previous verified association and operation attention, even after candidate bytes
 replace `applied.json`. ACKNOWLEDGED journals expose the exact candidate, must
-agree with `applied.json`, and are terminal/nonblocking. Malformed or contradictory
-journals report attention. Inspection remains creation-free and never fsyncs,
+agree with `applied.json` before terminal classification. ACK with previous applied
+is unresolved: previous/None remains exposed, operation is non-idle and Install is
+blocked. A frozen PUBLICATION_PENDING fence is non-idle even before journal creation
+or while finishing materialization durability/cleanup. Failed ACK barriers never
+newly expose candidate applied bytes. Malformed or contradictory journals report
+attention. Inspection remains creation-free and never fsyncs,
 acknowledges or cleans terminal evidence. Stale superseded recovery leaves the
 newer completed authority unchanged. A merely selected
 build cannot redirect publication recovery or its completed resolution.

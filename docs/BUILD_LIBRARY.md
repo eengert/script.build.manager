@@ -174,58 +174,66 @@ creation-free and use no-follow traversal for association and resolution evidenc
 ## Durable completion publication
 
 The existing frozen completion owner persists the exact completed resolution and
-restores the updater before creating a publication. `_create_applied_publication()`
-requires the exact still-live durable COMPLETE transaction, including its typed
-library target and source/plan/resolution/result identities. Lock-free frozen
-snapshots are checked before, inside and after creation under the existing bounded
-library writer lock. A changed owner rejects creation; a post-write change withdraws
-only the new pending record and preserves preceding terminal evidence. Frozen and
-library persistence locks are never held together.
+restores the updater, then atomically claims `COMPLETE -> PUBLICATION_PENDING`
+under the FrozenInstallStore lock with the exact transaction UUID and expected
+COMPLETE phase. This durable frozen phase is the publication ownership fence.
+A concurrent abandon either clears COMPLETE first (the fence fails and no journal
+can be created), or loses to the fence and cannot clear/cancel it.
 
-The bounded `applied-publication.json` journal has schema 2 and exactly these fields:
+`_create_applied_publication()` requires this exact fenced transaction. The store
+positively confirms/re-fsyncs the fence under its lock before library creation;
+lock-free checks inside the library writer lock reject obsolete observations but
+are not the mechanism protecting ownership. Generic clear, clear_expected and
+transition_expected reject PUBLICATION_PENDING; create cannot replace an active
+record, and held retry predicates exclude it. Abandon refuses before touching
+policy. Attention helpers cannot transition the fence away. No frozen and library
+writer locks are held together, and no new global lock is introduced.
+
+The bounded `applied-publication.json` journal remains schema 2 with exactly:
 `schema_version`, `transaction_id` (UUID), `candidate` (schema-2 association),
 `previous` (verified schema-2 association or null), and `state` (`pending` or
-`acknowledged`). Existing schema-1 publication journals are explicitly PENDING.
-The journal carries no paths, URLs, private values, raw resolution records,
-messages or backend payloads. Applied association schema 2 is unchanged.
+`acknowledged`). Existing schema-1 journals explicitly remain PENDING. Applied
+association schema 2 and exact resolution binding remain unchanged.
 
-PENDING masks candidate bytes with the previous verified association, or `None`.
-The owner authenticates the original library target and binds the exact resolution;
-any remaining frozen transaction must match the journal's UUID, target, COMPLETE
-phase, fingerprints and semantic records before lifecycle cleanup. Strict directory
-barriers cover frozen storage and the existing journal. The owner then atomically
-publishes and verifies `applied.json`, and atomically advances the journal to
-ACKNOWLEDGED (file fsync, replace, directory fsync). Only a successful positive ACK
-barrier permits `complete`. Failed fsync is never suppressed by visible readback.
+Publication ordering is PENDING durability -> positive ACK file fsync/replace/
+directory fsync -> applied candidate materialization/fsync/readback -> fenced
+transaction cleanup. Candidate bytes are never newly published before the ACK
+barrier succeeds. A legacy PENDING journal with already replaced candidate bytes
+first restores its masked previous materialization before attempting ACK. The
+fence stays durable across journal creation and every publication failure.
 
-ACKNOWLEDGED exposes the exact candidate, must agree with `applied.json`, and does
-not block Install. Normal completion retains one bounded terminal journal; a later
-live COMPLETE owner may replace it with the next PENDING journal. Optional terminal
-cleanup first positively re-fsyncs ACK; unlink failure or unlink-fsync ambiguity
-cannot reverse authority. Reappearing ACK after crash is harmless terminal evidence.
-Readers validate but never write, acknowledge, clean, create directories or locks.
-Malformed or contradictory journals fail closed, without selection fallback.
+PENDING exposes previous or None and blocks Install. ACK plus previous applied is
+unresolved: reads expose previous or None, Status remains non-idle and Install
+stays blocked. A failed ACK barrier can leave visible ACK, but applied remains
+previous; readback never substitutes for a positive barrier. Recovery validates
+the exact journal, re-fsyncs ACK and materializes only its exact candidate.
+ACK plus matching applied exposes the candidate. If the applied directory barrier
+fails after replacement, durable ACK still owns the candidate; the retained fence
+keeps the operation non-idle until recovery confirms durability and finishes cleanup.
+Malformed or contradictory state fails closed without selection fallback.
 
-Recovery uses `_validate_applied_publication()` for its exact observed identity.
-This operation can revalidate/re-fsync existing evidence, but never creates or
-replaces a missing journal. If another owner completed the same candidate, recovery
-is idempotently complete; if a different completed association superseded it,
-recovery returns a successful `superseded` no-op. Another PENDING identity conflicts
-without changing it. These decisions are serialized again before applied publication,
-so stale B recovery cannot recreate B after a later C Install. No timestamp ordering
-or resolution lookup fallback supplies authority.
+Only `_clear_publication_expected()` can finish the fence. Under the frozen lock
+it reads independent exact ACK evidence, requires matching applied candidate and
+resolution identity, and positively fsyncs the library directory before removing
+the fenced transaction. It takes no library writer lock. Terminal journal cleanup
+is optional and first requires matching independently durable applied bytes.
+Retained/restored ACK after cleanup ambiguity cannot reverse authority; unresolved
+ACK is never garbage-collected.
 
-`run_frozen_install_startup()` and frozen resume recover before runtime-owner
-construction, without software/configuration mutation or consulting selection.
-Only a still-live exact COMPLETE transaction can supply initial creation when no
-pending intent was established. Retained ACK does not intercept a different active
-or restart transaction. Pending/invalid state stays non-idle and blocks Install.
+Crash after fencing but before journal creation is recovered from the exact
+fenced identity. A legacy/current COMPLETE record first acquires the same fence.
+Startup/resume publication recovery runs before runtime-owner construction and
+never replays software/configuration mutation or consults selection. Fenced state
+is non-idle even with no pending journal and does not reassert updater quarantine,
+since original policy restoration preceded fencing. A different active/restart
+owner is not intercepted by retained terminal evidence.
 
-Crashes before or after PENDING replacement, frozen cleanup, applied replacement,
-and ACK transition remain recoverable. Visible ACK after a failed directory barrier
-requires a fresh positive re-fsync before recovery reports complete. Restored PENDING
-continues masking the candidate until recovery acknowledges it; restored ACK stays
-terminal. Failed terminal cleanup does not affect a previously proven completion.
+Recovery of an observed journal still uses `_validate_applied_publication()`;
+it never recreates a missing observed journal. Already completed same-candidate
+recovery is idempotent; a newer completed association supersedes stale recovery
+without writes. Another pending/unresolved identity conflicts untouched. The
+accepted A/B/C stale-recovery behavior, exact fingerprint lookup and binder remain
+unchanged; no timestamp ordering or resolution fallback supplies authority.
 
 Selection, registration, capture, noncomplete outcomes and legacy path installs
 never establish an association. Schema-4 restart target ownership is unchanged;
