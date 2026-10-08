@@ -17,11 +17,20 @@ class AddonMetadataTests(unittest.TestCase):
         cls.metadata = cls.root.find('./extension[@point="xbmc.addon.metadata"]')
         cls.news = cls.metadata.findtext('news') or ''
         cls.descriptions = {d.get('lang'): d.text or '' for d in cls.metadata.findall('description')}
+        cls.summaries = {s.get('lang'): s.text or '' for s in cls.metadata.findall('summary')}
 
     def test_addon_xml_parses_with_metadata_and_locales(self):
         self.assertEqual(self.root.get('id'), 'script.build.manager')
         self.assertTrue(self.news.strip())
         self.assertEqual(set(self.descriptions), {'en_US', 'en_GB'})
+        self.assertEqual(set(self.summaries), {'en_US', 'en_GB'})
+
+    def test_summaries_describe_capture_and_apply_not_backup(self):
+        for lang, summary in self.summaries.items():
+            with self.subTest(lang=lang):
+                self.assertEqual(summary, 'Capture and apply a managed Kodi setup.')
+                self.assertNotIn('restore', summary.lower())
+                self.assertNotIn('backup', summary.lower())
 
     def test_obsolete_claims_removed(self):
         lowered = self.raw.lower()

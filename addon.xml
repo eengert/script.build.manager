@@ -20,8 +20,8 @@ Create Build captures a managed Kodi setup.
 Install Build applies a saved build to this device.
 Update / Repair checks the applied build for supported managed differences and repairs only the changes you review.
 Build Status, Settings and Help are in the native menu.</news>
-    <summary lang="en_US">Save and restore your Kodi setup.</summary>
-    <summary lang="en_GB">Save and restore your Kodi setup.</summary>
+    <summary lang="en_US">Capture and apply a managed Kodi setup.</summary>
+    <summary lang="en_GB">Capture and apply a managed Kodi setup.</summary>
     <description lang="en_US">Build Manager saves a managed Kodi setup as a build and applies it to your devices. Create Build captures a managed Kodi setup. Install Build applies a saved build. Update / Repair checks the applied build for supported managed differences and repairs only the changes you review. Build Status shows whether Kodi needs a restart or Build Manager needs your attention. Build Manager manages supported parts of a saved setup, not every Kodi file.</description>
     <description lang="en_GB">Build Manager saves a managed Kodi setup as a build and applies it to your devices. Create Build captures a managed Kodi setup. Install Build applies a saved build. Update / Repair checks the applied build for supported managed differences and repairs only the changes you review. Build Status shows whether Kodi needs a restart or Build Manager needs your attention. Build Manager manages supported parts of a saved setup, not every Kodi file.</description>
   </extension>
