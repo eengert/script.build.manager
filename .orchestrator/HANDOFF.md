@@ -24,7 +24,7 @@ AGENT_HANDOFF_PROJECT=build-manager /Users/eengert/Documents/Kodi/agent-handoff/
 **Build Manager macOS Beta Qualification.** The finish line is the eight-item Beta exit checklist in `BUILD_MANAGER_PROJECT_PLAN.md`.
 
 - Items 1-7: accepted backend qualification evidence remains intact.
-- Item 8 (complete user-facing workflow through the Kodi UI, including Estuary, restart/resume, error states, and second-run presentation, tied to an exact candidate): **OPEN**.
+- Item 8 (complete user-facing workflow through the Kodi UI, including Estuary, restart/resume, error states, and second-run presentation, tied to an exact candidate): **OPEN**. Not accepted. It remains open pending ChatGPT review of the 2026-10-08 evidence consolidation (`.qualification-evidence/item8-evidence-consolidation-20261008T232026Z/`), which reports a remaining live gap. That report is evidence and does not accept or close Item 8.
 - Beta Candidate phase exit (repository-distributed package, custom icon, install/update through the Eengert Repository, repository-distributed qualification): **NOT COMPLETE**.
 - Do not describe beta qualification as complete.
 
@@ -45,20 +45,16 @@ Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e
 
 ## Installed runtime candidate versus newer unstaged metadata
 
-- The installed Test.app runtime candidate for every live qualification above is **`53f221986b6c76d5d13652421ac62f999c0c6aab`**.
-- Product source since `53f2219` (`resources/`, `tools/`, `default.py`, `service.py`) changes in one file only: `resources/images/icon.png`, changed in `a2b1ffc`. Verified by path diff.
-- Other commits after `53f2219` touch only tests, docs, `.orchestrator/**`, `.agent/**`, and `addon.xml`:
-  - `6105282b5340ba15f0ca4b231ce1e27c42d3cb81` package metadata refresh (news, en_US/en_GB descriptions, focused metadata test);
-  - `5f0dd67045079fbeff9651f782a4ff14f27cef33` package summary correction to `Capture and apply a managed Kodi setup.` in both English locales.
-- Product/test commit `a2b1ffcf77123d269d0e21452a316186950eec1a` adopts the approved custom icon and extends `tests/test_addon_metadata.py` to pin it.
-- **None of `6105282`, `5f0dd67`, or `a2b1ffc` is staged or live-proven in Test.app.** The installed candidate `53f2219` still carries the old stale package text ("not available yet" news and "Save and restore" summary) and the generic icon. The new metadata and icon are covered by unit tests, XML validation, and a PNG and SHA-256 check only.
+- The installed Test.app runtime candidate is now **`a2b1ffcf77123d269d0e21452a316186950eec1a`** ("Add approved Build Manager icon"). It was staged from exact Git objects and is Git-bound verified (`installed_equals_candidate` true).
+- **a2b1ffc package/icon live smoke: PASS** (2026-10-08, portable Test.app, `.qualification-evidence/bm-testapp-package-icon-smoke-20261008T225641Z/`). It showed the corrected `addon.xml` metadata, the approved 512x512 custom icon in Kodi, the corrected summary, the native six-item menu, a clean exit, and no Build Manager durable-state mutation.
+- Earlier live qualifications (Create, Install, applied association, Update / Repair) ran on earlier candidates. Their transfer to `a2b1ffc` is assessed in the consolidation evidence and is not assumed here.
 
 ## Remaining beta/package blockers
 
 1. **Item 8, complete-workflow qualification: OPEN.** Durable Estuary, restart/resume, error-state, and second-run evidence for the complete frontend, tied to one exact candidate, is still needed. The Update / Repair scenarios above are recorded. Create, Install, Status, Help, and Settings are not recorded here as complete across that full set.
-2. **Custom icon: CLOSED IN SOURCE** (`CUSTOM_ICON_ASSET_REQUIRED`). `resources/images/icon.png` is the approved custom Build Manager icon, byte-identical to `matrix:resources/images/icon.png`. It comes from matrix `a33a3f8` ("chore: add Build Manager addon icon", Eric Engert), blob `65c70420507d3d218d570c65d773ec6fc07db5cd`. It is a 512x512 PNG with SHA-256 `207c44a0474e7e370cf6d210c7646ce243c704a0694ef422c12bd51401628d23`, pinned by `tests/test_addon_metadata.py`. It replaces the generic skeleton icon (SHA-256 `b908af8490f1ea6f16a2d9c2cc551c678c640c04df81a341dc79ec6d37817b8c`). **Not yet staged or live-proven in Test.app.**
-3. **Live package qualification in Test.app of the metadata and icon (`6105282`, `5f0dd67`, `a2b1ffc`): OPEN.** Needs a named, bounded task.
-4. **Eengert Repository publication and install/update qualification through it: OPEN.**
+2. **Custom icon: CLOSED** (`CUSTOM_ICON_ASSET_REQUIRED`). `resources/images/icon.png` is the approved custom Build Manager icon (512x512 PNG, SHA-256 `207c44a0474e7e370cf6d210c7646ce243c704a0694ef422c12bd51401628d23`), byte-identical to `matrix:resources/images/icon.png` (blob `65c70420507d3d218d570c65d773ec6fc07db5cd`). The live Test.app smoke on `a2b1ffc` showed it in Kodi. The former generic skeleton icon (SHA-256 `b908af8490f1ea6f16a2d9c2cc551c678c640c04df81a341dc79ec6d37817b8c`) no longer ships.
+3. **Live package qualification of metadata and icon: CLOSED** on the exact candidate `a2b1ffc` (PASS; see the installed-runtime section).
+4. **Eengert Repository publication and install/update qualification through it: OPEN and unauthorized.** Nothing in the 2026-10-08 consolidation task authorizes publication. It is blocked until Item 8 is accepted (`BUILD_MANAGER_PROJECT_PLAN.md`, Beta Candidate phase exit).
 5. **Integration of this lane into `matrix`: not done.** It needs a separate, explicit decision. `matrix` already carries the same icon blob.
 
 ## Safety boundaries
@@ -75,7 +71,7 @@ Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e
 
 No implementation task is pre-selected. ChatGPT chooses the next bounded task and names its blocker. Open decisions for Eric and ChatGPT:
 
-- whether to stage `agent/claude` HEAD (metadata and icon) in portable Test.app for live proof (needs a named task);
+- Item 8 acceptance, pending ChatGPT review of the consolidation evidence (`item8-evidence-consolidation-20261008T232026Z`);
 - when and how to integrate into `matrix`.
 
 Do not restart Status, G1-G6, Create, Install, or Update / Repair implementation. These are implemented and recorded above. Reopening any of them needs a new bounded task that names a specific blocker.
