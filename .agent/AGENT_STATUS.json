@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
   "status": "idle",
-  "task": "Durable applied-build association foundation (offline)",
-  "reason": "Complete offline: 282 focused PASS; full 3043 with two reproduced baseline import-policy failures. STOP after report; no runtime access.",
-  "last_commit": "527b14b8d34ff17c0ab3947164cc4747436fe3c8",
+  "task": "Applied-build association blocking corrections (offline)",
+  "reason": "Complete offline correction candidate; STOP for independent re-review. Durable publication and exact resolutions; full 3067 with only two reproduced baseline failures; no runtime access.",
+  "last_commit": "99f0e24690e14d63dbe60d7a8263f701fa405131",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-08T02:50:07Z",
+  "updated_at": "2026-10-08T03:25:52Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",

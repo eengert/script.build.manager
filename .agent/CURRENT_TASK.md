@@ -1,11 +1,11 @@
 # Current Task
 
-- Task: Durable applied-build association foundation (offline; no assigned ID).
-- State: COMPLETE; stop after report.
-- Start: clean agent/codex at fb78e8e514304b16eb69051c571b0341e09d7a34.
-- Product: 527b14b8d34ff17c0ab3947164cc4747436fe3c8.
-- Result: schema-1 applied.json independent of selection; exact typed original library target recorded by shared direct/resumed finalization. Status defaults to association only; associated Plan bridge added, Repair UI deferred.
-- Validation: final focused 282 PASS; full 3043 tests with 2 independently reproduced baseline import-policy failures. Diff check PASS.
-- Boundaries: accepted Install UI unchanged; no application/profile/device/runtime access, evidence changes, push, merge, release or publication.
-- Next: independent review; separate scope for baseline test correction or frontend/runtime work.
-- Usage/model/effort: unavailable; GPT-6 session identity, exact tier and effort unavailable.
+- Task: Correct the two applied-build association blockers (offline; no assigned ID).
+- State: COMPLETE correction candidate; stop after report for independent re-review.
+- Start: clean agent/codex at 6ee4ee4c33ef173bd2c3ae868f3ea1d9ffe2eeef.
+- Product: 99f0e24690e14d63dbe60d7a8263f701fa405131; original reviewed history unchanged.
+- Result: durable two-phase association publication/recovery through existing frozen owner; exact completed resolution continuity for associated Status/Plan; pending state blocks Install and surfaces attention.
+- Validation: 507 focused tests (506 PASS + one verified baseline failure); 97 boundary/lifecycle PASS; 55 final publication/Status UI PASS. Full final 3067 (3065 PASS + two exact-HEAD-reproduced baseline import-policy failures). Diff checks PASS.
+- Boundaries: no Test.app/Kodi/real-profile/device/runtime/keychain/NSUserDefaults access, no UI presentation/evidence change, ai-supervisor, extra branch/worktree, history rewrite, push, merge, release or external publication.
+- Next: independent re-review of focused correction. Runtime qualification requires separate authorization.
+- Usage/model/effort: reliable shared-account desktop observations recorded; GPT-6 session identity, exact tier/effort unavailable.
