@@ -46,6 +46,17 @@ def _error():
     return LibraryError("build_library_invalid")
 
 
+def _safe_publication_write(method):
+    def write(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except LibraryError:
+            raise
+        except Exception:
+            raise _error() from None
+    return write
+
+
 def _encode(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -167,6 +178,48 @@ class AppliedBuildAssociation:
     """Verified terminal identity, distinct from a user selection."""
     entry_id: str
     device_profile_id: str
+    resolution_fingerprint: str
+
+    def to_dict(self):
+        return {"schema_version": 2, "entry_id": self.entry_id,
+                "device_profile_id": self.device_profile_id,
+                "resolution_fingerprint": self.resolution_fingerprint}
+
+    @classmethod
+    def from_dict(cls, raw):
+        if (not isinstance(raw, dict)
+                or set(raw) != {"schema_version", "entry_id", "device_profile_id", "resolution_fingerprint"}
+                or type(raw["schema_version"]) is not int or raw["schema_version"] != 2
+                or not isinstance(raw["entry_id"], str) or not _KEY.fullmatch(raw["entry_id"])
+                or not isinstance(raw["resolution_fingerprint"], str)
+                or not _KEY.fullmatch(raw["resolution_fingerprint"])
+                or not isinstance(raw["device_profile_id"], str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", raw["device_profile_id"])):
+            raise _error()
+        return cls(raw["entry_id"], raw["device_profile_id"], raw["resolution_fingerprint"])
+
+
+@dataclass(frozen=True)
+class AppliedPublication:
+    transaction_id: str
+    candidate: AppliedBuildAssociation
+    previous: AppliedBuildAssociation | None
+
+    def to_dict(self):
+        return {"schema_version": 1, "transaction_id": self.transaction_id,
+                "candidate": self.candidate.to_dict(),
+                "previous": self.previous.to_dict() if self.previous else None}
+
+    @classmethod
+    def from_dict(cls, raw):
+        if (not isinstance(raw, dict)
+                or set(raw) != {"schema_version", "transaction_id", "candidate", "previous"}
+                or type(raw["schema_version"]) is not int or raw["schema_version"] != 1
+                or not isinstance(raw["transaction_id"], str)
+                or str(uuid.UUID(raw["transaction_id"])) != raw["transaction_id"]):
+            raise _error()
+        return cls(raw["transaction_id"], AppliedBuildAssociation.from_dict(raw["candidate"]),
+                   None if raw["previous"] is None else AppliedBuildAssociation.from_dict(raw["previous"]))
 
 
 class _OwnedPackages(ConfigPackageLoader):
@@ -571,63 +624,140 @@ class BuildLibrary:
         except Exception:
             return None
 
-    def current_applied_association(self) -> AppliedBuildAssociation | None:
-        """Creation-free, fail-closed read; never substitutes selection."""
+    def pending_publication(self) -> AppliedPublication | None:
+        """Creation-free inspection. Malformed/unsafe intent is never idle."""
         try:
             with _directory(self.root) as fd:
-                data = _read_at(fd, "applied.json", STATE_LIMIT)
-                if data is None:
-                    return None
-                raw = _json(data)
-                if (not isinstance(raw, dict)
-                        or set(raw) != {"schema_version", "entry_id", "device_profile_id"}
-                        or type(raw["schema_version"]) is not int
-                        or raw["schema_version"] != 1
-                        or not isinstance(raw["entry_id"], str)
-                        or not _KEY.fullmatch(raw["entry_id"])
-                        or not isinstance(raw["device_profile_id"], str)):
-                    return None
-                manifest, _, _ = self._load_at(fd, raw["entry_id"], self._registry(fd))
-                if raw["device_profile_id"] not in manifest.device_profiles:
-                    return None
-                return AppliedBuildAssociation(raw["entry_id"], raw["device_profile_id"])
-        except Exception:
+                return self._publication_at(fd)
+        except FileNotFoundError:
             return None
-
-    def _record_applied_completion(self, target: LibraryInstallTarget) -> None:
-        """Internal completion-owner writer; exact authenticated library identity."""
-        try:
-            if not isinstance(target, LibraryInstallTarget) or target.source.root != self.root:
-                raise _error()
-            _authenticate_install_root(self.root)
-            with self._writer() as fd:
-                manifest, _, _ = self._load_at(fd, target.source.entry_id, self._registry(fd))
-                if target.device_profile_id not in manifest.device_profiles:
-                    raise _error()
-                data = _encode({"schema_version": 1, "entry_id": target.source.entry_id,
-                                "device_profile_id": target.device_profile_id})
-                if len(data) > STATE_LIMIT:
-                    raise _error()
-                _atomic(fd, "applied.json", data)
         except Exception:
             raise _error() from None
 
-    def associated_status_target(self):
-        """Verified associated desired target; unavailable never means selected."""
-        from resources.lib.status import StatusTarget
-        applied = self.current_applied_association()
-        if applied is None:
-            return None
-        path = str(Path(self.root) / "builds" / (applied.entry_id + ".json"))
-        return StatusTarget(path, applied.device_profile_id, path,
-                            library_source=LibrarySource(self.root, applied.entry_id),
-                            applied_association=applied)
+    @staticmethod
+    def _publication_at(fd):
+        data = _read_at(fd, "applied-publication.json", STATE_LIMIT)
+        return None if data is None else AppliedPublication.from_dict(_json(data))
 
-    def associated_plan_target(self):
-        applied = self.current_applied_association()
+    def _resolution(self, applied, resolution_store=None):
+        from resources.lib.frozen_install import FrozenInstallStore
+        from resources.lib.build_identity import bind_resolutions
+        # The library and frozen store share the active profile's addon-data
+        # parent. Reads do not create a directory or scan for a resolution.
+        store = resolution_store or FrozenInstallStore(Path(self.root).parent, create=False)
+        resolution = store.load_resolution_manifest(applied.resolution_fingerprint, nofollow=True)
+        if resolution.resolution_fingerprint != applied.resolution_fingerprint:
+            raise _error()
+        public, frozen, _ = self._load(applied.entry_id)
+        desired = resolve_manifest(public, applied.device_profile_id)
+        bind_resolutions(desired.build.id, frozen, resolution,
+                         policies=desired.frozen_install_policies)
+        return resolution
+
+    def current_applied_association(self, *, resolution_store=None) -> AppliedBuildAssociation | None:
+        """Pending intent masks even an already replaced candidate record."""
+        try:
+            with _directory(self.root) as fd:
+                pending = self._publication_at(fd)
+                if pending is not None:
+                    applied = pending.previous
+                else:
+                    data = _read_at(fd, "applied.json", STATE_LIMIT)
+                    applied = None if data is None else AppliedBuildAssociation.from_dict(_json(data))
+                    # A writer can persist an intent between our first intent
+                    # read and the applied read. Never expose its candidate.
+                    pending = self._publication_at(fd)
+                    if pending is not None:
+                        applied = pending.previous
+            if applied is not None:
+                self._resolution(applied, resolution_store)
+            return applied
+        except Exception:
+            return None
+
+    @_safe_publication_write
+    def _prepare_applied_publication(self, target, fingerprint, transaction_id, *, resolution_store):
+        """Persist bounded completion identity before frozen ownership is cleared."""
+        if not isinstance(target, LibraryInstallTarget) or target.source.root != self.root:
+            raise _error()
+        _authenticate_install_root(self.root)
+        candidate = AppliedBuildAssociation.from_dict({
+            "schema_version": 2, "entry_id": target.source.entry_id,
+            "device_profile_id": target.device_profile_id, "resolution_fingerprint": fingerprint})
+        self._resolution(candidate, resolution_store)
+        with self._writer() as fd:
+            pending = self._publication_at(fd)
+            if pending is not None:
+                if pending.transaction_id != transaction_id or pending.candidate != candidate:
+                    raise LibraryConflict("applied_publication_pending")
+                os.fsync(fd)
+                return pending
+            previous = self.current_applied_association(resolution_store=resolution_store)
+            pending = AppliedPublication.from_dict(AppliedPublication(transaction_id, candidate, previous).to_dict())
+            _atomic(fd, "applied-publication.json", _encode(pending.to_dict()))
+            return pending
+
+    @_safe_publication_write
+    def _record_applied_completion(self, pending, *, resolution_store):
+        """Publish idempotently, then acknowledge. Never take a frozen lock here."""
+        _authenticate_install_root(self.root)
+        self._resolution(pending.candidate, resolution_store)
+        with self._writer() as fd:
+            current = self._publication_at(fd)
+            if current is None and _read_at(fd, "applied.json", STATE_LIMIT) == _encode(pending.candidate.to_dict()):
+                os.fsync(fd)
+                return
+            if current != pending:
+                raise LibraryConflict("applied_publication_changed")
+            # Revalidate library content inside its own writer lock. Resolution
+            # reads take no persistence lock; no frozen/library lock nesting.
+            self._resolution(pending.candidate, resolution_store)
+            data = _encode(pending.candidate.to_dict())
+            if _read_at(fd, "applied.json", STATE_LIMIT) != data:
+                _atomic(fd, "applied.json", data)
+            os.fsync(fd)
+            self._resolution(pending.candidate, resolution_store)
+            if _read_at(fd, "applied.json", STATE_LIMIT) != data:
+                raise _error()
+            try:
+                self._acknowledge_publication(fd)
+            except Exception:
+                # unlink may have completed before directory fsync raised.
+                # With no intent and exact committed bytes, publication is done.
+                if (self._publication_at(fd) is not None
+                        or _read_at(fd, "applied.json", STATE_LIMIT) != data):
+                    raise
+            if (_read_at(fd, "applied.json", STATE_LIMIT) != data
+                    or self._publication_at(fd) is not None):
+                raise _error()
+
+    @staticmethod
+    def _acknowledge_publication(fd):
+        os.unlink("applied-publication.json", dir_fd=fd)
+        os.fsync(fd)
+
+    def associated_status_target(self, *, resolution_store=None):
+        from resources.lib.status import StatusTarget
+        applied = self.current_applied_association(resolution_store=resolution_store)
         if applied is None:
             return None
-        return self.plan_target(applied.entry_id, applied.device_profile_id)
+        try:
+            resolution = self._resolution(applied, resolution_store)
+            path = str(Path(self.root) / "builds" / (applied.entry_id + ".json"))
+            return StatusTarget(path, applied.device_profile_id, path,
+                                library_source=LibrarySource(self.root, applied.entry_id),
+                                applied_association=applied, install_resolution=resolution)
+        except Exception:
+            return None
+
+    def associated_plan_target(self, *, resolution_store=None):
+        target = self.associated_status_target(resolution_store=resolution_store)
+        if target is None:
+            return None
+        from resources.lib.plan import PlanTarget
+        return PlanTarget(target.configuration_manifest_path, target.device_profile_id,
+                          target.software_manifest_path, library_source=target.library_source,
+                          install_resolution=target.install_resolution)
 
     def clear_selection(self):
         try:
@@ -684,3 +814,9 @@ def selected_plan_target():
         return default_build_library().selected_plan_target()
     except Exception:
         return None
+
+
+def authoritative_build_library():
+    """Existing profile authority, with the explicit isolated test scope."""
+    root = _isolated_install_root.get()
+    return BuildLibrary(root) if root is not None else default_build_library()

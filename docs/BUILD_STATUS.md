@@ -75,6 +75,15 @@ still reported. The production default uses only a valid applied-build associati
 recorded by authoritative frozen completion. A merely selected build is separate:
 `selected_status_target()` remains available for explicit selected-target checks.
 Missing or invalid association returns `None`, without selection fallback.
+The schema-2 association names one exact completed resolution fingerprint. Both
+associated Status and Plan load that manifest from the same profile-local frozen
+store and attach `install_resolution` only after the existing binding checks pass.
+Accepted Skip remains current/no changes; Repository Current compares against the
+accepted resolved version. Missing/corrupt/unbindable resolution makes the target
+unavailable rather than dropping the resolution. Pending publication exposes the
+previous verified association and operation attention, even after candidate bytes
+replace `applied.json`; invalid intent also reports attention. A merely selected
+build cannot redirect publication recovery or its completed resolution.
 
 Stored resolutions must also match `frozen_resolution.install_plan_fingerprint()`
 for the selected frozen manifest and effective install policies. The shared binder
@@ -158,8 +167,8 @@ a held operation lock does not block a check, and an AST test pins that
 * Applied association persistence and target selection are proven offline. This
   change has not been runtime-qualified. Without a valid association the default
   reports "Not Fully Checked" for build-dependent areas. The association alone
-  does not bind accepted package exceptions into Status; install-resolution
-  evidence still needs its existing separate validation.
+  binds accepted package exceptions through its exact resolution fingerprint;
+  that evidence still passes the existing full resolution binding checks.
 * The updater policy is not read, so a residual quarantine without a
   transaction is not reported.
 * Display names are optional; none is supplied in production yet, so the details

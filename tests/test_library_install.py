@@ -48,7 +48,7 @@ class LibraryInstallTests(unittest.TestCase):
         self.addCleanup(authority.__exit__, None, None, None)
         self.base = self.fixture.base
         self.artifacts = ArtifactStore(self.base / "artifacts")
-        self.store = FrozenInstallStore(self.base / "frozen-state")
+        self.store = FrozenInstallStore(self.fixture.root.parent)
         self.restart_store = TransactionStore(str(self.base / "restart-state"))
         self.policy = FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY)
         self.backend = InMemoryFrozenArtifactBackend()
@@ -64,9 +64,11 @@ class LibraryInstallTests(unittest.TestCase):
     def seed_prior_association(self):
         version = self.fixture.raw["build"]["version"]
         self.fixture.raw["build"]["version"] = "0.9.0"
+        frozen = self.fixture.frozen
+        self.fixture.frozen = replace(frozen, addons=())
         self.fixture.write_sources(); prior = self.fixture.register()
-        original = LibraryInstallTarget(LibrarySource(str(self.fixture.root), prior.entry_id), "other")
-        self.fixture.library._record_applied_completion(original)
+        self.fixture.record_applied(prior, "other")
+        self.fixture.frozen = frozen
         self.fixture.raw["build"]["version"] = version
         self.fixture.write_sources()
         return self.fixture.library.current_applied_association()
@@ -341,6 +343,10 @@ class LibraryInstallTests(unittest.TestCase):
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
         self.assert_associated(target)
         self.assertEqual(final.resolution_manifest.records, durable.resolution_records)
+        self.assertEqual(self.fixture.library.current_applied_association().resolution_fingerprint,
+                         durable.resolution_fingerprint)
+        self.assertEqual(self.fixture.library.associated_status_target().install_resolution,
+                         final.resolution_manifest)
         self.assertEqual(final.resolution_manifest.install_plan_fingerprint, durable.install_plan_fingerprint)
         self.assertEqual(durable.library_target, first.transaction.library_target)
         self.assertIsNone(self.store.inspect())
@@ -430,6 +436,10 @@ class LibraryInstallTests(unittest.TestCase):
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
         self.assert_associated(target)
         self.assertEqual(final.resolution_manifest.records, durable.resolution_records)
+        self.assertEqual(self.fixture.library.current_applied_association().resolution_fingerprint,
+                         durable.resolution_fingerprint)
+        self.assertEqual(self.fixture.library.associated_status_target().install_resolution,
+                         final.resolution_manifest)
         self.assertNotIn(missing, self.backend.installed)
 
     def test_revalidation_after_resolution_before_first_mutation(self):

@@ -31,18 +31,28 @@ The existing frozen/BM-020/startup owners retain restart/resume responsibility;
 this frontend neither resumes manually nor modifies their durable records.
 Update / Repair remains unavailable.
 
-A successful library Install records the exact entry/profile in the separate
-Build Library `applied.json` record. The existing frozen lifecycle owner writes it
-only at its validated terminal completion boundary, after resolution evidence,
-updater restoration and transaction cleanup succeed. Reviewed missing-package
-choices retain that same target identity. `awaiting_restart`, cancellation,
-failure, active work and attention never advance the association. Restart/resume
-uses the original typed `library_target` persisted in the frozen transaction,
-independently of the current selection. Legacy path installs do not guess identity.
-Association persistence failure produces a stable attention result rather than
-claiming completion; the prior record remains when publication fails before
-replacement. The completed transaction has already been cleared at this point,
-so a later retry uses the normal reviewed Install path.
+A successful library Install records the exact entry/profile and completed
+resolution fingerprint through the existing frozen lifecycle owner. After final
+validation, it persists resolution evidence, restores the updater and writes a
+bounded Build Library `applied-publication.json` intent. It then clears the exact
+COMPLETE frozen transaction, publishes schema-2 `applied.json`, verifies its bytes
+and acknowledges the intent. While intent remains, the prior verified association
+(or none) stays authoritative even after candidate bytes have been replaced.
+
+Publication failures retain the intent, or the exact COMPLETE transaction when
+intent creation failed before replacement. The existing frozen startup/resume
+owner retries identity publication without software/configuration mutation or
+current selection. Remaining transaction identity and exact resolution binding
+must match. Unresolved or invalid intent blocks Install and appears as attention
+in startup, Status and Plan. Filesystem post-replacement/unlink ambiguity is
+reconciled against actual state; successful acknowledgement does not leave false
+attention with no durable identity.
+
+Accepted Skip and Repository Current choices remain attached to associated
+Status/Plan through the exact completed resolution manifest. `awaiting_restart`,
+cancellation, failure, active work and other noncomplete outcomes preserve the
+prior association. Schema-4 restart/resume keeps the original typed target;
+legacy path installs and schemas 1-3 do not guess library identity.
 
 Offline tests cover native selection/confirmation, approval freshness, safe
 errors, deferred runtime composition, and real disposable library -> Plan ->

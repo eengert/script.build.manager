@@ -18,6 +18,12 @@ def main() -> None:
         try:
             from resources.lib.frozen_install import run_frozen_install_startup
             frozen_result = run_frozen_install_startup(bm020_status=status)
+            if (frozen_result is not None and frozen_result.succeeded
+                    and status.code == "APPLIED_PUBLICATION_PENDING"):
+                from dataclasses import replace
+                from resources.lib.startup import StartupClassification
+                status = replace(status, classification=StartupClassification.NO_TRANSACTION,
+                                 transaction=None, code="", message="")
             if frozen_result is not None and not frozen_result.succeeded:
                 xbmc.log(
                     f"Build Manager BM-022 startup: {frozen_result.outcome}",

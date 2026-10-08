@@ -437,7 +437,9 @@ class Entry(unittest.TestCase):
     def test_production_wiring_runs_end_to_end_without_kodi_and_changes_nothing(self):
         from resources.lib import status as status_module
         h = Harness(self, with_private=False, with_resource=False)
-        profile = h.profile
+        # Library authority rejects ancestor symlinks, including macOS /var.
+        # Canonicalize only this disposable fixture before runtime translation.
+        profile = h.profile.resolve()
         window = SimpleNamespace(
             getProperty=lambda key: SESSION_A,
             setProperty=lambda *a: self.fail("a Kodi window property was written"))

@@ -155,29 +155,62 @@ resolution, policy binding and stale review validation remain intact.
 
 `applied.json` lives beside `selection.json` under the profile-owned Build Library
 (`special://profile/addon_data/script.build.manager/build-library`). Its exact
-schema is `{"schema_version":1,"entry_id":"<immutable library entry ID>",
-"device_profile_id":"<declared profile ID>"}`. No manifest, path, private value,
-digest of a review, or mutable display metadata is copied into it.
+schema is `{"schema_version":2,"entry_id":"<immutable library entry ID>",
+"device_profile_id":"<declared profile ID>",
+"resolution_fingerprint":"<64 lowercase hex>"}`. The fingerprint names the
+immutable completed `FrozenInstallResolutionManifest`, not a path or a review.
+Schema-1 records fail closed; no resolution is inferred or migrated.
 
-`current_applied_association()` returns a typed `AppliedBuildAssociation` or
-`None`. Every read revalidates the registry-published immutable envelope and the
-declared profile. Missing, malformed, oversized, incompatible, removed or changed
-inputs fail closed, with no sole-entry or selection fallback. Reads use bounded
-regular files and no-follow directory descriptors for every ancestor.
+`current_applied_association()` revalidates the registered envelope/profile and
+loads the exact referenced resolution from the profile-local frozen store's
+`install_resolutions/<fingerprint>.json`. Existing `bind_resolutions()` validates
+build, frozen graph, install plan, effective policy, record semantics and resulting
+software. Missing, corrupt, changed or unbindable evidence returns `None`; no
+selection, sole-entry, directory scan or latest-record fallback is used.
+Associated Status and Plan attach that same manifest as `install_resolution`,
+retaining accepted Skip and Repository Current semantics. Reads remain bounded,
+creation-free and use no-follow traversal for association and resolution evidence.
 
-The internal `_record_applied_completion()` validates authenticated library
-ownership and exact entry/profile under the existing writer lock, then uses the
-existing fsync/atomic-replace/directory-fsync pattern. Only the frozen lifecycle's
-validated completion path calls it, after resolution persistence, updater restore
-and transaction cleanup. Direct and resumed completion use the exact durable
-`LibraryInstallTarget`; pending restart and attention preserve the previous
-association. Legacy path installs cannot establish a library association.
+## Durable completion publication
 
-Selection, capture and registration never change this record.
-`associated_status_target()` carries the typed association separately from
-selection; `associated_plan_target()` supplies the future Repair target without
-fallback. Update / Repair UI remains deferred. These bridges do not infer accepted
-package resolutions; those remain separately bound installed-state evidence.
+The existing frozen completion owner persists the completed resolution, restores
+the updater, then atomically writes `applied-publication.json` before clearing the
+COMPLETE frozen transaction. Strict directory durability barriers cover the
+resolution directory, frozen root and surviving intent before lifecycle cleanup.
+The intent has schema 1 and exactly these fields:
+`schema_version`, `transaction_id` (UUID), `candidate` (schema-2 association), and
+`previous` (previous verified schema-2 association or null). It carries no paths,
+URLs, private values, raw resolution records, messages or backend payloads.
+
+While intent exists, readers expose its previous verified association, or `None`,
+even if `applied.json` already contains candidate bytes. A second intent read
+covers a publisher starting between the initial intent read and applied read.
+The owner authenticates the original library target and binds the exact resolution;
+any remaining frozen transaction must match the intent's transaction UUID, target,
+COMPLETE phase, source/plan/resolution/result fingerprints and semantic records.
+Only then is frozen ownership cleared. The candidate is atomically published and
+read back, with directory fsync, before intent acknowledgement (unlink and fsync).
+No frozen and library persistence locks are held together.
+
+`run_frozen_install_startup()` and frozen resume retry this same publication
+operation before runtime-owner construction. They do not reinstall software,
+reapply configuration, choose a build or consult current selection. An intent
+write failing before replacement leaves the exact COMPLETE transaction; startup
+can recreate intent after reading back the original updater policy and loading
+the already persisted resolution. Missing or changed evidence keeps attention
+and durable identity. Pending/malformed intent blocks Install and surfaces as
+non-idle attention in startup and Status (therefore Plan).
+
+Crashes with intent + transaction, intent alone, or intent + replaced applied
+bytes all recover idempotently. Post-replacement errors leave intent masking the
+candidate until retry. If frozen clear raises after unlink, the owner reconciles
+actual state. If acknowledgement raises after unlink but exact applied bytes are
+present, it reports completion rather than dangling attention with no identity.
+An already acknowledged exact candidate is also idempotent for a stale owner.
+
+Selection, registration, capture, noncomplete outcomes and legacy path installs
+never establish an association. Schema-4 restart target ownership is unchanged;
+schemas 1-3 do not acquire one. Update / Repair UI remains deferred.
 
 ## Validation boundary and next task
 

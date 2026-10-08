@@ -200,9 +200,7 @@ class SelectionTests(unittest.TestCase):
     def test_nonterminal_declined_and_stale_preserve_durable_applied_record(self):
         entry = self.f.register()
         library = self.f.library
-        applied_target = LibraryInstallTarget(LibrarySource(str(self.f.root), entry.entry_id), "desk")
-        with isolated_library_install_authority(library):
-            library._record_applied_completion(applied_target)
+        self.f.record_applied(entry, "desk")
         library.select(entry.entry_id, "other")
         before = (self.f.root / "applied.json").read_bytes()
         for case in ("cancelled", "failed", "active", "needs_attention",

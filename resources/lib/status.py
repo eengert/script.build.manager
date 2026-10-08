@@ -197,6 +197,7 @@ class StatusOwners:
     clock: Callable[[], str]
     log: Callable[[str], None]
     name_resolver: Optional[Callable[[str], str]] = None
+    publication_snapshot: Optional[Callable[[], object]] = None
 
 
 class _ReadOnlyDependencyBackend(DependencyBackend):
@@ -398,6 +399,18 @@ class BuildStatusService:
     # -- operation state --------------------------------------------------
 
     def _operation(self, gaps: List[CheckGap]) -> OperationStatus:
+        if self._o.publication_snapshot is not None:
+            try:
+                if self._o.publication_snapshot() is not None:
+                    return OperationStatus(OperationKind.NEEDS_ATTENTION,
+                                           OperationCode.OPERATION_NOT_FINISHED,
+                                           "APPLIED_PUBLICATION_PENDING",
+                                           protection_active=self._frozen_operation()[1])
+            except Exception:
+                return OperationStatus(OperationKind.NEEDS_ATTENTION,
+                                       OperationCode.TRANSACTION_INVALID,
+                                       "APPLIED_PUBLICATION_INVALID",
+                                       protection_active=self._frozen_operation()[1])
         restart = self._restart_operation()
         frozen = self._frozen_operation()
         protection = frozen[1]
@@ -874,6 +887,7 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
             store["store"] = PrivateOverlayStore()
         return store["store"].read_snapshot(overlay_id)
 
+    from resources.lib.build_library import default_build_library
     restart_store = TransactionStore()
     return StatusOwners(
         inspector=KodiStateInspector(KodiRuntimeBackend()),
@@ -895,6 +909,7 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
         clock=_utc_now,
         log=log or (lambda message: None),
         name_resolver=_resolve_installed_addon_name,
+        publication_snapshot=lambda: default_build_library().pending_publication(),
     )
 
 

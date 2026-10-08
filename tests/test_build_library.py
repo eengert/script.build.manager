@@ -75,10 +75,36 @@ class LibraryTests(unittest.TestCase):
         entry = self.register()
         return entry, json.loads(self.envelope(entry.entry_id).read_text())
 
+    def completed_resolution(self, entry, profile="desk", *, store=None):
+        from resources.lib.frozen_install import FrozenInstallStore
+        from resources.lib.frozen_resolution import (FrozenInstallResolutionManifest,
+            InstallResolutionRecord, InstallResolution, ResolutionState,
+            install_plan_fingerprint, resolved_software_fingerprint)
+        store = store or FrozenInstallStore(self.root.parent)
+        public, frozen, _ = self.library._load(entry.entry_id)
+        desired = resolve_manifest(public, profile)
+        records = tuple(sorted((InstallResolutionRecord(
+            n.addon_id, n.version, InstallResolution.EXACT, ResolutionState.INSTALLED,
+            resolved_version=n.version, artifact_sha256=n.artifact.sha256,
+            desired_enabled=n.desired_enabled, artifact_size=n.artifact.size) for n in frozen.addons if n.artifact),
+            key=lambda r: r.addon_id))
+        resolution = FrozenInstallResolutionManifest(
+            build_id=desired.build.id, source_software_fingerprint=frozen.fingerprint(),
+            install_plan_fingerprint=install_plan_fingerprint(frozen, desired.frozen_install_policies),
+            resulting_software_fingerprint=resolved_software_fingerprint(frozen, records), records=records)
+        store.save_resolution_manifest(resolution)
+        return store, resolution
+
     def record_applied(self, entry, profile="desk"):
+        import uuid
         target = lib.LibraryInstallTarget(lib.LibrarySource(str(self.root), entry.entry_id), profile)
         with lib.isolated_library_install_authority(self.library):
-            self.library._record_applied_completion(target)
+            target.load()
+            store, resolution = self.completed_resolution(entry, profile)
+            pending = self.library._prepare_applied_publication(
+                target, resolution.resolution_fingerprint, str(uuid.uuid4()), resolution_store=store)
+            self.library._record_applied_completion(pending, resolution_store=store)
+        return self.library.current_applied_association()
 
     def test_applied_durable_distinct_selection_and_bridges(self):
         self.assertIsNone(self.library.current_applied_association())
@@ -86,8 +112,7 @@ class LibraryTests(unittest.TestCase):
         a = self.register()
         self.library.select(a.entry_id, "desk")
         self.assertIsNone(self.library.current_applied_association())
-        self.record_applied(a)
-        applied = lib.AppliedBuildAssociation(a.entry_id, "desk")
+        applied = self.record_applied(a)
         self.assertEqual(BuildLibrary(self.root).current_applied_association(), applied)
         self.raw["build"]["version"] = "2.0.0"
         self.write_sources(); b = self.register()
@@ -101,9 +126,9 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(default_status_target().applied_association, applied)
         self.library.clear_selection()
         self.assertEqual(self.library.current_applied_association(), applied)
-        self.record_applied(b, "other")
+        final = self.record_applied(b, "other")
         raw = json.loads((self.root / "applied.json").read_text())
-        self.assertEqual(raw, {"schema_version": 1, "entry_id": b.entry_id, "device_profile_id": "other"})
+        self.assertEqual(raw, final.to_dict())
 
     def test_applied_malformed_bounded_and_no_fallback(self):
         entry = self.register(); self.library.select(entry.entry_id, "other")
@@ -186,7 +211,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual((self.root / "applied.json").read_bytes(), before)
         target = lib.LibraryInstallTarget(lib.LibrarySource(str(self.root), entry.entry_id), "desk")
         with patch('resources.lib.build_library.default_build_library', side_effect=RuntimeError):
-            with self.assertRaises(LibraryError): self.library._record_applied_completion(target)
+            with self.assertRaises(LibraryError): self.library._record_applied_completion(target, resolution_store=None)
         self.assertEqual((self.root / "applied.json").read_bytes(), before)
 
     def test_registered_missing_entire_root_proves_absence(self):

@@ -572,9 +572,10 @@ class FrozenInstallLock:
 class FrozenInstallStore:
     """Atomic, profile-local persistence for frozen-install state."""
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(self, root: Optional[Path] = None, *, create: bool = True):
         self.root = Path(root) if root is not None else default_frozen_install_root()
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if create:
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     @property
     def transaction_path(self) -> Path:
@@ -635,11 +636,13 @@ class FrozenInstallStore:
                 except OSError:
                     pass
 
-    def load_resolution_manifest(self, fingerprint: str) -> FrozenInstallResolutionManifest:
+    def load_resolution_manifest(self, fingerprint: str, *, nofollow: bool = False) -> FrozenInstallResolutionManifest:
         path = self.resolution_path(fingerprint)
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            from resources.lib.build_library import _read_path, FILE_LIMIT
+            raw = json.loads(_read_path(str(path), FILE_LIMIT) if nofollow
+                             else path.read_text(encoding="utf-8"))
+        except Exception as exc:
             raise FrozenInstallPersistenceError("install resolution could not be read") from exc
         try:
             record = FrozenInstallResolutionManifest.from_dict(raw)
@@ -1919,6 +1922,16 @@ class FrozenInstallCoordinator:
     ) -> FrozenInstallResult:
         configuration_runner = self.configuration_runner
         try:
+            from resources.lib.build_library import authoritative_build_library
+            try:
+                library = authoritative_build_library()
+            except Exception:
+                if library_target is not None:
+                    raise
+                library = None  # standalone offline callers have no Kodi library
+            if library is not None and library.pending_publication() is not None:
+                return FrozenInstallResult("needs_attention", code="APPLIED_PUBLICATION_PENDING",
+                                           message="completed association publication requires recovery")
             if library_target is not None:
                 if (not isinstance(library_target, LibraryInstallTarget)
                         or device_profile_id != library_target.device_profile_id
@@ -3004,6 +3017,9 @@ class FrozenInstallCoordinator:
         bm020_result: object = None,
         transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
+        publication = recover_applied_publication(store=self.store, policy_backend=self.policy_backend)
+        if publication is not None:
+            return publication
         transaction = self._safe_inspect()
         if transaction is None:
             return FrozenInstallResult("failed", code="FROZEN_TRANSACTION_MISSING", message="no frozen install transaction is active")
@@ -3481,6 +3497,8 @@ class FrozenInstallCoordinator:
         )
         try:
             self.store.save_resolution_manifest(resolution_manifest)
+            if transaction.library_target is not None:
+                _sync_publication_storage(self.store)
         except Exception:
             return self._attention(
                 transaction, "RESOLUTION_PERSISTENCE_FAILED",
@@ -3495,6 +3513,25 @@ class FrozenInstallCoordinator:
                 "original updater policy could not be restored",
                 recoverability=recoverability, resolution_manifest=resolution_manifest,
             )
+        if transaction.library_target is not None:
+            try:
+                from resources.lib.build_library import BuildLibrary
+                target = transaction.library_target
+                library = BuildLibrary(target.source.root)
+                library._prepare_applied_publication(
+                    target, resolution_manifest.resolution_fingerprint,
+                    transaction.transaction_id, resolution_store=self.store)
+            except Exception:
+                # COMPLETE and its exact resolution remain durable even if the
+                # intent write failed before replacement. Do not regress phase.
+                return FrozenInstallResult(
+                    "needs_attention", transaction=transaction,
+                    code="APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
+                    message="completed association publication requires recovery",
+                    recoverability=recoverability, resolution_manifest=resolution_manifest)
+            result = recover_applied_publication(store=self.store, library=library)
+            return replace(result, recoverability=recoverability,
+                           resolution_manifest=resolution_manifest)
         try:
             self.store.clear_expected(
                 transaction_id=transaction.transaction_id,
@@ -3506,20 +3543,6 @@ class FrozenInstallCoordinator:
                 "completed frozen transaction could not be cleared",
                 recoverability=recoverability, resolution_manifest=resolution_manifest,
             )
-        # Direct Install and resumed Install share this sole validated boundary.
-        # Do not publish an association until updater restoration and transaction
-        # cleanup have succeeded; earlier attention paths preserve the prior one.
-        if transaction.library_target is not None:
-            try:
-                from resources.lib.build_library import BuildLibrary
-                target = transaction.library_target
-                BuildLibrary(target.source.root)._record_applied_completion(target)
-            except Exception:
-                return self._attention(
-                    transaction, "APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
-                    "verified build association could not be recorded",
-                    recoverability=recoverability, resolution_manifest=resolution_manifest,
-                )
         return FrozenInstallResult(
             "complete",
             message="frozen installation completed and updater policy restored",
@@ -3583,6 +3606,85 @@ class FrozenStartupPrecondition:
     message: str = ""
 
 
+def _sync_publication_storage(store):
+    """Strict durability barrier for completion evidence and lifecycle cleanup."""
+    from resources.lib.build_library import _directory
+    with _directory(str(store.resolutions_dir)) as fd:
+        os.fsync(fd)
+    with _directory(str(store.root)) as fd:
+        os.fsync(fd)
+
+
+def recover_applied_publication(*, store=None, library=None, policy_backend=None):
+    """Existing frozen owner finishes identity publication without Install mutation."""
+    from resources.lib.build_library import authoritative_build_library, LibraryInstallTarget, LibrarySource
+    target = store or FrozenInstallStore()
+    transaction = None
+    try:
+        if library is None:
+            try:
+                library = authoritative_build_library()
+            except Exception:
+                transaction = target.inspect()
+                if transaction is not None and transaction.library_target is not None:
+                    raise
+                return None
+        pending = library.pending_publication()
+        transaction = target.inspect()
+        if pending is None:
+            if (transaction is None or transaction.phase is not FrozenInstallPhase.COMPLETE
+                    or transaction.library_target is None):
+                return None
+            # An intent write can fail before replacement. COMPLETE still owns
+            # the exact identity; recover only after the original policy is read
+            # back, never by rerunning software/configuration work.
+            if (policy_backend or _default_policy_backend()).get_policy() != transaction.original_update_policy:
+                raise FrozenInstallStateConflict("completed updater restoration is unverified")
+            selector = transaction.library_target
+            if selector.source.root != library.root:
+                raise FrozenInstallStateConflict("completed library authority changed")
+            pending = library._prepare_applied_publication(
+                selector, transaction.resolution_fingerprint, transaction.transaction_id,
+                resolution_store=target)
+        selector = LibraryInstallTarget(LibrarySource(library.root, pending.candidate.entry_id),
+                                        pending.candidate.device_profile_id)
+        selector.load()
+        resolution = library._resolution(pending.candidate, target)
+        _sync_publication_storage(target)
+        # Re-fsync an intent whose earlier replacement may have raised before
+        # directory durability was acknowledged, before clearing frozen state.
+        if library._prepare_applied_publication(
+                selector, pending.candidate.resolution_fingerprint, pending.transaction_id,
+                resolution_store=target) != pending:
+            raise FrozenInstallStateConflict("publication intent changed")
+        if transaction is not None:
+            if (transaction.transaction_id != pending.transaction_id
+                    or transaction.phase is not FrozenInstallPhase.COMPLETE
+                    or transaction.library_target != selector
+                    or transaction.resolution_fingerprint != resolution.resolution_fingerprint
+                    or transaction.resolved_software_fingerprint != resolution.resulting_software_fingerprint
+                    or transaction.manifest_fingerprint != resolution.source_software_fingerprint
+                    or transaction.install_plan_fingerprint != resolution.install_plan_fingerprint
+                    or tuple(sorted(transaction.resolution_records, key=lambda r: r.addon_id)) != resolution.records):
+                raise FrozenInstallStateConflict("publication does not match completed transaction")
+            try:
+                target.clear_expected(transaction_id=pending.transaction_id,
+                                      expected_phase=FrozenInstallPhase.COMPLETE)
+            except Exception:
+                if target.inspect() is not None:
+                    raise
+            if target.inspect() is not None:
+                raise FrozenInstallStateConflict("publication lifecycle cleanup is incomplete")
+        _sync_publication_storage(target)
+        library._record_applied_completion(pending, resolution_store=target)
+        return FrozenInstallResult("complete", resolution_manifest=resolution,
+                                   message="completed build association publication recovered")
+    except Exception:
+        return FrozenInstallResult("needs_attention", transaction=transaction,
+                                   code="APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
+                                   message="completed association publication requires recovery")
+
+
 def ensure_frozen_install_guard(
     *,
     store: Optional[FrozenInstallStore] = None,
@@ -3597,11 +3699,22 @@ def ensure_frozen_install_guard(
     """
     target = store or FrozenInstallStore()
     try:
+        from resources.lib.build_library import authoritative_build_library
+        try:
+            library = authoritative_build_library()
+        except Exception:
+            library = None
+        if library is not None and library.pending_publication() is not None:
+            return FrozenStartupPrecondition(False, code="APPLIED_PUBLICATION_PENDING",
+                                             message="completed association publication requires recovery")
         transaction = target.inspect()
     except Exception:
         return FrozenStartupPrecondition(False, code="FROZEN_TRANSACTION_INSPECTION_FAILED", message="active frozen transaction could not be inspected")
     if transaction is None:
         return FrozenStartupPrecondition(True)
+    if transaction.phase is FrozenInstallPhase.COMPLETE and transaction.library_target is not None:
+        return FrozenStartupPrecondition(False, transaction, "APPLIED_PUBLICATION_PENDING",
+                                         "completed association publication requires recovery")
     backend = policy_backend or _default_policy_backend()
     try:
         AddonUpdateGuard(backend).verify_quarantined()
@@ -3967,6 +4080,9 @@ def run_frozen_install_startup(
     continuation even when BM-020 correctly reports ``no_transaction``.
     """
     target = store or FrozenInstallStore()
+    publication = recover_applied_publication(store=target, policy_backend=policy_backend)
+    if publication is not None:
+        return publication
     transaction = target.inspect()
     if transaction is None:
         return None
