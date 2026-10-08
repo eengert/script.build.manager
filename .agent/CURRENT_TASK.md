@@ -1,12 +1,12 @@
 # Current Task
 
-- Task: Correct the two confirmed Install final-confirmation Gate-2 defects (offline; no assigned task ID).
+- Task: Correct only the Install final-confirmation presentation (offline; no assigned task ID).
 - State: COMPLETE; stop before runtime qualification.
-- Starting state: clean `agent/codex` at `170715505fd9c75912d1fd7bf202c7ded61dc391`; staged runtime candidate `439ab4f8884d59b3c02a096eb1c515e5e661950e` was not accessed.
-- Kodi contract: Kodi 21.3/Omega `Dialog.yesno()` defaults `defaultbutton` to `CONTROL_NO_BUTTON`; `DLG_YESNO_NO_BTN` maps to that control. [Kodi 21.3 Dialog.h](https://github.com/xbmc/xbmc/blob/21.3-Omega/xbmc/interfaces/legacy/Dialog.h)
-- Correction: omitted `defaultbutton` from the Install final confirmation; changed English string `#32815` to `Temporary protection and a full Kodi restart may be required.` Friendly-name Gate 1 implementation was not changed. Product commit `bb6dd9f62c943b08258b9090ef23f76e6aac3c8a`.
-- Validation: `python3 -m unittest tests.test_install_workflow tests.test_plan_ui -q` — 45 tests PASS. `git diff --check` — PASS. Final product diff contained only the requested three files.
-- Not done: no Test.app, Kodi/profile, or device access; no Apply/runtime qualification, push, merge, release, or publication.
-- Next: stop. Any Gate-2 runtime qualification requires a separate task.
-- Human input: none for this offline correction; separate task required before runtime qualification.
-- Usage/model/effort: start, end, and delta unavailable; exact Codex model tier and effort unavailable.
+- Starting state: clean `agent/codex` at `dd952d4d088a8809639df55b57bd92be617cc88a`; staged runtime candidate `bb6dd9f62c943b08258b9090ef23f76e6aac3c8a` remained untouched.
+- Correction: typed plan-view summary plus compact four-line final Yes/No body; one change uses its friendly localized line, while multiple changes/accepted Skips use bounded counts. Full Review Changes remains detailed; Back/Apply Build labels and safe default are unchanged.
+- Validation: `python3 -m unittest tests.test_install_workflow tests.test_plan_ui -q` — 49 tests PASS. `git diff --check` — PASS.
+- Product commit: `37258ad825f574fe97e0f7cffab00413d7e8d482`. Bookkeeping commit is separate.
+- Not done: no Test.app staging/runtime, Apply, Kodi/profile/device access, push, merge, release, or publication.
+- Next: separate authorized runtime qualification of the new candidate; do not restage in this offline correction task.
+- Human input: separate bounded task needed before Test.app runtime work.
+- Usage/model/effort: Codex usage source unavailable; exact model tier and effort unavailable. Start/end/delta unavailable.
