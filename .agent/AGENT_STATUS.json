@@ -1,12 +1,12 @@
 {
-  "active_agent": "codex",
+  "active_agent": "claude",
   "status": "idle",
   "task": "Strict publication-fence confirmation blocker (offline)",
-  "reason": "Complete narrow offline correction candidate; STOP for independent re-review. Strict open/fsync required before journal creation; legacy helper unchanged. Full 3103 with only two reproduced baseline import failures; no runtime access.",
-  "last_commit": "62a3f9062df8b41c1a64df6012b476b7f8626482",
+  "reason": null,
+  "last_commit": "67c0a9e",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-08T14:02:41Z",
+  "updated_at": "2026-10-08T14:11:23Z",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
