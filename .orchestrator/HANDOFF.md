@@ -4,8 +4,20 @@
 
 - **Manual relay** (D-025): ChatGPT plans and reviews, Eric relays one bounded prompt at a time, and Claude or Codex executes exactly that prompt and reports back. No agent selects the next project task.
 - ai-supervisor is retired cold storage. Do not start, resume, reinstall, or depend on it.
-- Working lane: **Claude**, `agent/claude`, worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude` (Agent Handoff endpoints, D-026). This refresh did not run the live Agent Handoff status command. Check live ownership before relying on the lane.
+- Working lane: **Claude**, `agent/claude`, worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude` (Agent Handoff endpoints, D-026). Confirm live ownership with the status command below before relying on the lane.
 - No push, release, or `matrix` integration by default. All `agent/claude` commits after `origin/agent/claude` are local and unpushed.
+
+## Live Agent Handoff status (read first)
+
+Read the live status before relying on lane ownership or issuing a mutation prompt:
+
+```bash
+AGENT_HANDOFF_PROJECT=build-manager /Users/eengert/Documents/Kodi/agent-handoff/src/agent_handoff_controller.sh status
+```
+
+- The command is read-only apart from a bounded fetch of `origin/matrix`. Do not run `continue`, `set-active-agent`, or any other Agent Handoff operation without Eric's explicit request (D-026).
+- `AGENT_HANDOFF_PROJECT=build-manager` is required. Without it the controller falls back to a saved project state or to the `backup-pro` project.
+- **Live output overrides this snapshot.** Last recorded check, reported in the 2026-10-08 icon task prompt: current agent `claude`; `agent/codex` at `67c0a9e`, clean, ahead; `agent/claude` at `f97ca32`, clean, ahead; Antigravity unavailable.
 
 ## Current milestone
 
@@ -34,19 +46,20 @@ Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e
 ## Installed runtime candidate versus newer unstaged metadata
 
 - The installed Test.app runtime candidate for every live qualification above is **`53f221986b6c76d5d13652421ac62f999c0c6aab`**.
-- Product source (`resources/`, `tools/`, `default.py`, `service.py`) is identical between `53f2219` and current HEAD. Verified by path diff.
-- Commits after `53f2219` touch only tests, docs, `.orchestrator/**`, `.agent/**`, and `addon.xml`:
+- Product source since `53f2219` (`resources/`, `tools/`, `default.py`, `service.py`) changes in one file only: `resources/images/icon.png`, changed in `a2b1ffc`. Verified by path diff.
+- Other commits after `53f2219` touch only tests, docs, `.orchestrator/**`, `.agent/**`, and `addon.xml`:
   - `6105282b5340ba15f0ca4b231ce1e27c42d3cb81` package metadata refresh (news, en_US/en_GB descriptions, focused metadata test);
   - `5f0dd67045079fbeff9651f782a4ff14f27cef33` package summary correction to `Capture and apply a managed Kodi setup.` in both English locales.
-- **Metadata at `6105282` and `5f0dd67` is NOT staged or live-proven in Test.app.** The installed Test.app still carries the old stale package text ("not available yet" news and "Save and restore" summary). The new metadata is covered by unit tests and XML validation only.
+- Product/test commit `a2b1ffcf77123d269d0e21452a316186950eec1a` adopts the approved custom icon and extends `tests/test_addon_metadata.py` to pin it.
+- **None of `6105282`, `5f0dd67`, or `a2b1ffc` is staged or live-proven in Test.app.** The installed candidate `53f2219` still carries the old stale package text ("not available yet" news and "Save and restore" summary) and the generic icon. The new metadata and icon are covered by unit tests, XML validation, and a PNG and SHA-256 check only.
 
 ## Remaining beta/package blockers
 
 1. **Item 8, complete-workflow qualification: OPEN.** Durable Estuary, restart/resume, error-state, and second-run evidence for the complete frontend, tied to one exact candidate, is still needed. The Update / Repair scenarios above are recorded. Create, Install, Status, Help, and Settings are not recorded here as complete across that full set.
-2. **Custom icon: OPEN (hard package-exit check, `CUSTOM_ICON_ASSET_REQUIRED`).** `resources/images/icon.png` on `agent/claude` is still the generic skeleton icon. `matrix` carries a much larger `resources/images/icon.png` (last changed in `a33a3f8`, "chore: add Build Manager addon icon"). Whether it is Eric's approved artwork has not been verified. Decide and verify before packaging.
-3. **Eengert Repository publication and install/update through it in portable Test.app: not recorded as done.**
-4. **Live staging of the metadata commits (`6105282`, `5f0dd67`) in Test.app: not done.**
-5. **Integration of this lane into `matrix`: not done.** It needs a separate, explicit decision.
+2. **Custom icon: CLOSED IN SOURCE** (`CUSTOM_ICON_ASSET_REQUIRED`). `resources/images/icon.png` is the approved custom Build Manager icon, byte-identical to `matrix:resources/images/icon.png`. It comes from matrix `a33a3f8` ("chore: add Build Manager addon icon", Eric Engert), blob `65c70420507d3d218d570c65d773ec6fc07db5cd`. It is a 512x512 PNG with SHA-256 `207c44a0474e7e370cf6d210c7646ce243c704a0694ef422c12bd51401628d23`, pinned by `tests/test_addon_metadata.py`. It replaces the generic skeleton icon (SHA-256 `b908af8490f1ea6f16a2d9c2cc551c678c640c04df81a341dc79ec6d37817b8c`). **Not yet staged or live-proven in Test.app.**
+3. **Live package qualification in Test.app of the metadata and icon (`6105282`, `5f0dd67`, `a2b1ffc`): OPEN.** Needs a named, bounded task.
+4. **Eengert Repository publication and install/update qualification through it: OPEN.**
+5. **Integration of this lane into `matrix`: not done.** It needs a separate, explicit decision. `matrix` already carries the same icon blob.
 
 ## Safety boundaries
 
@@ -62,8 +75,7 @@ Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e
 
 No implementation task is pre-selected. ChatGPT chooses the next bounded task and names its blocker. Open decisions for Eric and ChatGPT:
 
-- whether to stage `agent/claude` HEAD in portable Test.app for live metadata proof (needs a named task);
-- which icon artwork is authoritative (`matrix` versus this branch);
+- whether to stage `agent/claude` HEAD (metadata and icon) in portable Test.app for live proof (needs a named task);
 - when and how to integrate into `matrix`.
 
 Do not restart Status, G1-G6, Create, Install, or Update / Repair implementation. These are implemented and recorded above. Reopening any of them needs a new bounded task that names a specific blocker.
