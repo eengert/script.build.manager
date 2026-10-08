@@ -255,12 +255,80 @@ class NativeTests(unittest.TestCase):
         self.assertNotIn('defaultbutton', kwargs)
         self.assertEqual(kwargs['nolabel'], Addon().getLocalizedString(32113))
         self.assertEqual(kwargs['yeslabel'], Addon().getLocalizedString(32807))
-        self.assertIn('Friendly 1.2.0', body)
-        self.assertIn('desk', body)
-        self.assertIn('Install Demo 2.0.0', body)
-        self.assertIn('Temporary protection and a full Kodi restart may be required.', body)
+        self.assertEqual(body.splitlines(), [
+            'Friendly 1.2.0',
+            'Choose a device profile: desk',
+            'Install Demo 2.0.0',
+            'Temporary protection and a full Kodi restart may be required.',
+        ])
         self.assertEqual(d.calls[1][2], 2)
         self.assertNotIn('a'*64, json.dumps(d.questions))
+
+    def test_compact_confirmation_shows_the_single_friendly_change_in_four_lines(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        entry = LibraryEntry('a'*64, 'internal-build-id', '1.0.0',
+                             'BM-UI-003C-20261007', ('current-device-8794224972c6',))
+        rows = (SoftwareRow('repository.eengert', SoftwareAction.ENABLE, 'Eengert Repository'),)
+        model = ReviewViewModel.from_plan(plan(rows=rows))
+        dialog = NativeDialog([1], confirms=[False])
+        self.assertFalse(self.ui(dialog).confirm_install(
+            entry, 'current-device-8794224972c6', model))
+
+        args, kwargs = dialog.questions[0]
+        body = args[1]
+        self.assertEqual(body.splitlines(), [
+            'BM-UI-003C-20261007 1.0.0',
+            'Choose a device profile: current-device-8794224972c6',
+            'Enable Eengert Repository',
+            'Temporary protection and a full Kodi restart may be required.',
+        ])
+        self.assertLessEqual(len(body.splitlines()), 4)
+        self.assertNotIn('\n\n', body)
+        self.assertEqual(body.splitlines()[-1],
+                         'Temporary protection and a full Kodi restart may be required.')
+        for section in ('Add-ons', 'Settings', 'Skin', 'Private', 'Restart'):
+            self.assertNotIn(section, body)
+        for sensitive in ('repository.eengert', 'internal-build-id', 'a'*64,
+                          '/private/', 'https://', 'SENTINEL_PRIVATE_VALUE'):
+            self.assertNotIn(sensitive, body)
+        self.assertNotIn('defaultbutton', kwargs)
+        self.assertEqual(kwargs['nolabel'], 'Back')
+        self.assertEqual(kwargs['yeslabel'], 'Apply Build')
+
+    def test_multiple_changes_use_a_compact_count_and_accepted_skips_are_counted(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        entry = LibraryEntry('a'*64, 'internal-build-id', '1.2.0', 'Friendly Build', ('desk',))
+        rows = (
+            SoftwareRow('plugin.demo', SoftwareAction.ENABLE, 'Demo Video'),
+            SoftwareRow('plugin.module', SoftwareAction.INSTALL_EXACT, 'Demo Module', '2.0.0'),
+        )
+        model = ReviewViewModel.from_plan(plan(rows=rows))
+        dialog = NativeDialog([1], confirms=[False])
+        self.assertFalse(self.ui(dialog).confirm_install(entry, 'desk', model))
+        body = dialog.questions[0][0][1]
+        self.assertEqual(body.splitlines(), [
+            'Friendly Build 1.2.0',
+            'Choose a device profile: desk',
+            'This build — changes: 2; accepted skips: 0',
+            'Temporary protection and a full Kodi restart may be required.',
+        ])
+        for detail in ('Demo Video', 'Demo Module', 'Add-ons', 'Settings', 'Skin', 'Private', 'Restart'):
+            self.assertNotIn(detail, body)
+
+        exception_rows = (
+            SoftwareRow('plugin.demo', SoftwareAction.ENABLE, 'Demo Video'),
+            SoftwareRow('plugin.skip.one', SoftwareAction.ACCEPTED_SKIP, 'Skipped Alpha'),
+            SoftwareRow('plugin.skip.two', SoftwareAction.ACCEPTED_SKIP, 'Skipped Beta'),
+        )
+        exception_model = ReviewViewModel.from_plan(plan(rows=exception_rows))
+        exception_dialog = NativeDialog([1], confirms=[False])
+        self.assertFalse(self.ui(exception_dialog).confirm_install(entry, 'desk', exception_model))
+        exception_body = exception_dialog.questions[0][0][1]
+        self.assertIn('This build — changes: 1; accepted skips: 2', exception_body)
+        self.assertNotIn('Skipped Alpha', exception_body)
+        self.assertNotIn('Skipped Beta', exception_body)
+        self.assertEqual(exception_body.splitlines()[-1],
+                         'Temporary protection and a full Kodi restart may be required.')
 
     def test_prepared_repository_label_actual_version(self):
         from resources.lib.ui.plan_view import ReviewViewModel

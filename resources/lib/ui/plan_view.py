@@ -7,10 +7,11 @@ reference an allowlisted string identifier. The page is review-only: nothing
 here can offer, start or imply an operation.
 """
 from dataclasses import dataclass
+from typing import Optional
 
 from resources.lib.plan_model import (
-    BlockerCode, BuildPlan, DecisionChoice, PlanState, PrivatePlanKind, RestartExpectation,
-    SettingsPlanKind, SkinPlanKind, SoftwareAction,
+    BlockerCode, BuildPlan, CHANGE_ACTIONS, DecisionChoice, MAX_COUNT, MAX_SOFTWARE_ROWS,
+    PlanState, PrivatePlanKind, RestartExpectation, SettingsPlanKind, SkinPlanKind, SoftwareAction,
 )
 from resources.lib.status_model import CheckGap
 from resources.lib.ui.models import Semantic
@@ -59,6 +60,7 @@ NAMED_BLOCKERS = frozenset({
 })
 S_BLOCKER_GENERIC = 32684
 S_DECISION_HEADING = 32690
+S_CONFIRMATION_SUMMARY = 32694
 CHOICE_LABEL = {
     DecisionChoice.INSTALL_CURRENT: 32691, DecisionChoice.SKIP: 32692, DecisionChoice.CANCEL: 32693,
 }
@@ -66,7 +68,8 @@ CHOICE_LABEL = {
 PLAN_TEXT_IDS = frozenset(
     [32606, S_CLOSE, S_MORE_ITEMS, S_CHECKED_AT, S_ADDONS, S_SKIN, S_SETTINGS, S_PRIVATE, S_RESTART,
      S_CURRENT_MANY, S_CURRENT_ONE, S_UNCHECKED_ADDON, S_ALL_MATCH, S_SETTINGS_MANY,
-     S_SETTINGS_ONE, S_RESTART_EXPECTED, S_BLOCKER_GENERIC, S_DECISION_HEADING]
+     S_SETTINGS_ONE, S_RESTART_EXPECTED, S_BLOCKER_GENERIC, S_DECISION_HEADING,
+     S_CONFIRMATION_SUMMARY]
     + list(TITLE.values()) + list(SOFTWARE_LINE.values()) + list(SKIN_LINE.values())
     + list(SETTINGS_LINE.values()) + list(PRIVATE_LINE.values()) + list(BLOCKER_LINE.values())
     + list(CHOICE_LABEL.values()) + list(GAP_TEXT.values()))
@@ -100,6 +103,26 @@ class Text:
 
 
 @dataclass(frozen=True)
+class ConfirmationSummary:
+    """Safe compact summary for the initial viewport of the final confirmation."""
+    single_change: Optional[Text]
+    change_count: int
+    accepted_skip_count: int
+
+    def __post_init__(self):
+        max_changes = MAX_COUNT + MAX_SOFTWARE_ROWS + 2
+        if (self.single_change is not None and not isinstance(self.single_change, Text)):
+            raise ValueError('unsupported confirmation change')
+        if type(self.change_count) is not int or not 0 <= self.change_count <= max_changes:
+            raise ValueError('unsupported confirmation change count')
+        if (type(self.accepted_skip_count) is not int
+                or not 0 <= self.accepted_skip_count <= MAX_SOFTWARE_ROWS):
+            raise ValueError('unsupported confirmation exception count')
+        if self.single_change is not None and (self.change_count != 1 or self.accepted_skip_count):
+            raise ValueError('a direct confirmation change must be the only reviewed item')
+
+
+@dataclass(frozen=True)
 class ReviewSection:
     heading: object         # a Text, or None when the page title already says it
     lines: tuple
@@ -121,6 +144,7 @@ class ReviewViewModel:
     sections: tuple
     decisions: tuple
     check_time: str
+    confirmation_summary: ConfirmationSummary
 
     @classmethod
     def unavailable(cls):
@@ -128,7 +152,7 @@ class ReviewViewModel:
         state = PlanState.INCOMPLETE
         return cls(state, SEMANTIC[state], Text(TITLE[state]),
                    (ReviewSection(None, (Text(GAP_TEXT[CheckGap.INSPECTION_FAILED]),)),),
-                   (), '')
+                   (), '', ConfirmationSummary(None, 0, 0))
 
     @classmethod
     def from_plan(cls, plan, repository_current=(), fully_listed=False):
@@ -140,7 +164,33 @@ class ReviewViewModel:
                 DecisionPrompt(row.addon_id, Text(S_DECISION_HEADING, name=row.label), row.choices)
                 for row in plan.decisions)
         return cls(plan.state, SEMANTIC[plan.state], Text(TITLE[plan.state]), sections, decisions,
-                   plan.checked_time_label())
+                   plan.checked_time_label(), _confirmation_summary(plan, repository_current))
+
+
+def _confirmation_summary(plan, repository_current=()):
+    changes = []
+    change_count = 0
+    accepted_skip_count = 0
+    for row in plan.software:
+        if row.action in CHANGE_ACTIONS:
+            string_id = (32621 if row.action is SoftwareAction.INSTALL_EXACT
+                         and row.addon_id in repository_current else SOFTWARE_LINE[row.action])
+            changes.append(Text(string_id, name=_row_name(row)))
+            change_count += 1
+        elif row.action is SoftwareAction.ACCEPTED_SKIP:
+            accepted_skip_count += 1
+    if plan.skin.kind is SkinPlanKind.SWITCH:
+        changes.append(Text(SKIN_LINE[SkinPlanKind.SWITCH], name=plan.skin.label))
+        change_count += 1
+    if plan.settings.kind is SettingsPlanKind.CHANGES:
+        changes.append(Text(S_SETTINGS_ONE) if plan.settings.changing == 1
+                       else Text(S_SETTINGS_MANY, plan.settings.changing))
+        change_count += plan.settings.changing
+    if plan.private.kind is PrivatePlanKind.CHANGES_NEEDED:
+        changes.append(Text(PRIVATE_LINE[PrivatePlanKind.CHANGES_NEEDED]))
+        change_count += 1
+    single_change = changes[0] if change_count == 1 and accepted_skip_count == 0 else None
+    return ConfirmationSummary(single_change, change_count, accepted_skip_count)
 
 
 def _capped(lines):

@@ -181,6 +181,7 @@ class ReviewPage(ReviewBase):
             self.assertNotIn("%", STRINGS[string_id])
         for code in plan_view.NAMED_BLOCKERS:
             self.assertIn("%s", STRINGS[plan_view.BLOCKER_LINE[code]], code)
+        self.assertEqual(STRINGS[plan_view.S_CONFIRMATION_SUMMARY].count("%d"), 2)
         for code in BlockerCode:
             self.assertIn(code, plan_view.BLOCKER_LINE)
 
@@ -325,6 +326,36 @@ class ViewModel(unittest.TestCase):
             with self.subTest(kwargs), self.assertRaises(ValueError):
                 Text(**kwargs)
         Text(32620, name="Red Light 2.6.8")
+
+    def test_confirmation_summary_reuses_one_friendly_change_line(self):
+        rows = (SoftwareRow("repository.eengert", SoftwareAction.ENABLE, "Eengert Repository"),)
+        build_plan = BuildPlan(
+            PlanState.CHANGES_READY, NOW, rows,
+            SkinPlan(SkinPlanKind.NOT_APPLICABLE),
+            SettingsPlan(SettingsPlanKind.NOT_APPLICABLE),
+            PrivatePlan(PrivatePlanKind.NOT_USED), RestartPlan(),
+        )
+        summary = ReviewViewModel.from_plan(build_plan).confirmation_summary
+        self.assertEqual(summary.single_change,
+                         Text(plan_view.SOFTWARE_LINE[SoftwareAction.ENABLE], name="Eengert Repository"))
+        self.assertEqual((summary.change_count, summary.accepted_skip_count), (1, 0))
+
+    def test_confirmation_summary_counts_typed_changes_and_accepted_skips(self):
+        rows = (
+            SoftwareRow("plugin.alpha", SoftwareAction.ENABLE, "Alpha Video"),
+            SoftwareRow("plugin.beta", SoftwareAction.INSTALL_EXACT, "Beta Module", "2.0.0"),
+            SoftwareRow("plugin.skip.one", SoftwareAction.ACCEPTED_SKIP, "Skipped Alpha"),
+            SoftwareRow("plugin.skip.two", SoftwareAction.ACCEPTED_SKIP, "Skipped Beta"),
+        )
+        build_plan = BuildPlan(
+            PlanState.CHANGES_READY, NOW, rows,
+            SkinPlan(SkinPlanKind.SWITCH, "skin.demo", "skin.estuary", "Demo Skin"),
+            SettingsPlan(SettingsPlanKind.CHANGES, 2),
+            PrivatePlan(PrivatePlanKind.CHANGES_NEEDED), RestartPlan(),
+        )
+        summary = ReviewViewModel.from_plan(build_plan).confirmation_summary
+        self.assertIsNone(summary.single_change)
+        self.assertEqual((summary.change_count, summary.accepted_skip_count), (6, 2))
 
     def test_a_long_list_is_capped_with_a_count(self):
         rows = tuple(SoftwareRow("plugin.video.a%03d" % i, SoftwareAction.ENABLE) for i in range(40))

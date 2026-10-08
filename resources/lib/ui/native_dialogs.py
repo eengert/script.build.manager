@@ -3,7 +3,7 @@ Review Changes retain their read-only providers."""
 from resources.lib.ui.controller import ROUTES, TITLE_IDS, CONTEXT_HELP, Route
 from resources.lib.ui.help_content import SECTIONS
 from resources.lib.ui.models import PageModel, Semantic, SEMANTIC_LABELS
-from resources.lib.ui.plan_view import CHOICE_LABEL, ReviewViewModel
+from resources.lib.ui.plan_view import CHOICE_LABEL, ReviewViewModel, S_CONFIRMATION_SUMMARY
 from resources.lib.ui.plan_view import Text as PlanText
 from resources.lib.ui.status_view import (
     S_CHECK_AGAIN, S_CHECKED_AT, S_CLOSE, S_ROW, StatusViewModel,
@@ -289,16 +289,28 @@ class NativeDialogs:
     def show_install_review(self, model):
         self.viewer(self.render(model.title), self.review_body(model))
 
+    def install_confirmation_body(self, entry, profile, model):
+        summary = model.confirmation_summary
+        if summary.single_change is not None:
+            change_line = self.render(summary.single_change)
+        else:
+            change_line = self.text(S_CONFIRMATION_SUMMARY) % (
+                summary.change_count, summary.accepted_skip_count)
+        return '\n'.join((
+            self.install_label(entry.display_name) + ' ' + self.install_label(entry.build_version),
+            self.text(32801) + ': ' + self.install_label(profile),
+            change_line,
+            self.text(32815),
+        ))
+
     def confirm_install(self, entry, profile, model):
-        body = (self.install_label(entry.display_name) + ' ' + self.install_label(entry.build_version)
-                + '\n' + self.text(32801) + ': ' + self.install_label(profile)
-                + '\n\n' + self.review_body(model) + '\n\n' + self.text(32815))
+        body = self.install_confirmation_body(entry, profile, model)
         focus = 0
         while True:
             action = self.select(self.text(32101),
                 [self.text(32806), self.text(32807), self.text(32112), self.text(32113)], focus)
             if action == 0:
-                self.viewer(self.render(model.title), body)
+                self.viewer(self.render(model.title), self.review_body(model))
             elif action == 1:
                 confirmed = self.dialog.yesno(self.text(32805), body,
                     nolabel=self.text(32113), yeslabel=self.text(32807))

@@ -773,6 +773,10 @@ msgctxt "#32693"
 msgid "Cancel"
 msgstr ""
 
+msgctxt "#32694"
+msgid "This build — changes: %d; accepted skips: %d"
+msgstr ""
+
 msgctxt "#32605"
 msgid "Repository version needed"
 msgstr ""
