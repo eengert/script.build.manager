@@ -3506,6 +3506,20 @@ class FrozenInstallCoordinator:
                 "completed frozen transaction could not be cleared",
                 recoverability=recoverability, resolution_manifest=resolution_manifest,
             )
+        # Direct Install and resumed Install share this sole validated boundary.
+        # Do not publish an association until updater restoration and transaction
+        # cleanup have succeeded; earlier attention paths preserve the prior one.
+        if transaction.library_target is not None:
+            try:
+                from resources.lib.build_library import BuildLibrary
+                target = transaction.library_target
+                BuildLibrary(target.source.root)._record_applied_completion(target)
+            except Exception:
+                return self._attention(
+                    transaction, "APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
+                    "verified build association could not be recorded",
+                    recoverability=recoverability, resolution_manifest=resolution_manifest,
+                )
         return FrozenInstallResult(
             "complete",
             message="frozen installation completed and updater policy restored",

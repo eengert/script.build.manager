@@ -61,6 +61,80 @@ class LibraryInstallTests(unittest.TestCase):
         self.fixture.raw.pop("private_overlay")
         self.fixture.write_sources()
 
+    def seed_prior_association(self):
+        version = self.fixture.raw["build"]["version"]
+        self.fixture.raw["build"]["version"] = "0.9.0"
+        self.fixture.write_sources(); prior = self.fixture.register()
+        original = LibraryInstallTarget(LibrarySource(str(self.fixture.root), prior.entry_id), "other")
+        self.fixture.library._record_applied_completion(original)
+        self.fixture.raw["build"]["version"] = version
+        self.fixture.write_sources()
+        return self.fixture.library.current_applied_association()
+
+    def assert_associated(self, target):
+        applied = self.fixture.library.current_applied_association()
+        self.assertEqual((applied.entry_id, applied.device_profile_id),
+                         (target.source.entry_id, target.device_profile_id))
+
+    def test_successful_A_selection_B_then_successful_B(self):
+        a = self.fixture.register()
+        target_a = LibraryInstallTarget(LibrarySource(str(self.fixture.root), a.entry_id), "desk")
+        self.fixture.library.select(a.entry_id, "desk")
+        with self.isolated():
+            first = self.coordinator().install_target(target_a, interactive=False)
+        self.assertEqual(first.outcome, "complete"); self.assert_associated(target_a)
+        self.fixture.raw["build"]["version"] = "2.0.0"
+        self.fixture.descriptor["settings"][0]["value"] = "second"
+        self.fixture.write_sources(); b = self.fixture.register()
+        self.fixture.library.select(b.entry_id, "other")
+        self.assert_associated(target_a)
+        target_b = LibraryInstallTarget(LibrarySource(str(self.fixture.root), b.entry_id), "other")
+        with self.isolated():
+            second = self.coordinator().install_target(target_b, interactive=False)
+        self.assertEqual(second.outcome, "complete"); self.assert_associated(target_b)
+
+    def test_missing_choices_cancel_and_resolution_preserve_prior(self):
+        prior = self.seed_prior_association()
+        missing = self.with_missing_addon(); target = self.target()
+        before = (self.fixture.root / "applied.json").read_bytes()
+        for choices, outcome in (({}, "user_resolution_required"),
+                                 ({missing: ResolutionChoice.CANCEL}, "cancelled")):
+            with self.subTest(outcome=outcome), self.isolated():
+                result = self.coordinator().install_target(target, interactive=False, resolution_choices=choices)
+                self.assertEqual(result.outcome, outcome)
+                self.assertEqual(self.fixture.library.current_applied_association(), prior)
+                self.assertEqual((self.fixture.root / "applied.json").read_bytes(), before)
+        with self.isolated():
+            result = self.coordinator().install_target(target, interactive=False,
+                                                       resolution_choices={missing: ResolutionChoice.SKIP})
+        self.assertEqual(result.outcome, "complete"); self.assert_associated(target)
+
+    def test_terminal_cleanup_failures_preserve_prior(self):
+        for stage in ("resolution", "updater", "clear", "association"):
+            with self.subTest(stage=stage):
+                if stage != "resolution": self.setUp()
+                prior = self.seed_prior_association(); target = self.target()
+                before = (self.fixture.root / "applied.json").read_bytes()
+                coordinator = self.coordinator()
+                if stage == "resolution": owner, method = coordinator.store, "save_resolution_manifest"
+                elif stage == "updater": owner, method = self.policy, "set_policy"
+                elif stage == "clear": owner, method = coordinator.store, "clear_expected"
+                else:
+                    from resources.lib.build_library import BuildLibrary
+                    owner, method = BuildLibrary, "_record_applied_completion"
+                if stage == "updater":
+                    original = self.policy.set_policy
+                    def fail_restore(policy):
+                        if policy == AddonUpdatePolicy.NOTIFY_ONLY: raise OSError("restore failure")
+                        return original(policy)
+                    effect = fail_restore
+                else: effect = OSError("write failure")
+                with self.isolated(), patch.object(owner, method, side_effect=effect):
+                    result = coordinator.install_target(target, interactive=False)
+                self.assertEqual(result.outcome, "needs_attention", (result.code, result.message))
+                self.assertEqual(self.fixture.library.current_applied_association(), prior)
+                self.assertEqual((self.fixture.root / "applied.json").read_bytes(), before)
+
     def target(self):
         entry = self.fixture.register()
         self.fixture.library.select(entry.entry_id, "desk")
@@ -128,6 +202,7 @@ class LibraryInstallTests(unittest.TestCase):
         with self.isolated():
             result = coordinator.install_target(target, interactive=False)
         self.assertEqual(result.outcome, "complete", (result.code, result.message))
+        self.assert_associated(target)
         self.assertEqual(self.config.settings[(DEMO, "quality")], "high")
         self.assertEqual(self.config.files["userdata/keymaps/demo.xml"], self.fixture.asset)
         self.assertIsNone(self.store.inspect())
@@ -170,6 +245,7 @@ class LibraryInstallTests(unittest.TestCase):
         with self.isolated():
             result = self.coordinator().install_target(target, interactive=False)
         self.assertEqual(result.outcome, "complete", (result.code, result.message))
+        self.assert_associated(target)
         self.assertEqual(self.config.settings[(DEMO, "quality")], "high")
 
     def test_plan_review_binds_registered_source_even_with_identical_effective_content(self):
@@ -239,8 +315,10 @@ class LibraryInstallTests(unittest.TestCase):
         return result
 
     def test_real_restart_roundtrip_new_owners_and_resolution_continuity(self):
+        prior = self.seed_prior_association()
         target = self.target()
         first = self.awaiting(target)
+        self.assertEqual(self.fixture.library.current_applied_association(), prior)
         raw = json.loads(self.store.transaction_path.read_text())
         self.assertEqual(raw["schema_version"], 4)
         self.assertEqual(raw["library_target"], target.to_dict())
@@ -261,6 +339,7 @@ class LibraryInstallTests(unittest.TestCase):
             self.assertTrue(resumed.succeeded, resumed)
             final = self.coordinator(session=SESSION_B).resume_after_restart(bm020_result=resumed)
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
+        self.assert_associated(target)
         self.assertEqual(final.resolution_manifest.records, durable.resolution_records)
         self.assertEqual(final.resolution_manifest.install_plan_fingerprint, durable.install_plan_fingerprint)
         self.assertEqual(durable.library_target, first.transaction.library_target)
@@ -268,8 +347,10 @@ class LibraryInstallTests(unittest.TestCase):
         self.assertIsNone(self.restart_store.inspect())
 
     def test_changed_source_across_restart_rejected_before_configuration_or_activation(self):
+        prior = self.seed_prior_association()
         target = self.target()
         self.awaiting(target)
+        self.assertEqual(self.fixture.library.current_applied_association(), prior)
         restart_tx = self.restart_store.inspect()
         envelope = self.fixture.envelope(target.source.entry_id)
         bundle = json.loads(envelope.read_text())
@@ -282,6 +363,7 @@ class LibraryInstallTests(unittest.TestCase):
             final = self.coordinator(session=SESSION_B).resume_after_restart(bm020_result=resumed)
         self.assertFalse(resumed.succeeded)
         self.assertEqual(final.outcome, "needs_attention")
+        self.assertEqual(self.fixture.library.current_applied_association(), prior)
         self.assertEqual(before, (self.backend.installed, self.policy.calls, self.config.mutations))
         self.assertEqual(self.store.inspect().library_target, target)
 
@@ -346,6 +428,7 @@ class LibraryInstallTests(unittest.TestCase):
             final = self.coordinator(session=SESSION_B, resolution_decider=forbidden).resume_after_restart(bm020_result=resumed)
         self.assertTrue(resumed.succeeded, resumed)
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
+        self.assert_associated(target)
         self.assertEqual(final.resolution_manifest.records, durable.resolution_records)
         self.assertNotIn(missing, self.backend.installed)
 
@@ -415,6 +498,7 @@ class LibraryInstallTests(unittest.TestCase):
         final = self.coordinator(session="44444444-4444-4444-8444-444444444444",
                                  private_overlay_metadata_provider=provider).resume_after_restart(bm020_result=verified)
         self.assertEqual(final.outcome, "complete", (final.code, final.message))
+        self.assert_associated(target)
         self.assertTrue(self.backend.installed[DEMO].enabled)
         self.assertIsNone(self.store.inspect())
 
@@ -479,6 +563,7 @@ class LibraryInstallTests(unittest.TestCase):
                          InstallResolution.SKIPPED)
 
     def test_equivalent_active_requires_exact_library_source_and_profile(self):
+        prior = self.seed_prior_association()
         entry = self.fixture.register()
         self.fixture.library.select(entry.entry_id, "desk")
         target = LibraryInstallTarget.from_plan_target(self.fixture.library.selected_plan_target())
@@ -488,6 +573,7 @@ class LibraryInstallTests(unittest.TestCase):
         first = self.awaiting(target)
         before = (list(self.config.mutations), list(self.policy.calls))
         self.assertEqual(self.coordinator().install_target(target).outcome, "active")
+        self.assertEqual(self.fixture.library.current_applied_association(), prior)
         for incoming in (other, replace(target, device_profile_id="other")):
             with self.subTest(incoming=incoming):
                 self.assertEqual(self.coordinator().install_target(incoming).code, "ACTIVE_TRANSACTION_CONFLICT")

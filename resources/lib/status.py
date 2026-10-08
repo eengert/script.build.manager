@@ -108,7 +108,7 @@ from resources.lib.transaction import (
     TransactionStore,
 )
 from resources.lib.validator import ValidationDomain, ValidationStatus, validate_build_state
-from resources.lib.build_library import LibrarySource
+from resources.lib.build_library import LibrarySource, AppliedBuildAssociation
 
 _ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _STATUS_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
@@ -155,10 +155,17 @@ class StatusTarget:
     software_manifest_path: str = ""
     install_resolution: Optional[FrozenInstallResolutionManifest] = None
     library_source: Optional[LibrarySource] = None
+    applied_association: Optional[AppliedBuildAssociation] = None
 
     def __post_init__(self) -> None:
         if self.library_source is not None and not isinstance(self.library_source, LibrarySource):
             raise ValueError("library_source must be a LibrarySource")
+        if self.applied_association is not None:
+            if (not isinstance(self.applied_association, AppliedBuildAssociation)
+                    or self.library_source is None
+                    or self.applied_association.entry_id != self.library_source.entry_id
+                    or self.applied_association.device_profile_id != self.device_profile_id):
+                raise ValueError("applied association must match the target")
         if not isinstance(self.configuration_manifest_path, str) or not self.configuration_manifest_path:
             raise ValueError("configuration_manifest_path must be a non-empty string")
         if not isinstance(self.device_profile_id, str) or not self.device_profile_id:
@@ -892,10 +899,10 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
 
 
 def default_status_target() -> Optional[StatusTarget]:
-    """The explicitly selected, validated library build, or ``None``."""
+    """The verified associated library build, or ``None``; no selection fallback."""
     from resources.lib.build_library import default_build_library
     try:
-        return default_build_library().selected_status_target()
+        return default_build_library().associated_status_target()
     except Exception:
         return None
 

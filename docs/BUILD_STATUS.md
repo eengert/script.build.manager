@@ -71,8 +71,10 @@ the gap is the stable code `BUILD_IDENTITY_MISMATCH` or
 `RESOLUTION_IDENTITY_MISMATCH` (never a path, ID or fingerprint). With no
 target the build-dependent areas are `UNAVAILABLE` (`NO_BUILD_SELECTED`) and the
 overall result is `INCOMPLETE`; pending-restart and needs-attention state is
-still reported. Build Manager records no applied-build association yet, so the
-production default target is `None` until Install records one.
+still reported. The production default uses only a valid applied-build association
+recorded by authoritative frozen completion. A merely selected build is separate:
+`selected_status_target()` remains available for explicit selected-target checks.
+Missing or invalid association returns `None`, without selection fallback.
 
 Stored resolutions must also match `frozen_resolution.install_plan_fingerprint()`
 for the selected frozen manifest and effective install policies. The shared binder
@@ -153,10 +155,11 @@ a held operation lock does not block a check, and an AST test pins that
 
 ## Known limitations
 
-* No applied-build association exists yet, so the production default compares
-  nothing and reports "Not Fully Checked" for build-dependent areas; software,
-  skin, settings and private-data drift are proven by unit tests with explicit
-  targets, not against a live Kodi.
+* Applied association persistence and target selection are proven offline. This
+  change has not been runtime-qualified. Without a valid association the default
+  reports "Not Fully Checked" for build-dependent areas. The association alone
+  does not bind accepted package exceptions into Status; install-resolution
+  evidence still needs its existing separate validation.
 * The updater policy is not read, so a residual quarantine without a
   transaction is not reported.
 * Display names are optional; none is supplied in production yet, so the details

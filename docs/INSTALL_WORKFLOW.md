@@ -31,6 +31,19 @@ The existing frozen/BM-020/startup owners retain restart/resume responsibility;
 this frontend neither resumes manually nor modifies their durable records.
 Update / Repair remains unavailable.
 
+A successful library Install records the exact entry/profile in the separate
+Build Library `applied.json` record. The existing frozen lifecycle owner writes it
+only at its validated terminal completion boundary, after resolution evidence,
+updater restoration and transaction cleanup succeed. Reviewed missing-package
+choices retain that same target identity. `awaiting_restart`, cancellation,
+failure, active work and attention never advance the association. Restart/resume
+uses the original typed `library_target` persisted in the frozen transaction,
+independently of the current selection. Legacy path installs do not guess identity.
+Association persistence failure produces a stable attention result rather than
+claiming completion; the prior record remains when publication fails before
+replacement. The completed transaction has already been cleared at this point,
+so a later retry uses the normal reviewed Install path.
+
 Offline tests cover native selection/confirmation, approval freshness, safe
 errors, deferred runtime composition, and real disposable library -> Plan ->
 repository preparation -> reviewed saved-package execution. Runtime/remote

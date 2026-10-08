@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from resources.lib.install_workflow import InstallWorkflow
-from resources.lib.build_library import LibraryEntry, LibrarySource, isolated_library_install_authority
+from resources.lib.build_library import LibraryEntry, LibrarySource, LibraryInstallTarget, isolated_library_install_authority
 from resources.lib.plan import PlanTarget
 from resources.lib.plan_model import *
 from resources.lib.status_model import OperationKind, OperationStatus, CheckGap
@@ -196,6 +196,40 @@ class SelectionTests(unittest.TestCase):
         self.f = library_fixture.LibraryTests()
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
+
+    def test_nonterminal_declined_and_stale_preserve_durable_applied_record(self):
+        entry = self.f.register()
+        library = self.f.library
+        applied_target = LibraryInstallTarget(LibrarySource(str(self.f.root), entry.entry_id), "desk")
+        with isolated_library_install_authority(library):
+            library._record_applied_completion(applied_target)
+        library.select(entry.entry_id, "other")
+        before = (self.f.root / "applied.json").read_bytes()
+        for case in ("cancelled", "failed", "active", "needs_attention",
+                     "user_resolution_required", "awaiting_restart", "unknown", "declined", "stale"):
+            with self.subTest(case=case):
+                ui = Mock()
+                ui.choose_install_build.return_value = entry
+                ui.choose_install_profile.return_value = "other"
+                ui.confirm_install.return_value = case not in ("declined", "stale")
+                ui.execute_install.side_effect = lambda f: f()
+                service = Mock()
+                service.preview.return_value = plan()
+                service.validate.return_value = ReviewCheck(ReviewFreshness.CURRENT)
+                if case == "stale":
+                    ui.confirm_install.side_effect = [True, False]
+                    service.validate.return_value = ReviewCheck(ReviewFreshness.STALE, (IdentityComponent.BUILD,))
+                coordinator = Mock()
+                coordinator.install_target.return_value = FrozenInstallResult(case)
+                workflow = InstallWorkflow(library, service, Mock(), lambda: coordinator,
+                                           lambda: OperationStatus())
+                with isolated_library_install_authority(library), patch.object(
+                        library_fixture.lib.BuildLibrary, "_record_applied_completion", side_effect=AssertionError):
+                    workflow.run(ui)
+                self.assertEqual((self.f.root / "applied.json").read_bytes(), before)
+                self.assertEqual(library.current_applied_association().device_profile_id, "desk")
+                if case in ("declined", "stale"):
+                    coordinator.install_target.assert_not_called()
 
     def test_readonly_arbitrary_target_preserves_saved_selection(self):
         entry = self.f.register()

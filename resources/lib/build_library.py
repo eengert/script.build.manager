@@ -162,6 +162,13 @@ class SelectedBuild:
     device_profile_id: str
 
 
+@dataclass(frozen=True)
+class AppliedBuildAssociation:
+    """Verified terminal identity, distinct from a user selection."""
+    entry_id: str
+    device_profile_id: str
+
+
 class _OwnedPackages(ConfigPackageLoader):
     """Reuse the production preflight on verified in-memory package material."""
 
@@ -563,6 +570,64 @@ class BuildLibrary:
                 return SelectedBuild(raw["entry_id"], raw["device_profile_id"])
         except Exception:
             return None
+
+    def current_applied_association(self) -> AppliedBuildAssociation | None:
+        """Creation-free, fail-closed read; never substitutes selection."""
+        try:
+            with _directory(self.root) as fd:
+                data = _read_at(fd, "applied.json", STATE_LIMIT)
+                if data is None:
+                    return None
+                raw = _json(data)
+                if (not isinstance(raw, dict)
+                        or set(raw) != {"schema_version", "entry_id", "device_profile_id"}
+                        or type(raw["schema_version"]) is not int
+                        or raw["schema_version"] != 1
+                        or not isinstance(raw["entry_id"], str)
+                        or not _KEY.fullmatch(raw["entry_id"])
+                        or not isinstance(raw["device_profile_id"], str)):
+                    return None
+                manifest, _, _ = self._load_at(fd, raw["entry_id"], self._registry(fd))
+                if raw["device_profile_id"] not in manifest.device_profiles:
+                    return None
+                return AppliedBuildAssociation(raw["entry_id"], raw["device_profile_id"])
+        except Exception:
+            return None
+
+    def _record_applied_completion(self, target: LibraryInstallTarget) -> None:
+        """Internal completion-owner writer; exact authenticated library identity."""
+        try:
+            if not isinstance(target, LibraryInstallTarget) or target.source.root != self.root:
+                raise _error()
+            _authenticate_install_root(self.root)
+            with self._writer() as fd:
+                manifest, _, _ = self._load_at(fd, target.source.entry_id, self._registry(fd))
+                if target.device_profile_id not in manifest.device_profiles:
+                    raise _error()
+                data = _encode({"schema_version": 1, "entry_id": target.source.entry_id,
+                                "device_profile_id": target.device_profile_id})
+                if len(data) > STATE_LIMIT:
+                    raise _error()
+                _atomic(fd, "applied.json", data)
+        except Exception:
+            raise _error() from None
+
+    def associated_status_target(self):
+        """Verified associated desired target; unavailable never means selected."""
+        from resources.lib.status import StatusTarget
+        applied = self.current_applied_association()
+        if applied is None:
+            return None
+        path = str(Path(self.root) / "builds" / (applied.entry_id + ".json"))
+        return StatusTarget(path, applied.device_profile_id, path,
+                            library_source=LibrarySource(self.root, applied.entry_id),
+                            applied_association=applied)
+
+    def associated_plan_target(self):
+        applied = self.current_applied_association()
+        if applied is None:
+            return None
+        return self.plan_target(applied.entry_id, applied.device_profile_id)
 
     def clear_selection(self):
         try:

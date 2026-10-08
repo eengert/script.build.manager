@@ -13,7 +13,7 @@ selection. It adds no capture UI, Apply, repository acquisition or repair.
 | `ConfigPackageLoader` / `default_packages_root` | Reuse descriptor, value, overlay, AF3 and manifest-ownership preflight. The embedded root remains the existing default for legacy targets; library targets use their own verified package bytes. |
 | `ArtifactStore` | Exact ZIPs remain under the existing BM `frozen-artifacts/artifacts/<sha256>.zip` store. Registration validates reference structure, never acquires, duplicates, opens or imports ZIPs. |
 | `PrivateOverlayStore` | Private payloads remain under the existing profile-owned `private_overlays/<safe-id>.json` store. Registration never opens that store. Existing safe overlay IDs/declarations may remain in the public manifest. |
-| `FrozenInstallResolutionManifest` / `FrozenInstallStore` | Completed outcomes remain installed-state evidence in `install_resolutions/<fingerprint>.json`. This task defers association; selected targets carry `install_resolution=None`. |
+| `FrozenInstallResolutionManifest` / `FrozenInstallStore` | Completed outcomes remain installed-state evidence in `install_resolutions/<fingerprint>.json`. Applied association stores only entry/profile identity; targets carry `install_resolution=None` unless a caller supplies separately validated resolution evidence. |
 | `default_frozen_install_root` | Same BM profile parent. Library production translation deliberately has no host `/tmp` fallback: absent Kodi translation means no selection. |
 | Transaction persistence | Reuse the established staged write, file fsync, atomic replace, directory fsync and nonblocking OS lock pattern. Library/selection share a separate library lock; no install/restart transaction is created. |
 | `readonly_io.read_regular_file` | Reuse bounded nonblocking regular-file reads. Its optional `dir_fd` allows anchored reads after every directory component is opened with `O_DIRECTORY | O_NOFOLLOW`. |
@@ -134,13 +134,13 @@ FIFO, symlink, size and registry/content disagreement failures are covered.
 and atomically writes only schema version, immutable entry ID and profile ID.
 `current_selection()` reloads both records/content without mutation; missing,
 corrupt, removed, changed or unavailable content/profile returns `None`.
-`clear_selection()` atomically clears the association. A sole entry is never
+`clear_selection()` atomically clears the selection. A sole entry is never
 automatically selected. Registry and selection share the writer lock.
 
-`selected_status_target()` and `selected_plan_target()` bridge the association
-to accepted target contracts. `status.default_status_target()` uses the former;
-`plan.default_plan_target()` uses the same selection bridge for future UI.
-Absent/invalid selection preserves truthful no-build Status. Every service call
+`selected_status_target()` and `selected_plan_target()` bridge the selection
+to accepted target contracts. `plan.default_plan_target()` retains this selection
+bridge. Production `status.default_status_target()` uses only the verified applied
+association; absence or invalidity preserves truthful unavailable build comparison. Every service call
 revalidates the typed source, so a target obtained before corruption cannot
 silently fall back to another build or global package content.
 
@@ -150,6 +150,34 @@ uses this to retain the existing configuration validation without external path
 lookup. Existing path-based callers retain their previous loaders. Effective
 package content still participates in G3 build/review fingerprints; frozen,
 resolution, policy binding and stale review validation remain intact.
+
+## Verified applied association
+
+`applied.json` lives beside `selection.json` under the profile-owned Build Library
+(`special://profile/addon_data/script.build.manager/build-library`). Its exact
+schema is `{"schema_version":1,"entry_id":"<immutable library entry ID>",
+"device_profile_id":"<declared profile ID>"}`. No manifest, path, private value,
+digest of a review, or mutable display metadata is copied into it.
+
+`current_applied_association()` returns a typed `AppliedBuildAssociation` or
+`None`. Every read revalidates the registry-published immutable envelope and the
+declared profile. Missing, malformed, oversized, incompatible, removed or changed
+inputs fail closed, with no sole-entry or selection fallback. Reads use bounded
+regular files and no-follow directory descriptors for every ancestor.
+
+The internal `_record_applied_completion()` validates authenticated library
+ownership and exact entry/profile under the existing writer lock, then uses the
+existing fsync/atomic-replace/directory-fsync pattern. Only the frozen lifecycle's
+validated completion path calls it, after resolution persistence, updater restore
+and transaction cleanup. Direct and resumed completion use the exact durable
+`LibraryInstallTarget`; pending restart and attention preserve the previous
+association. Legacy path installs cannot establish a library association.
+
+Selection, capture and registration never change this record.
+`associated_status_target()` carries the typed association separately from
+selection; `associated_plan_target()` supplies the future Repair target without
+fallback. Update / Repair UI remains deferred. These bridges do not infer accepted
+package resolutions; those remain separately bound installed-state evidence.
 
 ## Validation boundary and next task
 

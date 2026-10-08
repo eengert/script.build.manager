@@ -75,6 +75,120 @@ class LibraryTests(unittest.TestCase):
         entry = self.register()
         return entry, json.loads(self.envelope(entry.entry_id).read_text())
 
+    def record_applied(self, entry, profile="desk"):
+        target = lib.LibraryInstallTarget(lib.LibrarySource(str(self.root), entry.entry_id), profile)
+        with lib.isolated_library_install_authority(self.library):
+            self.library._record_applied_completion(target)
+
+    def test_applied_durable_distinct_selection_and_bridges(self):
+        self.assertIsNone(self.library.current_applied_association())
+        self.assertFalse(self.root.exists())
+        a = self.register()
+        self.library.select(a.entry_id, "desk")
+        self.assertIsNone(self.library.current_applied_association())
+        self.record_applied(a)
+        applied = lib.AppliedBuildAssociation(a.entry_id, "desk")
+        self.assertEqual(BuildLibrary(self.root).current_applied_association(), applied)
+        self.raw["build"]["version"] = "2.0.0"
+        self.write_sources(); b = self.register()
+        self.library.select(b.entry_id, "other")
+        self.assertEqual(self.library.current_applied_association(), applied)
+        self.assertEqual(self.library.associated_status_target().applied_association, applied)
+        self.assertEqual(self.library.associated_plan_target().library_source.entry_id, a.entry_id)
+        self.assertEqual(self.library.selected_status_target().library_source.entry_id, b.entry_id)
+        self.assertIsNone(self.library.selected_status_target().applied_association)
+        with patch('resources.lib.build_library.default_build_library', return_value=self.library):
+            self.assertEqual(default_status_target().applied_association, applied)
+        self.library.clear_selection()
+        self.assertEqual(self.library.current_applied_association(), applied)
+        self.record_applied(b, "other")
+        raw = json.loads((self.root / "applied.json").read_text())
+        self.assertEqual(raw, {"schema_version": 1, "entry_id": b.entry_id, "device_profile_id": "other"})
+
+    def test_applied_malformed_bounded_and_no_fallback(self):
+        entry = self.register(); self.library.select(entry.entry_id, "other")
+        path = self.root / "applied.json"
+        valid = {"schema_version": 1, "entry_id": entry.entry_id, "device_profile_id": "desk"}
+        cases = [b"{", b"null", b"[]", b"x" * (lib.STATE_LIMIT + 1),
+                 b'{"schema_version":1,"schema_version":1}',
+                 json.dumps({**valid, "schema_version": True}).encode(),
+                 json.dumps({**valid, "schema_version": 2}).encode(),
+                 json.dumps({**valid, "entry_id": "../escape"}).encode(),
+                 json.dumps({**valid, "entry_id": "a" * 64}).encode(),
+                 json.dumps({**valid, "device_profile_id": []}).encode(),
+                 json.dumps({**valid, "device_profile_id": "removed"}).encode(),
+                 json.dumps({**valid, "private": SECRET}).encode()]
+        for data in cases:
+            with self.subTest(data_length=len(data)):
+                path.write_bytes(data)
+                self.assertIsNone(self.library.current_applied_association())
+                self.assertIsNone(self.library.associated_status_target())
+                with patch('resources.lib.build_library.default_build_library', return_value=self.library):
+                    self.assertIsNone(default_status_target())
+                self.assertIsNone(self.library.associated_plan_target())
+                self.assertEqual(self.library.current_selection().device_profile_id, "other")
+        path.unlink()
+        self.assertIsNone(self.library.current_applied_association())
+
+    def test_applied_safe_files_and_ancestors(self):
+        entry = self.register(); self.record_applied(entry)
+        path = self.root / "applied.json"; data = path.read_bytes(); path.unlink()
+        external = self.base / "external"; external.write_bytes(data)
+        for kind in ("link", "directory", "fifo", "socket"):
+            with self.subTest(kind=kind):
+                sock = None
+                if kind == "link": path.symlink_to(external)
+                elif kind == "directory": path.mkdir()
+                elif kind == "fifo": os.mkfifo(path)
+                else:
+                    sock = socket.socket(socket.AF_UNIX); sock.bind(str(path))
+                try:
+                    self.assertIsNone(self.library.current_applied_association())
+                    self.assertEqual(external.read_bytes(), data)
+                finally:
+                    if sock: sock.close()
+                    if kind == "directory": path.rmdir()
+                    else: path.unlink()
+        path.write_bytes(data)
+        moved = self.base / "moved"; self.root.rename(moved); self.root.symlink_to(moved, target_is_directory=True)
+        self.assertIsNone(self.library.current_applied_association())
+        with self.assertRaises(LibraryError): self.record_applied(entry)
+        self.assertEqual((moved / "applied.json").read_bytes(), data)
+
+    def test_applied_atomic_replace_failure_retains_prior_and_removes_stage(self):
+        entry = self.register(); self.record_applied(entry)
+        before = (self.root / "applied.json").read_bytes()
+        with patch.object(lib.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaises(LibraryError): self.record_applied(entry, "other")
+        self.assertEqual((self.root / "applied.json").read_bytes(), before)
+        self.assertEqual(list(self.root.glob(".stage-*")), [])
+
+    def test_applied_entry_changes_and_removed_profile_invalidate(self):
+        entry = self.register(); self.record_applied(entry)
+        path = self.envelope(entry.entry_id); saved = path.read_bytes()
+        for mode in ("deleted", "changed", "profile_removed", "unregistered"):
+            with self.subTest(mode=mode):
+                path.write_bytes(saved)
+                if mode == "deleted": path.unlink()
+                elif mode in ("changed", "profile_removed"):
+                    raw = json.loads(saved)
+                    if mode == "changed": raw["manifest"]["build"]["name"] = "Changed"
+                    else: del raw["manifest"]["device_profiles"]["desk"]
+                    path.write_text(json.dumps(raw))
+                else:
+                    (self.root / "registry.json").write_text('{"schema_version":1,"entries":{}}')
+                self.assertIsNone(self.library.current_applied_association())
+
+    def test_applied_writer_revalidates_and_preserves_on_rejection(self):
+        entry = self.register(); self.record_applied(entry)
+        before = (self.root / "applied.json").read_bytes()
+        with self.assertRaises(LibraryError): self.record_applied(entry, "unknown")
+        self.assertEqual((self.root / "applied.json").read_bytes(), before)
+        target = lib.LibraryInstallTarget(lib.LibrarySource(str(self.root), entry.entry_id), "desk")
+        with patch('resources.lib.build_library.default_build_library', side_effect=RuntimeError):
+            with self.assertRaises(LibraryError): self.library._record_applied_completion(target)
+        self.assertEqual((self.root / "applied.json").read_bytes(), before)
+
     def test_registered_missing_entire_root_proves_absence(self):
         _, bundle = self.registered_fixture()
         shutil.rmtree(self.root)
@@ -553,7 +667,9 @@ class LibraryTests(unittest.TestCase):
         translations = []
         vfs = SimpleNamespace(translatePath=lambda path: translations.append(path) or str(self.root.parent))
         with patch.dict("sys.modules", {"xbmcvfs": vfs}):
-            self.assertEqual(default_status_target(), status_target)
+            self.assertIsNone(default_status_target())  # selection is not applied
+            self.record_applied(entry)
+            self.assertEqual(default_status_target(), self.library.associated_status_target())
             self.assertEqual(lib.selected_plan_target(), plan_target)
             self.assertEqual(default_plan_target(), plan_target)
         self.assertEqual(set(translations), {"special://profile/addon_data/script.build.manager"})
