@@ -1,23 +1,11 @@
-# Handoff — Update / Repair Test.app missing exact add-on
+# Handoff — Test.app background launch guidance
 
-- State: PASS against the 19-point standard. The previous run's exit deviation was corrected: Build Manager was exited to the Program add-ons list before `test_app_quit`, and Kodi shut down without a kill.
-- Start: `agent/claude` at `cc0911d`, worktree clean. Test.app `not_running`. No restage.
-- Candidate verification: `tools/bm_test_app.py verify` against the accepted stage manifest (SHA-256 `e48cecf4…`) returned `ok`, `installed_equals_manifest` true, `installed_equals_candidate` true, Git binding OK. Re-verified after the run with the same result.
-- Exact artifact precheck (before uninstall): `5a0ee9bf…` is 562 bytes; recomputed SHA-256 matches its name and its sidecar. The product's `validate_addon_zip` passes on the exact bytes (loaded by file path, no store writes). Its only member is `repository.eengert/addon.xml` (952 bytes, SHA-256 `15c1410f…`). Applied resolution record: exact, installed, captured and resolved 1.0.0, desired enabled.
-- Pre-uninstall baseline: applied association `c7074361…`, profile `current-device-8794224972c6`, resolution fingerprint `002bfd67…`, publication `acknowledged`, library 1 entry, selection selected, transactions absent, updater `AUTOMATIC`, `repository.eengert` 1.0.0 enabled, 40 add-ons. `repository.eengert` tree SHA-256 `96b5c71b…`. Frozen store 60 files, SHA-256 `e3400b62…`.
-- Uninstall: Add-ons → My add-ons → Add-on repository → Eengert Repository → info page (Enabled confirmed) → Uninstall (focus confirmed) → Yes (focus confirmed). Kodi's confirmation said only "Are you sure?". Nothing else named.
-- Missing-state proof: UI list shows only the Kodi repository. Host read-only, Kodi running: 40 → 39, only `repository.eengert` removed, none added, no enablement or version changed, applied inspection 90/90 fields identical, transactions absent.
-- Review text: "Install repository.eengert 1.0.0" and "Settings are up to date" (checked 17:16). No repository choice, version choice, uninstall, or restart item.
-- Apply: confirmation "Install repository.eengert 1.0.0" for BM-UI-003C-20261007 1.0.0 on current-device-8794224972c6; Apply Changes confirmed once. Result: "Build applied and verified." No restart prompt.
-- Post-repair: `repository.eengert` enabled `true`, version `1.0.0`. Restored tree identical to the pre-run tree (SHA-256 `96b5c71b…`); `addon.xml` SHA-256 `15c1410f…` equals the saved ZIP member. Directory mtimes changed (real reinstall); content identical.
-- Exact-artifact use: the applied resolution record is still exact with artifact SHA `5a0ee9bf…`, size 562. Install-resolutions directory unchanged. Frozen store byte-identical before and after. The Kodi log in the apply window has no install, download, fetch, package, zip, or repository line. The Kodi log does not record the install source, so this rests on those facts together, not on one line.
-- Second check: Current / Healthy, "No changes needed. Everything Build Manager checked matches the applied build. Nothing was changed." Add-ons: "Everything already matches this build." Checked 17:17.
-- Publication: `applied-publication.json` rewritten by the apply (transaction `cf931bdb…` → `dcbbddcc…`; `previous` = same candidate; state `acknowledged`; journal valid). Association files byte-identical. Not pending.
-- Final stopped state: Git-bound verify `ok`; snapshot 285/285 fields identical; census 0 added, 0 removed; changed entries are the reinstall (repository add-on mtimes), Build Manager publication record and mtimes, and Kodi launch/quit churn.
-- Live-proven: uninstall, missing state, review text, apply, operation result, restored enabled state and content identity, second Current / Healthy, Build Manager exit, graceful quit and stopped observation.
-- Unit-tested only: none of this run's behavior; no test suite run in this task.
-- Log observations: this run's `kodi.log` has no `Unknown addon id 'repository.eengert'` line. The earlier one (17:02:57) is in `kodi.old.log` from the previous run. Also present, unrelated: `Unknown addon id 'repository.umbrella'` at startup (17:13:31), and TMDb helper `GetDirectory` errors at shutdown (17:18:32). At shutdown: "failed to stop script.build.manager (may have ended)" (17:18:33), with no kill.
-- Evidence: `.qualification-evidence/update-repair-missing-exact-addon-20261008T211207Z/` (gitignored): `runtime-qualification-report.md`, `EVIDENCE_SHA256.txt` (44 files), 20 exact-window screens in `screens/`, the precheck, and pre/post identify, verify, snapshot, applied inspection, census, and identity JSON.
-- Out of scope, noticed (not fixed): the installed Build Manager description still says the Create, Install and Update / Repair screens are "still being built". Not changed.
-- Human decisions: none required for PASS.
-- Not updated: `.agent/AGENT_STATUS.json` (controller-owned under D-026). No push, no Agent Handoff operation, no product commit.
+- State: COMPLETE; docs-only change.
+- Start: `agent/claude` at `ce17a39`, clean. Since the expected `cc0911d` baseline, only `.agent/**` bookkeeping had advanced.
+- Done: updated `.orchestrator/PROJECT.md`, `.orchestrator/WORKFLOW.md`, D-007 in `.orchestrator/DECISIONS.md`, and current launch/relaunch instructions in `docs/BM_TEST_APP_HELPER.md` and `docs/FROZEN_BUILD_INSTALL.md`.
+- Durable default: `open -g "/Applications/Kodi Build Manager Test.app" --args -p`. Portable `-p` remains mandatory; a specific validation task may require foreground activation.
+- Commit: `a9af2bb1dbbb580f93620ceb336d89bfa2132f0e` (`Use background launch for Test.app validation`).
+- Validation: `git diff --check` passed. No product tests were run or needed. Historical qualification evidence was not edited.
+- Not done: no Test.app/Kodi/profile/device interaction, MCP extension changes, push, merge, or Agent Handoff operation. `.agent/AGENT_STATUS.json` remains untouched.
+- Next step: none for this task. Any integration needs a separate decision.
+- Human input: none required to complete this task.
