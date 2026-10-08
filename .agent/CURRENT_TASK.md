@@ -1,12 +1,12 @@
 # Current Task
 
-- Task: Correct ONLY publication-fence strict durability-confirmation blocker (offline; no assigned ID).
-- State: COMPLETE narrow correction candidate; STOP for independent re-review.
-- Start: clean agent/codex at 76588f9c80d80cbaebe6f382f9a559fe1fbf455f.
-- Product/test: 62a3f9062df8b41c1a64df6012b476b7f8626482; d42e6ba and existing history preserved; bookkeeping separate.
-- Result: exact fenced owner confirmation now requires successful strict directory open/fsync under existing lock. No journal after any failed confirmation. Legacy helper semantics unchanged. ENOTSUP crash-restoration/abandon cannot leave recoverable B authority; fresh strict retry completes without Install replay.
-- Validation: 5 strict tests PASS; 106 publication/frozen PASS; requested nine affected modules 566 (565 PASS + one verified baseline failure); full 3103 (3101 PASS + two exact-start-HEAD-reproduced baseline import-policy failures). Working/staged diff checks PASS.
-- Preserved: accepted fence/abandon, ACK order/public reads, cleanup, stale recovery, exact resolutions, creation-free Status, restart and BM023A behavior.
-- Boundaries: no Test.app/Kodi/profile/device/runtime/keychain/NSUserDefaults access, evidence change, ai-supervisor, extra branch/worktree, history rewrite, push, merge, release or external publication.
-- Next: independent re-review only; runtime needs separately authorized task.
-- Usage/model/effort: shared-account desktop observations in USAGE_HISTORY.md; GPT-6 session identity, exact tier/effort unavailable.
+- Task: BUILD MANAGER UPDATE / REPAIR SUPPORTED WORKFLOW (bounded offline product implementation; no assigned ID).
+- State: STOPPED candidate. Product commit 866080e (local, not pushed). Stop for a product decision on repository-current packages before independent review.
+- Start: clean agent/claude at 6b5f43c97c4531425b451a2c5d2447fe2411ea91. Accepted product ancestor 62a3f9062df8b41c1a64df6012b476b7f8626482; 6b5f43c..HEAD delta was .agent-only.
+- Product: 866080e (10 files: Update / Repair workflow, UI wiring, strings, tests, docs).
+- Result: REPAIR routes to the real workflow from the verified applied association. Check for Changes, reviewed Apply, G6 blockers, and session-only different revisions are implemented. Two repository-current limits are refused before Apply (see HANDOFF.md).
+- Validation: 29 new offline tests pass. Full suite 3132 run: 2 import-policy failures and 4 keychain errors, identical to the git-backed starting HEAD (3103 run, same six).
+- Preserved: applied association and publication path, Install behavior, Status, Help, main-menu order.
+- Boundaries: no push, no matrix, no Agent Handoff operation, no Test.app/Kodi/profile/device/MCP access.
+- Next: product decision on repository-current packages on applied builds; then independent review of 866080e.
+- Usage: see the last row of .agent/USAGE_HISTORY.md.
