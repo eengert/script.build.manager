@@ -1121,12 +1121,17 @@ with isolated_library_install_authority(library):
     def test_visible_fence_after_failed_store_barrier_must_be_confirmed_before_journal(self):
         previous = self.x.seed_prior_association()
         target = self.x.target()
-        original = FrozenInstallStore._fsync_directory
-        def fail_fence(store):
-            if FrozenInstallStore.read_snapshot(store.root).phase is FrozenInstallPhase.PUBLICATION_PENDING:
-                raise OSError("fence directory ambiguity")
-            return original(store)
-        with patch.object(FrozenInstallStore, "_fsync_directory", new=fail_fence):
+        import stat
+        original = os.fsync
+        identity = os.stat(self.x.store.root)
+        def fail_fence(fd):
+            info = os.fstat(fd)
+            if stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+                owner = FrozenInstallStore.read_snapshot(self.x.store.root)
+                if owner is not None and owner.phase is FrozenInstallPhase.PUBLICATION_PENDING:
+                    raise OSError("fence directory ambiguity")
+            return original(fd)
+        with patch.object(os, "fsync", side_effect=fail_fence):
             self.assertEqual(self.install(target).outcome, "needs_attention")
             self.assertEqual(self.recover().outcome, "needs_attention")
             self.assertNotEqual(self.library.publication_journal().candidate.entry_id, target.source.entry_id)
@@ -1182,3 +1187,143 @@ with isolated_library_install_authority(library):
         with patch.object(BuildLibrary, "_writer", new=writer), patch.object(FrozenInstallStore, "locked", new=locked):
             self.assert_complete(target, self.install(target))
             self.assert_complete(target, self.recover())
+
+class StrictFenceConfirmationTests(unittest.TestCase):
+    setUp = PublicationFenceTests.setUp
+    services = PublicationTests.services
+    snapshot = PublicationTests.snapshot
+    install = PublicationTests.install
+    recover = PublicationTests.recover
+    assert_complete = PublicationTests.assert_complete
+    fence_without_journal = PublicationFenceTests.fence_without_journal
+    fresh_process = PublicationFenceTests.fresh_process
+
+    def frozen_barrier_failure(self, mode, *, fenced_only=False):
+        import errno
+        import stat
+        original_open = os.open
+        original_fsync = os.fsync
+        root = self.x.store.root
+        identity = os.stat(root)
+        def failed_open(path, flags, *args, **kwargs):
+            if mode == "open" and os.fspath(path) == str(root):
+                raise OSError(errno.EACCES, "injected frozen directory open failure")
+            return original_open(path, flags, *args, **kwargs)
+        def failed_fsync(fd):
+            info = os.fstat(fd)
+            if (mode != "open" and stat.S_ISDIR(info.st_mode)
+                    and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
+                    and (not fenced_only or FrozenInstallStore.read_snapshot(root).phase is FrozenInstallPhase.PUBLICATION_PENDING)):
+                raise OSError(getattr(errno, mode), "injected frozen directory fsync failure")
+            return original_fsync(fd)
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(patch.object(os, "open", side_effect=failed_open))
+        stack.enter_context(patch.object(os, "fsync", side_effect=failed_fsync))
+        return stack
+
+    def test_confirmation_and_creation_reject_all_directory_errors(self):
+        from resources.lib.frozen_install import FrozenInstallPersistenceError
+        from resources.lib.build_library import LibraryConflict
+        for mode in ("open", "EINVAL", "ENOTSUP", "EIO"):
+            with self.subTest(mode=mode):
+                if mode != "open": self.setUp()
+                previous, target = self.fence_without_journal()
+                expected = self.x.store.inspect()
+                journal = self.library.publication_journal()
+                applied = (Path(self.library.root) / "applied.json").read_bytes()
+                before = self.snapshot()
+                with self.frozen_barrier_failure(mode):
+                    with self.assertRaises(FrozenInstallPersistenceError):
+                        self.x.store._confirm_publication_owner(expected)
+                    with self.assertRaises(LibraryConflict):
+                        self.library._create_applied_publication(expected, resolution_store=self.x.store)
+                    self.assertEqual(self.recover().outcome, "needs_attention")
+                    self.assertEqual(self.recover().outcome, "needs_attention")
+                self.assertEqual(self.library.publication_journal(), journal)
+                self.assertEqual((Path(self.library.root) / "applied.json").read_bytes(), applied)
+                self.assertEqual(self.x.store.inspect(), expected)
+                self.assertEqual(self.snapshot(), before)
+                self.fresh_process()
+                self.assert_complete(target, self.recover())
+                self.assertEqual(self.snapshot(), before)
+
+    def test_ENOTSUP_crash_restored_COMPLETE_abandon_cannot_leave_B_authority(self):
+        previous = self.x.seed_prior_association()
+        target = self.x.target()
+        original_transition = FrozenInstallStore.transition_expected
+        durable_complete = []
+        def remember(store, **kwargs):
+            if kwargs["new_phase"] is FrozenInstallPhase.PUBLICATION_PENDING:
+                durable_complete.append(store.transaction_path.read_bytes())
+            return original_transition(store, **kwargs)
+        # Legacy transition can tolerate ENOTSUP, but confirmation must not.
+        with patch.object(FrozenInstallStore, "transition_expected", new=remember), self.frozen_barrier_failure("ENOTSUP", fenced_only=True):
+            result = self.install(target)
+        self.assertEqual(result.outcome, "needs_attention")
+        visible = self.x.store.inspect()
+        b_journal = self.library.publication_journal().candidate.entry_id == target.source.entry_id
+        self.assertEqual(visible.phase, FrozenInstallPhase.PUBLICATION_PENDING)
+        self.x.store.transaction_path.write_bytes(durable_complete[0])
+        abandoned = self.x.coordinator().abandon()
+        self.assertEqual(abandoned.outcome, "complete")
+        self.assertIsNone(self.x.store.inspect())
+        before = self.snapshot()
+        self.recover()
+        published_b = self.library.current_applied_association().entry_id == target.source.entry_id
+        print("ENOTSUP crash probe:", result.outcome, "B journal:", b_journal,
+              "visible phase:", visible.phase.value, "abandon:", abandoned.outcome,
+              "B published:", published_b)
+        self.assertFalse(b_journal)
+        self.assertFalse(published_b)
+        self.assertEqual(self.library.current_applied_association(), previous)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_successful_strict_confirmation_precedes_journal_creation(self):
+        import stat
+        _, target = self.fence_without_journal()
+        owner = self.x.store.inspect()
+        identity = os.stat(self.x.store.root)
+        original = os.fsync
+        barriers = []
+        original_atomic = lib._atomic
+        def sync(fd):
+            info = os.fstat(fd)
+            if stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+                barriers.append(True)
+            return original(fd)
+        def write(fd, name, data):
+            if name == "applied-publication.json": self.assertTrue(barriers)
+            return original_atomic(fd, name, data)
+        with patch.object(os, "fsync", side_effect=sync), patch.object(lib, "_atomic", side_effect=write):
+            self.assertEqual(self.x.store._confirm_publication_owner(owner), owner)
+            journal = self.library._create_applied_publication(owner, resolution_store=self.x.store)
+        self.assertEqual(journal.transaction_id, owner.transaction_id)
+        self.assert_complete(target, self.recover())
+
+    def test_mismatch_and_wrong_phase_reject_before_barrier_or_journal(self):
+        from resources.lib.frozen_install import FrozenInstallStateConflict
+        from resources.lib.build_library import LibraryConflict
+        _, target = self.fence_without_journal()
+        owner = self.x.store.inspect()
+        journal = self.library.publication_journal()
+        for wrong_phase in (False, True):
+            with self.subTest(wrong_phase=wrong_phase):
+                if wrong_phase:
+                    owner = replace(owner, phase=FrozenInstallPhase.COMPLETE)
+                    self.x.store.transaction_path.write_text(json.dumps(owner.to_dict()))
+                    expected = owner
+                else:
+                    expected = replace(owner, transaction_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+                with patch.object(os, "fsync", side_effect=AssertionError("unowned barrier")):
+                    with self.assertRaises(FrozenInstallStateConflict):
+                        self.x.store._confirm_publication_owner(expected)
+                    with self.assertRaises(LibraryConflict):
+                        self.library._create_applied_publication(expected, resolution_store=self.x.store)
+                self.assertEqual(self.library.publication_journal(), journal)
+        self.assert_complete(target, self.recover())
+
+    def test_legacy_directory_helper_keeps_compatibility_semantics(self):
+        for mode in ("open", "EINVAL", "ENOTSUP"):
+            with self.subTest(mode=mode), self.frozen_barrier_failure(mode):
+                self.x.store._fsync_directory()

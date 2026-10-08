@@ -822,7 +822,7 @@ class FrozenInstallStore:
             current = self._read_unlocked()
             if current != expected or current.phase is not FrozenInstallPhase.PUBLICATION_PENDING:
                 raise FrozenInstallStateConflict("publication fence owner changed")
-            self._fsync_directory()
+            self._fsync_directory_strict()
             return current
 
     def _clear_publication_expected(self, *, transaction_id, publication):
@@ -905,6 +905,18 @@ class FrozenInstallStore:
                     staged.unlink()
                 except OSError:
                     pass
+
+    def _fsync_directory_strict(self) -> None:
+        """Positive publication authority barrier; no compatibility suppression."""
+        try:
+            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            raise FrozenInstallPersistenceError(
+                "could not confirm publication fence durability") from exc
 
     def _fsync_directory(self) -> None:
         try:
