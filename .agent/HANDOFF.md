@@ -1,30 +1,31 @@
-# Handoff — Update / Repair recorded-resolution correction
+# Handoff — Update / Repair recorded-resolution coverage
 
-- State: READY FOR REVIEW, offline. Correction commit 326e52d (local; not pushed; not merged). It supersedes the STOPPED candidate 866080e: the repository-current refusal is removed, and an applied outcome is now reused exactly.
-- Start: clean agent/claude at 91d9dc39c1559840b0f2a1b97aea33d23cb8254f; parent product candidate 866080ef9d687879fdcb02efa480e34ae34dff99. Active agent in .agent/AGENT_STATUS.json: claude (read locally; the live Agent Handoff controller was not run).
-- Product question, proven: a published applied outcome records a terminal resolution for every installable add-on. The executor's install-order loop records each one at completion, and restart restoration checks that coverage. The plan consults recorded records first, so Check for Changes never asks for a new decision or a new repository package on the applied revision. Only a partial bound outcome reaches a decision, and publication never produces one. Documented and pinned by tests.
-- Root cause of the earlier refusal: library install() never seeded records from the applied resolution. It prompted for every non-exact installable add-on, including installed healthy repository-current ones, so the reviewed plan could never be bound to execution.
-- Product (326e52d):
-  - FrozenInstallCoordinator.install_target / install take prior_resolution (keyword, library only, no prepared resolution). Accepts only a FrozenInstallResolutionManifest.
-  - Bound before any mutation: bind_resolutions against this build, frozen manifest and current policies; the verified applied association must still be this entry, profile and resolution fingerprint; every record must pass _check_terminal_record, the rule set restart restoration also uses; repository-current saved bytes and dependencies are checked by the existing validate_execution_material path; installed managed add-ons must match the recorded version and be healthy (G6 stays blocked); skipped records must not be installed.
-  - Records are seeded from the bound prior. Install-stage code installs repository-current outcomes from stored bytes and never calls resolve_repository_current for a resolved record.
-  - Transaction durably records prior_resolution_fingerprint (optional field, schema 4 kept, defaults to empty for older files). Equivalence and resume compare it, so a different prior is a different operation.
-  - plan.py: a recorded package is checked for installed add-ons too. A gone package blocks with PACKAGE_MISSING, because execution needs those bytes.
-  - Update / Repair passes install_resolution whole. Session answers are the only choices. The recorded-repository refusal, its note 32914, and the recorded-skip mapping are removed. Docs rewritten.
-- Install workflow: unchanged behaviour (prior defaults to None); its existing tests pass.
+- State: READY FOR INDEPENDENT REVIEW, offline. Coverage completion commit 53f2219 (local; not pushed; not merged). It closes the two regression gaps named in the correction handoff. No production code changed.
+- Start: clean agent/claude at 48bfd56f85d5a56e63a348ff9cba0825c74d2e3e; correction 326e52d present as an ancestor. Active agent in .agent/AGENT_STATUS.json: claude (read locally; the live controller was not run).
+- Gap 1, recorded SKIP end to end (tests/test_recorded_resolution_lifecycle.py, RecordedSkipEndToEndTests): an applied library build with an accepted skip for an add-on that has no artifact. Unrelated drift (a managed add-on missing) is repaired with a reuse of the prior outcome, using the real coordinator.
+  - Only the drifted add-on is installed. The skipped add-on gets no install, no repository resolution and no new choice (resolution_decider forbidden).
+  - The resulting records are identical to the prior, including SKIPPED. The resulting resolution fingerprint and the applied association are preserved.
+  - Negative: the skipped add-on is now installed. The engine refuses with PRIOR_RESOLUTION_INVALID before any mutation, with no transaction, no install, no enable change and no removal.
+- Gap 2, real restart and resume (RestartPriorResolutionTests): a held pre-activation owner drives the real lifecycle.
+  - First install stops at QUIESCENCE_AWAITING_RESTART with no prior. A resume in a new session completes and publishes the association.
+  - A prior-seeded reconciliation stops at QUIESCENCE with the prior fingerprint persisted and lifecycle_restart_count 1. The durable file round-trips through FrozenInstallTransaction.from_dict.
+  - Same prior, same session: SAME_SESSION, no runner call, not a resume.
+  - Same prior, new session: active_resume. Configuration runs once more (runner calls +1), the transaction clears, the owner is enabled, and the association is published with the same fingerprint.
+  - Omitted prior, new session: ACTIVE_TRANSACTION_CONFLICT. Durable bytes, installed state, runner calls, policy calls and configuration mutations are unchanged.
+  - Different durable prior identity: the recorded fingerprint is rewritten to a different well-formed value. The request's valid applied prior conflicts with ACTIVE_TRANSACTION_CONFLICT, with no mutation. No second real valid prior exists for this target without a second completed operation, so this fence is exercised through the durable identity, and the report says so.
+  - Legacy empty prior: the durable file is written without the field, which loads as empty. A request carrying a prior conflicts with ACTIVE_TRANSACTION_CONFLICT, with no mutation.
+- Mutation evidence, in a scratch copy only: removing the quiescence prior comparison fails the three fence tests (omitted, different, legacy). Removing the installed-skip refusal fails the negative skip test. Both comparisons are what the tests bind to.
 - Validation:
-  - tests/test_recorded_resolution.py: 16 new offline tests, all pass. They cover the decision invariant (complete and partial), installed-package-gone blocking, exact reuse (healthy, missing saved bytes, unbound tamper, stale association, G6 different version, broken, choices refused), repository reuse with network forbidden (healthy, missing from saved bytes, saved bytes missing, truncated), and durable identity (interrupted reuse keeps the prior, a different prior conflicts, same prior is equivalent, legacy files default to empty).
-  - tests/test_update_repair_workflow.py: 29, all pass. Two accepted expectations updated for the whole-resolution hand-off: the recorded-repository test and the recorded-skip test.
-  - Focused engine and workflow run: frozen install, resolution, build library, applied publication, resume, restart, install workflow, update/repair workflow, repository preparation, library install: 373 pass.
-  - Full suite: 3148 run; failures 2, errors 4, all six pre-existing (two plan_view import-policy failures, four keychain fixture errors). No new failures.
-  - compile, git diff --check, string IDs (262 entries, no duplicates, all referenced IDs defined), non-ASCII scan, UI import policy: clean apart from the pre-existing plan_view typing import.
-- Live-proven: none. Everything is offline with fake installers and the real library, artifact and frozen stores. No Test.app, normal Kodi, profile, device, MCP or push activity.
+  - tests/test_recorded_resolution_lifecycle.py: 8 run, all OK.
+  - Focused regression set (new module, test_recorded_resolution, test_update_repair_workflow, frozen install, frozen resolution, resume, restart, restart coordinator, build library, applied publication, plan, install workflow, library install, repository preparation): 483 run. Only the pre-existing plan_view import-policy failure.
+  - Full suite: 3156 run. Failures 2, errors 4, all six pre-existing (two plan_view import-policy failures, four keychain fixture errors). No new failures.
+  - py_compile, git diff --check, non-ASCII, trailing whitespace and unused-import checks: clean.
+- Live-proven: none. Offline with fake installer, fake Kodi state, fake policy and configuration over the real library, artifact, frozen and transaction stores. No Test.app, normal Kodi, profile, device, MCP or push activity.
 - Residual limits:
-  - Restart: the restart identity test uses an interrupted reuse, not a real restart. Real restart resume of a reused outcome is not exercised end to end.
-  - Update / Repair workflow tests use fakes. The engine tests exercise the real binding and lifecycle.
-  - A partial bound outcome can still reach DECISION_REQUIRED, which then ends safely at repository preparation. Publication never produces one, and the docs say so.
-  - G6 replacement and broken-add-on repair are not implemented, by design.
-- Out of scope, noticed (not fixed): resources/lib/ui/plan_view.py imports typing (two pre-existing ImportPolicy tests); tests/test_bm_test_app_keychain.py has four pre-existing fixture errors (TypeError in tools/bm_test_app.py resolve_commit).
+  - Real process restart is simulated by the injected session boundary. No Kodi process restart was exercised.
+  - The different-identity fence uses a durable identity mismatch, because a second real valid prior cannot be produced for the same applied target without a second completed operation.
+  - Test expectations for the restart path use the runner and private-overlay fakes from the library suite.
+- Out of scope, noticed (not fixed): resources/lib/ui/plan_view.py imports typing (two pre-existing ImportPolicy tests); tests/test_bm_test_app_keychain.py has four pre-existing fixture errors.
 - Not updated: .agent/AGENT_STATUS.json (controller-owned under D-026; not hand-edited).
-- Next: independent review of 326e52d. Runtime validation needs a separate, explicit authorization.
+- Next: independent review of 326e52d together with 53f2219. Runtime validation needs a separate, explicit authorization.
 - Usage: see the last row of .agent/USAGE_HISTORY.md.
