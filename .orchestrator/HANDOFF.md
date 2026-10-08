@@ -25,6 +25,7 @@ AGENT_HANDOFF_PROJECT=build-manager /Users/eengert/Documents/Kodi/agent-handoff/
 
 - Items 1-7: accepted backend qualification evidence remains intact.
 - Item 8 (complete user-facing workflow through the Kodi UI, including Estuary, restart/resume, error states, and second-run presentation, tied to an exact candidate): **OPEN**. Not accepted. It remains open pending ChatGPT review of the 2026-10-08 evidence consolidation (`.qualification-evidence/item8-evidence-consolidation-20261008T232026Z/`), which reports a remaining live gap. That report is evidence and does not accept or close Item 8.
+- Status applied-versus-selected presentation gap: **CLOSED IN SOURCE** (product commit `5d2bf55`). Live Test.app proof is **still pending**. Restart/resume, error-state, artifact-decision and multi-build UI gaps **remain**, so Item 8 stays **OPEN**.
 - Beta Candidate phase exit (repository-distributed package, custom icon, install/update through the Eengert Repository, repository-distributed qualification): **NOT COMPLETE**.
 - Do not describe beta qualification as complete.
 
