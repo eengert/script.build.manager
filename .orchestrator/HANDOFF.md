@@ -1,156 +1,78 @@
-# Current Handoff — Build Manager Manual Mode (refreshed 2026-10-04)
+# Current Handoff — Build Manager Manual Mode (refreshed 2026-10-08)
 
 ## Operating mode
 
-Build Manager is intentionally in **manual relay mode**.
-
-Active loop:
-
-`ChatGPT plans/supervises -> Eric runs a bounded Codex/Claude prompt -> Eric pastes the report back -> ChatGPT reviews/chooses the next task`.
-
-Normal future work happens in the two Agent Handoff endpoints described below (Codex and Claude), each task naming the exact worktree/branch it may use, with ChatGPT supervising.
-
-Do not start, resume, reinstall, or depend on ai-supervisor unless Eric explicitly decides to resurrect that separate framework project. Relay-v1 is deferred.
-
-The previous Relay-v1 scheduled automation has been disabled.
+- **Manual relay** (D-025): ChatGPT plans and reviews, Eric relays one bounded prompt at a time, and Claude or Codex executes exactly that prompt and reports back. No agent selects the next project task.
+- ai-supervisor is retired cold storage. Do not start, resume, reinstall, or depend on it.
+- Working lane: **Claude**, `agent/claude`, worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude` (Agent Handoff endpoints, D-026). This refresh did not run the live Agent Handoff status command. Check live ownership before relying on the lane.
+- No push, release, or `matrix` integration by default. All `agent/claude` commits after `origin/agent/claude` are local and unpushed.
 
 ## Current milestone
 
-The current outcome remains **Build Manager macOS Beta Qualification**. Use the eight exit items in `BUILD_MANAGER_PROJECT_PLAN.md` as the finish line.
+**Build Manager macOS Beta Qualification.** The finish line is the eight-item Beta exit checklist in `BUILD_MANAGER_PROJECT_PLAN.md`.
 
-Do not turn unfinished ai-supervisor provenance, planner, trusted-action pinning, Relay-v1, or framework cleanup into Build Manager prerequisites.
+- Items 1-7: accepted backend qualification evidence remains intact.
+- Item 8 (complete user-facing workflow through the Kodi UI, including Estuary, restart/resume, error states, and second-run presentation, tied to an exact candidate): **OPEN**.
+- Beta Candidate phase exit (repository-distributed package, custom icon, install/update through the Eengert Repository, repository-distributed qualification): **NOT COMPLETE**.
+- Do not describe beta qualification as complete.
 
-Backend qualification alone does not satisfy product beta readiness. Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions. Accepted backend criteria 1-7 remain complete; item 8 remains unimplemented/unqualified.
+## Product state
 
-## Current product candidate
+Package version in `addon.xml`: **0.1.0**. The "BM 0.0.15 candidate" wording in earlier handoffs is historical.
 
-The reviewed BM 0.0.15 product candidate is carried by the Codex and Claude Agent Handoff endpoints (next section), whose product trees outside `.agent/**` are identical. They were restored on 2026-10-04 from the former working worktree:
+- **Create Build:** implemented; previously qualified.
+- **Install Build:** implemented; previously qualified.
+- **Update / Repair:** implemented and independently reviewed. Live portable Test.app PASS:
+  - verified no-op: Current / Healthy, no changes, no durable mutation;
+  - supported enablement repair: `repository.eengert` disabled deliberately, enable-only review, re-enabled without reinstalling, second check Current / Healthy;
+  - missing exact managed add-on restoration: `repository.eengert` 1.0.0 uninstalled deliberately, exact frozen artifact `5a0ee9bf94e900ed4c7f09a2eff82b2f36c7854fd45796a4c6bb2e564569ea86` restored, no Repository Current fallback, second check Current / Healthy.
+  - Evidence: `.qualification-evidence/update-repair-noop-20261008T203627Z`, `.qualification-evidence/update-repair-enable-drift-20261008T205800Z`, `.qualification-evidence/update-repair-missing-exact-addon-20261008T211207Z`.
+- **Build Status, Settings, Help / Information:** native Kodi UI exists. Help H01-H10 was rewritten in plain language (BM-UI-002A). Not recorded here as fully item-8 qualified.
 
-- `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-beta-recovery`, branch `agent/beta-recovery`, last verified HEAD `e57a5b6d47a7ed53d3f8bd526de300960d9f7e32`
-- reviewed substantive BM 0.0.15 commit: `8789329054b77815c6f9548fd4ce9beacbe1d348`
-- reviewed product/tracking identity includes `16435a892b4ad2cf54c34d3b049c28ed3f1703eb`
-- independent product review work: `4ef22b35-da05-454a-99c4-0ae08aea4882`
+Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e52d5b2d4e24f870d3ab11aadd61fc9b2c496`, `53f221986b6c76d5d13652421ac62f999c0c6aab`. NB-1 terminal-record coverage: `723c254b737446975e8c77e12b0ce7a62951ddbf`.
 
-beta-recovery is retained as a historical/safety reference for that candidate, not as a normal working endpoint. It intentionally still has uncommitted manual bookkeeping edits under `.agent/**` from the ai-supervisor shutdown cleanup; they are not product changes and should be left alone.
+## Installed runtime candidate versus newer unstaged metadata
 
-`matrix` currently carries the guidance/orchestration documents but not the BM 0.0.15 product source. Integrating the product candidate into `matrix` is a later, deliberate step and has not been done. `matrix` also has a newer `resources/images/icon.png` than the endpoints; whether that icon belongs in the candidate is an open product/asset decision, separate from guidance synchronization.
+- The installed Test.app runtime candidate for every live qualification above is **`53f221986b6c76d5d13652421ac62f999c0c6aab`**.
+- Product source (`resources/`, `tools/`, `default.py`, `service.py`) is identical between `53f2219` and current HEAD. Verified by path diff.
+- Commits after `53f2219` touch only tests, docs, `.orchestrator/**`, `.agent/**`, and `addon.xml`:
+  - `6105282b5340ba15f0ca4b231ce1e27c42d3cb81` package metadata refresh (news, en_US/en_GB descriptions, focused metadata test);
+  - `5f0dd67045079fbeff9651f782a4ff14f27cef33` package summary correction to `Capture and apply a managed Kodi setup.` in both English locales.
+- **Metadata at `6105282` and `5f0dd67` is NOT staged or live-proven in Test.app.** The installed Test.app still carries the old stale package text ("not available yet" news and "Save and restore" summary). The new metadata is covered by unit tests and XML validation only.
 
-Before any new implementation, re-run read-only Git status/identity checks on the endpoint the prompt names; current live Git always wins over this snapshot. Endpoint HEADs are deliberately not recorded here.
+## Remaining beta/package blockers
 
-## Agent Handoff endpoints (restored 2026-10-04)
+1. **Item 8, complete-workflow qualification: OPEN.** Durable Estuary, restart/resume, error-state, and second-run evidence for the complete frontend, tied to one exact candidate, is still needed. The Update / Repair scenarios above are recorded. Create, Install, Status, Help, and Settings are not recorded here as complete across that full set.
+2. **Custom icon: OPEN (hard package-exit check, `CUSTOM_ICON_ASSET_REQUIRED`).** `resources/images/icon.png` on `agent/claude` is still the generic skeleton icon. `matrix` carries a much larger `resources/images/icon.png` (last changed in `a33a3f8`, "chore: add Build Manager addon icon"). Whether it is Eric's approved artwork has not been verified. Decide and verify before packaging.
+3. **Eengert Repository publication and install/update through it in portable Test.app: not recorded as done.**
+4. **Live staging of the metadata commits (`6105282`, `5f0dd67`) in Test.app: not done.**
+5. **Integration of this lane into `matrix`: not done.** It needs a separate, explicit decision.
 
-The endpoint architecture is recorded as decision D-026 in `.orchestrator/DECISIONS.md`. Agent Handoff is retained as the mechanism for maintaining the two manual agent worktrees and switching ownership between them. Its source is `/Users/eengert/Documents/Kodi/agent-handoff`; the installed `Agent Handoff.app` matches that source and includes the macOS `USAGE_HISTORY` union fix.
+## Safety boundaries
 
-- Codex endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`
-- Claude endpoint: worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude`, branch `agent/claude`
-- Only these two endpoints are configured for Build Manager. Antigravity is retired from the Build Manager Agent Handoff configuration and must not be recreated.
-- Which agent is current is determined live, not assumed: Agent Handoff records the active worker, and it changes only through a real handoff or the supported `set-active-agent` recovery command. At the 2026-10-04 refresh it was Codex.
-- At this refresh Agent Handoff `status` reported Codex as the current agent with both endpoints clean and containing `origin/matrix`. Re-verify live before relying on it:
+- Authorized runtime target: **`/Applications/Kodi Build Manager Test.app` in portable `-p` mode only.**
+- Default launch: `open -g "/Applications/Kodi Build Manager Test.app" --args -p`. `-p` is mandatory. Use foreground activation only when a specific validation task requires it.
+- Standalone Test.app MCP interaction is qualified and supported. Use it only inside a named task.
+- Forbidden for BM validation: normal `/Applications/Kodi.app`, and `/Users/eengert/Library/Application Support/Kodi`, including read or probe access.
+- Household Kodi devices (Apple TV, Shield, Fire TV): mutation needs Eric's explicit authority naming the device and the action. Completing portable Test.app work does not authorize normal Kodi or device validation.
+- No push, release, force-push, or history rewrite without explicit authorization. The only standing exception is the agent-switch push in D-026.
+- Do not expose credentials, tokens, private overlay values, or secrets.
 
-  `AGENT_HANDOFF_PROJECT=build-manager "/Applications/Agent Handoff.app/Contents/Resources/agent_handoff_controller.sh" status`
+## Next step
 
-  This is read-only apart from a bounded fetch of `origin/matrix`.
-- A real handoff (`continue <agent>`) merges the outgoing endpoint into the incoming one and pushes the incoming branch to `origin`. Run one only when Eric has explicitly asked the Supervisor to switch agents; that request carries the narrow standing publication authorization in D-026 (that one push only: no other push, no `matrix` push, no release, no force-push, no history rewrite). As of this refresh neither endpoint has been pushed since restoration.
-- Each endpoint's `.agent/**` is endpoint-specific; do not copy `matrix` `.agent/**`. The `.orchestrator/**`, `AGENTS.md`, `CLAUDE.md` and `BUILD_MANAGER_PROJECT_PLAN.md` copies on the endpoints are path-level snapshots of `matrix`; after changing them here, re-sync them with an explicit-path history-preserving copy (see `.orchestrator/WORKFLOW.md`), never a wholesale merge. `matrix` remains the canonical guidance and protected integration lane.
+No implementation task is pre-selected. ChatGPT chooses the next bounded task and names its blocker. Open decisions for Eric and ChatGPT:
 
-## Product evidence already established
+- whether to stage `agent/claude` HEAD in portable Test.app for live metadata proof (needs a named task);
+- which icon artwork is authoritative (`matrix` versus this branch);
+- when and how to integrate into `matrix`.
 
-The 0.0.15 candidate corrected the two defects raised by independent review:
+Do not restart Status, G1-G6, Create, Install, or Update / Repair implementation. These are implemented and recorded above. Reopening any of them needs a new bounded task that names a specific blocker.
 
-- finite product status-code allowlists/sanitization;
-- safe bounded transaction-record reads that reject non-regular objects/races and avoid blocking FIFOs.
+## Stable references
 
-Recorded validation before the manual-mode switch included focused and full offline product test passes and an independent PASS. Preserve that accepted product evidence unless source content actually changes.
+- `BUILD_MANAGER_PROJECT_PLAN.md`: eight-item exit checklist and Beta Candidate phase exit.
+- `.orchestrator/PROJECT.md`, `.orchestrator/WORKFLOW.md`, `.orchestrator/DECISIONS.md` (D-025 manual relay, D-026 Agent Handoff endpoints).
+- `AGENTS.md`, `CLAUDE.md`.
+- Approved backend baseline: `4a02b833178f5cb29e2b596985f1a8641ed3fa25`.
 
-Do not repeat review merely because retired ai-supervisor checkpoint/provenance mechanics are no longer being used.
-
-## Historical ai-supervisor candidates — preserved, not Build Manager blockers
-
-At retirement, ai-supervisor production main was:
-
-`cb32c8edbffd32beb07e04aa6041e7636e7dd28b`
-
-Two intentionally dirty framework/action candidates were preserved into cold storage:
-
-### Provenance-reconcile candidate
-
-- historical worktree: `/Users/eengert/.codex/worktrees/ai-supervisor-provenance-reconcile/ai-supervisor`
-- branch: `codex/provenance-reconcile`
-- HEAD: `a004294654e09233943ad0dc6c1b419356384882`
-- large uncommitted source-only reconciliation candidate
-- intentionally unfinished; no longer a BM prerequisite
-
-### BM-023A trusted-action bridge
-
-- historical worktree: `/Users/eengert/Documents/Kodi/tools/ai-supervisor-bm023a-actions`
-- branch: `action/bm023a-trusted`
-- HEAD: `9950ca51709d3799af9b5487ef3867088afe62cc`
-- retained four reviewed dirty paths
-- security PASS review: `55d39236-dd93-4731-9e8b-54212556a0b0`
-
-These states are archived for possible ai-supervisor resurrection. Do not finish their checkpoint/pin/provenance mechanics merely to continue Build Manager manually.
-
-## ai-supervisor cold storage
-
-Cold-storage archive created and verified at:
-
-`/Users/eengert/Documents/Kodi/archives/ai-supervisor-cold-storage-2026-10-03.zip`
-
-SHA-256:
-
-`654403c5815841ab5d3eb2a47c8dd3f69e98ae8b3b338fea3d845eeaa7c5c008`
-
-The archive contains:
-
-- a self-contained Git bundle of all committed ai-supervisor refs/history;
-- tracked patches and untracked-file archives for the two dirty candidates above;
-- durable BM ai-supervisor checkpoint records;
-- sanitized project configuration;
-- historical launch/usage ledger;
-- LaunchAgent/install inventory;
-- Relay-v1 context summary;
-- restore guide;
-- SHA-256 manifest.
-
-Stale controller/operator tokens, provider session caches, transient runtime/test logs, and running process state were intentionally not preserved.
-
-A fuller `Relay-v1_Plan_and_Context.md` was exported separately for Eric.
-
-**Retirement completed after archive verification:** all ai-supervisor LaunchAgents/services, stale controller-broker processes, menu-bar app copies, CLI symlink, framework repository, linked framework worktrees, and the old Build Manager supervisor worktree were removed. No ai-supervisor process/service remains active.
-
-Build Manager frozen artifact data was relocated on 2026-10-04 to `/Users/eengert/Documents/Kodi/archives/build-manager-frozen-artifacts-2026-10-04`. The 61 preserved payload files were verified byte-for-byte by SHA-256 before the retired `~/.local/state/ai-supervisor` copy was removed. This is product/qualification evidence, not active framework runtime state.
-
-The uncommitted state of the retired `supervised-codex` and `supervised-claude` worktrees (plus a stale non-worktree directory found at the old Codex endpoint path) was preserved before those worktrees were removed, at `/Users/eengert/Documents/Kodi/archives/build-manager-supervised-worktrees-retirement-2026-10-04` (with a `.zip` beside it; zip SHA-256 `57862288421f67346181da2bbc30dda1d2c38e90a1a79af769f670f9885d063c`). The branches of those and the other retired historical worktrees (`bm023a-reviewed-0.0.9/-0.0.10`, `outcome-driven-supervision`, `stage-source-reconcile`) were kept; only the worktree directories were removed.
-
-## Safety boundaries that still apply
-
-- Never access normal `/Applications/Kodi.app` for BM validation.
-- Never access `/Users/eengert/Library/Application Support/Kodi`, including read/probe access.
-- Authorized macOS runtime target is only `/Applications/Kodi Build Manager Test.app` in portable `-p` mode.
-- Real Apple TV / Shield / Fire TV mutation requires Eric's explicit named-device/named-action authorization.
-- Do not expose credentials, private overlay values, tokens, or secrets.
-- No push, release, force-push, destructive history rewrite, or evidence-destroying cleanup without Eric's explicit authorization (the only standing exception is the agent-switch publication push in D-026).
-
-## Manual Test.app work
-
-Eric's standing authorization for routine Build Manager validation against the disposable portable Test.app remains valid.
-
-In manual mode, ChatGPT must put the exact operation and safety scope into each Codex/Claude prompt.
-
-Do not assume historical ai-supervisor named actions/brokers exist. If a required Test.app operation needs credential isolation or a helper that is not already available outside ai-supervisor, stop and design/verify a small safe manual helper rather than exposing credentials or reviving the whole framework.
-
-## Smallest next manual step
-
-**BM-UI-001 native-dialog foundation is complete and portable-Test.app validated.** The rejected custom full-screen WindowXML shell was removed. The accepted foundation uses native Kodi dialogs: the six-item Build Manager main menu, H01-H10 Help via native selection/text dialogs, and direct native Settings with focus restored to Settings on return. Focused UI tests passed and no backend mutation occurred.
-
-Eric visually accepted the native-dialog model. BM-UI-002A (Help rewrite + package baseline) rewrote H01-H10 in plain scannable language, replaced stale skeleton addon.xml wording and recorded the Beta Candidate phase exit in `BUILD_MANAGER_PROJECT_PLAN.md` (Eengert Repository publication, custom icon, repository-distributed qualification). `resources/images/icon.png` is still the old generic icon: `CUSTOM_ICON_ASSET_REQUIRED` remains a hard package-exit check. Item 8 stays open.
-
-Next bounded step: truthful read-only Status / plan interfaces. Do not begin G1-G6, Create/Install/Repair backends or publication without an explicit task.
-
-The approved backend baseline remains `4a02b833178f5cb29e2b596985f1a8641ed3fa25`; accepted backend qualification evidence remains intact. BM-UI-001 adds frontend product changes above that baseline and is not yet a complete beta frontend.
-
-## Historical files
-
-`BUILD_MANAGER_SUPERVISOR_HANDOFF.md`, old `.agent/**` records (the endpoints' current `.agent/**` notes are endpoint-specific, not project policy), ai-supervisor state/checkpoints, and the cold-storage archives are historical evidence.
-
-They do not override current Git plus this manual-mode `.orchestrator` guidance.
+Ai-supervisor archives, `BUILD_MANAGER_SUPERVISOR_HANDOFF.md`, and old `.agent/**` records are historical evidence only. They do not override current Git or this file.
