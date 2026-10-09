@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import weakref
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from enum import Enum
@@ -469,6 +470,76 @@ _HOME_ADDONS_PREFIX = "special://home/addons/"
 _APPLICATION_ADDONS_PREFIX = "special://xbmc/addons/"
 
 
+def _open_canonical_directory(canonical: Path) -> int:
+    """Open an absolute canonical directory one component at a time, never following a link.
+
+    Each component is opened relative to the previous descriptor with O_NOFOLLOW,
+    so the walk never re-resolves a pathname from the top and cannot be redirected
+    by a symlink that appears in an ancestor during the walk.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open("/", flags)
+    try:
+        for part in canonical.parts[1:]:
+            next_fd = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+class _TrustedRoot:
+    """A canonical add-ons root whose authority is pinned by one held descriptor.
+
+    The held descriptor keeps the inode allocated, so the recorded (st_dev, st_ino)
+    cannot be recycled into a different directory while this object lives. The
+    descriptor is released by close() or when the object is garbage collected.
+    """
+
+    def __init__(self, canonical: Path, anchor_fd: int, identity: Tuple[int, int]):
+        self.canonical = canonical
+        self.identity = identity
+        self._finalizer = weakref.finalize(self, os.close, anchor_fd)
+
+    @classmethod
+    def establish(cls, path: Path) -> Optional["_TrustedRoot"]:
+        """Record authority over the object the canonical root names right now, or None."""
+        canonical = Path(path).resolve()
+        try:
+            fd = _open_canonical_directory(canonical)
+        except OSError:
+            return None
+        try:
+            info = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            return None
+        return cls(canonical, fd, (info.st_dev, info.st_ino))
+
+    def reacquire(self) -> Optional[int]:
+        """A fresh root descriptor, only if the canonical path still names the recorded object."""
+        if not self._finalizer.alive:
+            return None
+        try:
+            fd = _open_canonical_directory(self.canonical)
+        except OSError:
+            return None
+        try:
+            info = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            return None
+        if (info.st_dev, info.st_ino) != self.identity:
+            os.close(fd)
+            return None
+        return fd
+
+    def close(self) -> None:
+        self._finalizer()
+
+
 class KodiInventoryBackend(InventoryBackend):
     """Read-only Kodi JSON-RPC/filesystem adapter.
 
@@ -479,7 +550,9 @@ class KodiInventoryBackend(InventoryBackend):
     Installed ``addon.xml`` is read only from an explicit trusted root: the home
     add-ons directory, and optionally the Kodi application add-ons directory
     (``special://xbmc/addons``) for bundled add-ons. Kodi's reported path is
-    never authority by itself.
+    never authority by itself. Authority over each root is recorded at
+    construction and re-verified on every read, so replacing a root, an ancestor,
+    or the root path fails closed.
     """
 
     def __init__(
@@ -499,6 +572,12 @@ class KodiInventoryBackend(InventoryBackend):
             raise ValueError("application add-ons root must be an absolute path")
         self.application_addons_dir = (
             Path(application_addons_dir).resolve() if application_addons_dir is not None else None
+        )
+        # Authority over each configured root is recorded once, here; reads re-verify it.
+        self._home = _TrustedRoot.establish(self.addons_dir)
+        self._application = (
+            _TrustedRoot.establish(self.application_addons_dir)
+            if self.application_addons_dir is not None else None
         )
 
     def get_installed_addons(self) -> Sequence[Mapping[str, object]]:
@@ -529,13 +608,13 @@ class KodiInventoryBackend(InventoryBackend):
             return None
         return self._read_addon_xml_in(root, addon_id)
 
-    def _trusted_roots(self) -> Tuple[Tuple[str, Path], ...]:
-        roots = [(_HOME_ADDONS_PREFIX, self.addons_dir)]
+    def _trusted_roots(self):
+        roots = [(_HOME_ADDONS_PREFIX, self._home)]
         if self.application_addons_dir is not None:
-            roots.append((_APPLICATION_ADDONS_PREFIX, self.application_addons_dir))
+            roots.append((_APPLICATION_ADDONS_PREFIX, self._application))
         return tuple(roots)
 
-    def _trusted_root(self, addon_id: str, path_value) -> Optional[Path]:
+    def _trusted_root(self, addon_id: str, path_value) -> Optional["_TrustedRoot"]:
         """Return the explicit trusted root that directly holds this add-on, or None.
 
         A Kodi-reported special path must name exactly the requested add-on's
@@ -544,7 +623,7 @@ class KodiInventoryBackend(InventoryBackend):
         value, including traversal, sibling and prefix-confusion paths, is rejected.
         """
         if path_value is None or path_value == "":
-            return self.addons_dir
+            return self._home
         if not isinstance(path_value, str):
             return None
         for prefix, root in self._trusted_roots():
@@ -552,7 +631,7 @@ class KodiInventoryBackend(InventoryBackend):
                 name = path_value[len(prefix):]
                 if name.endswith("/"):
                     name = name[:-1]
-                return root if name == addon_id else None
+                return root if root is not None and name == addon_id else None
         if not os.path.isabs(path_value):
             return None
         try:
@@ -560,16 +639,19 @@ class KodiInventoryBackend(InventoryBackend):
         except (OSError, RuntimeError):
             return None
         for _, root in self._trusted_roots():
-            if resolved.parent == root and resolved.name == addon_id:
+            if root is not None and resolved.parent == root.canonical and resolved.name == addon_id:
                 return root
         return None
 
-    @staticmethod
-    def _read_addon_xml_in(root: Path, addon_id: str) -> Optional[bytes]:
-        """Read ``root/<addon_id>/addon.xml`` anchored to ``root``; no link is followed."""
-        try:
-            root_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        except OSError:
+    def _read_addon_xml_in(self, trusted: "_TrustedRoot", addon_id: str) -> Optional[bytes]:
+        """Read ``<trusted root>/<addon_id>/addon.xml`` from a freshly verified root descriptor.
+
+        The root is re-walked from its canonical path and must still be the recorded
+        object. Only then is the add-on directory opened relative to that descriptor,
+        and addon.xml relative to the directory. No link is followed at any step.
+        """
+        root_fd = trusted.reacquire()
+        if root_fd is None:
             return None
         try:
             try:
@@ -586,6 +668,12 @@ class KodiInventoryBackend(InventoryBackend):
                 os.close(directory_fd)
         finally:
             os.close(root_fd)
+
+    def close(self) -> None:
+        """Release the pinned root descriptors. Metadata reads after close fail closed."""
+        for root in (self._home, self._application):
+            if root is not None:
+                root.close()
 
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         if not self.package_cache_dir.is_dir():

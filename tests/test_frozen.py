@@ -525,3 +525,155 @@ class FrozenCaptureTruthTests(unittest.TestCase):
         self.assertTrue(nodes["xbmc.python"].system)
         self.assertTrue(result.complete)
         validate_frozen_manifest(result.manifest, ArtifactStore(store_dir))
+
+
+class TrustedRootAuthorityTests(unittest.TestCase):
+    """Authority is bound to the trusted root object established at construction.
+
+    Replacing that root, any ancestor, or the root path itself must not redirect
+    metadata reads into a different filesystem object.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        self.trusted = self.base / "trusted" / "addons"
+        self.outside = self.base / "outside"
+        self.home = self.base / "home" / "addons"
+        self.cache = self.base / "packages"
+        self.cache.mkdir()
+        self.home.mkdir(parents=True)
+        self.trusted.mkdir(parents=True)
+        self.outside.mkdir()
+        _write_addon(self.trusted, "script.demo", version="1.0.0")
+        _write_addon(self.outside / "addons", "script.demo", version="1.0.0",
+                     imports=(("script.outside.dep", "1.0.0", False),))
+        _write_addon(self.home, "script.outside.dep", version="1.0.0")
+        (self.cache / "script.demo-1.0.0.zip").write_bytes(_zip("script.demo"))
+        (self.cache / "script.outside.dep-1.0.0.zip").write_bytes(_zip("script.outside.dep"))
+
+    def backend(self, *, application=None):
+        entries = [
+            _kodi_entry("script.demo", "special://xbmc/addons/script.demo/", "1.0.0"),
+            _kodi_entry("script.outside.dep", "special://home/addons/script.outside.dep/", "1.0.0"),
+        ]
+        return KodiInventoryBackend(
+            _kodi_rpc(entries), addons_dir=self.home, package_cache_dir=self.cache,
+            application_addons_dir=self.trusted if application is None else application,
+        )
+
+    def capture(self, backend):
+        return capture_frozen_build(
+            backend=backend, store=ArtifactStore(self.base / "artifacts"),
+            root_addon_ids=["script.demo"], build_id="authority", name="Authority",
+            created_at="now", kodi_version="21.3", platform="macos",
+        )
+
+    def assertFailsClosed(self, backend, *, reason):
+        self.assertIsNone(backend.read_addon_xml("script.demo"), reason)
+        result = self.capture(backend)
+        self.assertNotEqual(CaptureStatus.COMPLETE, result.manifest.capture_status, reason)
+        self.assertFalse(result.complete, reason)
+        node = next(n for n in result.manifest.addons if n.addon_id == "script.demo")
+        self.assertNotIn("script.outside.dep", [edge.addon_id for edge in node.dependency_edges], reason)
+
+    def test_ancestor_replacement_cannot_redirect_a_special_path_read(self):
+        backend = self.backend()
+        (self.base / "trusted").rename(self.base / "trusted-original")
+        (self.base / "trusted").symlink_to(self.outside)
+        self.assertFailsClosed(backend, reason="ancestor symlink must not redirect the read")
+
+    def test_same_path_root_replacement_does_not_inherit_old_authority(self):
+        backend = self.backend()
+        self.trusted.rename(self.base / "trusted" / "addons-original")
+        _write_addon(self.trusted, "script.demo", version="1.0.0",
+                     imports=(("script.outside.dep", "1.0.0", False),))
+        self.assertFailsClosed(backend, reason="a new directory at the same path has a different identity")
+
+    def test_root_replaced_by_symlink_fails_closed(self):
+        backend = self.backend()
+        self.trusted.rename(self.base / "trusted" / "addons-original")
+        self.trusted.symlink_to(self.outside / "addons", target_is_directory=True)
+        self.assertFailsClosed(backend, reason="a symlinked root must not be followed")
+
+    def test_absolute_path_cannot_regain_authority_over_a_replacement_tree(self):
+        absolute = str(self.trusted / "script.demo") + "/"
+        entries = [_kodi_entry("script.demo", absolute, "1.0.0")]
+        backend = KodiInventoryBackend(
+            _kodi_rpc(entries), addons_dir=self.home, package_cache_dir=self.cache,
+            application_addons_dir=self.trusted,
+        )
+        self.trusted.rename(self.base / "trusted" / "addons-original")
+        _write_addon(self.trusted, "script.demo", version="1.0.0")
+        self.assertIsNone(backend.read_addon_xml("script.demo"))
+
+    def test_absolute_path_after_ancestor_symlink_fails_closed(self):
+        absolute = str(self.trusted / "script.demo") + "/"
+        entries = [_kodi_entry("script.demo", absolute, "1.0.0")]
+        backend = KodiInventoryBackend(
+            _kodi_rpc(entries), addons_dir=self.home, package_cache_dir=self.cache,
+            application_addons_dir=self.trusted,
+        )
+        (self.base / "trusted").rename(self.base / "trusted-original")
+        (self.base / "trusted").symlink_to(self.outside)
+        self.assertIsNone(backend.read_addon_xml("script.demo"))
+
+    def test_ancestor_swapped_during_acquisition_is_refused_not_followed(self):
+        backend = self.backend()
+        real_open = os.open
+        swapped = []
+
+        def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is not None and path == "trusted" and not swapped:
+                swapped.append(path)
+                (self.base / "trusted").rename(self.base / "trusted-original")
+                (self.base / "trusted").symlink_to(self.outside)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with patch("os.open", new=swapping_open):
+            result = backend.read_addon_xml("script.demo")
+        self.assertEqual(["trusted"], swapped)
+        self.assertIsNone(result)
+
+    def test_home_root_same_path_replacement_fails_closed(self):
+        _write_addon(self.home, "plugin.demo", version="1.0.0")
+        entries = [_kodi_entry("plugin.demo", "special://home/addons/plugin.demo/", "1.0.0")]
+        backend = KodiInventoryBackend(
+            _kodi_rpc(entries), addons_dir=self.home, package_cache_dir=self.cache,
+        )
+        self.assertIsNotNone(backend.read_addon_xml("plugin.demo"))
+        self.home.rename(self.base / "home" / "addons-original")
+        _write_addon(self.home, "plugin.demo", version="1.0.0")
+        self.assertIsNone(backend.read_addon_xml("plugin.demo"))
+
+    def test_closed_backend_fails_closed_and_releases_its_authority(self):
+        backend = self.backend()
+        self.assertIsNotNone(backend.read_addon_xml("script.demo"))
+        backend.close()
+        self.assertIsNone(backend.read_addon_xml("script.demo"))
+        backend.close()
+
+    def test_configured_alias_root_is_canonicalized_and_readable(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        target = Path(temporary.name) / "addons"
+        _write_addon(target, "script.demo", version="1.0.0")
+        backend = KodiInventoryBackend(
+            _kodi_rpc([_kodi_entry("script.demo", "special://xbmc/addons/script.demo/", "1.0.0")]),
+            addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=target,
+        )
+        self.assertIsNotNone(backend.read_addon_xml("script.demo"))
+
+    def test_unchanged_home_and_bundled_roots_keep_their_authority(self):
+        _write_addon(self.home, "plugin.demo", version="1.0.0")
+        entries = [
+            _kodi_entry("plugin.demo", "special://home/addons/plugin.demo/", "1.0.0"),
+            _kodi_entry("script.demo", "special://xbmc/addons/script.demo/", "1.0.0"),
+        ]
+        backend = KodiInventoryBackend(
+            _kodi_rpc(entries), addons_dir=self.home, package_cache_dir=self.cache,
+            application_addons_dir=self.trusted,
+        )
+        self.assertIsNotNone(backend.read_addon_xml("plugin.demo"))
+        self.assertIsNotNone(backend.read_addon_xml("script.demo"))
