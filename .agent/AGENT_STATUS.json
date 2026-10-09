@@ -1,12 +1,12 @@
 {
-  "active_agent": "claude",
-  "status": "review_pending",
+  "active_agent": "codex",
+  "status": "idle",
   "task": "Platform-provided bundled add-on core, Phase 1",
-  "reason": "Product commit bddbe6f implements the D-028 platform-provided semantic: trusted application-origin capture, frozen schema 2 emitted only for platform nodes (schema 1 bytes and fingerprints unchanged), one read-only pre-mutation verifier rechecked on resume and before COMPLETE, and platform nodes excluded from artifacts, install, enablement, repository fallback, Skip and managed Create roots. Focused and full suites match the parent failure identities. Not claimed closed; independent review pending. Item 8 and restart/resume OPEN.",
-  "last_commit": "bddbe6f",
-  "matrix_sha": "299cf81dce75363966cd363c6bfdc58e3a97dcce",
+  "reason": null,
+  "last_commit": "cdddbd8",
+  "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-09T22:18:46Z",
+  "updated_at": "2026-10-09T23:53:48Z",
   "previous_task_record": {
     "active_agent": "claude",
     "status": "review_pending",
