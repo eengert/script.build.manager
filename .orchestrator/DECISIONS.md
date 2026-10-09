@@ -170,3 +170,15 @@ Eric approved the UI design at `.qualification-evidence/ui-design-20261006T11340
 Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions.
 
 BM-UI-001 must pass focused tests and interactive Test.app validation, then STOP for Eric/ChatGPT visual UX review before the presentation foundation is used for remaining major workflows. Adopt persistent unacknowledged terminal results, one internal Build Library with a separate Build Transfer Folder, contextual navigation-only Help, and consistent success/exception/incomplete/warning/blocked/validation-failure/NEEDS_ATTENTION semantics. These reuse Backup Pro principles without copying its UI.
+
+## D-028 — Kodi application-bundled add-ons are platform-provided requirements (2026-10-09)
+
+Kodi application-bundled add-ons proven through Build Manager's trusted application-root authority are platform-provided requirements. They are not Build Manager-managed software. Capture records their observed identity, version, type, observed enabled/usable condition, and dependency metadata without acquiring, importing, or manufacturing a ZIP artifact. The captured platform version is source observation and fingerprint evidence. It is not an exact target install requirement and is not an implicit minimum. The platform target requirement is the strictest actual minimum carried by the incoming dependency edges of the frozen graph, compared with fail-closed strict version rules.
+
+Target verification must prove, before meaningful mutation and again before successful completion: trusted application origin; presence; supported, enabled, usable and unbroken state; identity and type coherence; dependency-version compatibility; and a compatible required dependency closure read from the target's own trusted metadata. Unsupported, missing, home-shadowed, broken, disabled, unreadable, version-unknown, or otherwise unverifiable required platform components block execution.
+
+Build Manager never downloads, installs, replaces, downgrades, enables, disables, offers repository fallback for, or offers Skip for a platform-provided node. Platform nodes remain real vertices of the frozen dependency graph: their outgoing edges, cycles and missing managed children are validated, and their managed children remain ordinary exact-artifact nodes.
+
+D-003 continues to govern Build Manager-managed exact-artifact software. Platform-provided requirements are not BM-managed payloads. They do not create a source-tree packaging provenance class, and locally packaging official Kodi source into a substitute artifact is not a permitted route.
+
+The frozen manifest carries this meaning as schema version 2, emitted only when a platform-provided node is present. Schema version 1 keeps its exact prior meaning and fingerprints and cannot represent a platform-provided node. Presentation of platform rows is a separate follow-up and does not change this policy.
