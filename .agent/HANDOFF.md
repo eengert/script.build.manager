@@ -1,20 +1,32 @@
-# Handoff — Trusted add-on root authority correction (pending independent re-review)
+# Handoff — Platform-provided bundled add-on core, Phase 1 (pending independent review)
 
-- State: product correction committed for independent re-review: `ace8b77` ("Pin trusted add-on root authority to the recorded directory object"), on top of `b8d7a06` and `b0835a2`. Neither prior commit was amended. **The bundled-capture defect is NOT claimed closed.** It remains pending independent re-review of `ace8b77`. Item 8 and restart/resume stay OPEN. Publication stays unauthorized.
-- Start: `agent/claude` at `b0835a2`, worktree clean.
-- Review finding addressed: trusted-root acquisition used a full-path open with O_NOFOLLOW, which protects only the final component. An ancestor replaced after construction with a symlink was followed. Reproduced on `b8d7a06`: the read returned the outside `addon.xml`, and the reviewed capture reached `COMPLETE` with the outside dependency edge.
-- Fix: each configured root is canonicalized and opened component by component at construction (O_NOFOLLOW, relative to the previous descriptor). Its `(st_dev, st_ino)` is recorded, and the descriptor is held so the recorded inode cannot be recycled. Each read re-walks the canonical path from an anchored root, requires directories at every step, requires the final object to match the recorded identity, and only then opens the add-on directory and `addon.xml` relative to it. Replacement, root symlinks, same-path directories, and stale absolute paths fail closed as `addon.xml unavailable`, with no host path exposed. `close()` releases the descriptors.
-- Tests: 10 new `TrustedRootAuthorityTests`. Six failed on `b8d7a06` for the reviewed reasons. All pass on `ace8b77`, on dev Python and on `/usr/bin/python3` 3.9.6. Child, addon.xml, identifier, identity, version, home, and bundled path tests are unchanged and pass.
-- Focused modules (dev Python): test_frozen 37, test_create_capture 59, test_create_workflow 98, test_frozen_install 48, test_frozen_resolution 32, test_recorded_resolution_lifecycle 8, test_dependencies 148, test_status 102, all OK. Under Apple Python the same modules pass, except the pre-existing `assertNoLogs` error in test_create_workflow that the parent also has.
-- Full suite (dev Python): candidate `Ran 3266, FAILED (failures=2, errors=4)`; parent `b0835a2` `Ran 3256, FAILED (failures=2, errors=4, skipped=5)`. Failing and erroring names are identical (4 keychain errors and 2 known import-policy failures). Candidate-only and parent-only sets are empty.
-- Known residual limits (not blocking this correction):
-  1. Anchored reads are verified with synthetic filesystem fixtures. They are not live-proven against Kodi's real path forms.
-  2. The `KodiRuntimeDependencyBackend.read_addon_xml` fallback is unchanged, as requested. It fails closed.
-  3. The downstream ZIP-versus-recorded-edge defense is not added, as requested.
-- Not done: no Test.app staging or launch, no live Red Light database or private overlay access, no PIL sourcing, download, or import, no push, no release, no publication, no Agent Handoff.
-- Smallest next step: independent re-review of `ace8b77`, then the exact `script.module.pil` 5.1.0 artifact decision for the Item 8 fixture. Do not source 1.1.7.
-
-## Correction addenda (historical entries kept as written)
-
-- The stopped Item 8 fixture record said `script.module.pil` was absent from Test.app. That was a stopped-state probe limitation. Test.app's application bundle ships `script.module.pil` 5.1.0 under `Contents/Resources/Kodi/addons/`, and Red Light 2.6.8 requires `>= 1.1.7`, which 5.1.0 satisfies.
-- The earlier handoff said the bundled-capture defect was pending independent review of `b8d7a06`. That review returned NOT PASS on exactly one blocker: the ancestor replacement escape. `ace8b77` is the correction for that blocker, and it is pending re-review. Nothing is closed.
+- State: Phase-1 core semantics committed for independent review. **Not claimed CLOSED.** Acceptance criteria 1–20 self-verified; nothing pushed; `matrix` untouched. Item 8 and restart/resume remain OPEN. Publication stays unauthorized.
+- Start: `agent/claude` at `20b5477`, worktree clean. Expected starting HEAD matched.
+- Commits (local, unpushed):
+  - `d1ebfa0` — D-028 guidance only (`.orchestrator/DECISIONS.md`).
+  - `bddbe6f` — product plus tests (`resources/lib/{build_manager,create_capture,create_workflow,dependencies,frozen,frozen_install,frozen_resolution,plan,status}.py`; `tests/{test_build_manager,test_create_capture,test_create_workflow,test_dependencies,test_frozen,test_frozen_install,test_frozen_resolution,test_plan,test_status}.py`).
+  - This bookkeeping commit — `.agent/**` only.
+- Design implemented:
+  - Capture classifies origin in the same trusted-root read that obtains addon.xml (`InstalledMetadata`: HOME or APPLICATION). Platform nodes are recorded without acquisition, install, enable or disable.
+  - Frozen manifest schema 2 is emitted only when a platform node exists. Schema 1 bytes and fingerprints are unchanged (pinned in tests).
+  - One read-only verifier runs before any mutation, and again on resume and before COMPLETE. It fails closed on absence, home shadow, broken, disabled, unreadable or unverifiable metadata, insufficient or unparseable versions, an undeclared type, and unrepresented dependencies. Builtin minima need Kodi evidence.
+- Test results:
+  - RED (before product changes, 20b5477 plus RED tests): 366 run, 39 failing. Detail in `.qualification-evidence/platform-provided-core-20261009/PRE-FIX-RESULTS.txt`.
+  - Final focused, python3 3.10.9: 791 candidate vs 739 parent for the twelve modules, with only the baseline ImportPolicy failure.
+  - Apple `/usr/bin/python3` 3.9.6, same twelve modules: 832 run, 1 failure and 1 error. Both reproduce identically on the parent (the baseline ImportPolicy test, and the pre-existing `assertNoLogs`, which Python 3.9 lacks).
+  - Full suite: candidate 3318 vs parent 3266. Failure identities are identical (2 failures, 4 keychain errors). Zero candidate-only failures. The parent's 5 skips are environmental (scratch export lacks reviewed commit 8789329).
+- Live-proven vs unit-only:
+  - Unit-tested and synthetic only. No Kodi, no Test.app, no normal Kodi, no devices, no private overlay, no PIL artifact, no PIL sourcing.
+  - Not live-proven: builtin `xbmc.python` verification via `Addons.GetAddonDetails`; trusted application origin on a real Kodi; `Addons.GetAddons` path for bundled add-ons.
+- Risks and human decisions before the next step:
+  1. Independent review of `bddbe6f` is required before any CLOSED claim.
+  2. A bundled active skin (for example `skin.estuary`, if application-bundled) stays selectable but is refused by capture as a platform root. Decide whether bundled skins become platform requirements with settings capture (Phase 2).
+  3. Live proof needed for `xbmc.python` builtin evidence and for the trusted origin/type read on a real Kodi (no Test.app work was authorized here).
+  4. Judgment calls in the implementation, for review: platform nodes require non-empty trusted dependency edges (so dependency-free bundled add-ons are refused); observed disabled or broken platform nodes block capture; incoming minima from optional edges also apply; type proof uses the add-on's own addon.xml extension point rather than an unverified `GetAddonDetails` "type" property; `schema_version` booleans are rejected.
+  5. Plan preview and repository preparation fail closed for repository-current packages that depend on a platform node (no verified target version there).
+- Usage row: appended to `.agent/USAGE_HISTORY.md` (start unknown; end from `get_usage`).
+- Out of scope — noticed:
+  - `test_create_workflow.test_private_sentinels_absent_from_staging_logs_and_errors` uses `assertNoLogs` (absent on Python 3.9). Pre-existing; not changed.
+  - `test_plan.ImportPolicy` and `test_ui_foundation.NativeFoundationTests` fail on the parent too. Not changed.
+- Smallest next step: independent review of `bddbe6f` (with `d1ebfa0`), with focus on the verifier and the schema-2 invariants.
+- Phase-2 follow-ups (deferred presentation and wording, not built here): Plan row wording and a "Provided by Kodi" presentation; Status verified platform rows (currently uncheckable); Help text; localization; repository-preparation preview for platform-dependent packages; the bundled-skin decision.
