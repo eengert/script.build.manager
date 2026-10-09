@@ -279,6 +279,7 @@ class CreateBuildWorkflow:
 def runtime_create_workflow():
     """Lazy runtime composition; no host fallback, no ArtifactStore before confirmation."""
     import json
+    import os
     import xbmc
     import xbmcvfs
     from resources.lib.inspector import KodiStateInspector
@@ -301,8 +302,13 @@ def runtime_create_workflow():
         if not isinstance(path, str) or not os.path.isabs(path):
             raise CreateValidationError()
         return Path(path)
+    # Trusted bundled root for application add-ons. Fail closed rather than trust anything else.
+    application_addons = xbmcvfs.translatePath('special://xbmc/addons')
+    if not isinstance(application_addons, str) or not os.path.isabs(application_addons):
+        raise CreateValidationError()
     inventory = KodiInventoryBackend(rpc, addons_dir=Path(xbmcvfs.translatePath('special://home/addons')),
-        package_cache_dir=Path(xbmcvfs.translatePath('special://home/addons/packages')))
+        package_cache_dir=Path(xbmcvfs.translatePath('special://home/addons/packages')),
+        application_addons_dir=Path(application_addons))
     inspector = KodiStateInspector()
     def engine():
         resources = StructuredPrivateResourceManager()

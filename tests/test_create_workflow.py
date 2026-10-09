@@ -751,6 +751,38 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('name',calls[0]['params']['properties'])
             workflow.engine_factory();artifacts.assert_called_once();private.assert_not_called()
 
+    def test_runtime_composition_passes_trusted_application_addons_root(self):
+        import sys
+        from resources.lib.create_workflow import runtime_create_workflow
+        bundled = self.base / 'xbmc-addons'
+        def translate(uri):
+            if uri == 'special://xbmc/addons':
+                return str(bundled)
+            return str(self.base / uri.replace('special://', '').replace('/', '-'))
+        modules = {'xbmc': SimpleNamespace(executeJSONRPC=lambda raw: json.dumps({'result': {}})),
+                   'xbmcvfs': SimpleNamespace(translatePath=translate)}
+        with patch.dict(sys.modules, modules), patch('resources.lib.frozen.KodiInventoryBackend') as backend, \
+             patch('resources.lib.inspector.KodiStateInspector'), patch('resources.lib.artifacts.ArtifactStore'), \
+             patch('resources.lib.private_overlay.PrivateOverlayStore'):
+            runtime_create_workflow()
+        self.assertEqual(backend.call_args.kwargs['application_addons_dir'], bundled)
+
+    def test_runtime_composition_fails_closed_without_absolute_application_root(self):
+        import sys
+        from resources.lib.create_workflow import CreateValidationError, runtime_create_workflow
+        def translate(uri):
+            if uri == 'special://xbmc/addons':
+                return 'relative/xbmc-addons'
+            return str(self.base / uri.replace('special://', '').replace('/', '-'))
+        modules = {'xbmc': SimpleNamespace(executeJSONRPC=lambda raw: json.dumps({'result': {}})),
+                   'xbmcvfs': SimpleNamespace(translatePath=translate)}
+        with patch.dict(sys.modules, modules), patch('resources.lib.frozen.KodiInventoryBackend') as backend, \
+             patch('resources.lib.inspector.KodiStateInspector'), patch('resources.lib.artifacts.ArtifactStore'), \
+             patch('resources.lib.private_overlay.PrivateOverlayStore'):
+            with self.assertRaises(CreateValidationError):
+                runtime_create_workflow()
+        backend.assert_not_called()
+
     def test_localization_required(self):
         po=(Path(__file__).parents[1]/'resources/language/resource.language.en_gb/strings.po').read_text()
         for identifier in (*range(32700,32726),*range(32730,32740)):

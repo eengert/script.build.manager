@@ -14,12 +14,12 @@ from resources.lib.build_library import BuildLibrary, _validate_bundle
 from resources.lib.config import ConfigurationBackend, ConfigSettingType as T, ConfigBackendError
 from resources.lib.create_capture import (CreateBuildRequest, CreateBuildCaptureEngine, CreateCaptureStatus as S,
     PublicCaptureSpecification as Spec, PublicSettingTarget as Target, CreateRequestError, describe_capture)
-from resources.lib.frozen import InMemoryInventoryBackend, FrozenBuildManifest
+from resources.lib.frozen import InMemoryInventoryBackend, FrozenBuildManifest, KodiInventoryBackend
 from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind as K
 from resources.lib.private_resource import StructuredPrivateResourceManager
 from resources.lib.redlight_resource import RedLightSettingsAdapter
 from resources.lib.resolver import resolve_manifest
-from tests.test_frozen import _addon, _xml, _zip
+from tests.test_frozen import _addon, _kodi_entry, _kodi_rpc, _write_addon, _xml, _zip
 
 SECRET = 'PRIVATE_SENTINEL_NEVER_PUBLIC_792'
 ROOT = 'plugin.demo'
@@ -752,4 +752,58 @@ class CreateCaptureTests(unittest.TestCase):
         with patch('resources.lib.create_capture.capture_frozen_build', side_effect=corrupted):
             result = self.capture()
         self.assertEqual(result.status, S.FAILED)
+        self.assertIsNone(result.public_bundle)
+
+
+class BundledCreateCaptureTests(unittest.TestCase):
+    """Ordinary Create reads installed metadata through the real Kodi inventory backend."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        self.home = self.base / 'home' / 'addons'
+        self.application = self.base / 'application' / 'addons'
+        self.cache = self.base / 'packages'
+        for root in (self.home, self.application, self.cache):
+            root.mkdir(parents=True)
+        _write_addon(self.home, ROOT, imports=(('script.module.pil', '1.1.7', False),))
+        _write_addon(self.application, 'script.module.pil', version='5.1.0',
+                     imports=(('xbmc.python', '3.0.0', False),))
+        (self.cache / 'plugin.demo-1.0.0.zip').write_bytes(_zip(ROOT))
+        (self.cache / 'script.module.pil-5.1.0.zip').write_bytes(_zip('script.module.pil', '5.1.0'))
+        inventory = KodiInventoryBackend(
+            _kodi_rpc([
+                _kodi_entry(ROOT, 'special://home/addons/' + ROOT + '/', addon_type='xbmc.python.plugin.video'),
+                _kodi_entry('script.module.pil', 'special://xbmc/addons/script.module.pil/', '5.1.0'),
+            ]),
+            addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
+        )
+        self.store = ArtifactStore(self.base / 'artifacts')
+        self.config = Configuration()
+        self.state = SimpleNamespace(platform='macos', kodi_version='21.0', active_skin='')
+        self.engine = CreateBuildCaptureEngine(inventory=inventory, artifact_store=self.store,
+            configuration=self.config, inspect_state=lambda: self.state,
+            private_resources=StructuredPrivateResourceManager())
+        self.request = CreateBuildRequest('demo', '1.0.0', 'Demo', 'macos', 'Mac', 'desk', 'Desk',
+                                          (ROOT,), False, Spec(), 'captured')
+
+    def capture(self):
+        return self.engine.capture(self.request, created_at='2026-10-06T00:00:00Z')
+
+    def test_valid_bundled_dependency_completes_ordinary_create(self):
+        result = self.capture()
+        self.assertEqual(result.status, S.COMPLETE, result)
+        raw = result.public_bundle.to_dict()
+        frozen = {node['addon_id']: node for node in raw['frozen']['addons']}
+        self.assertEqual(frozen['script.module.pil']['version'], '5.1.0')
+        self.assertIsNotNone(frozen['script.module.pil']['artifact_sha256'])
+        self.assertTrue(frozen['xbmc.python']['system'])
+        self.assertEqual(result.missing_artifact_count, 0)
+
+    def test_unreadable_bundled_metadata_stays_incomplete_without_public_bundle(self):
+        (self.application / 'script.module.pil' / 'addon.xml').unlink()
+        result = self.capture()
+        self.assertEqual(result.status, S.INCOMPLETE)
+        self.assertEqual(result.gaps, ('SOFTWARE_INCOMPLETE',))
         self.assertIsNone(result.public_bundle)

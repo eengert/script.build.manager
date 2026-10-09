@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from resources.lib.artifacts import (
     validate_addon_zip,
 )
 from resources.lib.dependencies import _is_system_dependency
+from resources.lib.readonly_io import read_regular_file
 
 if TYPE_CHECKING:
     from resources.lib.frozen_resolution import FrozenBuildRecoverabilitySummary
@@ -255,7 +257,8 @@ class FrozenBuildCaptureResult:
 
     @property
     def complete(self) -> bool:
-        return self.manifest.capture_status == CaptureStatus.COMPLETE
+        # Any capture error is blocking, so it can never coexist with a complete graph.
+        return self.manifest.capture_status == CaptureStatus.COMPLETE and not self.errors
 
     @property
     def exact_frozen_coverage(self) -> Optional[str]:
@@ -460,12 +463,23 @@ class InMemoryInventoryBackend(InventoryBackend):
         return self.source_metadata
 
 
+_ADDON_XML_LIMIT = 1024 * 1024
+_SAFE_ADDON_COMPONENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,159}")
+_HOME_ADDONS_PREFIX = "special://home/addons/"
+_APPLICATION_ADDONS_PREFIX = "special://xbmc/addons/"
+
+
 class KodiInventoryBackend(InventoryBackend):
     """Read-only Kodi JSON-RPC/filesystem adapter.
 
     ``rpc`` must return the JSON-RPC result object, as the project's disposable
     harness does.  Internal database origin evidence is accepted only through
     the optional read-only ``origin_reader`` callback.
+
+    Installed ``addon.xml`` is read only from an explicit trusted root: the home
+    add-ons directory, and optionally the Kodi application add-ons directory
+    (``special://xbmc/addons``) for bundled add-ons. Kodi's reported path is
+    never authority by itself.
     """
 
     def __init__(
@@ -475,11 +489,17 @@ class KodiInventoryBackend(InventoryBackend):
         addons_dir: Path,
         package_cache_dir: Path,
         origin_reader: Optional[Callable[[str], Tuple[ProvenanceStatus, Mapping[str, str]]]] = None,
+        application_addons_dir: Optional[Path] = None,
     ):
         self.rpc = rpc
         self.addons_dir = Path(addons_dir).resolve()
         self.package_cache_dir = Path(package_cache_dir).resolve()
         self.origin_reader = origin_reader
+        if application_addons_dir is not None and not os.path.isabs(str(application_addons_dir)):
+            raise ValueError("application add-ons root must be an absolute path")
+        self.application_addons_dir = (
+            Path(application_addons_dir).resolve() if application_addons_dir is not None else None
+        )
 
     def get_installed_addons(self) -> Sequence[Mapping[str, object]]:
         result = self.rpc(
@@ -495,22 +515,77 @@ class KodiInventoryBackend(InventoryBackend):
         return tuple(item for item in addons if isinstance(item, Mapping))
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        # An identifier must be exactly one safe directory name, so it can never
+        # traverse out of a trusted root.
+        if not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id):
+            return None
         details = next(
             (item for item in self.get_installed_addons() if item.get("addonid") == addon_id),
             None,
         )
         path_value = details.get("path") if details else None
-        if isinstance(path_value, str) and path_value.startswith("special://home/addons/"):
-            target = self.addons_dir / path_value.split("special://home/addons/", 1)[1] / "addon.xml"
-        elif isinstance(path_value, str) and path_value:
-            target = Path(path_value).resolve() / "addon.xml"
-        else:
-            target = self.addons_dir / addon_id / "addon.xml"
-        try:
-            target.relative_to(self.addons_dir)
-            return target.read_bytes()
-        except (OSError, ValueError):
+        root = self._trusted_root(addon_id, path_value)
+        if root is None:
             return None
+        return self._read_addon_xml_in(root, addon_id)
+
+    def _trusted_roots(self) -> Tuple[Tuple[str, Path], ...]:
+        roots = [(_HOME_ADDONS_PREFIX, self.addons_dir)]
+        if self.application_addons_dir is not None:
+            roots.append((_APPLICATION_ADDONS_PREFIX, self.application_addons_dir))
+        return tuple(roots)
+
+    def _trusted_root(self, addon_id: str, path_value) -> Optional[Path]:
+        """Return the explicit trusted root that directly holds this add-on, or None.
+
+        A Kodi-reported special path must name exactly the requested add-on's
+        directory under a configured root. An absolute path must resolve, after
+        symlinks and ``..`` are removed, to ``<trusted root>/<addon_id>``. Any other
+        value, including traversal, sibling and prefix-confusion paths, is rejected.
+        """
+        if path_value is None or path_value == "":
+            return self.addons_dir
+        if not isinstance(path_value, str):
+            return None
+        for prefix, root in self._trusted_roots():
+            if path_value.startswith(prefix):
+                name = path_value[len(prefix):]
+                if name.endswith("/"):
+                    name = name[:-1]
+                return root if name == addon_id else None
+        if not os.path.isabs(path_value):
+            return None
+        try:
+            resolved = Path(path_value).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        for _, root in self._trusted_roots():
+            if resolved.parent == root and resolved.name == addon_id:
+                return root
+        return None
+
+    @staticmethod
+    def _read_addon_xml_in(root: Path, addon_id: str) -> Optional[bytes]:
+        """Read ``root/<addon_id>/addon.xml`` anchored to ``root``; no link is followed."""
+        try:
+            root_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            return None
+        try:
+            try:
+                directory_fd = os.open(
+                    addon_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd,
+                )
+            except OSError:
+                return None
+            try:
+                return read_regular_file("addon.xml", limit=_ADDON_XML_LIMIT, dir_fd=directory_fd)
+            except Exception:
+                return None
+            finally:
+                os.close(directory_fd)
+        finally:
+            os.close(root_fd)
 
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         if not self.package_cache_dir.is_dir():
@@ -594,6 +669,18 @@ class ArtifactAcquirer:
 _IMPORT_RE = re.compile(r"^import$")
 
 
+def _check_addon_xml_identity(xml_bytes: bytes, addon_id: str, installed_version) -> None:
+    """Refuse metadata that does not describe the inventory add-on it was read for."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise CaptureError(f"{addon_id}: malformed addon.xml") from exc
+    if root.tag.rsplit("}", 1)[-1] != "addon" or root.get("id") != addon_id:
+        raise CaptureError(f"{addon_id}: addon.xml identity does not match the installed add-on")
+    if isinstance(installed_version, str) and installed_version and root.get("version") != installed_version:
+        raise CaptureError(f"{addon_id}: addon.xml version does not match the installed add-on")
+
+
 def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[DependencyEdge, ...]:
     try:
         root = ET.fromstring(xml_bytes)
@@ -670,9 +757,13 @@ def capture_frozen_build(
         visiting.add(addon_id)
         xml_bytes = backend.read_addon_xml(addon_id)
         if xml_bytes is None:
+            # Required metadata absence blocks exactly like malformed metadata.
+            # Dependency edges are never inferred from inventory RPC data.
             errors.append(f"{addon_id}: addon.xml unavailable")
+            metadata_errors.add(addon_id)
         else:
             try:
+                _check_addon_xml_identity(xml_bytes, addon_id, raw.get("version"))
                 edges = _parse_dependency_edges(xml_bytes, addon_id)
                 edges_by_id[addon_id] = list(edges)
                 for edge in edges:
@@ -781,6 +872,11 @@ def capture_frozen_build(
             (node.status for node in blocking if node.status in set(CaptureStatus)),
             CaptureStatus.UNSUPPORTED,
         )
+    elif errors:
+        # Every capture error is blocking: metadata, identity, and closure
+        # failures make the recorded graph unreproducible, so the manifest
+        # itself must say so. Nothing downstream may launder it into COMPLETE.
+        overall = CaptureStatus.UNSUPPORTED
     else:
         overall = CaptureStatus.COMPLETE
     source = dict(backend.get_source_metadata())
