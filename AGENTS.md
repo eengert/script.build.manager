@@ -62,6 +62,14 @@ evidence.
   not require repeated full-suite runs; preserve valid full-suite evidence when
   the candidate source is unchanged. Record the checks relevant to this task.
 
+## End-of-task cleanup
+
+Before reporting completion, remove ephemeral material created by the task: temporary code copies/worktrees, mutation-test scratch trees, compiler or module caches, disposable logs/JSON/text files, and screenshots/recordings that are not retained qualification evidence. Do not leave large scratch artifacts in `/private/tmp`, the repository, or evidence directories after they stop serving the task.
+
+Preserve canonical or still-unaccepted qualification evidence, checksummed/manifesteed evidence, and the minimum screenshots/logs needed to support accepted claims. Never delete the only evidence copy and never use broad `git clean` or destructive cleanup. If classification is uncertain, keep the artifact and say so.
+
+Every final report must include a `Cleanup` line or section stating what was removed and what non-source artifacts intentionally remain.
+
 ## Handoff
 
 After completing a task, write a concise structured handoff to
