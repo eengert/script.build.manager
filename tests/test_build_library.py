@@ -1206,15 +1206,33 @@ class LibraryTests(unittest.TestCase):
                 self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
                 self.assertNotIn("status-overlay", repr(presentation).casefold())
 
-    def test_another_builds_overlay_id_never_renders_as_this_name(self):
+    def test_another_builds_overlay_id_does_not_hide_an_exactly_matching_name(self):
         self.raw["private_overlay"]["overlay_id"] = "other-overlay"
         self.register_named("Demo Pack", "owner")
         self.raw["private_overlay"]["overlay_id"] = "safe-overlay"
         borrower = self.register_named("other-overlay", "borrower")
-        self.library.select(borrower.entry_id, "desk")
-        presentation = build_presentation(self.library, None)
-        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
-        self.assertNotIn("other-overlay", repr(presentation))
+        self.record_applied(borrower)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("other-overlay", "1.0.0", "desk")))
+
+    def test_another_builds_short_overlay_id_does_not_hide_an_unrelated_name(self):
+        self.raw["private_overlay"]["overlay_id"] = "tv"
+        self.register_named("Demo Pack", "owner")
+        self.raw["private_overlay"]["overlay_id"] = "safe-overlay"
+        room = self.register_named("Family TV Room", "room")
+        self.record_applied(room)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertFalse(presentation.applied_unreadable)
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("Family TV Room", "1.0.0", "desk")))
+
+    def test_a_builds_own_short_overlay_id_still_hides_its_own_name(self):
+        self.raw["private_overlay"]["overlay_id"] = "tv"
+        entry = self.register_named("Family TV Room", "ownshort")
+        self.record_applied(entry)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertFalse(presentation.applied_unreadable)
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("", "1.0.0", "desk")))
+        self.assertNotIn("Family TV Room", repr(presentation))
 
     def test_ordinary_names_that_contain_former_reserved_words_render(self):
         for index, name in enumerate(("Family Room Transaction Test", "Token Refresh Lab",

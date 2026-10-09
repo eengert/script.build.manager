@@ -926,22 +926,19 @@ def default_status_target() -> Optional[StatusTarget]:
 
 
 def _presentation_identifiers(library, applied):
-    """Stored values that must never appear inside a shown build name.
+    """Global internal values that must never appear inside any shown build name.
 
-    Entry IDs, private overlay IDs (declared by each listed build's public manifest),
-    resolution fingerprints and publication transaction IDs are matched as
-    substrings. Build IDs are matched only as a whole name. Every lookup is
-    read-only, and a failed lookup contributes nothing.
+    Entry IDs, resolution fingerprints and publication transaction IDs are matched
+    as substrings. Build IDs are matched only as a whole name. A build's own private
+    overlay ID is NOT global: it is added per build in _identity, so one build's
+    overlay ID never hides another build's name. Every lookup is read-only, and a
+    failed lookup contributes nothing.
     """
     identifiers, exact = set(), set()
     try:
         for entry in library.list_builds():
             identifiers.add(entry.entry_id)
             exact.add(entry.build_id)
-            try:
-                identifiers |= library.private_identifiers(entry.entry_id)
-            except Exception:
-                pass
     except Exception:
         pass
     if applied is not None:
