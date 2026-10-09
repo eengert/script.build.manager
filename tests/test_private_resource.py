@@ -1,6 +1,7 @@
 """BM-017C fake structured-resource, Red Light schema, and secret-safety tests."""
 
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -19,6 +20,7 @@ from resources.lib.private_overlay import (
 )
 from resources.lib.private_resource import (
     PrivateResourceCompatibilityError,
+    PrivateResourceError,
     PrivateResourceLifecycleError,
     PrivateResourceNotInitializedError,
     PrivateResourceValidationError,
@@ -905,6 +907,262 @@ class StructuredResourceTest(unittest.TestCase):
         manifest = load_manifest_json(json.dumps(document))
         self.assertEqual(manifest.config.structured_private_resources[0].resource_id, REDLIGHT_RESOURCE_ID)
         self.assertNotIn(SECRET, json.dumps(document))
+
+
+_QUIET_ROWS = (
+    ("trakt.token", "string", "", "old-token"),
+    ("pm.token", "string", "", "old-pm"),
+    ("ordinary.preference", "string", "default", "keep-me"),
+    ("generated.name", "name", "", "generated"),
+    ("unknown.row", "string", "", "untouched"),
+)
+_QUIET_SCHEMA = (
+    "CREATE TABLE settings (setting_id text not null unique, setting_type text, "
+    "setting_default text, setting_value text)"
+)
+
+
+def _quiet_database_path(profile_root: Path) -> Path:
+    return profile_root / "addon_data" / REDLIGHT_ADDON_ID / "databases" / "settings.db"
+
+
+def _write_quiet_wal_database(database: Path, rows, *, create_sql=_QUIET_SCHEMA) -> Path:
+    """A populated WAL database cleanly closed with no -wal and no -shm sidecar."""
+    database.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute(create_sql)
+    connection.executemany(
+        "INSERT INTO settings VALUES (" + ", ".join("?" * len(rows[0])) + ")", rows,
+    )
+    connection.commit()
+    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    connection.close()
+    for suffix in ("-wal", "-shm"):
+        Path(str(database) + suffix).unlink(missing_ok=True)
+    return database
+
+
+def _store_files(database: Path) -> dict:
+    """Raw bytes of the store and its sidecars; reading them never writes."""
+    result = {}
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(str(database) + suffix)
+        result[suffix] = path.read_bytes() if path.exists() else None
+    return result
+
+
+def _settings_rows(database: Path) -> dict:
+    """Rows read from a private copy, so the store and its sidecars stay untouched."""
+    with tempfile.TemporaryDirectory() as temporary:
+        copy = Path(temporary) / "settings.db"
+        copy.write_bytes(database.read_bytes())
+        wal = Path(str(database) + "-wal")
+        if wal.exists():
+            Path(str(copy) + "-wal").write_bytes(wal.read_bytes())
+        connection = sqlite3.connect(copy)
+        try:
+            return {row[0]: row[1] for row in connection.execute("SELECT setting_id, setting_value FROM settings")}
+        finally:
+            connection.close()
+
+
+def _held_adapter(profile_root: Path) -> RedLightSettingsAdapter:
+    return RedLightSettingsAdapter(
+        profile_root,
+        lifecycle=ResourceLifecycle.QUIESCED,
+        initialized=True,
+        activation_hold_provider=lambda _addon_id: True,
+        enabled_state_provider=lambda _addon_id: False,
+    )
+
+
+class QuietWalReadCompatibilityTests(unittest.TestCase):
+    """Quiet-WAL (no -wal, no -shm) databases must read through production paths.
+
+    On the affected SQLite runtime (3.51.0, Apple Python 3.9.6) a read-only open of
+    a WAL database whose -wal file is absent fails, and the production read-only
+    checks reported the populated database as unverifiable. These tests build that
+    exact state with synthetic values only.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.database = _write_quiet_wal_database(_quiet_database_path(self.root), _QUIET_ROWS)
+        self.declaration = _declaration()
+        self.adapter = _held_adapter(self.root)
+        self.assertIsNone(_store_files(self.database)["-wal"])
+        self.assertIsNone(_store_files(self.database)["-shm"])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_quiet_wal_verify_matches_without_touching_the_store(self):
+        before = _store_files(self.database)
+        result = self.adapter.verify(
+            self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+        )
+        self.assertEqual(result.outcome, "applied")
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_quiet_wal_capture_reads_declared_fields(self):
+        before = _store_files(self.database)
+        overlay, _result = self.adapter.capture(self.declaration)
+        values = {value.field_id: value.value for value in overlay.values}
+        self.assertEqual(values["trakt.token"], "old-token")
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_quiet_wal_status_is_zero_touch_and_current(self):
+        before = _store_files(self.database)
+        result = self.adapter.inspect(
+            self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+        )
+        self.assertEqual(result.outcome, "applied")
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_quiet_wal_existing_resource_is_verified_and_never_reseeded(self):
+        before = _store_files(self.database)
+        rows_before = _settings_rows(self.database)
+        guards = {
+            name: patch.object(self.adapter, name, side_effect=AssertionError(f"{name} must not run"))
+            for name in ("_write_default_rows", "_ensure_settings_database",
+                         "_redlight_initializers", "_fresh_default_rows")
+        }
+        mocks = {}
+        for name, guard in guards.items():
+            mocks[name] = guard.start()
+        try:
+            result = self.adapter.initialize(self.declaration)
+        finally:
+            for guard in guards.values():
+                guard.stop()
+        self.assertEqual(result.outcome, "already_initialized")
+        for mock in mocks.values():
+            mock.assert_not_called()
+        self.assertFalse(self.adapter._settings_database_is_empty())
+        self.assertEqual(_settings_rows(self.database), rows_before)
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_quiet_wal_manager_apply_with_matching_overlay_makes_no_write(self):
+        before = _store_files(self.database)
+        manager = StructuredPrivateResourceManager({self.adapter.adapter_id: self.adapter})
+        (result,) = manager.apply(
+            (self.declaration,),
+            (_overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),),
+        )
+        self.assertEqual(result.outcome, "applied")
+        self.assertFalse(result.changed)
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_quiet_wal_drifting_overlay_updates_only_declared_rows(self):
+        overlay = _overlay(
+            StructuredPrivateValue("trakt.token", "string", SECRET),
+            StructuredPrivateValue("pm.token", "string", "fake-pm-token"),
+        )
+        result = self.adapter.apply(self.declaration, overlay)
+        self.assertTrue(result.succeeded)
+        self.assertTrue(result.changed)
+        self.assertNotIn(SECRET, json.dumps(result.to_dict()))
+        rows = _settings_rows(self.database)
+        self.assertEqual(rows["trakt.token"], SECRET)
+        self.assertEqual(rows["pm.token"], "fake-pm-token")
+        self.assertEqual(rows["ordinary.preference"], "keep-me")
+        self.assertEqual(rows["generated.name"], "generated")
+        self.assertEqual(rows["unknown.row"], "untouched")
+        self.assertEqual(self.adapter.verify(self.declaration, overlay).outcome, "applied")
+
+    def test_committed_wal_frames_are_read_by_production_and_refused_by_status(self):
+        writer = sqlite3.connect(self.database)
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("UPDATE settings SET setting_value = 'from-the-wal' WHERE setting_id = 'trakt.token'")
+        writer.commit()
+        try:
+            self.assertGreater(os.path.getsize(str(self.database) + "-wal"), 0)
+            before = _store_files(self.database)
+            current = self.adapter.verify(
+                self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "from-the-wal")),
+            )
+            self.assertEqual(current.outcome, "applied")
+            stale = self.adapter.verify(
+                self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+            )
+            self.assertEqual(stale.outcome, "not_applied")
+            with self.assertRaises(PrivateResourceCompatibilityError):
+                self.adapter.inspect(
+                    self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "from-the-wal")),
+                )
+            # Production reads work on a private copy, so the live -shm read
+            # marks are not rewritten either; Status refuses without touching it.
+            self.assertEqual(_store_files(self.database), before)
+        finally:
+            writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            writer.close()
+
+    def test_quiet_wal_unsupported_schema_fails_closed_without_initialization(self):
+        self.database.unlink()
+        _write_quiet_wal_database(
+            self.database,
+            (("trakt.token", "old-token"),),
+            create_sql="CREATE TABLE settings (setting_id text, setting_value text)",
+        )
+        before = _store_files(self.database)
+        overlay = _overlay(StructuredPrivateValue("trakt.token", "string", SECRET))
+        with patch.object(self.adapter, "_write_default_rows", side_effect=AssertionError("must not seed")) as seed:
+            with self.assertRaises(PrivateResourceCompatibilityError) as verified:
+                self.adapter.verify(self.declaration, overlay)
+            self.assertIn("schema is unsupported", str(verified.exception))
+            with self.assertRaises(PrivateResourceError) as initialized:
+                self.adapter.initialize(self.declaration)
+            seed.assert_not_called()
+        self.assertNotIn(SECRET, repr(initialized.exception))
+        self.assertNotIn(SECRET, str(verified.exception))
+        self.assertEqual(_store_files(self.database), before)
+
+    def test_profile_paths_with_uri_special_characters_are_read_exactly(self):
+        special = self.root / "profile with space #hash ?query %41"
+        _write_quiet_wal_database(_quiet_database_path(special), _QUIET_ROWS)
+        adapter = _held_adapter(special)
+        before_listing = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
+        verified = adapter.verify(
+            self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+        )
+        probed = adapter.inspect(
+            self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+        )
+        self.assertEqual(verified.outcome, "applied")
+        self.assertEqual(probed.outcome, "applied")
+        after_listing = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
+        self.assertEqual(after_listing, before_listing)
+
+    def test_concurrent_store_change_during_a_production_read_is_refused(self):
+        original = self.adapter._read_snapshot_files
+        reads = []
+
+        def change_underneath(directory):
+            data = original(directory)
+            reads.append(None)
+            if len(reads) == 1:
+                writer = sqlite3.connect(self.database)
+                writer.execute("UPDATE settings SET setting_value = 'changed-underneath' WHERE setting_id = 'trakt.token'")
+                writer.commit()
+                writer.close()
+            return data
+
+        self.adapter._read_snapshot_files = change_underneath
+        try:
+            with self.assertRaises(PrivateResourceCompatibilityError) as raced:
+                self.adapter.verify(
+                    self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "old-token")),
+                )
+        finally:
+            del self.adapter._read_snapshot_files
+        self.assertIn("unstable", str(raced.exception))
+        self.assertNotIn("changed-underneath", str(raced.exception))
+        result = self.adapter.verify(
+            self.declaration, _overlay(StructuredPrivateValue("trakt.token", "string", "changed-underneath")),
+        )
+        self.assertEqual(result.outcome, "applied")
 
 
 if __name__ == "__main__":

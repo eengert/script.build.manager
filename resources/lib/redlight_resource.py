@@ -382,21 +382,15 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
 
     def _has_settings_rows(self) -> bool:
         """Read only whether the owner settings table has at least one row."""
-        connection = None
         try:
-            uri = f"file:{self.database_path}?mode=ro"
-            connection = sqlite3.connect(uri, uri=True, timeout=0.5)
-            self._validate_schema(connection)
-            return connection.execute(
-                "SELECT 1 FROM settings LIMIT 1"
-            ).fetchone() is not None
+            with self._read_connection() as connection:
+                return connection.execute(
+                    "SELECT 1 FROM settings LIMIT 1"
+                ).fetchone() is not None
         except sqlite3.Error:
             raise PrivateResourceCompatibilityError(
                 "Red Light settings rows cannot be verified safely"
             ) from None
-        finally:
-            if connection is not None:
-                connection.close()
 
     @staticmethod
     def _fresh_default_rows(default_settings, new_setting_value):
@@ -696,39 +690,53 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
             return False
         return len(header) == 20 and header[18] == 2 and header[19] == 2
 
-    def _verify_database(self, probe: bool = False) -> str:
-        """Verify the store; returns the read-only URI the caller should reuse."""
+    @contextmanager
+    def _read_connection(self, probe: bool = False):
+        """The one verified, read-only connection for Red Light settings reads.
+
+        A status read (``probe``) keeps its immutable read of the main file. It
+        refuses pending WAL frames and touches nothing beside the store.
+
+        Every other read uses a private copy of the store's stable committed
+        bytes. SQLite's normal WAL path then reads committed frames, and a
+        database whose -wal file is absent is readable: a read-only open cannot
+        create that file on the affected SQLite build. The store and its sidecars
+        are never opened or written by these reads.
+        """
         if not self.database_path.is_file():
             raise PrivateResourceNotInitializedError(
                 "Red Light settings database is absent"
             )
-        connection = None
-        try:
-            uri = self._probe_uri() if probe else f"file:{self.database_path}?mode=ro"
-            connection = sqlite3.connect(uri, uri=True, timeout=0.5)
-            if probe:
-                # Immutable connections do not use WAL, so judge the audited
-                # journal mode from the file header instead of the pragma.
-                wal = self._header_declares_wal()
-            else:
-                wal = str(
-                    connection.execute("PRAGMA journal_mode").fetchone()[0]
-                ).lower() == "wal"
-            if not wal:
+        with ExitStack() as stack:
+            try:
+                if probe:
+                    connection = sqlite3.connect(self._probe_uri(), uri=True, timeout=0.5)
+                    stack.callback(connection.close)
+                    # Immutable connections do not use WAL, so judge the audited
+                    # journal mode from the file header instead of the pragma.
+                    wal = self._header_declares_wal()
+                else:
+                    connection = stack.enter_context(self._private_copy_connection())
+                    wal = str(
+                        connection.execute("PRAGMA journal_mode").fetchone()[0]
+                    ).lower() == "wal"
+                if not wal:
+                    raise PrivateResourceCompatibilityError(
+                        "Red Light settings database is not using audited WAL mode"
+                    )
+                self._validate_schema(connection)
+            except PrivateResourceError:
+                raise
+            except sqlite3.Error:
                 raise PrivateResourceCompatibilityError(
-                    "Red Light settings database is not using audited WAL mode"
-                )
-            self._validate_schema(connection)
-        except PrivateResourceCompatibilityError:
-            raise
-        except sqlite3.Error as exc:
-            raise PrivateResourceCompatibilityError(
-                "Red Light settings database cannot be verified safely"
-            ) from None
-        finally:
-            if connection is not None:
-                connection.close()
-        return uri
+                    "Red Light settings database cannot be verified safely"
+                ) from None
+            yield connection
+
+    def _verify_database(self, probe: bool = False) -> None:
+        """Verify WAL mode and the audited schema through the shared read path."""
+        with self._read_connection(probe):
+            return None
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -738,19 +746,6 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         declared_types = tuple(str(row[2]).lower() for row in connection.execute("PRAGMA table_info(settings)"))
         if declared_types != ("text", "text", "text", "text"):
             raise PrivateResourceCompatibilityError("Red Light settings column types are unsupported")
-
-    def _open_read_only(self) -> sqlite3.Connection:
-        self._validate_lifecycle()
-        uri = f"file:{self.database_path}?mode=ro"
-        connection = None
-        try:
-            connection = sqlite3.connect(uri, uri=True, timeout=0.5)
-            self._validate_schema(connection)
-            return connection
-        except sqlite3.Error as exc:
-            if connection is not None:
-                connection.close()
-            raise PrivateResourceCompatibilityError("Red Light settings database cannot be read safely") from exc
 
     @staticmethod
     def _snapshot_signature(info):
@@ -787,15 +782,15 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                      for name in ("settings.db", "settings.db-wal"))
 
     @contextmanager
-    def _capture_snapshot(self):
-        """Query only a disposable copy of stable, current committed DB/WAL bytes.
+    def _private_copy_connection(self, *, check_lifecycle: bool = False):
+        """A read-only connection to a private copy of the store's stable committed bytes.
 
-        One attempt, two complete reads, and before/between/after inode/time/size
-        checks detect changes or replacement. Ancestor identities are rechecked
-        through fresh no-follow descriptors. SHM is never read or copied.
+        One attempt with two complete reads. Inode, size, and time identities are
+        compared before, between, and after the reads, and ancestor identities are
+        rechecked through fresh no-follow descriptors, so a concurrent change fails
+        closed. A missing -wal becomes an empty placeholder, which holds no pending
+        frames. -shm is never read or copied, so the store is never written beside.
         """
-        self._validate_lifecycle()
-        connection = None
         try:
             with self._snapshot_source_directory() as (directory, ancestors):
                 before = self._snapshot_state(directory)
@@ -807,33 +802,40 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
                     current_state = self._snapshot_state(current)
                 if (before != middle or before != after or before != current_state
                         or ancestors != current_ancestors or data != again or data[0] is None):
-                    raise PrivateResourceCompatibilityError("Red Light capture snapshot is unstable")
+                    raise PrivateResourceCompatibilityError("Red Light settings snapshot is unstable")
+
             def require_unchanged():
                 with self._snapshot_source_directory() as (current, current_ancestors):
                     if (ancestors != current_ancestors
                             or before != self._snapshot_state(current)):
-                        raise PrivateResourceCompatibilityError("Red Light capture snapshot is unstable")
-                self._validate_lifecycle()
+                        raise PrivateResourceCompatibilityError("Red Light settings snapshot is unstable")
+                if check_lifecycle:
+                    self._validate_lifecycle()
 
             require_unchanged()
-            with tempfile.TemporaryDirectory(prefix="bm-redlight-capture-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="bm-redlight-read-") as temporary:
                 copy = Path(temporary) / "settings.db"
                 copy.write_bytes(data[0])
-                if data[1] is not None:
-                    Path(str(copy) + "-wal").write_bytes(data[1])
+                Path(str(copy) + "-wal").write_bytes(data[1] or b"")
+                connection = sqlite3.connect(copy.as_uri() + "?mode=ro", uri=True, timeout=0.5)
                 try:
-                    connection = sqlite3.connect(copy.as_uri() + "?mode=ro", uri=True, timeout=0.5)
-                    self._validate_schema(connection)
-                    if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
-                        raise PrivateResourceCompatibilityError("Red Light capture snapshot is inconsistent")
                     require_unchanged()
                     yield connection
                     require_unchanged()
                 finally:
-                    if connection is not None:
-                        connection.close()
+                    connection.close()
         except (OSError, sqlite3.Error):
-            raise PrivateResourceCompatibilityError("Red Light capture snapshot cannot be read safely") from None
+            raise PrivateResourceCompatibilityError("Red Light settings snapshot cannot be read safely") from None
+
+    @contextmanager
+    def _capture_snapshot(self):
+        """Query only a disposable copy of stable, current committed DB/WAL bytes."""
+        self._validate_lifecycle()
+        with self._private_copy_connection(check_lifecycle=True) as connection:
+            self._validate_schema(connection)
+            if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                raise PrivateResourceCompatibilityError("Red Light capture snapshot is inconsistent")
+            yield connection
 
     def _verify_overlay_values(
         self,
@@ -841,45 +843,39 @@ class RedLightSettingsAdapter(StructuredPrivateResourceAdapter):
         overlay: StructuredPrivateResourceOverlay,
         probe: bool = False,
     ) -> StructuredResourceResult:
-        uri = self._verify_database(probe)
-        connection = None
         results = []
         matched = True
         try:
-            connection = sqlite3.connect(uri, uri=True, timeout=0.5)
-            self._validate_schema(connection)
-            for value in overlay.values:
-                row = connection.execute(
-                    "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
-                    (value.field_id,),
-                ).fetchone()
-                if row is None:
-                    matched = False
+            with self._read_connection(probe) as connection:
+                for value in overlay.values:
+                    row = connection.execute(
+                        "SELECT setting_type, setting_value FROM settings WHERE setting_id = ?",
+                        (value.field_id,),
+                    ).fetchone()
+                    if row is None:
+                        matched = False
+                        results.append(ResourceFieldResult(
+                            value.field_id, "missing", False, False,
+                            "declared field is not initialized",
+                        ))
+                        continue
+                    if str(row[0]).lower() != "string":
+                        raise PrivateResourceCompatibilityError(
+                            "Red Light field type is unsupported"
+                        )
+                    same = row[1] == value.value
+                    matched = matched and same
                     results.append(ResourceFieldResult(
-                        value.field_id, "missing", False, False,
-                        "declared field is not initialized",
+                        value.field_id,
+                        "unchanged" if same else "mismatch",
+                        same,
+                        False,
+                        "field was verified" if same else "declared field needs configuration",
                     ))
-                    continue
-                if str(row[0]).lower() != "string":
-                    raise PrivateResourceCompatibilityError(
-                        "Red Light field type is unsupported"
-                    )
-                same = row[1] == value.value
-                matched = matched and same
-                results.append(ResourceFieldResult(
-                    value.field_id,
-                    "unchanged" if same else "mismatch",
-                    same,
-                    False,
-                    "field was verified" if same else "declared field needs configuration",
-                ))
         except sqlite3.Error as exc:
             raise PrivateResourceCompatibilityError(
                 "Red Light settings values cannot be verified safely"
             ) from exc
-        finally:
-            if connection is not None:
-                connection.close()
         return StructuredResourceResult(
             REDLIGHT_RESOURCE_ID,
             "applied" if matched else "not_applied",

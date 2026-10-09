@@ -3,6 +3,7 @@ import base64
 from dataclasses import replace
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -481,8 +482,14 @@ class CreateCaptureTests(unittest.TestCase):
                         directory = original(**kwargs)
                         scratch.append(Path(directory.name))
                         return directory
+                    live_database = str(adapter.database_path)
+                    real_connect = sqlite3.connect
+                    def connect_without_live_store(target, *args, **kwargs):
+                        if live_database in str(target):
+                            raise AssertionError("live SQLite")
+                        return real_connect(target, *args, **kwargs)
                     with patch("resources.lib.redlight_resource.tempfile.TemporaryDirectory", side_effect=temporary), \
-                         patch.object(adapter, "_open_read_only", side_effect=AssertionError("live SQLite")), \
+                         patch("resources.lib.redlight_resource.sqlite3.connect", side_effect=connect_without_live_store), \
                          patch("logging.Logger._log") as log:
                         result = case.capture()
                     case.assertEqual(case.live_database_state(adapter), before)
