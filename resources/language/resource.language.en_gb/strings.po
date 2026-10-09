@@ -262,7 +262,7 @@ msgid "Some changes only finish after Kodi starts again.\n\nWhat you'll do\n• 
 msgstr ""
 
 msgctxt "#32308"
-msgid "If something goes wrong, start here.\n\nNeeds Attention\n• Open View Problem\n• Use the action it suggests\n• If there isn't one, close Build Manager and try again later\n\nCan't find an add-on\n• Add the saved version yourself, or check again\n• Only use another version if the build allows it\n\nSomething wasn't saved\n• See what is missing\n• Create a new version after you fix it\n\nCouldn't confirm the result\n• See what failed\n• Use Review Changes to try again\n\nRestart Required\n• Fully close Kodi and open it again\n\nGood to know\n• Don't delete saved progress\n• Don't turn add-ons on by hand to get past a problem\n• Private settings are never shown"
+msgid "If something goes wrong, start here.\n\nNeeds Attention\n• Open Build Status and select Overall\n• Read the problem details\n• If it still needs attention, close Build Manager and try again later\n\nCan't find an add-on\n• Add the saved version yourself, or check again\n• Only use another version if the build allows it\n\nSomething wasn't saved\n• See what is missing\n• Create a new version after you fix it\n\nCouldn't confirm the result\n• See what failed\n• Use Review Changes to try again\n\nRestart Required\n• Fully close Kodi and open it again\n\nGood to know\n• Don't delete saved progress\n• Don't turn add-ons on by hand to get past a problem\n• Private settings are never shown"
 msgstr ""
 
 msgctxt "#32309"

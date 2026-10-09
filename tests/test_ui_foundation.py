@@ -181,6 +181,31 @@ class HelpCopyTests(unittest.TestCase):
     def test_restart_is_manual(self):
         r=self.s[32307]
         self.assertIn('Fully close Kodi',r); self.assertIn('does not reopen Kodi for you',r)
+    def test_needs_attention_help_names_only_the_real_build_status_route(self):
+        # Build Status -> Overall is the real route; no View Problem control exists.
+        problems=self.s[32308]
+        self.assertNotIn('View Problem',problems)
+        block=next(p for p in problems.split('\n\n') if p.startswith('Needs Attention'))
+        self.assertIn('Build Status',block); self.assertIn('select Overall',block)
+        self.assertIn('Read the problem details',block)
+        self.assertIn('If it still needs attention, close Build Manager and try again later',block)
+        for t in BANNED_HELP_TERMS: self.assertNotIn(t,block.lower(),t)
+        # The rest of the page is unchanged; only the Needs Attention subsection differs.
+        self.assertEqual(problems,
+            'If something goes wrong, start here.\n\n'
+            'Needs Attention\n• Open Build Status and select Overall\n'
+            '• Read the problem details\n'
+            '• If it still needs attention, close Build Manager and try again later\n\n'
+            "Can't find an add-on\n• Add the saved version yourself, or check again\n"
+            '• Only use another version if the build allows it\n\n'
+            "Something wasn't saved\n• See what is missing\n"
+            '• Create a new version after you fix it\n\n'
+            "Couldn't confirm the result\n• See what failed\n"
+            '• Use Review Changes to try again\n\n'
+            'Restart Required\n• Fully close Kodi and open it again\n\n'
+            'Good to know\n• Don\'t delete saved progress\n'
+            "• Don't turn add-ons on by hand to get past a problem\n"
+            '• Private settings are never shown')
 
 
 class AddonMetadataTests(unittest.TestCase):
