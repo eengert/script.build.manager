@@ -1066,3 +1066,97 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(status.presentation, BuildPresentation(
             applied=BuildIdentity("Demo", "1.0.0", "desk"),
             selected=BuildIdentity("Demo", "2.0.0", "other")))
+
+    # -- Presentation-safe build labels (independent review correction) ---------------
+
+    def register_named(self, name, build_id):
+        """A valid build whose public display name is ``name``; omitted when ``name`` is None."""
+        if name is None:
+            self.raw["build"].pop("name", None)
+        else:
+            self.raw["build"]["name"] = name
+        self.raw["build"]["id"] = build_id
+        frozen_name = name if name else "Frozen Demo"
+        self.frozen = FrozenBuildManifest(1, build_id, frozen_name, "2026-10-06T00:00:00Z", "21.0",
+                                          "macos", CaptureStatus.COMPLETE, (), ("shared",))
+        self.write_sources()
+        return self.register()
+
+    def test_valid_slash_name_stays_readable_and_recognizable(self):
+        entry = self.register_named("Movies / TV", "slash")
+        self.library.select(entry.entry_id, "desk")
+        presentation = build_presentation(self.library, None)
+        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("Movies / TV", "1.0.0", "desk")))
+
+    def test_valid_long_name_stays_readable_and_is_bounded(self):
+        entry = self.register_named("Movie Collection Edition " * 3, "long")
+        self.library.select(entry.entry_id, "desk")
+        presentation = build_presentation(self.library, None)
+        self.assertFalse(presentation.selection_unreadable)
+        shown = presentation.selected.name
+        self.assertTrue(shown.startswith("Movie Collection"))
+        self.assertTrue(shown.endswith("..."))
+        self.assertLessEqual(len(shown), 48)
+
+    def test_omitted_or_empty_name_is_a_valid_identity_with_neutral_fallback(self):
+        omitted = self.register_named(None, "omitted")
+        self.record_applied(omitted)
+        self.assertEqual(build_presentation(self.library, self.library.associated_status_target()),
+                         BuildPresentation(applied=BuildIdentity("", "1.0.0", "desk")))
+        empty = self.register_named("", "emptyname")
+        self.library.select(empty.entry_id, "other")
+        self.assertEqual(build_presentation(self.library, self.library.associated_status_target()),
+                         BuildPresentation(applied=BuildIdentity("", "1.0.0", "desk"),
+                                           selected=BuildIdentity("", "1.0.0", "other")))
+
+    def test_a_name_equal_to_another_builds_entry_id_never_renders(self):
+        other = self.register_named("Demo Pack", "other")
+        entry = self.register_named(other.entry_id, "idname")
+        self.library.select(entry.entry_id, "desk")
+        presentation = build_presentation(self.library, None)
+        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
+        self.assertNotIn(other.entry_id, repr(presentation))
+
+    def test_hash_and_uuid_shaped_names_never_render_raw(self):
+        for index, name in enumerate(("9f" * 32, "0123456789" * 6, "123e4567-e89b-12d3-a456-426614174000")):
+            with self.subTest(name=name[:12]):
+                entry = self.register_named(name, f"shape{index}")
+                self.library.select(entry.entry_id, "desk")
+                presentation = build_presentation(self.library, None)
+                self.assertEqual(presentation.selected, BuildIdentity("", "1.0.0", "desk"))
+                self.assertNotIn(name, repr(presentation))
+
+    def test_path_like_names_fall_back_without_exposing_a_path(self):
+        for index, name in enumerate(("/Users/eengert/Movies", "~/Movies", "C:\\Users\\eengert\\x",
+                                      "file:///tmp/x", "builds/movies/pack", "Movies\\TV")):
+            with self.subTest(name=name):
+                entry = self.register_named(name, f"path{index}")
+                self.library.select(entry.entry_id, "desk")
+                presentation = build_presentation(self.library, None)
+                self.assertEqual(presentation.selected, BuildIdentity("", "1.0.0", "desk"))
+                self.assertFalse(presentation.selection_unreadable)
+                self.assertNotIn(name, repr(presentation))
+
+    def test_same_entry_with_a_different_profile_shows_applied_and_selected_distinctly(self):
+        entry = self.register_named("Demo", "sameentry")
+        self.record_applied(entry, "desk")
+        self.library.select(entry.entry_id, "other")
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(
+            applied=BuildIdentity("Demo", "1.0.0", "desk"),
+            selected=BuildIdentity("Demo", "1.0.0", "other")))
+
+    def test_complete_status_presentation_never_renders_identifiers_paths_or_secrets(self):
+        from resources.lib.ui.status_view import StatusViewModel
+        applied_entry = self.register_named("Demo", "complete")
+        applied = self.record_applied(applied_entry)
+        leaking = self.register_named(applied_entry.entry_id, "leak")
+        self.library.select(leaking.entry_id, "other")
+        target = self.library.associated_status_target()
+        harness = PlanHarness(self, with_private=False, with_resource=False)
+        base = BuildStatusService(harness.owners(resolver=resolve_manifest)).check(target)
+        status = replace(base, presentation=build_presentation(self.library, target))
+        rendered = repr(StatusViewModel.from_status(status).rows)
+        for hidden in (applied_entry.entry_id, leaking.entry_id, applied.resolution_fingerprint,
+                       str(self.root), str(self.base), "safe-overlay", "transaction", SECRET, DB_SECRET):
+            self.assertNotIn(hidden, rendered)

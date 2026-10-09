@@ -34,6 +34,7 @@ S_DEVICE_PROFILE = 32557                                 # "Device profile: %s"
 S_CHECKS_FOR_APPLIED = 32558
 S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE = 32559, 32560
 S_SELECTED_UNREADABLE = 32561
+S_UNNAMED_BUILD = 32562                                  # "Unnamed build %s": version
 
 OVERALL_LABEL = {
     OverallStatus.CURRENT: 32430, OverallStatus.CHANGES_NEEDED: 32431,
@@ -91,7 +92,7 @@ STATUS_TEXT_IDS = frozenset(
      S_PRIVATE_NONE, S_PROTECTION, S_CHECKED_AT, 32103, 32112,
      S_APPLIED_LABEL, S_SELECTED_LABEL, S_BUILD_NAME, S_NOT_APPLIED_STATE, S_NO_BUILD_APPLIED,
      S_BUILD_UNREADABLE, S_APPLIED_UNREADABLE, S_DEVICE_PROFILE, S_CHECKS_FOR_APPLIED,
-     S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE, S_SELECTED_UNREADABLE]
+     S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE, S_SELECTED_UNREADABLE, S_UNNAMED_BUILD]
     + list(OVERALL_LABEL.values()) + list(OVERALL_SENTENCE.values())
     + list(AREA_STATE.values()) + list(GAP_TEXT.values()) + list(ITEM_STATE.values())
     + list(PRIVATE_KIND.values()) + list(OPERATION_TEXT.values())
@@ -169,8 +170,11 @@ class StatusViewModel:
                    status.checked_time_label())
 
 
-def _name_and_version(build):
-    return build.name + ' ' + build.version
+def _build_label(build):
+    """A safe display name with its version, or the neutral fallback when the name is empty."""
+    if build.name:
+        return Text(S_BUILD_NAME, name=build.name + ' ' + build.version)
+    return Text(S_UNNAMED_BUILD, name=build.version)
 
 
 def _build_rows(presentation):
@@ -184,7 +188,7 @@ def _build_rows(presentation):
         detail = [Text(S_DEVICE_PROFILE, name=presentation.applied.profile)] if presentation.applied.profile else []
         detail.append(Text(S_CHECKS_FOR_APPLIED))
         rows.append(StatusRow(Text(S_APPLIED_LABEL),
-                              Text(S_BUILD_NAME, name=_name_and_version(presentation.applied)),
+                              _build_label(presentation.applied),
                               tuple(detail)))
     elif presentation.applied_unreadable:
         rows.append(StatusRow(Text(S_APPLIED_LABEL), Text(S_BUILD_UNREADABLE),
@@ -193,7 +197,7 @@ def _build_rows(presentation):
         rows.append(StatusRow(Text(S_APPLIED_LABEL), Text(S_NOT_APPLIED_STATE),
                               (Text(S_NO_BUILD_APPLIED),)))
     if presentation.selected is not None:
-        detail = [Text(S_BUILD_NAME, name=_name_and_version(presentation.selected))]
+        detail = [_build_label(presentation.selected)]
         if presentation.selected.profile:
             detail.append(Text(S_DEVICE_PROFILE, name=presentation.selected.profile))
         detail.append(Text(S_SELECTED_NOTE))

@@ -621,6 +621,10 @@ msgctxt "#32561"
 msgid "The saved selection could not be read safely. It is not applied and does not change this status."
 msgstr ""
 
+msgctxt "#32562"
+msgid "Unnamed build %s"
+msgstr ""
+
 msgctxt "#32600"
 msgid "Review Changes"
 msgstr ""

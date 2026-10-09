@@ -87,6 +87,7 @@ from resources.lib.status_model import (
     AreaLevel,
     BuildIdentity,
     BuildPresentation,
+    build_display_name,
     BuildStatus,
     CheckGap,
     ConfigurationStatus,
@@ -924,24 +925,64 @@ def default_status_target() -> Optional[StatusTarget]:
         return None
 
 
+def _presentation_identifiers(library, applied):
+    """Stored values that must never appear inside a shown build name.
+
+    Entry IDs, resolution fingerprints and publication transaction IDs are matched
+    as substrings. Build IDs are matched only as a whole name. Every lookup is
+    read-only, and a failed lookup contributes nothing.
+    """
+    identifiers, exact = set(), set()
+    try:
+        for entry in library.list_builds():
+            identifiers.add(entry.entry_id)
+            exact.add(entry.build_id)
+    except Exception:
+        pass
+    if applied is not None:
+        identifiers.add(applied.resolution_fingerprint)
+    try:
+        journal = library.publication_journal()
+    except Exception:
+        journal = None
+    if journal is not None:
+        identifiers.add(journal.transaction_id)
+        for association in (journal.candidate, journal.previous):
+            if association is not None:
+                identifiers.update((association.entry_id, association.resolution_fingerprint))
+    return frozenset(identifiers), frozenset(exact)
+
+
+def _identity(entry, profile, identifiers, exact):
+    """A valid build always yields an identity. Only its display name can fall back."""
+    name = build_display_name(entry.display_name, identifiers=identifiers, exact=exact)
+    return BuildIdentity(name, entry.build_version, profile)
+
+
 def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresentation:
     """Applied and saved-selection identities for display. Never a comparison input.
 
     ``target`` is the verified applied association, the same authority the health
     check uses; it alone decides what counts as applied. The saved selection is
-    read separately, read-only, and shown only as context. Anything that cannot be
-    named safely is reported as unreadable, with no internal detail.
+    read separately, read-only, and shown only as context. A build that cannot be
+    read is reported as unreadable, with no internal detail. A build that can be
+    read but has an unsafe display name keeps its identity and shows the neutral
+    name fallback.
     """
     applied = None
     applied_unreadable = False
     applied_key = None
+    applied_association = None
     if target is not None:
-        if target.applied_association is None:
+        applied_association = target.applied_association
+        if applied_association is None:
             raise ValueError("presentation needs the verified applied association")
-        applied_key = (target.applied_association.entry_id, target.device_profile_id)
+        applied_key = (applied_association.entry_id, target.device_profile_id)
+    identifiers, exact = _presentation_identifiers(library, applied_association)
+    if target is not None:
         try:
-            entry = library.get(target.applied_association.entry_id)
-            applied = BuildIdentity(entry.display_name, entry.build_version, target.device_profile_id)
+            entry = library.get(applied_association.entry_id)
+            applied = _identity(entry, target.device_profile_id, identifiers, exact)
         except Exception:
             applied_unreadable = True
     selected = None
@@ -954,7 +995,7 @@ def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresenta
             entry = library.get(saved.entry_id)
             if saved.device_profile_id not in entry.device_profiles:
                 raise ValueError("selection profile is not in the build")
-            selected = BuildIdentity(entry.display_name, entry.build_version, saved.device_profile_id)
+            selected = _identity(entry, saved.device_profile_id, identifiers, exact)
         except Exception:
             selection_unreadable = True
     return BuildPresentation(applied, applied_unreadable, selected, selection_unreadable)

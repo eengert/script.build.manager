@@ -326,7 +326,7 @@ class Language(unittest.TestCase):
     def test_every_status_string_exists_and_is_plain(self):
         for identifier in sorted(STATUS_TEXT_IDS):
             self.assertIn(identifier, STRINGS, identifier)
-        for identifier in range(32401, 32562):
+        for identifier in range(32401, 32563):
             if identifier not in STRINGS:
                 continue
             lowered = STRINGS[identifier].lower()
@@ -334,8 +334,8 @@ class Language(unittest.TestCase):
                 self.assertNotIn(term, lowered, (identifier, term))
 
     def test_the_status_blocks_are_all_used(self):
-        defined = {i for i in STRINGS if 32401 <= i <= 32561}
-        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32562)))
+        defined = {i for i in STRINGS if 32401 <= i <= 32562}
+        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32563)))
 
     def test_every_view_text_renders_without_falling_back_to_a_raw_template(self):
         ui = NativeDialogs(Addon(), Dialog([]), lambda ms: None)
@@ -541,7 +541,7 @@ class AppliedAndSelected(unittest.TestCase):
         self.assertEqual(ui.render(StatusViewModel.from_status(status()).rows[1].label), "Add-ons")
 
     def test_identity_labels_are_plain_bounded_and_never_paths(self):
-        for name, version, profile in (("", "1", ""), ("Movies [B]", "1", ""), ("A$B", "1", ""),
+        for name, version, profile in (("Movies [B]", "1", ""), ("A$B", "1", ""),
                                        ("A\nB", "1", ""), ("/Users/x/build", "1", ""),
                                        ("Movies\\x", "1", ""), (" Movies", "1", ""),
                                        ("M" * 65, "1", ""), ("Movies", "1" * 33, ""),
@@ -550,6 +550,8 @@ class AppliedAndSelected(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     BuildIdentity(name, version, profile)
         self.assertEqual(BuildIdentity("Movies Pack", "1.2.0", "desk").profile, "desk")
+        self.assertEqual(BuildIdentity("Movies / TV", "1.2.0").name, "Movies / TV")   # ordinary text
+        self.assertEqual(BuildIdentity("", "1.2.0").name, "")                    # neutral fallback
 
     def test_presentation_rows_never_render_identifiers_or_paths(self):
         model = self.page(applied=self.MOVIES, selected=self.OTHER)
@@ -584,6 +586,45 @@ class AppliedAndSelected(unittest.TestCase):
                          "Selecting a build does not apply it. Only the applied build is checked.")
         status_rows = rows(dialog)
         self.assertNotIn("/", "\n".join(status_rows))              # the Status rows never show a path
+
+    def test_an_unnamed_build_shows_the_neutral_fallback_with_its_version(self):
+        rows, details, _ = self.texts(self.page(applied=BuildIdentity("", "1.2.0", "desk")))
+        self.assertEqual(rows[1], "Applied build: Unnamed build 1.2.0")
+        self.assertEqual(details[1], ["Device profile: desk", "The checks below are for this applied build."])
+
+    def test_display_conversion_keeps_ordinary_names_and_drops_unsafe_ones(self):
+        from resources.lib.status_model import build_display_name
+        self.assertEqual(build_display_name("Movies / TV"), "Movies / TV")
+        self.assertEqual(build_display_name("  Family   Movies "), "Family Movies")
+        self.assertEqual(build_display_name("Movie Collection Edition " * 3),
+                         "Movie Collection Edition Movie Collection Edi...")
+        self.assertEqual(build_display_name("A\x07B"), "A B")
+        self.assertEqual(build_display_name(""), "")
+        self.assertEqual(build_display_name(None), "")
+        self.assertEqual(build_display_name("9f" * 32), "")
+        self.assertEqual(build_display_name("0123456789" * 6), "")   # digits-only identifier
+        self.assertEqual(build_display_name("123e4567-e89b-12d3-a456-426614174000"), "")
+        self.assertEqual(build_display_name("Demo", exact=("Demo",)), "")
+        self.assertEqual(build_display_name("Demo Pack", identifiers=("pack",)), "")
+        for raw in ("/Users/eengert/Movies", "~/Movies", "C:\\Users\\x", "file:///tmp/x",
+                    "builds/movies/pack", "[COLOR red]Movies[/COLOR]", "Movies\\TV"):
+            with self.subTest(raw=raw):
+                self.assertEqual(build_display_name(raw), "")
+
+    def test_presentation_never_changes_restart_or_attention_priority(self):
+        cases = ((OverallStatus.RESTART_REQUIRED, OperationStatus(
+                     OperationKind.RESTART_REQUIRED, OperationCode.AWAITING_RESTART)),
+                 (OverallStatus.NEEDS_ATTENTION, OperationStatus(
+                     OperationKind.NEEDS_ATTENTION, OperationCode.OPERATION_NOT_FINISHED)))
+        for overall, operation in cases:
+            with self.subTest(overall=overall):
+                base = status(overall=overall, operation=operation)
+                plain = StatusViewModel.from_status(base)
+                model = StatusViewModel.from_status(replace(base, presentation=BuildPresentation(
+                    applied=self.MOVIES, selected=self.OTHER)))
+                self.assertIs(model.overall, overall)
+                self.assertEqual(model.semantic, plain.semantic)
+                self.assertEqual(model.rows[0], plain.rows[0])
 
 
 if __name__ == "__main__":

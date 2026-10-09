@@ -247,18 +247,77 @@ class OperationStatus:
 
 
 def _is_label(value: object, limit: int) -> bool:
-    # Path separators are refused so a label can never read as a filesystem path.
+    # Version and profile labels never contain separators, so they cannot read as paths.
     return (isinstance(value, str) and 0 < len(value) <= limit
             and value == value.strip() and is_plain_name(value)
             and "/" not in value and "\\" not in value)
 
 
+DISPLAY_NAME_LIMIT = 48
+_UNSAFE_CHARS = frozenset("[]$")
+_UNSAFE_CATEGORIES = frozenset(("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"))
+_HEX_RUN = re.compile(r"[0-9a-fA-F]{32,}")
+_UUID_SHAPE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+# Home- or root-relative paths, URLs, and multi-segment slash paths. A slash with
+# spaces around it ("Movies / TV") is ordinary text and is not matched.
+_PATH_SHAPE = re.compile(r"(^|\s)(~/|/\S)|://|/[^\s/]+/[^\s/]+")
+_RESERVED_WORDS = ("secret", "password", "passwd", "token", "api_key", "apikey", "traceback",
+                   "exception", "sha256", "fingerprint", "transaction", "entry_id", "build_id")
+
+
+def _identifier_or_path_shaped(value: str) -> bool:
+    """Content that must never be shown as a build name, whatever its length."""
+    if "\\" in value or _PATH_SHAPE.search(value) or _HEX_RUN.search(value) or _UUID_SHAPE.search(value):
+        return True
+    if any(len(token) >= 40 and any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
+           for token in value.split()):
+        return True
+    lowered = value.lower()
+    return any(word in lowered for word in _RESERVED_WORDS)
+
+
+def safe_display_label(value: object) -> bool:
+    """Whether a build name may be shown exactly as it is. Strict: normalize first."""
+    return (isinstance(value, str) and 1 <= len(value) <= DISPLAY_NAME_LIMIT
+            and value == value.strip() and "  " not in value
+            and not any(ch in _UNSAFE_CHARS or unicodedata.category(ch) in _UNSAFE_CATEGORIES
+                        for ch in value)
+            and not _identifier_or_path_shaped(value))
+
+
+def build_display_name(raw: object, *, identifiers=(), exact=()) -> str:
+    """Presentation-safe build name from raw public metadata, or "" for the neutral fallback.
+
+    A valid build whose name cannot be shown is still a valid identity: only the
+    name falls back. ``identifiers`` are stored values never to appear inside a name
+    (matched case-insensitively), and ``exact`` are build IDs never to be a whole
+    name. Paths, URLs, markup and control text are dropped, not masked.
+    """
+    if not isinstance(raw, str) or "\\" in raw or "://" in raw:
+        return ""
+    if raw.strip() in exact:
+        return ""
+    lowered = raw.casefold()
+    if any(value and value.casefold() in lowered for value in identifiers):
+        return ""
+    text = " ".join("".join(
+        " " if unicodedata.category(ch) in _UNSAFE_CATEGORIES or ch in _UNSAFE_CHARS else ch
+        for ch in raw).split())
+    if not text or _identifier_or_path_shaped(text):
+        return ""
+    if len(text) > DISPLAY_NAME_LIMIT:
+        text = text[:DISPLAY_NAME_LIMIT - 3].rstrip() + "..."
+    return text if safe_display_label(text) else ""
+
+
 @dataclass(frozen=True)
 class BuildIdentity:
-    """Presentation-only label of one library build: friendly name, version, profile.
+    """Presentation-only label of one library build: display name, version, profile.
 
-    Never a status or plan target and never a comparison input. It carries no
-    entry identifier, path, fingerprint, transaction or private value.
+    ``name`` is already presentation-safe. The empty string means the neutral
+    fallback text, which the view renders. This is never a status or plan target
+    and never a comparison input. It carries no entry identifier, path,
+    fingerprint, transaction or private value.
     """
 
     name: str
@@ -266,7 +325,7 @@ class BuildIdentity:
     profile: str = ""
 
     def __post_init__(self) -> None:
-        _require(_is_label(self.name, 64), "unsupported build name")
+        _require(self.name == "" or safe_display_label(self.name), "unsupported build name")
         _require(_is_label(self.version, 32), "unsupported build version")
         _require(self.profile == "" or _is_label(self.profile, 64),
                  "unsupported device profile label")
