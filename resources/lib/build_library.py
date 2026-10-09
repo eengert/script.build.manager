@@ -474,12 +474,15 @@ class BuildLibrary:
         Read-only and creation-free. It reads only the validated public bundle: it
         never opens the private overlay store and never reads a private value. The
         overlay identifier is the only private identifier value the public contract
-        carries. "default" is the parser's placeholder for an undeclared overlay and
-        names no store entry, so it is not returned.
+        carries. An omitted overlay_id is not a declared identifier, so nothing is
+        returned for it, even though the parser's "default" placeholder is what the
+        store lookup uses. An explicit "default" is declared, so it is returned.
         """
         manifest, _, _ = self._load(key)
         overlay = manifest.private_overlay
-        if overlay is None or overlay.overlay_id == "default":
+        if overlay is None:
+            return frozenset()
+        if overlay.overlay_id == "default" and not overlay.overlay_id_explicit:
             return frozenset()
         return frozenset((overlay.overlay_id,))
 

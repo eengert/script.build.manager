@@ -217,6 +217,9 @@ class PrivateOverlayRef:
     description: str = ""
     overlay_id: str = "default"
     required: bool = False
+    # Parser provenance: True only when the manifest explicitly named overlay_id.
+    # Outside equality, hashing and repr, so identity and public serialization are unchanged.
+    overlay_id_explicit: bool = field(default=False, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1131,6 +1134,7 @@ def _parse_private_overlay(raw: object) -> Optional[PrivateOverlayRef]:
         description=overlay_desc,
         overlay_id=overlay_id,
         required=required,
+        overlay_id_explicit="overlay_id" in raw,
     )
 
 

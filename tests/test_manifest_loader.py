@@ -742,6 +742,26 @@ class TestPrivateOverlay(unittest.TestCase):
         m = validate_manifest(_make())
         self.assertIsNone(m.private_overlay)
 
+    def test_overlay_id_provenance_tells_omitted_from_explicit_default(self):
+        omitted = validate_manifest(_make({"private_overlay": {"type": "local_file"}})).private_overlay
+        explicit = validate_manifest(_make({"private_overlay": {
+            "type": "local_file", "overlay_id": "default"}})).private_overlay
+        named = validate_manifest(_make({"private_overlay": {
+            "type": "local_file", "overlay_id": "status-overlay"}})).private_overlay
+        self.assertEqual((omitted.overlay_id, omitted.overlay_id_explicit), ("default", False))
+        self.assertEqual((explicit.overlay_id, explicit.overlay_id_explicit), ("default", True))
+        self.assertEqual((named.overlay_id, named.overlay_id_explicit), ("status-overlay", True))
+
+    def test_overlay_id_provenance_leaves_equality_hashing_and_repr_unchanged(self):
+        omitted = validate_manifest(_make({"private_overlay": {"type": "local_file"}})).private_overlay
+        explicit = validate_manifest(_make({"private_overlay": {
+            "type": "local_file", "overlay_id": "default"}})).private_overlay
+        self.assertEqual(omitted, PrivateOverlayRef("local_file"))
+        self.assertEqual(explicit, PrivateOverlayRef("local_file", overlay_id="default"))
+        self.assertEqual(hash(explicit), hash(PrivateOverlayRef("local_file", overlay_id="default")))
+        self.assertEqual(repr(explicit), repr(PrivateOverlayRef("local_file", overlay_id="default")))
+        self.assertNotIn("overlay_id_explicit", repr(explicit))
+
 
 # ---------------------------------------------------------------------------
 # Restart policy

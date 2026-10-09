@@ -1266,3 +1266,58 @@ class LibraryTests(unittest.TestCase):
             applied=BuildIdentity("Demo", "1.0.0", "desk"), selected=BuildIdentity("Demo", "1.0.0", "other")))
         self.assertNotIn(SECRET, repr(presentation))
         self.assertNotIn(DB_SECRET, repr(presentation))
+
+    def test_omitted_overlay_id_declares_no_identifier_and_default_settings_renders(self):
+        self.raw["private_overlay"] = {"type": "local_file"}
+        entry = self.register_named("Default Settings", "omittedid")
+        self.assertEqual(self.library.private_identifiers(entry.entry_id), frozenset())
+        self.library.select(entry.entry_id, "desk")
+        self.assertEqual(build_presentation(self.library, None).selected,
+                         BuildIdentity("Default Settings", "1.0.0", "desk"))
+
+    def test_explicit_default_overlay_id_is_a_declared_identifier(self):
+        self.raw["private_overlay"] = {"type": "local_file", "overlay_id": "default"}
+        entry = self.register_named("Demo", "explicitid")
+        self.assertEqual(self.library.private_identifiers(entry.entry_id), frozenset({"default"}))
+
+    def test_explicit_default_exact_name_falls_back_and_stays_readable(self):
+        self.raw["private_overlay"] = {"type": "local_file", "overlay_id": "default"}
+        entry = self.register_named("default", "explicitexact")
+        self.record_applied(entry)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertFalse(presentation.applied_unreadable)
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("", "1.0.0", "desk")))
+
+    def test_explicit_default_embedded_name_falls_back_and_never_renders_raw(self):
+        self.raw["private_overlay"] = {"type": "local_file", "overlay_id": "default"}
+        entry = self.register_named("Family default Setup", "explicitembedded")
+        self.library.select(entry.entry_id, "desk")
+        presentation = build_presentation(self.library, None)
+        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
+        self.assertNotIn("default", repr(presentation).casefold())
+
+    def test_explicit_default_of_another_build_never_hides_default_settings(self):
+        self.raw["private_overlay"] = {"type": "local_file", "overlay_id": "default"}
+        self.register_named("Demo Pack", "explicitowner")
+        self.raw["private_overlay"] = {"type": "local_file", "overlay_id": "safe-overlay"}
+        settings = self.register_named("Default Settings", "settings")
+        self.record_applied(settings)
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("Default Settings", "1.0.0", "desk")))
+
+    def test_explicit_default_is_a_valid_identifier_in_a_disposable_store(self):
+        from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayStore
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        store = PrivateOverlayStore(Path(scratch.name))
+        store.save(PrivateOverlay("default", "another-build", ()))
+        self.assertEqual(store.load("default").overlay_id, "default")
+        self.assertEqual(store.path_for("default").name, "default.json")
+
+    def test_declared_default_and_omitted_default_are_distinct_in_the_public_model(self):
+        from resources.lib.manifest import validate_manifest
+        base = {"schema_version": 1, "build": {"id": "provenance", "version": "1.0.0"}}
+        omitted = validate_manifest({**base, "private_overlay": {"type": "local_file"}})
+        explicit = validate_manifest({**base, "private_overlay": {"type": "local_file", "overlay_id": "default"}})
+        self.assertEqual(omitted.private_overlay.overlay_id, explicit.private_overlay.overlay_id)
+        self.assertNotEqual(omitted.private_overlay.overlay_id_explicit, explicit.private_overlay.overlay_id_explicit)
