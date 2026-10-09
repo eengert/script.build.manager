@@ -82,6 +82,14 @@ For substantive product changes:
 
 Do not repeat an independent review solely because old ai-supervisor checkpoint/provenance bookkeeping is absent. Manual mode binds review to ordinary Git identity/diff evidence plus the reviewer report.
 
+## End-of-task cleanup
+
+Every Codex/Claude task must clean up its own ephemeral working material before the final report. Remove task-created temporary worktrees/copies, mutation-test scratch trees, compiler/module caches, disposable logs/JSON/text outputs, and screenshots or recordings that are not part of retained qualification evidence. Do not leave large scratch artifacts in `/private/tmp`, the repository, or the evidence tree merely because the task has ended.
+
+Preserve canonical or still-unaccepted qualification evidence, stage manifests/checksums, and the minimum screenshots/logs needed to substantiate accepted runtime claims. Never delete the only copy of evidence, alter evidence covered by a checksum/manifest, or use broad `git clean`/destructive cleanup. When uncertain whether an artifact is evidence or scratch, preserve it and report it.
+
+Every final agent report must include a `Cleanup` line or section stating what ephemeral material was removed and what non-source artifacts intentionally remain (with the reason).
+
 ## Handoffs
 
 Agents should leave concise task reports. Repository `.agent/**` files may be updated when the task/worktree already uses them, but they are no longer an autonomous control plane.
