@@ -1,23 +1,22 @@
-# Handoff — Item 8 evidence consolidation (read-only audit)
+# Handoff — Item 8 Red Light restart/resume qualification (STOP, NOT PASS)
 
-- State: complete. Verdict: **ITEM 8 EVIDENCE CONSOLIDATION: LIVE GAP REMAINS** (a recommendation to ChatGPT and Eric, not acceptance). Item 8 stays OPEN. Eengert Repository publication stays blocked and unauthorized.
-- Start: `agent/claude` at `286aa709e17b5d8b5b743a2f45a42880493e1172`, worktree clean, ahead of origin by 22. Agent Handoff not run.
+- State: stopped at the fixture gate. Verdict: **NOT PASS**. Nothing was registered, applied, launched, restarted, or changed in durable state. Item 8 stays OPEN. Restart/resume stays OPEN. Publication stays unauthorized.
+- Start: `agent/claude` at `16b87d873339229287dbd830ed7860aafa90a4e3`, worktree clean. Agent Handoff read-only status: claude at `16b87d8`, clean. Test.app `not_running`.
 - Done:
-  - Verified by ancestry that the Create (`9ee7f86`), Install (`37258ad`), Update/Repair (`53f2219`) and backend (`4a02b83`) candidates are all ancestors of `a2b1ffc`.
-  - Verified that `53f2219` → `a2b1ffc` changes only `addon.xml` and `resources/images/icon.png` in the distributable paths. Only test `.py` files changed in that range.
-  - Mapped each accepted live result to its exact candidate and to the implementing paths. Decided each row TRANSFERABLE, NOT TRANSFERABLE, DIRECT or MISSING (22 requirements, 28 sub-rows).
-  - Wrote the minimal remaining live scope: Phase A (restart, resume, several builds, private rendering on the exact candidate) and Phase B (blocked presentation).
-- Files and commits:
-  - Evidence (gitignored): `.qualification-evidence/item8-evidence-consolidation-20261008T232026Z/` with `item8-evidence-consolidation-report.md`, outputs `01`–`06`, and `tools-used/item8_audit.py`.
-  - Guidance-only: `.orchestrator/HANDOFF.md`, commit `0f026ed`.
-  - This bookkeeping commit: `.agent/HANDOFF.md`, `.agent/CURRENT_TASK.md`, `.agent/USAGE_HISTORY.md` (one row).
-- Tests: none run. The task was read-only and changed no product code.
-- Live-proven in this task: nothing new. No Test.app launch or staging.
-- Not done: no Test.app, Kodi, profile, device, push, release, Agent Handoff, publication, or product change.
+  - Standalone Git-bound verify of candidate `7b625cc3aa58fcc4d50660172a4a67ada326fb4c` against the existing stage manifest: `installed_equals_manifest` true, `installed_equals_candidate` true, `git_binding` checked and ok, `problems` `[]`. No restage.
+  - Preflight durable baseline (product read-only APIs and `snapshot --library-baseline`): A applied; publication acknowledged and tied to A; B selected; transactions absent; updater `AUTOMATIC`; Red Light 2.6.8 installed and enabled; registry A/A2/B/C/D.
+  - Fixture E public graph built in scratch and checked with production capture (in memory). Not registered.
+  - No-seeding gate run value-blind (counts and metadata only).
+- Blockers, both independent:
+  1. **Fixture E is not a complete graph.** Red Light 2.6.8 has a required `<import>` of `script.module.pil` 1.1.7. pil is not installed in Test.app, not in the public ArtifactStore, and not in the local repository listing. Production capture reports `MISSING`.
+  2. **Red Light readiness fails closed.** The existing `settings.db` is non-empty (diagnostic, count only). The product's own non-empty check uses a `mode=ro` SQLite open. That open fails on a cleanly closed WAL database with no `-wal`/`-shm` sidecars (reproduced in scratch; `immutable=1` reads it). Production cannot verify readiness, so the gate fails closed. No seeding or initialization was attempted.
+- Not done: private compatibility gate (overlay not opened); E registration; Apply; Test.app launch, navigation, restart, resume; second-run proof; final proof.
+- Live-proven in this task: nothing new. No Test.app launch.
+- Tests: none run. The task changed no product source.
 - Risks and human decisions:
-  1. Phase A needs a Red Light structured private resource to drive the restart. Eric or ChatGPT must authorize its use in Test.app, and private values must never be rendered.
-  2. Whether Repository Current / Skip decisions and Update's Choose Different Revision are required for Item 8 acceptance, or deferrable.
-  3. Build Status does not name the selected build. The design asks for associated and selected builds to be shown distinctly. Decide whether to fix that before acceptance.
-  4. BM-UI-001 evidence is blob-identical to `404f080` but was run from an uncommitted worktree, so it is not Git-bound.
-- Usage: start reading not captured for this task. End reading 5-hour 68% used, weekly 43% used. Session reported `claude-haiku-5-5` at effort `xhigh`.
-- Smallest next step: one bounded Test.app task with two ordered phases, A and B (report section 7). It needs the decisions above first.
+  1. **pil.** Choose: (a) authorize one exact `script.module.pil` 1.1.7 artifact (name the source and SHA-256) to be imported to the public ArtifactStore and installed in Test.app as part of E; or (b) choose a fixture that does not depend on pil.
+  2. **Red Light readiness.** Choose: (a) authorize a bounded product change so the read-only settings check verifies a cleanly closed WAL database, then a separate run; or (b) authorize a different verification path. Check whether a live Kodi profile is affected too. That was not tested.
+  3. The Red Light overlay was not opened. Its binding to E is still unchecked. It depends on E's final fingerprint, so it has to be checked after decision 1.
+- Usage: start 5-hour 16%, weekly 56%. End 5-hour 19%, weekly 56%. Session reported `claude-haiku-5-5` at effort `xhigh`.
+- Cleanup: scratch scripts and temporary reproduction databases removed. Evidence kept under `.qualification-evidence/item8-restart-resume-redlight-20261009/` (gitignored).
+- Smallest next step: decide 1 and 2 above, then one bounded task for the chosen path.

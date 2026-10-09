@@ -1,10 +1,10 @@
 # Current Task
 
-- Task: BUILD MANAGER ITEM 8 EVIDENCE CONSOLIDATION / MINIMAL GAP AUDIT (read-only; no assigned ID).
-- State: complete. Verdict: LIVE GAP REMAINS (recommendation). Item 8 OPEN, not accepted.
-- Start: `agent/claude` at `286aa709e17b5d8b5b743a2f45a42880493e1172`, worktree clean, ahead 22.
-- Commits: guidance `0f026ed` (`.orchestrator/HANDOFF.md`); this bookkeeping commit (`.agent/**` only).
-- Evidence: `.qualification-evidence/item8-evidence-consolidation-20261008T232026Z/item8-evidence-consolidation-report.md` (gitignored).
-- Boundaries: no product change, no Test.app launch or staging, no Kodi, profile, or device access, no push, no release, no Agent Handoff, no publication.
-- Next: one bounded Test.app task with phases A and B (report section 7), after the decisions in `.agent/HANDOFF.md`.
+- Task: BUILD MANAGER ITEM 8 RED LIGHT RESTART / RESUME QUALIFICATION (no assigned ID; live Test.app, one bounded run).
+- State: stopped. Verdict: **NOT PASS** at the fixture gate. Nothing registered, applied, launched, or restarted. Item 8 OPEN. Restart/resume OPEN.
+- Start: `agent/claude` at `16b87d873339229287dbd830ed7860aafa90a4e3`, worktree clean. Candidate `7b625cc` verified standalone and Git-bound (no restage).
+- Commits: guidance `63a00de` (`.orchestrator/HANDOFF.md`, stale remaining-blocker wording only); this bookkeeping commit (`.agent/**` only).
+- Evidence: `.qualification-evidence/item8-restart-resume-redlight-20261009/RUN-SUMMARY.md` (gitignored, with sanitized JSON and checksums).
+- Boundaries: no product change, no fixture registration, no Apply, no Test.app launch, no Kodi or device access, no private overlay opened, no push, no release, no publication, no Agent Handoff switch.
+- Next: decisions in `.agent/HANDOFF.md` (pil dependency; Red Light readiness check). Then a new bounded task.
 - Usage: see the appended row in `.agent/USAGE_HISTORY.md`.
