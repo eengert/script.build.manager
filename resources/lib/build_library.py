@@ -468,6 +468,21 @@ class BuildLibrary:
         return LibraryEntry(key, manifest.build.id, manifest.build.version, manifest.build.name,
                             tuple(sorted(manifest.device_profiles)))
 
+    def private_identifiers(self, key):
+        """Private identifiers declared by one build's registered PUBLIC manifest.
+
+        Read-only and creation-free. It reads only the validated public bundle: it
+        never opens the private overlay store and never reads a private value. The
+        overlay identifier is the only private identifier value the public contract
+        carries. "default" is the parser's placeholder for an undeclared overlay and
+        names no store entry, so it is not returned.
+        """
+        manifest, _, _ = self._load(key)
+        overlay = manifest.private_overlay
+        if overlay is None or overlay.overlay_id == "default":
+            return frozenset()
+        return frozenset((overlay.overlay_id,))
+
     def list_builds(self):
         try:
             with _directory(self.root) as fd:

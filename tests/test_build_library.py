@@ -980,6 +980,8 @@ class LibraryTests(unittest.TestCase):
                 if key == applied_entry:
                     return library.get(key)
                 raise LibraryError("selected build unreadable")
+            def private_identifiers(self, key):
+                return library.private_identifiers(key)
             def selection_state(self):
                 return ("selected", lib.SelectedBuild(selected_entry, "other"))
 
@@ -1160,3 +1162,89 @@ class LibraryTests(unittest.TestCase):
         for hidden in (applied_entry.entry_id, leaking.entry_id, applied.resolution_fingerprint,
                        str(self.root), str(self.base), "safe-overlay", "transaction", SECRET, DB_SECRET):
             self.assertNotIn(hidden, rendered)
+
+    def test_private_identifiers_are_the_declared_overlay_id_and_nothing_else(self):
+        self.raw["private_overlay"]["overlay_id"] = "status-overlay"
+        declared = self.register_named("Demo", "declared")
+        before = snapshot_tree(self.base / "bm")
+        self.assertEqual(self.library.private_identifiers(declared.entry_id), frozenset({"status-overlay"}))
+        self.assertEqual(snapshot_tree(self.base / "bm"), before)            # read-only
+        self.raw["private_overlay"].pop("overlay_id")                        # parser placeholder "default"
+        defaulted = self.register_named("Default Settings", "defaulted")
+        self.assertEqual(self.library.private_identifiers(defaulted.entry_id), frozenset())
+        self.raw.pop("private_overlay")
+        undeclared = self.register_named("Default Settings", "undeclared")
+        self.assertEqual(self.library.private_identifiers(undeclared.entry_id), frozenset())
+        self.library.select(undeclared.entry_id, "desk")
+        self.assertEqual(build_presentation(self.library, None).selected,
+                         BuildIdentity("Default Settings", "1.0.0", "desk"))
+
+    def test_unreadable_private_identifiers_fall_back_the_name_and_never_show_it(self):
+        entry = self.register_named("Demo", "unreadableids")
+        self.record_applied(entry)
+        with patch.object(BuildLibrary, "private_identifiers", side_effect=LibraryError("unreadable")):
+            presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(applied=BuildIdentity("", "1.0.0", "desk")))
+
+    def test_a_name_equal_to_its_own_overlay_id_falls_back_for_applied_and_selected(self):
+        self.raw["private_overlay"]["overlay_id"] = "status-overlay"
+        entry = self.register_named("status-overlay", "ownid")
+        self.record_applied(entry)
+        self.library.select(entry.entry_id, "other")
+        presentation = build_presentation(self.library, self.library.associated_status_target())
+        self.assertEqual(presentation, BuildPresentation(
+            applied=BuildIdentity("", "1.0.0", "desk"), selected=BuildIdentity("", "1.0.0", "other")))
+        self.assertNotIn("status-overlay", repr(presentation))
+
+    def test_an_embedded_or_cased_overlay_id_never_renders_inside_a_name(self):
+        self.raw["private_overlay"]["overlay_id"] = "status-overlay"
+        for index, name in enumerate(("Family status-overlay Setup", "STATUS-OVERLAY backup", "Status-Overlay")):
+            with self.subTest(name=name):
+                entry = self.register_named(name, f"embedded{index}")
+                self.library.select(entry.entry_id, "desk")
+                presentation = build_presentation(self.library, None)
+                self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
+                self.assertNotIn("status-overlay", repr(presentation).casefold())
+
+    def test_another_builds_overlay_id_never_renders_as_this_name(self):
+        self.raw["private_overlay"]["overlay_id"] = "other-overlay"
+        self.register_named("Demo Pack", "owner")
+        self.raw["private_overlay"]["overlay_id"] = "safe-overlay"
+        borrower = self.register_named("other-overlay", "borrower")
+        self.library.select(borrower.entry_id, "desk")
+        presentation = build_presentation(self.library, None)
+        self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity("", "1.0.0", "desk")))
+        self.assertNotIn("other-overlay", repr(presentation))
+
+    def test_ordinary_names_that_contain_former_reserved_words_render(self):
+        for index, name in enumerate(("Family Room Transaction Test", "Token Refresh Lab",
+                                      "Fingerprint Demo", "Secret Garden", "Exception Handling Pack")):
+            with self.subTest(name=name):
+                entry = self.register_named(name, f"word{index}")
+                self.library.select(entry.entry_id, "desk")
+                presentation = build_presentation(self.library, None)
+                self.assertEqual(presentation, BuildPresentation(selected=BuildIdentity(name, "1.0.0", "desk")))
+
+    def test_presentation_never_opens_the_private_overlay_or_renders_its_values(self):
+        from resources.lib.private_overlay import PrivateOverlayStore
+        harness = PlanHarness(self)
+        harness.save_overlay()                     # SECRET and DB_SECRET stored under "status-overlay"
+        self.raw["private_overlay"]["overlay_id"] = "status-overlay"
+        entry = self.register_named("Demo", "noninterference")
+        self.record_applied(entry)
+        self.library.select(entry.entry_id, "other")
+        target = self.library.associated_status_target()
+        touched = []
+
+        def refuse(*args, **kwargs):
+            touched.append("private overlay")
+            raise AssertionError("presentation opened the private overlay")
+
+        with patch.object(PrivateOverlayStore, "read_snapshot", refuse), \
+                patch.object(PrivateOverlayStore, "load", refuse):
+            presentation = build_presentation(self.library, target)
+        self.assertEqual(touched, [])
+        self.assertEqual(presentation, BuildPresentation(
+            applied=BuildIdentity("Demo", "1.0.0", "desk"), selected=BuildIdentity("Demo", "1.0.0", "other")))
+        self.assertNotIn(SECRET, repr(presentation))
+        self.assertNotIn(DB_SECRET, repr(presentation))

@@ -928,8 +928,9 @@ def default_status_target() -> Optional[StatusTarget]:
 def _presentation_identifiers(library, applied):
     """Stored values that must never appear inside a shown build name.
 
-    Entry IDs, resolution fingerprints and publication transaction IDs are matched
-    as substrings. Build IDs are matched only as a whole name. Every lookup is
+    Entry IDs, private overlay IDs (declared by each listed build's public manifest),
+    resolution fingerprints and publication transaction IDs are matched as
+    substrings. Build IDs are matched only as a whole name. Every lookup is
     read-only, and a failed lookup contributes nothing.
     """
     identifiers, exact = set(), set()
@@ -937,6 +938,10 @@ def _presentation_identifiers(library, applied):
         for entry in library.list_builds():
             identifiers.add(entry.entry_id)
             exact.add(entry.build_id)
+            try:
+                identifiers |= library.private_identifiers(entry.entry_id)
+            except Exception:
+                pass
     except Exception:
         pass
     if applied is not None:
@@ -953,9 +958,18 @@ def _presentation_identifiers(library, applied):
     return frozenset(identifiers), frozenset(exact)
 
 
-def _identity(entry, profile, identifiers, exact):
-    """A valid build always yields an identity. Only its display name can fall back."""
-    name = build_display_name(entry.display_name, identifiers=identifiers, exact=exact)
+def _identity(library, entry, profile, identifiers, exact):
+    """A valid build always yields an identity. Only its display name can fall back.
+
+    The build's own declared private identifiers (from its public manifest) join the
+    shared known identifiers, and only for this build. If they cannot be read, the
+    name falls back rather than risk showing one.
+    """
+    try:
+        private = library.private_identifiers(entry.entry_id)
+    except Exception:
+        return BuildIdentity("", entry.build_version, profile)
+    name = build_display_name(entry.display_name, identifiers=identifiers | private, exact=exact)
     return BuildIdentity(name, entry.build_version, profile)
 
 
@@ -982,7 +996,7 @@ def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresenta
     if target is not None:
         try:
             entry = library.get(applied_association.entry_id)
-            applied = _identity(entry, target.device_profile_id, identifiers, exact)
+            applied = _identity(library, entry, target.device_profile_id, identifiers, exact)
         except Exception:
             applied_unreadable = True
     selected = None
@@ -995,7 +1009,7 @@ def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresenta
             entry = library.get(saved.entry_id)
             if saved.device_profile_id not in entry.device_profiles:
                 raise ValueError("selection profile is not in the build")
-            selected = _identity(entry, saved.device_profile_id, identifiers, exact)
+            selected = _identity(library, entry, saved.device_profile_id, identifiers, exact)
         except Exception:
             selection_unreadable = True
     return BuildPresentation(applied, applied_unreadable, selected, selection_unreadable)

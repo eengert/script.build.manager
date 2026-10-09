@@ -261,8 +261,6 @@ _UUID_SHAPE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA
 # Home- or root-relative paths, URLs, and multi-segment slash paths. A slash with
 # spaces around it ("Movies / TV") is ordinary text and is not matched.
 _PATH_SHAPE = re.compile(r"(^|\s)(~/|/\S)|://|/[^\s/]+/[^\s/]+")
-_RESERVED_WORDS = ("secret", "password", "passwd", "token", "api_key", "apikey", "traceback",
-                   "exception", "sha256", "fingerprint", "transaction", "entry_id", "build_id")
 
 
 def _identifier_or_path_shaped(value: str) -> bool:
@@ -272,8 +270,7 @@ def _identifier_or_path_shaped(value: str) -> bool:
     if any(len(token) >= 40 and any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
            for token in value.split()):
         return True
-    lowered = value.lower()
-    return any(word in lowered for word in _RESERVED_WORDS)
+    return False
 
 
 def safe_display_label(value: object) -> bool:
