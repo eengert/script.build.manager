@@ -452,6 +452,13 @@ def _verified_python_dependency_sources(
             raise ValueError("frozen Python dependency is absent from the dependency graph")
         if node.system:
             continue
+        if node.platform_provided:
+            # Kodi supplies a platform-provided module, so it has no managed source. Its
+            # managed dependencies remain part of the required subtree (D-028).
+            for edge in reversed(node.dependency_edges):
+                if not edge.optional:
+                    pending.append(edge.addon_id)
+            continue
         if (
             node.status is not CaptureStatus.COMPLETE
             or node.artifact is None

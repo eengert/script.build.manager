@@ -25,7 +25,7 @@ from resources.lib.artifacts import (
     ArtifactValidationError,
     validate_addon_zip,
 )
-from resources.lib.dependencies import _is_system_dependency
+from resources.lib.dependencies import _is_system_dependency, _strict_version_satisfies
 from resources.lib.readonly_io import read_regular_file
 
 if TYPE_CHECKING:
@@ -45,6 +45,7 @@ class CaptureStatus(str, Enum):
     UNSUPPORTED = "unsupported"
     MISSING = "missing"
     SYSTEM = "system"
+    PLATFORM_PROVIDED = "platform_provided"
 
 
 class ProvenanceStatus(str, Enum):
@@ -52,6 +53,25 @@ class ProvenanceStatus(str, Enum):
     REPOSITORY_EVIDENCE = "repository_evidence"
     MANUAL_OR_UNKNOWN = "manual_or_unknown"
     UNKNOWN = "unknown"
+
+
+class InstalledOrigin(str, Enum):
+    """Which trusted root an installed add-on's metadata was read from."""
+
+    HOME = "home"
+    APPLICATION = "application"
+
+
+@dataclass(frozen=True)
+class InstalledMetadata:
+    """Installed addon.xml bytes together with the trusted origin that proved them.
+
+    The origin is assigned only after the trusted root, identity and safe read
+    have all succeeded in the same operation. It is never serialized.
+    """
+
+    xml_bytes: bytes
+    origin: InstalledOrigin
 
 
 @dataclass(frozen=True)
@@ -92,6 +112,24 @@ class AddonCaptureNode:
     optional: bool = False
     status: CaptureStatus = CaptureStatus.COMPLETE
     error: str = ""
+    platform_provided: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject contradictory combinations at construction, so no path can carry one."""
+        if not self.platform_provided:
+            if self.status is CaptureStatus.PLATFORM_PROVIDED:
+                raise CaptureError("platform-provided status requires the platform marker")
+            return
+        if self.status is not CaptureStatus.PLATFORM_PROVIDED:
+            raise CaptureError("platform-provided add-on must have platform-provided status")
+        if self.system:
+            raise CaptureError("platform-provided add-on cannot be a system dependency")
+        if self.artifact is not None:
+            raise CaptureError("platform-provided add-on cannot carry an artifact")
+        if not self.addon_id or not self.version or not self.addon_type:
+            raise CaptureError("platform-provided add-on requires identity, version and type")
+        if not self.dependency_edges:
+            raise CaptureError("platform-provided add-on requires trusted dependency edges")
 
     @property
     def required_dependency_ids(self) -> Tuple[str, ...]:
@@ -112,7 +150,7 @@ class AddonCaptureNode:
             and self.artifact is None
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self, schema_version: int = 1) -> dict:
         result = {
             "addon_id": self.addon_id,
             "version": self.version,
@@ -129,6 +167,9 @@ class AddonCaptureNode:
             "optional": self.optional,
             "capture_status": self.status.value,
         }
+        if schema_version >= 2:
+            # Schema v1 has no platform marker; its serialized bytes must not change.
+            result["platform_provided"] = self.platform_provided
         if self.artifact is not None:
             result["artifact_filename"] = self.artifact.filename
         if self.error:
@@ -151,12 +192,25 @@ class FrozenBuildManifest:
     configuration_packages: Tuple[str, ...] = ()
     source_metadata: Mapping[str, str] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Schema v2 exists only to carry platform-provided meaning (D-028)."""
+        if self.schema_version not in (1, 2) or isinstance(self.schema_version, bool):
+            raise CaptureError("unsupported frozen manifest schema")
+        platform = any(node.platform_provided for node in self.addons)
+        if self.schema_version == 1 and platform:
+            raise CaptureError("frozen manifest schema 1 cannot carry platform-provided add-ons")
+        if self.schema_version == 2 and not platform:
+            raise CaptureError("frozen manifest schema 2 requires a platform-provided add-on")
+
     def software_graph(self) -> dict:
         return {
             "schema_version": self.schema_version,
             "kodi_version": self.kodi_version,
             "platform": self.platform,
-            "addons": [node.to_dict() for node in sorted(self.addons, key=lambda item: item.addon_id)],
+            "addons": [
+                node.to_dict(self.schema_version)
+                for node in sorted(self.addons, key=lambda item: item.addon_id)
+            ],
             "configuration_packages": sorted(self.configuration_packages),
         }
 
@@ -179,7 +233,10 @@ class FrozenBuildManifest:
             },
             "software_fingerprint": self.fingerprint(),
             "capture_status": self.capture_status.value,
-            "addons": [node.to_dict() for node in sorted(self.addons, key=lambda item: item.addon_id)],
+            "addons": [
+                node.to_dict(self.schema_version)
+                for node in sorted(self.addons, key=lambda item: item.addon_id)
+            ],
             "configuration_packages": sorted(self.configuration_packages),
         }
 
@@ -203,7 +260,8 @@ class FrozenBuildManifest:
         }
         if set(value) != required:
             raise CaptureError("frozen manifest fields are not exactly supported")
-        if value["schema_version"] != 1:
+        schema_version = value["schema_version"]
+        if schema_version not in (1, 2) or isinstance(schema_version, bool):
             raise CaptureError("unsupported frozen manifest schema")
         source = value["source"]
         if not isinstance(source, dict) or set(source) != {
@@ -219,14 +277,14 @@ class FrozenBuildManifest:
         addons = value["addons"]
         if not isinstance(addons, list):
             raise CaptureError("frozen manifest addons must be a list")
-        nodes = tuple(_node_from_dict(item) for item in addons)
+        nodes = tuple(_node_from_dict(item, schema_version) for item in addons)
         packages = value["configuration_packages"]
         if not isinstance(packages, list) or any(
             not isinstance(item, str) or not item for item in packages
         ):
             raise CaptureError("frozen manifest configuration packages are malformed")
         manifest = cls(
-            schema_version=1,
+            schema_version=schema_version,
             build_id=_manifest_string(value, "build_id"),
             name=_manifest_string(value, "name"),
             created_at=_manifest_string(value, "created_at"),
@@ -290,7 +348,7 @@ def _manifest_string(value: Mapping[str, object], field: str) -> str:
     return result
 
 
-def _node_from_dict(value: object) -> AddonCaptureNode:
+def _node_from_dict(value: object, schema_version: int = 1) -> AddonCaptureNode:
     if not isinstance(value, dict):
         raise CaptureError("frozen manifest add-on node must be an object")
     required = {
@@ -299,6 +357,8 @@ def _node_from_dict(value: object) -> AddonCaptureNode:
         "required_dependency_ids", "optional_dependency_ids", "dependency_edges",
         "system", "optional", "capture_status",
     }
+    if schema_version == 2:
+        required = required | {"platform_provided"}
     optional = {"artifact_filename", "error"}
     if set(value) - required - optional or not required.issubset(value):
         raise CaptureError("frozen manifest add-on node fields are not supported")
@@ -388,6 +448,9 @@ def _node_from_dict(value: object) -> AddonCaptureNode:
     error = value.get("error", "")
     if not isinstance(error, str):
         raise CaptureError("frozen manifest node error must be a string")
+    platform_provided = value.get("platform_provided", False)
+    if not isinstance(platform_provided, bool):
+        raise CaptureError("frozen manifest platform marker must be boolean")
     return AddonCaptureNode(
         addon_id=addon_id,
         version=version,
@@ -401,6 +464,7 @@ def _node_from_dict(value: object) -> AddonCaptureNode:
         optional=value["optional"],
         status=status,
         error=error,
+        platform_provided=platform_provided,
     )
 
 
@@ -412,6 +476,13 @@ class InventoryBackend:
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
         raise NotImplementedError
+
+    def read_installed_metadata(
+        self, addon_id: str, *, installed: Optional[Sequence[Mapping[str, object]]] = None,
+    ) -> Optional[InstalledMetadata]:
+        """Installed addon.xml with its trusted origin. A backend without roots is HOME-only."""
+        xml_bytes = self.read_addon_xml(addon_id)
+        return None if xml_bytes is None else InstalledMetadata(xml_bytes, InstalledOrigin.HOME)
 
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         return ()
@@ -437,7 +508,9 @@ class InMemoryInventoryBackend(InventoryBackend):
         repository: Optional[Mapping[Tuple[str, str], Tuple[str, bytes]]] = None,
         provenance: Optional[Mapping[str, Tuple[ProvenanceStatus, Mapping[str, str]]]] = None,
         source_metadata: Optional[Mapping[str, str]] = None,
+        application_addon_ids: Sequence[str] = (),
     ):
+        self.application_addon_ids = frozenset(application_addon_ids)
         self.addons = tuple(dict(item) for item in addons)
         self.addon_xml = dict(addon_xml)
         self.package_cache = dict(package_cache or {})
@@ -450,6 +523,17 @@ class InMemoryInventoryBackend(InventoryBackend):
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
         return self.addon_xml.get(addon_id)
+
+    def read_installed_metadata(
+        self, addon_id: str, *, installed: Optional[Sequence[Mapping[str, object]]] = None,
+    ) -> Optional[InstalledMetadata]:
+        xml_bytes = self.addon_xml.get(addon_id)
+        if xml_bytes is None:
+            return None
+        origin = (
+            InstalledOrigin.APPLICATION if addon_id in self.application_addon_ids else InstalledOrigin.HOME
+        )
+        return InstalledMetadata(xml_bytes, origin)
 
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         return self.package_cache.get((addon_id, version), ())
@@ -594,19 +678,34 @@ class KodiInventoryBackend(InventoryBackend):
         return tuple(item for item in addons if isinstance(item, Mapping))
 
     def read_addon_xml(self, addon_id: str) -> Optional[bytes]:
+        metadata = self.read_installed_metadata(addon_id)
+        return None if metadata is None else metadata.xml_bytes
+
+    def read_installed_metadata(
+        self, addon_id: str, *, installed: Optional[Sequence[Mapping[str, object]]] = None,
+    ) -> Optional[InstalledMetadata]:
+        """Read addon.xml from its trusted root and report which root proved it.
+
+        The origin is assigned only after the trusted root, identity and safe read
+        have all succeeded in this one operation. Kodi's reported path is still
+        never authority by itself. ``installed`` may carry a listing already read
+        from Kodi, so callers that classify many add-ons make one inventory call.
+        """
         # An identifier must be exactly one safe directory name, so it can never
         # traverse out of a trusted root.
         if not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id):
             return None
-        details = next(
-            (item for item in self.get_installed_addons() if item.get("addonid") == addon_id),
-            None,
-        )
+        listing = self.get_installed_addons() if installed is None else installed
+        details = next((item for item in listing if item.get("addonid") == addon_id), None)
         path_value = details.get("path") if details else None
         root = self._trusted_root(addon_id, path_value)
         if root is None:
             return None
-        return self._read_addon_xml_in(root, addon_id)
+        xml_bytes = self._read_addon_xml_in(root, addon_id)
+        if xml_bytes is None:
+            return None
+        origin = InstalledOrigin.APPLICATION if root is self._application else InstalledOrigin.HOME
+        return InstalledMetadata(xml_bytes, origin)
 
     def _trusted_roots(self):
         roots = [(_HOME_ADDONS_PREFIX, self._home)]
@@ -791,6 +890,19 @@ def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[Dependency
     return tuple(sorted(edges, key=lambda edge: (edge.addon_id, edge.optional, edge.min_version)))
 
 
+def _declared_extension_points(xml_bytes: bytes, addon_id: str) -> Tuple[str, ...]:
+    """Extension points an addon.xml declares. Kodi derives an add-on's type from them (D-028)."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise CaptureError(f"{addon_id}: malformed addon.xml") from exc
+    return tuple(
+        child.attrib.get("point", "")
+        for child in root
+        if child.tag.rsplit("}", 1)[-1] == "extension"
+    )
+
+
 def _combine_edges(edges: Iterable[DependencyEdge]) -> Tuple[DependencyEdge, ...]:
     grouped: Dict[Tuple[str, bool, str], set] = {}
     for edge in edges:
@@ -798,6 +910,70 @@ def _combine_edges(edges: Iterable[DependencyEdge]) -> Tuple[DependencyEdge, ...
     return tuple(
         DependencyEdge(addon_id, min_version, optional, tuple(sorted(required_by)))
         for (addon_id, optional, min_version), required_by in sorted(grouped.items())
+    )
+
+
+def _platform_node(
+    addon_id: str,
+    raw: Mapping[str, object],
+    optional: bool,
+    edges: Sequence[DependencyEdge],
+    incoming_minima: Sequence[str],
+    declared_points: Sequence[str],
+) -> AddonCaptureNode:
+    """Record a trusted application add-on as a verified platform requirement (D-028).
+
+    Capture records the observed identity and dependency closure only. It never
+    acquires, installs, enables or disables anything. Any defect makes the node
+    UNSUPPORTED, so the capture cannot complete with it.
+    """
+    version = raw.get("version")
+    addon_type = raw.get("type", "")
+    enabled = raw.get("enabled", False)
+    broken = raw.get("broken", False)
+
+    def unsupported(reason: str) -> AddonCaptureNode:
+        return AddonCaptureNode(
+            addon_id=addon_id,
+            version=str(version or ""),
+            addon_type=str(addon_type or ""),
+            desired_enabled=bool(enabled),
+            provenance=ProvenanceStatus.UNKNOWN,
+            optional=optional,
+            status=CaptureStatus.UNSUPPORTED,
+            error=reason,
+        )
+
+    if (
+        not isinstance(version, str) or not version
+        or not isinstance(addon_type, str) or not addon_type
+        or not isinstance(enabled, bool) or not isinstance(broken, bool)
+    ):
+        return unsupported("installed metadata is malformed")
+    if broken:
+        return unsupported("platform-provided add-on is broken")
+    if not enabled:
+        return unsupported("platform-provided add-on is disabled")
+    if not edges:
+        return unsupported("platform-provided add-on has no trusted dependency metadata")
+    if addon_type not in declared_points:
+        return unsupported("platform-provided add-on type is not declared by its trusted metadata")
+    # The observed version is evidence, so it must be parseable and must already
+    # meet every minimum that the build's incoming edges declare.
+    if not _strict_version_satisfies(version, ""):
+        return unsupported("platform-provided add-on version is unverifiable")
+    if any(not _strict_version_satisfies(version, minimum) for minimum in incoming_minima):
+        return unsupported("platform-provided add-on does not satisfy a required minimum")
+    return AddonCaptureNode(
+        addon_id=addon_id,
+        version=version,
+        addon_type=addon_type,
+        desired_enabled=True,
+        provenance=ProvenanceStatus.UNKNOWN,
+        dependency_edges=_combine_edges(edges),
+        optional=optional,
+        status=CaptureStatus.PLATFORM_PROVIDED,
+        platform_provided=True,
     )
 
 
@@ -815,8 +991,9 @@ def capture_frozen_build(
     install_policies: Sequence["FrozenInstallPolicy"] = (),
 ) -> FrozenBuildCaptureResult:
     """Capture exact installed software for selected roots and dependencies."""
+    listing = tuple(backend.get_installed_addons())
     installed = {}
-    for raw in backend.get_installed_addons():
+    for raw in listing:
         addon_id = raw.get("addonid")
         if isinstance(addon_id, str) and addon_id not in installed:
             installed[addon_id] = dict(raw)
@@ -825,6 +1002,8 @@ def capture_frozen_build(
     optional_by_id: Dict[str, bool] = {}
     system_min_versions: Dict[str, str] = {}
     metadata_errors = set()
+    platform_ids = set()
+    declared_points_by_id: Dict[str, Tuple[str, ...]] = {}
     visiting = set()
     visited = set()
     errors: List[str] = []
@@ -843,7 +1022,8 @@ def capture_frozen_build(
         if raw is None:
             return
         visiting.add(addon_id)
-        xml_bytes = backend.read_addon_xml(addon_id)
+        metadata = backend.read_installed_metadata(addon_id, installed=listing)
+        xml_bytes = None if metadata is None else metadata.xml_bytes
         if xml_bytes is None:
             # Required metadata absence blocks exactly like malformed metadata.
             # Dependency edges are never inferred from inventory RPC data.
@@ -854,6 +1034,9 @@ def capture_frozen_build(
                 _check_addon_xml_identity(xml_bytes, addon_id, raw.get("version"))
                 edges = _parse_dependency_edges(xml_bytes, addon_id)
                 edges_by_id[addon_id] = list(edges)
+                if metadata.origin is InstalledOrigin.APPLICATION:
+                    declared_points_by_id[addon_id] = _declared_extension_points(xml_bytes, addon_id)
+                    platform_ids.add(addon_id)
                 for edge in edges:
                     if _is_system_dependency(edge.addon_id):
                         current = system_min_versions.get(edge.addon_id, "")
@@ -867,6 +1050,16 @@ def capture_frozen_build(
 
     for root in sorted(set(root_addon_ids)):
         walk(root, False)
+    for root in sorted(set(root_addon_ids)):
+        if root in platform_ids:
+            # Trusted application add-ons are dependencies, never ordinary managed roots (D-028).
+            errors.append(f"{root}: platform-provided add-on cannot be an ordinary managed root")
+
+    incoming_minima: Dict[str, List[str]] = {}
+    for parent_edges in edges_by_id.values():
+        for edge in parent_edges:
+            if edge.min_version:
+                incoming_minima.setdefault(edge.addon_id, []).append(edge.min_version)
 
     nodes: List[AddonCaptureNode] = []
     for addon_id in sorted(visited):
@@ -899,6 +1092,17 @@ def capture_frozen_build(
                     error="add-on is not installed",
                 )
             )
+            continue
+        if addon_id in platform_ids and addon_id not in metadata_errors:
+            # Platform-provided: no acquisition, provenance lookup, install or enablement.
+            platform_node = _platform_node(
+                addon_id, raw, optional_by_id.get(addon_id, False),
+                edges_by_id.get(addon_id, ()), incoming_minima.get(addon_id, ()),
+                declared_points_by_id.get(addon_id, ()),
+            )
+            nodes.append(platform_node)
+            if platform_node.status is not CaptureStatus.PLATFORM_PROVIDED:
+                errors.append(f"{addon_id}: {platform_node.error}")
             continue
         if addon_id in metadata_errors:
             nodes.append(
@@ -952,7 +1156,7 @@ def capture_frozen_build(
         node
         for node in nodes
         if not node.system
-        and node.status is not CaptureStatus.COMPLETE
+        and node.status not in (CaptureStatus.COMPLETE, CaptureStatus.PLATFORM_PROVIDED)
         and not node.is_absent_optional_dependency
     ]
     if blocking:
@@ -971,7 +1175,9 @@ def capture_frozen_build(
     if not kodi_version:
         kodi_version = source.pop("kodi_version", "")
     manifest = FrozenBuildManifest(
-        schema_version=1,
+        # Schema 2 is emitted only for platform-provided meaning, so every
+        # managed-only capture keeps its schema 1 bytes and fingerprint.
+        schema_version=2 if any(node.platform_provided for node in nodes) else 1,
         build_id=build_id,
         name=name,
         created_at=created_at,

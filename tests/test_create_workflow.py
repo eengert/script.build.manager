@@ -25,6 +25,7 @@ from tests.test_ui_foundation import Addon
 ROOT = 'plugin.demo'
 DEP = 'script.module.demo'
 SKIN = 'skin.demo'
+BUNDLED = 'plugin.bundled.demo'
 RED = 'plugin.video.redlight'
 AF3 = 'skin.arctic.fuse.3'
 STAMP = '2026-10-06T21:00:00Z'
@@ -100,6 +101,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(set(self.session.selected),{ROOT,SKIN}); self.assertTrue(self.session.include_private)
     def test_manager_system_module_resource_excluded(self):
         self.assertEqual({c.addon_id for c in self.session.components},{ROOT,SKIN})
+    def _open_with_application_origin(self, application_ids):
+        # A plugin, so only its trusted application origin can exclude it from managed roots (D-028).
+        rows = list(self.inventory.addons) + [{**_addon(BUNDLED, addon_type='xbmc.python.pluginsource'), 'name': 'Bundled'}]
+        inventory = InMemoryInventoryBackend(
+            rows, {ROOT: _xml(ROOT, imports=((DEP,'1.0.0',False),)), DEP:_xml(DEP), SKIN:_xml(SKIN), BUNDLED:_xml(BUNDLED)},
+            package_cache={(a,'1.0.0'):((a+'.zip',_zip(a)),) for a in (ROOT,DEP,SKIN)},
+            application_addon_ids=application_ids)
+        workflow = CreateBuildWorkflow(inventory=inventory, inspect_state=lambda:self.state,
+            library=self.library, engine_factory=self.factory, private_store_factory=self.private_factory,
+            catalog=Catalog(), clock=self.clock)
+        return workflow.open('Current device')
+    def test_bundled_application_add_on_is_not_a_selectable_root_even_when_it_is_not_a_module(self):
+        session = self._open_with_application_origin((BUNDLED,))
+        self.assertEqual({c.addon_id for c in session.components}, {ROOT, SKIN})
+    def test_bundled_active_skin_stays_selectable_so_capture_reports_it_truthfully(self):
+        session = self._open_with_application_origin((BUNDLED, SKIN))
+        self.assertIn(SKIN, {c.addon_id for c in session.components})
+        self.assertNotIn(BUNDLED, {c.addon_id for c in session.components})
     def test_skin_default_marked(self):
         self.assertTrue(next(c for c in self.session.components if c.addon_id==SKIN).current_skin)
         self.assertTrue(self.preview().request.include_active_skin)

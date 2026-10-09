@@ -560,6 +560,13 @@ class BuildStatusService:
                 version = (record.resolved_version if record is not None else "") or node.version
                 enabled = record.desired_enabled if record is not None else node.desired_enabled
                 installed = actual_map.get(node.addon_id)
+                if node.platform_provided:
+                    # Status is observational and cannot run the target verifier, so it never
+                    # reports a platform-provided requirement as current (D-028).
+                    items[node.addon_id] = (
+                        SoftwareItemState.MISSING if installed is None else SoftwareItemState.UNCHECKABLE
+                    )
+                    continue
                 if installed is None:
                     state = SoftwareItemState.MISSING
                 elif (node.status is not CaptureStatus.COMPLETE and record is None) or not version \

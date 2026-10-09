@@ -90,7 +90,7 @@ class PlanHarness(Harness):
         self.set_graph()
 
     # -- saved software ------------------------------------------------------------------
-    def set_graph(self, *, extra=(), without=(), policies=None, disabled=(), store=True):
+    def set_graph(self, *, extra=(), without=(), policies=None, disabled=(), store=True, platform=()):
         """(Re)build the frozen graph and the saved packages it points at."""
         specs = {
             DEMO: ("1.0.0", PLUGIN_TYPE, (MODULE,)),
@@ -121,8 +121,13 @@ class PlanHarness(Harness):
         nodes.append(AddonCaptureNode("script.module.optional", "", "", False,
                                       ProvenanceStatus.UNKNOWN, optional=True,
                                       status=CaptureStatus.MISSING))
+        for addon_id, version, kind, requires in platform:
+            nodes.append(AddonCaptureNode(
+                addon_id, version, kind, True, ProvenanceStatus.UNKNOWN,
+                dependency_edges=tuple(DependencyEdge(r) for r in requires),
+                platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED))
         self.frozen = FrozenBuildManifest(
-            schema_version=1, build_id=BUILD_ID, name="Plan fixture",
+            schema_version=2 if platform else 1, build_id=BUILD_ID, name="Plan fixture",
             created_at="2026-10-06T00:00:00Z", kodi_version="21.0", platform="macos",
             capture_status=CaptureStatus.COMPLETE, addons=tuple(nodes))
         if policies is not None:
@@ -1557,6 +1562,20 @@ class G3CorrectionRegressions(PlanBase):
                 if plan.review is not None:
                     self.assertEqual(h.validate(target, plan.review).freshness, ReviewFreshness.CURRENT)
                     self.assertEqual(before, snapshot_tree(h.profile))
+
+
+class PlatformProvidedPlan(PlanBase):
+    """A bundled Kodi add-on is a verified requirement, never a managed row or a choice (D-028)."""
+
+    PLATFORM = "script.module.platform"
+
+    def test_platform_requirement_is_neither_a_missing_package_nor_a_skip_or_repository_row(self):
+        h = PlanHarness(self)
+        h.set_graph(platform=((self.PLATFORM, "5.1.0", "xbmc.python.module", ("xbmc.python",)),))
+        h.save_overlay()
+        plan = h.plan()
+        self.assertNotIn(self.PLATFORM, self.actions(plan))
+        self.assertEqual(plan.blockers, ())
 
 
 if __name__ == "__main__":

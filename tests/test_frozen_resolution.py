@@ -765,5 +765,93 @@ class ResolutionDialogTest(unittest.TestCase):
         self.assertIsNone(choice)
 
 
+class PlatformProvidedResolutionTests(unittest.TestCase):
+    """A platform-provided node is a verified requirement: never exact, repository or Skip."""
+
+    PIL = "script.module.pil"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.store = ArtifactStore(Path(temporary.name) / "artifacts")
+
+    def _managed(self, addon_id, version, addon_type, edges, requires=()):
+        metadata = self.store.import_zip(
+            _zip(addon_id, version, requires=requires), expected_addon_id=addon_id,
+            expected_version=version, source="test",
+        )
+        return AddonCaptureNode(
+            addon_id, version, addon_type, True, ProvenanceStatus.VERIFIED_REPOSITORY,
+            artifact=metadata, dependency_edges=edges, status=CaptureStatus.COMPLETE,
+        )
+
+    def _fixture_e(self):
+        """Synthetic Fixture E: Red Light 2.6.8 and its exact closure, PIL 5.1.0 platform-provided."""
+        redlight = "plugin.video.redlight"
+        requests = "script.module.requests"
+        urllib3 = "script.module.urllib3"
+        certifi = "script.module.certifi"
+        nodes = (
+            self._managed("script.module.base", "1.0.0", "xbmc.python.module", ()),
+            self._managed(redlight, "2.6.8", "xbmc.python.pluginsource", (
+                DependencyEdge(self.PIL, "1.1.7", False, (redlight,)),
+                DependencyEdge(requests, "2.31.0", False, (redlight,)),
+            ), requires=((self.PIL, "1.1.7"), (requests, "2.31.0"))),
+            self._managed(requests, "2.31.0", "xbmc.python.module", (
+                DependencyEdge(urllib3, "1.26.0", False, (requests,)),
+                DependencyEdge(certifi, "2023.0.0", False, (requests,)),
+            ), requires=((urllib3, "1.26.0"), (certifi, "2023.0.0"))),
+            self._managed(urllib3, "1.26.18", "xbmc.python.module", ()),
+            self._managed(certifi, "2023.7.22", "xbmc.python.module", ()),
+            AddonCaptureNode(
+                self.PIL, "5.1.0", "xbmc.python.module", True, ProvenanceStatus.UNKNOWN,
+                dependency_edges=(DependencyEdge("xbmc.python", "3.0.0", False, (self.PIL,)),),
+                platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED,
+            ),
+            AddonCaptureNode(
+                "xbmc.python", "3.0.1", "system", True, ProvenanceStatus.UNKNOWN,
+                system=True, status=CaptureStatus.SYSTEM,
+            ),
+        )
+        return FrozenBuildManifest(
+            schema_version=2, build_id="fixture-e", name="Fixture E", created_at="2026-10-09T00:00:00Z",
+            kodi_version="21.3", platform="macos", capture_status=CaptureStatus.COMPLETE, addons=nodes,
+        )
+
+    def test_fixture_e_validates_without_any_pil_artifact(self):
+        from resources.lib.frozen_resolution import FrozenPlanActionKind
+        manifest = self._fixture_e()
+        self.assertEqual(CaptureStatus.COMPLETE, manifest.capture_status)
+        plan = validate_frozen_manifest(manifest, self.store)
+        self.assertIn(self.PIL, [node.addon_id for node in plan.install_order])
+        self.assertNotIn(self.PIL, [node.addon_id for node in plan.executable_install_order])
+        recoverable = validate_frozen_install_plan(manifest, self.store, ())
+        self.assertEqual("5 / 5", recoverable.summary.exact_frozen_coverage)
+        self.assertEqual("fully_automatic", recoverable.summary.install_recoverability)
+        pil_kinds = {action.kind for action in recoverable.actions if action.addon_id == self.PIL}
+        self.assertEqual({FrozenPlanActionKind.PLATFORM_PROVIDED}, pil_kinds)
+
+    def test_platform_row_offers_no_repository_fallback_or_skip_and_needs_no_artifact(self):
+        from resources.lib.frozen_resolution import Recoverability, summarize_frozen_recoverability
+        summary = summarize_frozen_recoverability(self._fixture_e(), self.store, ())
+        row = {item.addon_id: item for item in summary.addons}[self.PIL]
+        self.assertEqual(Recoverability.PLATFORM_PROVIDED, row.recoverability)
+        self.assertFalse(row.exact_artifact_available)
+        self.assertFalse(row.repository_known)
+        self.assertFalse(row.fallback_eligible)
+        self.assertFalse(row.skip_eligible)
+
+    def test_repository_fallback_policy_cannot_target_a_platform_node(self):
+        from resources.lib.frozen_resolution import FrozenResolutionError, summarize_frozen_recoverability
+        from resources.lib.manifest import FrozenInstallPolicy, FrozenInstallPolicyMode
+        policy = FrozenInstallPolicy(self.PIL, FrozenInstallPolicyMode.EXACT_FIRST_REPOSITORY, "repository.fixture")
+        with self.assertRaisesRegex(FrozenResolutionError, "platform"):
+            summarize_frozen_recoverability(self._fixture_e(), self.store, (policy,))
+
+    def test_skip_is_never_accepted_for_a_platform_node(self):
+        with self.assertRaisesRegex(FrozenInstallValidationError, "platform"):
+            validate_frozen_install_plan(self._fixture_e(), self.store, (), skipped=(self.PIL,))
+
+
 if __name__ == "__main__":
     unittest.main()

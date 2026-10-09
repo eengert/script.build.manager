@@ -683,6 +683,67 @@ class TestBuildManager(unittest.TestCase):
                 ),
             )
 
+    def test_platform_provided_python_dependency_is_walked_but_never_resolved_as_a_source(self):
+        from dataclasses import replace
+        from resources.lib.build_manager import _verified_python_dependency_sources
+        from resources.lib.frozen import CaptureStatus, DependencyEdge
+
+        class ModuleSource:
+            def __init__(self, addon_id):
+                self.addon_id = addon_id
+
+            def python_module_roots(self):
+                return ("lib",)
+
+        manifest, records = _redlight_frozen_import_graph()
+        addons = []
+        for node in manifest.addons:
+            if node.addon_id == "script.module.pil":
+                node = replace(
+                    node, artifact=None, platform_provided=True,
+                    status=CaptureStatus.PLATFORM_PROVIDED,
+                )
+            elif node.addon_id == "script.module.requests":
+                node = replace(node, dependency_edges=node.dependency_edges + (
+                    DependencyEdge("script.module.pil", "1.1.7", False, (node.addon_id,)),
+                ))
+            addons.append(node)
+        manifest = replace(manifest, schema_version=2, addons=tuple(addons))
+        records_by_id = {item.addon_id: item for item in records}
+        actual_by_id = {
+            item.addon_id: InstalledAddon(item.addon_id, item.desired_enabled, item.resolved_version)
+            for item in records if item.addon_id != "script.module.pil"
+        }
+        resolved_ids = []
+        transaction = SimpleNamespace(
+            transaction_id="33333333-3333-4333-8333-333333333333",
+            manifest_fingerprint=manifest.fingerprint(),
+        )
+        sources = _verified_python_dependency_sources(
+            frozen_manifest=manifest,
+            transaction=transaction,
+            owner_addon_id="plugin.video.redlight",
+            required_module_providers={"requests": "script.module.requests"},
+            records_by_id=records_by_id,
+            actual_by_id=actual_by_id,
+            source_resolver=SimpleNamespace(
+                resolve=lambda identity: (
+                    resolved_ids.append(identity.addon_id), ModuleSource(identity.addon_id)
+                )[1]
+            ),
+        )
+        self.assertEqual(
+            {
+                "script.module.requests",
+                "script.module.urllib3",
+                "script.module.certifi",
+                "script.module.chardet",
+                "script.module.idna",
+            },
+            {source.addon_id for source in sources},
+        )
+        self.assertNotIn("script.module.pil", resolved_ids)
+
     def test_wrong_python_dependency_registry_version_fails_closed(self):
         from resources.lib.build_manager import _verified_python_dependency_sources
 

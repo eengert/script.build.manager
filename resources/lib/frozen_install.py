@@ -45,7 +45,14 @@ from resources.lib.frozen import (
     CaptureError,
     CaptureStatus,
     FrozenBuildManifest,
+    InstalledMetadata,
+    InstalledOrigin,
+    KodiInventoryBackend,
+    _check_addon_xml_identity,
+    _declared_extension_points,
+    _parse_dependency_edges,
 )
+from resources.lib.dependencies import _is_system_dependency, _strict_version_satisfies
 from resources.lib.frozen_resolution import (
     FrozenBuildRecoverabilitySummary,
     FrozenInstallResolutionManifest,
@@ -979,6 +986,11 @@ class FrozenManifestPlan:
     nodes: Mapping[str, AddonCaptureNode]
     install_order: Tuple[AddonCaptureNode, ...]
 
+    @property
+    def executable_install_order(self) -> Tuple[AddonCaptureNode, ...]:
+        """Install order without platform-provided nodes, which are verified and never installed (D-028)."""
+        return tuple(node for node in self.install_order if not node.platform_provided)
+
 
 def validate_frozen_manifest(
     manifest: FrozenBuildManifest, store: ArtifactStore
@@ -998,7 +1010,7 @@ def _validate_frozen_manifest_core(
     """Validate graph/artifacts, allowing only caller-proven install gaps."""
     if not isinstance(manifest, FrozenBuildManifest):
         raise FrozenInstallValidationError("frozen installation requires a typed manifest")
-    if manifest.schema_version != 1:
+    if manifest.schema_version not in (1, 2):
         raise FrozenInstallValidationError("unsupported frozen manifest schema")
     if manifest.capture_status is not CaptureStatus.COMPLETE and not (
         manifest.capture_status is CaptureStatus.INCOMPLETE_ARTIFACT
@@ -1015,6 +1027,10 @@ def _validate_frozen_manifest_core(
                 raise FrozenInstallValidationError("system dependency has an artifact")
             continue
         if node.is_absent_optional_dependency:
+            continue
+        if node.platform_provided:
+            # Verified target requirement, not an artifact: it stays a graph vertex for
+            # edges, cycles and missing children, but needs no ZIP (D-028).
             continue
         if (
             node.addon_id in recoverable_gaps
@@ -1144,6 +1160,10 @@ class RecoverableFrozenInstallPlan:
     def install_order(self) -> Tuple[AddonCaptureNode, ...]:
         return self.strict_plan.install_order
 
+    @property
+    def executable_install_order(self) -> Tuple[AddonCaptureNode, ...]:
+        return self.strict_plan.executable_install_order
+
 
 def validate_frozen_install_plan(
     manifest: FrozenBuildManifest,
@@ -1164,6 +1184,10 @@ def validate_frozen_install_plan(
     effective = {policy.addon_id: policy for policy in policies}
     for addon_id in skipped:
         row = rows.get(addon_id)
+        if row is not None and row.recoverability is Recoverability.PLATFORM_PROVIDED:
+            raise FrozenInstallValidationError(
+                f"platform-provided add-on cannot be skipped: {addon_id}"
+            )
         policy = effective_policy(addon_id, effective)
         if (
             row is None
@@ -1183,7 +1207,9 @@ def validate_frozen_install_plan(
             "missing exact artifacts are blocking for " + ", ".join(sorted(blocking))
         )
     allowed_gaps = frozenset(
-        row.addon_id for row in summary.addons if not row.exact_artifact_available
+        row.addon_id for row in summary.addons
+        if not row.exact_artifact_available
+        and row.recoverability is not Recoverability.PLATFORM_PROVIDED
     )
     trusted_repo_dependencies: Dict[str, Tuple[str, ...]] = {}
     for addon_id in allowed_gaps:
@@ -1205,7 +1231,9 @@ def validate_frozen_install_plan(
     actions = []
     for node in strict_plan.install_order:
         row = rows[node.addon_id]
-        if row.exact_artifact_available:
+        if row.recoverability is Recoverability.PLATFORM_PROVIDED:
+            kind = FrozenPlanActionKind.PLATFORM_PROVIDED
+        elif row.exact_artifact_available:
             kind = FrozenPlanActionKind.INSTALL_EXACT_ARTIFACT
         elif row.repository_known and row.fallback_eligible:
             kind = (
@@ -1236,8 +1264,13 @@ def _repository_package_required_dependencies(
     manifest_plan: RecoverableFrozenInstallPlan,
     records: Mapping[str, InstallResolutionRecord],
     skipped: frozenset,
+    platform_versions: Optional[Mapping[str, str]] = None,
 ) -> Tuple[str, ...]:
-    """Require repository-current ZIP dependencies to fit the captured plan."""
+    """Require repository-current ZIP dependencies to fit the captured plan.
+
+    A platform-provided dependency is checked against its verified target version,
+    never its captured observation, and it fails closed when none was verified.
+    """
     try:
         with zipfile.ZipFile(io.BytesIO(package.zip_bytes), "r") as archive:
             xml_bytes = archive.read(f"{package.addon_id}/addon.xml")
@@ -1264,6 +1297,21 @@ def _repository_package_required_dependencies(
             raise FrozenInstallValidationError(
                 f"repository package requires skipped dependency {requirement.addon_id}"
             )
+        if dependency.platform_provided:
+            verified = (platform_versions or {}).get(requirement.addon_id)
+            if verified is None:
+                raise FrozenInstallValidationError(
+                    f"repository package requires unverified platform dependency {requirement.addon_id}"
+                )
+            if requirement.min_version and not _strict_version_satisfies(verified, requirement.min_version):
+                if requirement.optional:
+                    continue
+                raise FrozenInstallValidationError(
+                    f"repository package requires a newer platform dependency {requirement.addon_id}"
+                )
+            if not requirement.optional:
+                dependencies.append(requirement.addon_id)
+            continue
         record = records.get(requirement.addon_id)
         version = (
             record.resolved_version if record and record.resolved_version
@@ -1280,7 +1328,9 @@ def _repository_package_required_dependencies(
     return tuple(sorted(set(dependencies)))
 
 
-def stored_repository_dependencies(store, record, plan, records, skipped) -> Tuple[str, ...]:
+def stored_repository_dependencies(
+    store, record, plan, records, skipped, *, platform_versions=None,
+) -> Tuple[str, ...]:
     """Read an exact saved repository package and reconstruct installer semantics.
 
     Deterministic read-only helper shared by restart restoration and plan preview.
@@ -1299,7 +1349,9 @@ def stored_repository_dependencies(store, record, plan, records, skipped) -> Tup
     package = RepositoryPackage(
         record.addon_id, record.repository_id, record.resolved_version, data
     )
-    return _repository_package_required_dependencies(package, plan, records, skipped)
+    return _repository_package_required_dependencies(
+        package, plan, records, skipped, platform_versions=platform_versions,
+    )
 
 
 def _check_terminal_record(addon_id, record, node, row, policies, *, allow_uninstalled=False):
@@ -1342,6 +1394,143 @@ def _check_terminal_record(addon_id, record, node, row, policies, *, allow_unins
             raise FrozenInstallValidationError("durable skip resolution is inconsistent")
 
 
+class FrozenPlatformRequirementError(FrozenInstallValidationError):
+    """A platform-provided Kodi add-on cannot be verified for this build (D-028)."""
+
+    code = "PLATFORM_REQUIREMENT_UNSATISFIED"
+
+
+def _platform_unsatisfied(message: str) -> FrozenPlatformRequirementError:
+    return FrozenPlatformRequirementError(message)
+
+
+def _builtin_satisfies(installer, edge) -> bool:
+    """Authoritative Kodi evidence for a builtin minimum; anything less fails closed."""
+    try:
+        builtin = installer.get_addon_details(edge.addon_id)
+    except Exception:
+        return False
+    return (
+        builtin is not None
+        and not builtin.broken
+        and builtin.enabled is True
+        and _strict_version_satisfies(builtin.version, edge.min_version)
+    )
+
+
+def _planned_versions(plan, records) -> Dict[str, str]:
+    """Managed versions the build will leave installed, resolved where a record already knows them."""
+    by_id = records if isinstance(records, Mapping) else {record.addon_id: record for record in records}
+    versions: Dict[str, str] = {}
+    for node in plan.manifest.addons:
+        if node.system or node.platform_provided or node.is_absent_optional_dependency:
+            continue
+        record = by_id.get(node.addon_id)
+        versions[node.addon_id] = (
+            record.resolved_version if record is not None and record.resolved_version else node.version
+        )
+    return versions
+
+
+def verify_platform_requirements(
+    plan,
+    installer,
+    *,
+    planned_versions: Mapping[str, str],
+    skipped: frozenset = frozenset(),
+    resolutions: Mapping[str, object] = {},
+) -> Dict[str, str]:
+    """Verify every platform-provided node on the target. Read-only and fail-closed (D-028).
+
+    Each platform node must be present, trusted application-origin, enabled,
+    unbroken, of the captured type, identity-consistent, and parseable at a version
+    that meets every incoming minimum. Its own trusted metadata must then be
+    representable by the frozen plan: managed children at a satisfying planned
+    version, platform children at their verified version, builtins by authoritative
+    Kodi evidence. Only inspection methods are called. Returns each verified target
+    version. Any uncertainty raises FrozenPlatformRequirementError.
+    """
+    platform_nodes = [node for node in plan.manifest.addons if node.platform_provided]
+    if not platform_nodes:
+        return {}
+    for node in platform_nodes:
+        if node.addon_id in resolutions:
+            raise FrozenInstallValidationError(
+                "a platform-provided add-on cannot have a resolution record"
+            )
+    incoming: Dict[str, list] = {node.addon_id: [] for node in platform_nodes}
+    for parent in plan.nodes.values():
+        if parent.system or parent.is_absent_optional_dependency or parent.addon_id in skipped:
+            continue
+        for edge in parent.dependency_edges:
+            if edge.addon_id in incoming and edge.min_version:
+                incoming[edge.addon_id].append(edge.min_version)
+
+    verified: Dict[str, str] = {}
+    metadata_by_id: Dict[str, InstalledMetadata] = {}
+    for node in platform_nodes:
+        addon_id = node.addon_id
+        try:
+            details = installer.get_addon_details(addon_id)
+        except Exception:
+            details = None
+        if details is None:
+            raise _platform_unsatisfied(f"{addon_id} is not installed on the target")
+        try:
+            metadata = installer.read_installed_metadata(addon_id)
+        except Exception:
+            metadata = None
+        if metadata is None:
+            raise _platform_unsatisfied(f"{addon_id} has no readable trusted metadata on the target")
+        if metadata.origin is not InstalledOrigin.APPLICATION:
+            raise _platform_unsatisfied(f"{addon_id} on the target is not the trusted application add-on")
+        if details.broken or details.enabled is not True:
+            raise _platform_unsatisfied(f"{addon_id} on the target is broken or disabled")
+        try:
+            _check_addon_xml_identity(metadata.xml_bytes, addon_id, details.version)
+            declared = _declared_extension_points(metadata.xml_bytes, addon_id)
+        except CaptureError as exc:
+            raise _platform_unsatisfied(f"{addon_id} metadata does not describe the target add-on") from exc
+        if node.addon_type not in declared:
+            raise _platform_unsatisfied(f"{addon_id} on the target does not declare the captured add-on type")
+        if not _strict_version_satisfies(details.version, ""):
+            raise _platform_unsatisfied(f"{addon_id} on the target has an unverifiable version")
+        if any(not _strict_version_satisfies(details.version, minimum) for minimum in incoming[addon_id]):
+            raise _platform_unsatisfied(f"{addon_id} on the target does not satisfy the build's minimum")
+        verified[addon_id] = details.version
+        metadata_by_id[addon_id] = metadata
+
+    for node in platform_nodes:
+        addon_id = node.addon_id
+        try:
+            target_edges = _parse_dependency_edges(metadata_by_id[addon_id].xml_bytes, addon_id)
+        except CaptureError as exc:
+            raise _platform_unsatisfied(f"{addon_id} on the target has unreadable dependency metadata") from exc
+        for edge in target_edges:
+            if edge.optional:
+                continue
+            if _is_system_dependency(edge.addon_id):
+                if not _builtin_satisfies(installer, edge):
+                    raise _platform_unsatisfied(
+                        f"{addon_id} requires builtin {edge.addon_id} that the target does not verify"
+                    )
+                continue
+            planned = plan.nodes.get(edge.addon_id)
+            if planned is None or planned.is_absent_optional_dependency or edge.addon_id in skipped:
+                raise _platform_unsatisfied(
+                    f"{addon_id} on the target requires {edge.addon_id}, which this build does not install"
+                )
+            if planned.platform_provided:
+                version = verified[edge.addon_id]
+            else:
+                version = planned_versions.get(edge.addon_id, planned.version)
+            if not _strict_version_satisfies(version, edge.min_version):
+                raise _platform_unsatisfied(
+                    f"{addon_id} on the target requires {edge.addon_id} {edge.min_version}, which this build does not provide"
+                )
+    return verified
+
+
 @dataclass(frozen=True)
 class FrozenInstalledAddon:
     addon_id: str
@@ -1355,6 +1544,10 @@ class FrozenArtifactBackend:
 
     def get_addon_details(self, addon_id: str) -> Optional[FrozenInstalledAddon]:
         raise NotImplementedError
+
+    def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
+        """Read-only trusted metadata for platform verification. No evidence means no proof."""
+        return None
 
     def install_exact(self, addon_id: str, version: str, zip_bytes: bytes) -> FrozenInstalledAddon:
         raise NotImplementedError
@@ -1375,9 +1568,11 @@ class InMemoryFrozenArtifactBackend(FrozenArtifactBackend):
         self,
         installed: Optional[Mapping[str, FrozenInstalledAddon]] = None,
         repository_packages: Optional[Mapping[Tuple[str, str], Tuple[str, bytes]]] = None,
+        platform_metadata: Optional[Mapping[str, InstalledMetadata]] = None,
     ):
         self.installed = dict(installed or {})
         self.repository_packages = dict(repository_packages or {})
+        self.platform_metadata = dict(platform_metadata or {})
         self.install_calls = []
         self.enable_calls = []
         self.artifacts = {}
@@ -1385,6 +1580,9 @@ class InMemoryFrozenArtifactBackend(FrozenArtifactBackend):
 
     def get_addon_details(self, addon_id: str) -> Optional[FrozenInstalledAddon]:
         return self.installed.get(addon_id)
+
+    def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
+        return self.platform_metadata.get(addon_id)
 
     def install_exact(self, addon_id: str, version: str, zip_bytes: bytes) -> FrozenInstalledAddon:
         current = self.installed.get(addon_id)
@@ -1452,6 +1650,33 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         if not isinstance(response, dict):
             raise FrozenInstallError(f"{method} returned malformed JSON-RPC data")
         return response
+
+    def _application_addons_dir(self) -> Path:
+        try:
+            import xbmcvfs
+            return Path(xbmcvfs.translatePath("special://xbmc/addons"))
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            raise FrozenInstallError("Kodi VFS module is unavailable") from exc
+
+    def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
+        """Trusted addon.xml through the same root authority that capture uses (D-028)."""
+        def result_rpc(method: str, params: dict) -> dict:
+            response = self._rpc(method, params)
+            if response.get("error") is not None:
+                raise FrozenInstallError("Kodi refused add-on inventory")
+            return response.get("result", {})
+
+        addons_dir = self._addons_dir()
+        backend = KodiInventoryBackend(
+            result_rpc,
+            addons_dir=addons_dir,
+            package_cache_dir=addons_dir / "packages",
+            application_addons_dir=self._application_addons_dir(),
+        )
+        try:
+            return backend.read_installed_metadata(addon_id)
+        finally:
+            backend.close()
 
     def get_addon_details(self, addon_id: str) -> Optional[FrozenInstalledAddon]:
         response = self._rpc(
@@ -2007,6 +2232,7 @@ class FrozenInstallCoordinator:
     @staticmethod
     def _repository_prerequisites(plan, repository_ids, records, recoverability_rows):
         required = set()
+        verified_platform = set()
         pending = list(repository_ids)
         while pending:
             addon_id = pending.pop()
@@ -2015,6 +2241,14 @@ class FrozenInstallCoordinator:
             node = plan.nodes.get(addon_id)
             if node is None or node.system or node.is_absent_optional_dependency:
                 raise FrozenInstallValidationError("captured repository prerequisite is unavailable")
+            if node.platform_provided:
+                # Verified against the target, never installed; its managed children still install first.
+                if addon_id not in verified_platform:
+                    verified_platform.add(addon_id)
+                    for edge in node.dependency_edges:
+                        if not edge.optional and edge.addon_id in plan.nodes and not plan.nodes[edge.addon_id].system:
+                            pending.append(edge.addon_id)
+                continue
             record = records.get(addon_id)
             row = recoverability_rows.get(addon_id)
             if (
@@ -2063,6 +2297,11 @@ class FrozenInstallCoordinator:
                 ):
                     held.add(node.addon_id)
                     changed = True
+        platform_ids = {node.addon_id for node in plan.install_order if node.platform_provided}
+        if platform_ids.intersection(held):
+            raise FrozenInstallValidationError(
+                "a platform-provided add-on cannot be held or disabled"
+            )
         return tuple(sorted(held))
 
     @staticmethod
@@ -2137,7 +2376,10 @@ class FrozenInstallCoordinator:
                 if (not isinstance(resolution_choices, Mapping)
                         or any(not isinstance(key, str) or not isinstance(choice, ResolutionChoice)
                                for key, choice in resolution_choices.items())
-                        or set(resolution_choices) - {node.addon_id for node in manifest.addons}):
+                        or set(resolution_choices) - {node.addon_id for node in manifest.addons}
+                        or set(resolution_choices) & {
+                            node.addon_id for node in manifest.addons if node.platform_provided
+                        }):
                     raise FrozenInstallValidationError("approved resolution choices are invalid")
                 resolution_choices = dict(resolution_choices)
             policies = tuple(
@@ -2254,7 +2496,7 @@ class FrozenInstallCoordinator:
         )
         rows = {row.addon_id: row for row in plan.summary.addons}
         effective = {policy.addon_id: policy for policy in policies}
-        for node in plan.install_order:
+        for node in plan.executable_install_order:
             if active_resume:
                 break
             row = rows[node.addon_id]
@@ -2358,8 +2600,18 @@ class FrozenInstallCoordinator:
             resolved_plan = validate_frozen_install_plan(
                 checked_manifest, self.artifact_store, checked_policies, skipped=tuple(skipped)
             )
+            # Platform-provided requirements are verified read-only, before any transaction,
+            # policy, hold, install or configuration step (D-028).
+            platform_versions = verify_platform_requirements(
+                resolved_plan.strict_plan, self.installer,
+                planned_versions=_planned_versions(resolved_plan.strict_plan, records),
+                skipped=frozenset(skipped), resolutions=records,
+            )
             extra_dependencies = {
-                aid: stored_repository_dependencies(self.artifact_store, record, resolved_plan, records, skipped)
+                aid: stored_repository_dependencies(
+                    self.artifact_store, record, resolved_plan, records, skipped,
+                    platform_versions=platform_versions,
+                )
                 for aid, record in records.items()
                 if record.resolution is InstallResolution.REPOSITORY_CURRENT and record.resolved_version
             }
@@ -2402,6 +2654,12 @@ class FrozenInstallCoordinator:
         try:
             (resolved_plan, hold_ids, private_overlay_id, private_overlay_fingerprint,
              private_overlay_required) = validate_execution_material(manifest, desired_profile, policies)
+        except FrozenPlatformRequirementError as exc:
+            return FrozenInstallResult(
+                "failed", code=exc.code,
+                message="a Kodi-provided add-on required by this build does not satisfy it; nothing was changed",
+                recoverability=plan.summary,
+            )
         except Exception as exc:
             return FrozenInstallResult(
                 "failed", code=getattr(exc, "code", "FROZEN_RESOLUTION_INVALID"),
@@ -2531,7 +2789,7 @@ class FrozenInstallCoordinator:
             ) if repository_ids else set()
             installed_ids = set()
             record_map = dict(records)
-            for node in plan.install_order:
+            for node in plan.executable_install_order:
                 current = self.installer.get_addon_details(node.addon_id)
                 target_version = record_map[node.addon_id].resolved_version or node.version
                 if current is not None and current.version == target_version and not current.broken:
@@ -2551,7 +2809,7 @@ class FrozenInstallCoordinator:
                             record_map[node.addon_id], state=ResolutionState.INSTALLED
                         )
                     installed_ids.add(node.addon_id)
-            for node in plan.install_order:
+            for node in plan.executable_install_order:
                 if node.addon_id not in prelude_ids:
                     continue
                 if node.addon_id in installed_ids:
@@ -2619,14 +2877,23 @@ class FrozenInstallCoordinator:
                 )
                 transaction = self._persist_resolutions(transaction, manifest, tuple(record_map.values()))
 
+            # Recheck against the state that exists now, before any further install (D-028).
+            platform_versions = verify_platform_requirements(
+                plan.strict_plan, self.installer,
+                planned_versions=_planned_versions(plan.strict_plan, record_map),
+                skipped=skipped, resolutions=record_map,
+            )
             extra_dependencies = {
-                aid: stored_repository_dependencies(self.artifact_store, record, plan, record_map, skipped)
+                aid: stored_repository_dependencies(
+                    self.artifact_store, record, plan, record_map, skipped,
+                    platform_versions=platform_versions,
+                )
                 for aid, record in record_map.items()
                 if record.resolution is InstallResolution.REPOSITORY_CURRENT and record.resolved_version
             }
             for addon_id, package in packages.items():
                 extra_dependencies[addon_id] = _repository_package_required_dependencies(
-                    package, plan, record_map, skipped
+                    package, plan, record_map, skipped, platform_versions=platform_versions,
                 )
             resolved_plan = validate_frozen_install_plan(
                 manifest,
@@ -2639,7 +2906,7 @@ class FrozenInstallCoordinator:
                 desired_profile, tuple(record_map.values())
             )
 
-            for node in resolved_plan.install_order:
+            for node in resolved_plan.executable_install_order:
                 if node.addon_id in installed_ids:
                     continue
                 record = record_map[node.addon_id]
@@ -2765,7 +3032,7 @@ class FrozenInstallCoordinator:
             strict_plan = validate_frozen_manifest(manifest, self.artifact_store)
             records = tuple(
                 replace(default_exact_record(node), state=ResolutionState.INSTALLED)
-                for node in strict_plan.install_order
+                for node in strict_plan.executable_install_order
             )
             plan = RecoverableFrozenInstallPlan(
                 strict_plan,
@@ -2773,7 +3040,7 @@ class FrozenInstallCoordinator:
                 summarize_frozen_recoverability(manifest, self.artifact_store),
                 install_plan_fingerprint(manifest, ()),
                 tuple(FrozenPlanAction(FrozenPlanActionKind.INSTALL_EXACT_ARTIFACT, node.addon_id)
-                      for node in strict_plan.install_order),
+                      for node in strict_plan.executable_install_order),
             )
         else:
             skipped = tuple(
@@ -2787,7 +3054,12 @@ class FrozenInstallCoordinator:
                 raise FrozenInstallValidationError("install policy changed before restart resume")
             rows = {row.addon_id: row for row in plan.summary.addons}
             record_map = {record.addon_id: record for record in records}
-            if set(record_map) != set(rows):
+            # Platform-provided rows are verified requirements and never carry a durable record.
+            managed_ids = {
+                addon_id for addon_id, row in rows.items()
+                if row.recoverability is not Recoverability.PLATFORM_PROVIDED
+            }
+            if set(record_map) != managed_ids:
                 raise FrozenInstallValidationError("durable resolutions do not cover captured add-ons")
             extra_dependencies = {}
             for addon_id, record in record_map.items():
@@ -2825,6 +3097,16 @@ class FrozenInstallCoordinator:
                 )
             ):
                 raise FrozenInstallValidationError("resolved software fingerprint changed")
+        # Resume re-verifies the target before anything else mutates (D-028).
+        verify_platform_requirements(
+            plan.strict_plan, self.installer,
+            planned_versions=_planned_versions(plan.strict_plan, records),
+            skipped=frozenset(
+                record.addon_id for record in records
+                if record.resolution is InstallResolution.SKIPPED
+            ),
+            resolutions={record.addon_id: record for record in records},
+        )
         resolution_manifest = self._make_resolution_manifest(manifest, transaction, records)
         return plan, records, resolution_manifest
 
@@ -3552,6 +3834,28 @@ class FrozenInstallCoordinator:
             )
         return updated, None
 
+    def _platform_recheck(
+        self, transaction, plan, records, *, recoverability, resolution_manifest,
+    ) -> Optional[FrozenInstallResult]:
+        """Read-only platform check before success. A lost requirement fails closed; nothing is repaired (D-028)."""
+        try:
+            verify_platform_requirements(
+                plan, self.installer,
+                planned_versions=_planned_versions(plan, records),
+                skipped=frozenset(
+                    record.addon_id for record in records
+                    if record.resolution is InstallResolution.SKIPPED
+                ),
+                resolutions={record.addon_id: record for record in records},
+            )
+        except FrozenPlatformRequirementError as exc:
+            return self._attention(
+                transaction, exc.code,
+                "a Kodi-provided add-on no longer satisfies this build; Build Manager did not change it",
+                recoverability=recoverability, resolution_manifest=resolution_manifest,
+            )
+        return None
+
     def _finalize(
         self,
         transaction,
@@ -3568,6 +3872,12 @@ class FrozenInstallCoordinator:
             expected_phase=transaction.phase,
             new_phase=FrozenInstallPhase.VALIDATING,
         )
+        attention = self._platform_recheck(
+            transaction, plan, records,
+            recoverability=recoverability, resolution_manifest=resolution_manifest,
+        )
+        if attention is not None:
+            return attention
         if self.final_validator is not None and not self.final_validator(plan):
             return self._attention(
                 transaction, "FINAL_VALIDATION_FAILED",
@@ -3603,7 +3913,7 @@ class FrozenInstallCoordinator:
                         f"skipped add-on {record.addon_id} is present on the target",
                         recoverability=recoverability, resolution_manifest=resolution_manifest,
                     )
-        for node in plan.install_order:
+        for node in plan.executable_install_order:
             record = record_map.get(node.addon_id)
             if record is None or record.resolution is InstallResolution.SKIPPED:
                 return self._attention(
@@ -3621,7 +3931,7 @@ class FrozenInstallCoordinator:
                 )
             if current.enabled is not node.desired_enabled:
                 self.installer.set_addon_enabled(node.addon_id, node.desired_enabled)
-        for node in plan.install_order:
+        for node in plan.executable_install_order:
             record = record_map[node.addon_id]
             resolved_version = record.resolved_version or node.version
             current = self.installer.get_addon_details(node.addon_id)
@@ -3645,6 +3955,12 @@ class FrozenInstallCoordinator:
                 "install resolution identity changed before completion",
                 recoverability=recoverability, resolution_manifest=resolution_manifest,
             )
+        attention = self._platform_recheck(
+            transaction, plan, records,
+            recoverability=recoverability, resolution_manifest=resolution_manifest,
+        )
+        if attention is not None:
+            return attention
         transaction = self.store.transition_expected(
             transaction_id=transaction.transaction_id,
             expected_phase=FrozenInstallPhase.VALIDATING,

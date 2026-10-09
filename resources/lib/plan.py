@@ -518,8 +518,11 @@ class BuildPlanService:
         o = self._o
         sw = _Software()
         policies = tuple(desired.frozen_install_policies)
+        # Platform-provided requirements are verified at Apply, never installed, so they are not
+        # managed rows: no package can be missing, and no repository or Skip choice applies (D-028).
         installable = tuple(sorted(
-            (n for n in frozen.addons if not n.system and not n.is_absent_optional_dependency),
+            (n for n in frozen.addons
+             if not n.system and not n.is_absent_optional_dependency and not n.platform_provided),
             key=lambda n: n.addon_id))
         prior = {record.addon_id: record for record in records}
         choices = dict(target.choices)
@@ -741,7 +744,7 @@ class BuildPlanService:
                 plan = validate_frozen_install_plan(
                     frozen, self._o.artifact_store, policies, skipped=tuple(sorted(skipped)),
                     extra_dependencies=extra_dependencies)
-            sw.install_order = tuple(node.addon_id for node in plan.install_order)
+            sw.install_order = tuple(node.addon_id for node in plan.executable_install_order)
             sw.hold_ids = _hold_ids(plan.install_order, desired)
         except Exception as exc:
             self._log_failure("graph", exc)
@@ -759,7 +762,8 @@ class BuildPlanService:
         """Kodi after the software stage: each saved add-on at its exact version, as the build says."""
         final = dict(actual_map)
         for node in frozen.addons:
-            if node.system or node.is_absent_optional_dependency or node.addon_id in sw.skipped:
+            if (node.system or node.is_absent_optional_dependency or node.platform_provided
+                    or node.addon_id in sw.skipped):
                 continue
             if node.addon_id in sw.target_version or node.addon_id in sw.pending:
                 installed = actual_map.get(node.addon_id)

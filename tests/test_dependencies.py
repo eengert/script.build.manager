@@ -1624,5 +1624,27 @@ class TestResolveClosureRootMetadata(unittest.TestCase):
         self.assertEqual(statuses["good.dep"], DependencyStatus.SATISFIED)
 
 
+class StrictPlatformVersionTests(unittest.TestCase):
+    """Platform verification fails closed; the generic dependency comparison is unchanged."""
+
+    def test_strict_comparison_requires_a_parseable_installed_version_and_minimum(self):
+        from resources.lib.dependencies import _strict_version_satisfies
+        self.assertTrue(_strict_version_satisfies("5.1.0", "1.1.7"))
+        self.assertTrue(_strict_version_satisfies("1.1.7", "1.1.7"))
+        self.assertTrue(_strict_version_satisfies("1.1", "1.1.0"))
+        self.assertTrue(_strict_version_satisfies("6.0.0", "1.1.7"))
+        self.assertTrue(_strict_version_satisfies("5.1.0", ""))
+        self.assertFalse(_strict_version_satisfies("1.0.0", "1.1.7"))
+        self.assertFalse(_strict_version_satisfies("", ""))
+        self.assertFalse(_strict_version_satisfies("", "1.1.7"))
+        self.assertFalse(_strict_version_satisfies("5.1.0-beta", "1.1.7"))
+        self.assertFalse(_strict_version_satisfies("abc", "1.1.7"))
+        self.assertFalse(_strict_version_satisfies("5.1.0", "1.1.x"))
+
+    def test_generic_dependency_comparison_stays_permissive(self):
+        from resources.lib.dependencies import _version_satisfies
+        self.assertTrue(_version_satisfies("abc", "1.0"))
+
+
 if __name__ == "__main__":
     unittest.main()

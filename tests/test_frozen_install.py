@@ -36,8 +36,11 @@ from resources.lib.frozen import (
     CaptureStatus,
     DependencyEdge,
     FrozenBuildManifest,
+    KodiInventoryBackend,
     ProvenanceStatus,
+    capture_frozen_build,
 )
+from tests.test_frozen import _kodi_entry, _kodi_rpc, _write_addon, _xml
 from resources.lib.frozen_install import (
     FrozenInstallCoordinator,
     FrozenInstallPhase,
@@ -2281,6 +2284,310 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertIsNone(self.store.inspect())
         self.assertEqual(self.policy.policy, AddonUpdatePolicy.NOTIFY_ONLY)
         self.assertTrue(self.backend.installed)
+
+
+PLATFORM_ID = "script.module.pil"
+PLATFORM_ROOT = "plugin.video.redlight.fixture"
+PLATFORM_CODE = "PLATFORM_REQUIREMENT_UNSATISFIED"
+
+
+class PlatformProvidedInstallTests(unittest.TestCase):
+    """Bundled Kodi add-ons are verified platform requirements: never installed or toggled (D-028)."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.home = self.root / "home" / "addons"
+        self.application = self.root / "application" / "addons"
+        self.cache = self.root / "packages"
+        for directory in (self.home, self.application, self.cache):
+            directory.mkdir(parents=True)
+        self.artifacts = ArtifactStore(self.root / "artifacts")
+        self.store = FrozenInstallStore(self.root / "transaction")
+        self.policy = FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY)
+        self.backend = InMemoryFrozenArtifactBackend()
+        _write_addon(self.home, PLATFORM_ROOT, version="2.6.8",
+                     imports=((PLATFORM_ID, "1.1.7", False),))
+        _write_addon(self.application, PLATFORM_ID, version="5.1.0", point="xbmc.python.module",
+                     imports=(("xbmc.python", "3.0.0", False),))
+        (self.cache / "plugin.video.redlight.fixture-2.6.8.zip").write_bytes(
+            _zip(PLATFORM_ROOT, "2.6.8", requires=((PLATFORM_ID, "1.1.7"),)))
+        self.entries = [
+            _kodi_entry(PLATFORM_ROOT, f"special://home/addons/{PLATFORM_ROOT}/", "2.6.8",
+                        addon_type="xbmc.python.pluginsource"),
+            _kodi_entry(PLATFORM_ID, f"special://xbmc/addons/{PLATFORM_ID}/", "5.1.0"),
+        ]
+        self.manifest = self._capture()
+        self._install_target()
+
+    def _capture(self, entries=None):
+        backend = KodiInventoryBackend(
+            _kodi_rpc(self.entries if entries is None else entries),
+            addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
+        )
+        return capture_frozen_build(
+            backend=backend, store=self.artifacts, root_addon_ids=[PLATFORM_ROOT],
+            build_id="platform-install", name="Platform install", created_at="2026-10-09T00:00:00Z",
+            platform="macos",
+        ).manifest
+
+    def _install_target(self, *, pil_version="5.1.0", enabled=True, broken=False, absent=False,
+                        origin="application", metadata_version=None, builtin=True,
+                        builtin_version="3.0.1", extra_imports=(), unreadable=False,
+                        declared_point="xbmc.python.module"):
+        from resources.lib.frozen import InstalledMetadata, InstalledOrigin
+        self.backend.installed = {}
+        if not absent:
+            self.backend.installed[PLATFORM_ID] = FrozenInstalledAddon(
+                PLATFORM_ID, pil_version, enabled, broken)
+        if builtin:
+            self.backend.installed["xbmc.python"] = FrozenInstalledAddon(
+                "xbmc.python", builtin_version, True, False)
+        xml = _xml(
+            PLATFORM_ID, pil_version if metadata_version is None else metadata_version,
+            imports=(("xbmc.python", "3.0.0", False),) + tuple(extra_imports),
+            point=declared_point,
+        )
+        self.backend.platform_metadata = {} if unreadable else {
+            PLATFORM_ID: InstalledMetadata(xml, InstalledOrigin(origin)),
+        }
+
+    def _install(self, *, manifest=None, configuration_runner=None):
+        return FrozenInstallCoordinator(
+            store=self.store, artifact_store=self.artifacts, policy_backend=self.policy,
+            installer=self.backend, session_id_provider=lambda: SESSION_A,
+            configuration_runner=configuration_runner,
+            registry_backend=InMemoryRegistryBackend(self.backend),
+        ).install(
+            self.manifest if manifest is None else manifest,
+            manifest_path="/platform-fixture.json", device_profile_id="test",
+        )
+
+    def _assert_blocked_before_mutation(self):
+        policy_calls = list(self.policy.calls)
+        result = self._install()
+        self.assertEqual("failed", result.outcome, (result.code, result.message))
+        self.assertEqual(PLATFORM_CODE, result.code)
+        self.assertEqual([], self.backend.install_calls)
+        self.assertEqual([], self.backend.enable_calls)
+        self.assertEqual(policy_calls, self.policy.calls)
+        self.assertIsNone(self.store.inspect())
+
+    def _manifest_with_platform_edges(self, edges):
+        root = next(node for node in self.manifest.addons if node.addon_id == PLATFORM_ROOT)
+        builtin = next(node for node in self.manifest.addons if node.addon_id == "xbmc.python")
+        platform = AddonCaptureNode(
+            PLATFORM_ID, "5.1.0", "xbmc.python.module", True, ProvenanceStatus.UNKNOWN,
+            dependency_edges=edges, platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED,
+        )
+        return FrozenBuildManifest(
+            schema_version=2, build_id="platform-graph", name="Platform graph",
+            created_at="2026-10-09T00:00:00Z", kodi_version="21.3", platform="macos",
+            capture_status=CaptureStatus.COMPLETE, addons=(root, platform, builtin),
+        )
+
+    def test_compatible_platform_target_completes_and_never_mutates_the_platform_node(self):
+        result = self._install()
+        self.assertEqual("complete", result.outcome, (result.code, result.message))
+        self.assertEqual([PLATFORM_ROOT], self.backend.install_calls)
+        self.assertEqual([(PLATFORM_ROOT, True)], self.backend.enable_calls)
+        self.assertEqual("5.1.0", self.backend.installed[PLATFORM_ID].version)
+        self.assertTrue(self.backend.installed[PLATFORM_ID].enabled)
+        self.assertIsNone(self.store.inspect())
+
+    def test_compatible_different_platform_version_passes_when_every_minimum_holds(self):
+        self._install_target(pil_version="6.0.0")
+        result = self._install()
+        self.assertEqual("complete", result.outcome, (result.code, result.message))
+        self.assertNotIn(PLATFORM_ID, self.backend.install_calls)
+        self.assertEqual("6.0.0", self.backend.installed[PLATFORM_ID].version)
+
+    def test_missing_platform_component_blocks_before_mutation(self):
+        self._install_target(absent=True)
+        self._assert_blocked_before_mutation()
+
+    def test_home_shadowed_same_id_component_blocks_before_mutation(self):
+        self._install_target(origin="home")
+        self._assert_blocked_before_mutation()
+
+    def test_insufficient_platform_version_blocks_before_mutation(self):
+        self._install_target(pil_version="1.0.0")
+        self._assert_blocked_before_mutation()
+
+    def test_malformed_or_empty_platform_versions_block_before_mutation(self):
+        for version in ("5.1.0-beta", ""):
+            with self.subTest(version=version):
+                self._install_target(pil_version=version)
+                self._assert_blocked_before_mutation()
+
+    def test_unparseable_incoming_minimum_blocks_before_mutation(self):
+        from dataclasses import replace
+        root = next(node for node in self.manifest.addons if node.addon_id == PLATFORM_ROOT)
+        edge = DependencyEdge(PLATFORM_ID, "1.1.x", False, (PLATFORM_ROOT,))
+        self.manifest = FrozenBuildManifest(
+            schema_version=self.manifest.schema_version, build_id=self.manifest.build_id,
+            name=self.manifest.name, created_at=self.manifest.created_at,
+            kodi_version=self.manifest.kodi_version, platform=self.manifest.platform,
+            capture_status=self.manifest.capture_status, source_metadata=self.manifest.source_metadata,
+            addons=tuple(
+                replace(root, dependency_edges=(edge,)) if node.addon_id == PLATFORM_ROOT else node
+                for node in self.manifest.addons
+            ),
+        )
+        self._assert_blocked_before_mutation()
+
+    def test_broken_platform_component_blocks_before_mutation(self):
+        self._install_target(broken=True)
+        self._assert_blocked_before_mutation()
+
+    def test_disabled_required_platform_component_blocks_before_mutation(self):
+        self._install_target(enabled=False)
+        self._assert_blocked_before_mutation()
+
+    def test_unreadable_target_platform_metadata_blocks_before_mutation(self):
+        self._install_target(unreadable=True)
+        self._assert_blocked_before_mutation()
+
+    def test_target_metadata_identity_mismatch_blocks_before_mutation(self):
+        self._install_target(metadata_version="4.0.0")
+        self._assert_blocked_before_mutation()
+
+    def test_new_unrepresented_mandatory_target_dependency_blocks_before_mutation(self):
+        self._install_target(extra_imports=(("script.module.unplanned", "1.0.0", False),))
+        self._assert_blocked_before_mutation()
+
+    def test_kodi_runtime_target_metadata_uses_the_trusted_capture_root_authority(self):
+        from resources.lib.frozen import InstalledOrigin
+        backend = KodiRuntimeFrozenArtifactBackend()
+        backend._addons_dir = lambda: self.home
+        backend._application_addons_dir = lambda: self.application
+        listing = {"result": {"addons": [dict(entry) for entry in self.entries]}}
+        backend._rpc = lambda method, params: listing
+        bundled = backend.read_installed_metadata(PLATFORM_ID)
+        self.assertEqual(InstalledOrigin.APPLICATION, bundled.origin)
+        self.assertEqual((self.application / PLATFORM_ID / "addon.xml").read_bytes(), bundled.xml_bytes)
+        # A home add-on with the same identity never satisfies a platform requirement.
+        shadow = [dict(entry) for entry in self.entries]
+        shadow[1] = _kodi_entry(PLATFORM_ID, f"special://home/addons/{PLATFORM_ID}/", "5.1.0")
+        _write_addon(self.home, PLATFORM_ID, version="5.1.0", imports=(("xbmc.python", "3.0.0", False),),
+                     point="xbmc.python.module")
+        backend._rpc = lambda method, params: {"result": {"addons": shadow}}
+        self.assertEqual(InstalledOrigin.HOME, backend.read_installed_metadata(PLATFORM_ID).origin)
+
+    def test_target_metadata_must_declare_the_captured_add_on_type(self):
+        self._install_target(declared_point="xbmc.python.pluginsource")
+        self._assert_blocked_before_mutation()
+
+    def test_absent_builtin_minimum_blocks_before_mutation(self):
+        self._install_target(builtin=False)
+        self._assert_blocked_before_mutation()
+
+    def test_insufficient_builtin_minimum_blocks_before_mutation(self):
+        self._install_target(builtin_version="2.0.0")
+        self._assert_blocked_before_mutation()
+
+    def test_managed_child_below_a_platform_node_is_installed_as_exact_software_before_its_parent(self):
+        _write_addon(self.home, "script.module.child", version="1.0.0")
+        (self.cache / "script.module.child-1.0.0.zip").write_bytes(_zip("script.module.child", "1.0.0"))
+        _write_addon(self.application, PLATFORM_ID, version="5.1.0", point="xbmc.python.module", imports=(
+            ("xbmc.python", "3.0.0", False), ("script.module.child", "1.0.0", False),
+        ))
+        self.manifest = self._capture(self.entries + [
+            _kodi_entry("script.module.child", "special://home/addons/script.module.child/", "1.0.0"),
+        ])
+        self._install_target(extra_imports=(("script.module.child", "1.0.0", False),))
+        result = self._install()
+        self.assertEqual("complete", result.outcome, (result.code, result.message))
+        self.assertEqual(["script.module.child", PLATFORM_ROOT], self.backend.install_calls)
+        self.assertNotIn(PLATFORM_ID, self.backend.install_calls)
+
+    def _install_fixture_e(self):
+        """Red Light 2.6.8 with its requests closure exact, PIL 5.1.0 platform-provided, xbmc.python builtin."""
+        closure = {
+            "script.module.requests": ("2.31.0", (
+                ("script.module.urllib3", "1.26.0"), ("script.module.certifi", "2023.0.0"),
+            )),
+            "script.module.urllib3": ("1.26.18", ()),
+            "script.module.certifi": ("2023.7.22", ()),
+        }
+        root_requires = ((PLATFORM_ID, "1.1.7"), ("script.module.requests", "2.31.0"))
+        _write_addon(self.home, PLATFORM_ROOT, version="2.6.8", imports=tuple(
+            (target, minimum, False) for target, minimum in root_requires))
+        (self.cache / "plugin.video.redlight.fixture-2.6.8.zip").write_bytes(
+            _zip(PLATFORM_ROOT, "2.6.8", requires=root_requires))
+        entries = list(self.entries)
+        for addon_id, (version, requires) in closure.items():
+            _write_addon(self.home, addon_id, version=version, imports=tuple(
+                (target, minimum, False) for target, minimum in requires))
+            (self.cache / f"{addon_id}-{version}.zip").write_bytes(_zip(addon_id, version, requires=requires))
+            entries.append(_kodi_entry(addon_id, f"special://home/addons/{addon_id}/", version))
+        self.entries = entries
+        self.manifest = self._capture(entries)
+
+    def test_fixture_e_completes_for_a_compatible_target_and_never_installs_pil(self):
+        self._install_fixture_e()
+        self._install_target()
+        self.assertEqual(CaptureStatus.COMPLETE, self.manifest.capture_status)
+        result = self._install()
+        self.assertEqual("complete", result.outcome, (result.code, result.message))
+        self.assertEqual(
+            {"script.module.certifi", "script.module.requests", "script.module.urllib3", PLATFORM_ROOT},
+            set(self.backend.install_calls),
+        )
+        self.assertNotIn(PLATFORM_ID, [addon_id for addon_id, _ in self.backend.enable_calls])
+
+    def test_fixture_e_blocks_before_mutation_when_the_platform_is_absent_or_home_shadowed(self):
+        self._install_fixture_e()
+        self._install_target(absent=True)
+        self._assert_blocked_before_mutation()
+        self._install_target(origin="home")
+        self._assert_blocked_before_mutation()
+
+    def test_cycle_through_a_platform_node_is_rejected_by_graph_validation(self):
+        manifest = self._manifest_with_platform_edges(
+            (DependencyEdge(PLATFORM_ROOT, "2.6.8", False, (PLATFORM_ID,)),))
+        with self.assertRaises(FrozenInstallValidationError):
+            validate_frozen_manifest(manifest, self.artifacts)
+
+    def test_missing_managed_child_below_a_platform_node_is_rejected_by_graph_validation(self):
+        manifest = self._manifest_with_platform_edges(
+            (DependencyEdge("script.module.gone", "1.0.0", False, (PLATFORM_ID,)),))
+        with self.assertRaises(FrozenInstallValidationError):
+            validate_frozen_manifest(manifest, self.artifacts)
+
+    def test_resume_rechecks_platform_state_before_any_further_mutation(self):
+        restart = SimpleNamespace(
+            outcome="manual_restart_required",
+            transaction=SimpleNamespace(transaction_id="33333333-3333-4333-8333-333333333333"),
+        )
+        first = self._install(configuration_runner=lambda _request: restart)
+        self.assertEqual("awaiting_restart", first.outcome, (first.code, first.message))
+        self.backend.installed[PLATFORM_ID] = FrozenInstalledAddon(
+            PLATFORM_ID, "5.1.0", False, False)
+        calls_before = (list(self.backend.install_calls), list(self.backend.enable_calls))
+        resumed = FrozenInstallCoordinator(
+            store=self.store, artifact_store=self.artifacts, policy_backend=self.policy,
+            installer=self.backend, manifest_loader=lambda _path: self.manifest,
+            session_id_provider=lambda: SESSION_B,
+        ).resume_after_restart()
+        self.assertNotEqual("complete", resumed.outcome)
+        self.assertEqual(PLATFORM_CODE, resumed.code)
+        self.assertEqual(calls_before, (self.backend.install_calls, self.backend.enable_calls))
+        self.assertNotIn(PLATFORM_ID, [addon_id for addon_id, _ in self.backend.enable_calls])
+        self.assertIsNotNone(self.store.inspect())
+
+    def test_final_completion_rechecks_platform_state_before_success(self):
+        def configure(_request):
+            self.backend.installed[PLATFORM_ID] = FrozenInstalledAddon(
+                PLATFORM_ID, "4.0.0", True, False)
+            return SimpleNamespace(outcome="complete")
+
+        result = self._install(configuration_runner=configure)
+        self.assertEqual("needs_attention", result.outcome, (result.code, result.message))
+        self.assertEqual(PLATFORM_CODE, result.code)
+        self.assertNotIn(PLATFORM_ID, self.backend.install_calls)
+        self.assertNotIn(PLATFORM_ID, [addon_id for addon_id, _ in self.backend.enable_calls])
 
 
 if __name__ == "__main__":

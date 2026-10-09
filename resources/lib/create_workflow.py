@@ -14,7 +14,7 @@ from resources.lib.dependencies import _is_system_dependency
 from resources.lib.manifest import SettingTargetKind, validate_manifest
 from resources.lib.resolver import resolve_manifest
 from resources.lib.private_overlay import PrivateOverlayConflict, PrivateOverlay, validate_private_overlay
-from resources.lib.frozen import FrozenBuildManifest
+from resources.lib.frozen import FrozenBuildManifest, InstalledOrigin
 from resources.lib.redlight_resource import redlight_declaration
 
 
@@ -126,6 +126,10 @@ class CreateBuildWorkflow:
         self.catalog = catalog or TrustedCaptureCatalog()
         self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
 
+    def _is_application_addon(self, addon_id, inventory):
+        metadata = self.inventory.read_installed_metadata(addon_id, installed=inventory)
+        return metadata is not None and metadata.origin is InstalledOrigin.APPLICATION
+
     def open(self, device_label):
         state = self.inspect_state()
         if state.platform not in {'macos', 'tvos', 'ios', 'android', 'linux', 'windows'}:
@@ -138,6 +142,9 @@ class CreateBuildWorkflow:
             if not isinstance(aid, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]*', aid):
                 raise CreateValidationError()
             if aid == 'script.build.manager' or _is_system_dependency(aid):
+                continue
+            # Trusted application origin, not module type alone, excludes a bundled add-on from managed roots (D-028).
+            if aid != state.active_skin and self._is_application_addon(aid, inventory):
                 continue
             if aid != state.active_skin and (aid.startswith('script.module.') or kind in {
                     'xbmc.python.module', 'kodi.gameclient', 'kodi.inputstream', 'kodi.vfs',

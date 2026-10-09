@@ -390,6 +390,37 @@ def _version_satisfies(installed: str, required_min: str) -> bool:
     return inst_padded >= req_padded
 
 
+def _strict_version_satisfies(installed: str, required_min: str) -> bool:
+    """Fail-closed comparison for platform-provided requirements (D-028).
+
+    Unlike _version_satisfies, a missing, malformed or unparseable installed
+    version never satisfies a requirement, and neither does a malformed minimum.
+    Only plain dotted decimal versions (for example "5.1.0") are accepted. A blank
+    minimum imposes no requirement, but the installed version must still parse.
+    The generic dependency comparison above is deliberately left unchanged.
+    """
+    inst = _strict_version_tuple(installed)
+    if inst is None:
+        return False
+    if not required_min or not required_min.strip():
+        return True
+    req = _strict_version_tuple(required_min)
+    if req is None:
+        return False
+    max_len = max(len(inst), len(req))
+    return inst + (0,) * (max_len - len(inst)) >= req + (0,) * (max_len - len(req))
+
+
+def _strict_version_tuple(version) -> Optional[Tuple[int, ...]]:
+    """Parse plain dotted decimal digits only; anything else is unverifiable."""
+    if not isinstance(version, str):
+        return None
+    parts = version.split(".")
+    if any(not (part.isascii() and part.isdigit()) for part in parts):
+        return None
+    return tuple(int(part) for part in parts)
+
+
 def _max_version_requirement(a: str, b: str) -> str:
     """Return the stricter (higher minimum required) of two version strings.
 

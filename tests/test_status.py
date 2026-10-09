@@ -764,6 +764,24 @@ class CurrentAndDrift(StatusBase):
         self.assertEqual(status.software.level, AreaLevel.UNAVAILABLE)
         self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
 
+    def test_platform_provided_requirement_is_uncheckable_and_never_reported_current(self):
+        from resources.lib.frozen import DependencyEdge
+        h = self.current()
+        platform = AddonCaptureNode(
+            "script.module.platform", "5.1.0", "xbmc.python.module", True, ProvenanceStatus.UNKNOWN,
+            dependency_edges=(DependencyEdge("xbmc.python", "3.0.0", False, ("script.module.platform",)),),
+            platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED,
+        )
+        base = frozen_manifest()
+        h.frozen = replace(base, schema_version=2, addons=base.addons + (platform,))
+        h.kodi.addons["script.module.platform"] = ("5.1.0", True)
+        status = h.check()
+        self.assertEqual(
+            {i.addon_id: i.state for i in status.software.items}["script.module.platform"],
+            SoftwareItemState.UNCHECKABLE,
+        )
+        self.assertNotEqual(status.overall, OverallStatus.CURRENT)
+
     def test_dependency_of_managed_addon_missing_is_reported(self):
         h = self.current()
 

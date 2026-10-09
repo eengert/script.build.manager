@@ -322,8 +322,10 @@ class CreateBuildCaptureEngine:
                                            configuration_packages=(request.config_package_id,))
             raw = captured.manifest
             exact = sum(n.artifact is not None for n in raw.addons)
+            # A platform-provided requirement is verified on the target, so it is never a missing artifact.
             gaps = tuple((n.addon_id, n.status.value) for n in raw.addons
-                         if not n.system and n.status is not CaptureStatus.COMPLETE and not n.is_absent_optional_dependency)
+                         if not n.system and not n.platform_provided
+                         and n.status is not CaptureStatus.COMPLETE and not n.is_absent_optional_dependency)
             # Only safe validated IDs may cross the result boundary.
             for node in raw.addons:
                 validate_manifest({"schema_version": 1, "build": {"id": request.build_id, "version": request.build_version},
@@ -337,7 +339,7 @@ class CreateBuildCaptureEngine:
             nodes = {n.addon_id: n for n in frozen.addons}
             stage = "CAPTURE_OWNER_UNAVAILABLE"
             for t in (*request.public_capture.settings, *request.private_settings):
-                if t.addon_id not in nodes or nodes[t.addon_id].system:
+                if t.addon_id not in nodes or nodes[t.addon_id].system or nodes[t.addon_id].platform_provided:
                     raise ValueError()
                 if nodes[t.addon_id].is_absent_optional_dependency and (
                         isinstance(t, PublicSettingTarget) or t.required):
@@ -348,7 +350,7 @@ class CreateBuildCaptureEngine:
                 owner = nodes.get(declaration.owner_addon_id)
                 if owner is not None and owner.is_absent_optional_dependency and not declaration.required:
                     continue
-                if owner is None or owner.version not in declaration.supported_versions:
+                if owner is None or owner.platform_provided or owner.version not in declaration.supported_versions:
                     raise ValueError()
             doc = _manifest(request, [{"addon_id": r, "state": "enabled" if nodes[r].desired_enabled else "disabled"} for r in roots], skin)
             stage = "PUBLIC_SETTING_UNREADABLE"

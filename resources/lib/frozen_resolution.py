@@ -34,6 +34,8 @@ class Recoverability(str, Enum):
     REPOSITORY_RECOVERABLE = "repository_recoverable"
     MANUAL_OR_SKIP = "manual_or_skip"
     BLOCKING_UNRECOVERABLE = "blocking_unrecoverable"
+    # Not an artifact recovery at all: Kodi supplies it and it is verified, not installed (D-028).
+    PLATFORM_PROVIDED = "platform_provided"
 
 
 class InstallResolution(str, Enum):
@@ -62,6 +64,8 @@ class FrozenPlanActionKind(str, Enum):
     PROMPT_SKIP_OR_CANCEL = "prompt_skip_or_cancel"
     BLOCKING_UNRECOVERABLE = "blocking_unrecoverable"
     SKIPPED = "skipped"
+    # Verified before mutation; never installed, enabled, disabled, fetched or skipped (D-028).
+    PLATFORM_PROVIDED = "platform_provided"
 
 
 _ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -79,6 +83,7 @@ def _policy_map(
     policies: Sequence[FrozenInstallPolicy] = (),
 ) -> Dict[str, FrozenInstallPolicy]:
     node_ids = {node.addon_id for node in manifest.addons}
+    platform_ids = {node.addon_id for node in manifest.addons if node.platform_provided}
     result: Dict[str, FrozenInstallPolicy] = {}
     for policy in policies:
         if not isinstance(policy, FrozenInstallPolicy):
@@ -87,6 +92,8 @@ def _policy_map(
             raise FrozenResolutionError("frozen install policy add-on ID is invalid")
         if policy.addon_id not in node_ids:
             raise FrozenResolutionError("frozen install policy targets an add-on absent from capture")
+        if policy.addon_id in platform_ids:
+            raise FrozenResolutionError("frozen install policy cannot target a platform-provided add-on")
         if policy.addon_id in result:
             raise FrozenResolutionError("frozen install policies contain duplicate add-on IDs")
         if policy.repository_id and not _REPOSITORY_ID.fullmatch(policy.repository_id):
@@ -107,6 +114,14 @@ def effective_policy(
 
 
 def _installed_managed_nodes(manifest: FrozenBuildManifest) -> Tuple[AddonCaptureNode, ...]:
+    return tuple(
+        node for node in manifest.addons
+        if not node.system and not node.is_absent_optional_dependency and not node.platform_provided
+    )
+
+
+def _dependency_nodes(manifest: FrozenBuildManifest) -> Tuple[AddonCaptureNode, ...]:
+    """Every non-system graph vertex, platform-provided ones included, for edge consumers."""
     return tuple(
         node for node in manifest.addons
         if not node.system and not node.is_absent_optional_dependency
@@ -185,9 +200,10 @@ def _trusted_repository_id(
 
 
 def _required_dependents(manifest: FrozenBuildManifest, addon_id: str) -> Tuple[str, ...]:
+    # A platform-provided node still requires its managed children, so it blocks a Skip too.
     return tuple(sorted({
         node.addon_id
-        for node in _installed_managed_nodes(manifest)
+        for node in _dependency_nodes(manifest)
         if node.addon_id != addon_id
         and any(edge.addon_id == addon_id and not edge.optional for edge in node.dependency_edges)
     }))
@@ -210,6 +226,8 @@ class AddonRecoverability:
 
     @property
     def likely_installation_behavior(self) -> str:
+        if self.recoverability is Recoverability.PLATFORM_PROVIDED:
+            return "provided by Kodi; verified before install and never installed"
         if self.exact_artifact_available:
             return "install exact captured version"
         if self.repository_known and self.fallback_eligible:
@@ -268,7 +286,16 @@ def summarize_frozen_recoverability(
     effective = _policy_map(manifest, policies)
     nodes = {node.addon_id: node for node in manifest.addons}
     rows = []
-    for node in _installed_managed_nodes(manifest):
+    for node in _dependency_nodes(manifest):
+        if node.platform_provided:
+            # Verified requirement: no artifact exists or is needed, and no repository or Skip applies.
+            rows.append(AddonRecoverability(
+                addon_id=node.addon_id,
+                captured_version=node.version,
+                recoverability=Recoverability.PLATFORM_PROVIDED,
+                exact_artifact_available=False,
+            ))
+            continue
         exact = _exact_artifact(node, store)
         policy = effective_policy(node.addon_id, effective)
         repository_id = _trusted_repository_id(policy, nodes, store)
@@ -319,7 +346,7 @@ def summarize_frozen_recoverability(
         node.is_absent_optional_dependency
         or node.system
         or (
-            node.status in inventory_statuses
+            (node.platform_provided or node.status in inventory_statuses)
             and bool(node.version)
             and bool(node.addon_type)
         )
@@ -336,7 +363,10 @@ def summarize_frozen_recoverability(
     return FrozenBuildRecoverabilitySummary(
         "complete" if desired_state_complete else "incomplete",
         sum(1 for row in rows if row.installed_on_source and row.exact_artifact_available),
-        sum(1 for row in rows if row.installed_on_source),
+        sum(
+            1 for row in rows
+            if row.installed_on_source and row.recoverability is not Recoverability.PLATFORM_PROVIDED
+        ),
         overall,
         tuple(rows),
     )

@@ -768,7 +768,7 @@ class BundledCreateCaptureTests(unittest.TestCase):
         for root in (self.home, self.application, self.cache):
             root.mkdir(parents=True)
         _write_addon(self.home, ROOT, imports=(('script.module.pil', '1.1.7', False),))
-        _write_addon(self.application, 'script.module.pil', version='5.1.0',
+        _write_addon(self.application, 'script.module.pil', version='5.1.0', point='xbmc.python.module',
                      imports=(('xbmc.python', '3.0.0', False),))
         (self.cache / 'plugin.demo-1.0.0.zip').write_bytes(_zip(ROOT))
         (self.cache / 'script.module.pil-5.1.0.zip').write_bytes(_zip('script.module.pil', '5.1.0'))
@@ -797,9 +797,12 @@ class BundledCreateCaptureTests(unittest.TestCase):
         raw = result.public_bundle.to_dict()
         frozen = {node['addon_id']: node for node in raw['frozen']['addons']}
         self.assertEqual(frozen['script.module.pil']['version'], '5.1.0')
-        self.assertIsNotNone(frozen['script.module.pil']['artifact_sha256'])
+        self.assertIsNone(frozen['script.module.pil']['artifact_sha256'])
+        self.assertIs(True, frozen['script.module.pil']['platform_provided'])
+        self.assertEqual(frozen['script.module.pil']['capture_status'], 'platform_provided')
         self.assertTrue(frozen['xbmc.python']['system'])
         self.assertEqual(result.missing_artifact_count, 0)
+        self.assertIsNone(self.store.find('script.module.pil', '5.1.0'))
 
     def test_unreadable_bundled_metadata_stays_incomplete_without_public_bundle(self):
         (self.application / 'script.module.pil' / 'addon.xml').unlink()
@@ -807,3 +810,29 @@ class BundledCreateCaptureTests(unittest.TestCase):
         self.assertEqual(result.status, S.INCOMPLETE)
         self.assertEqual(result.gaps, ('SOFTWARE_INCOMPLETE',))
         self.assertIsNone(result.public_bundle)
+
+    def test_ordinary_create_completes_without_any_pil_artifact_in_the_package_cache(self):
+        (self.cache / 'script.module.pil-5.1.0.zip').unlink()
+        result = self.capture()
+        self.assertEqual(result.status, S.COMPLETE, result)
+        self.assertEqual(result.missing_artifact_count, 0)
+        self.assertEqual(result.artifact_gaps, ())
+        frozen = {node['addon_id']: node for node in result.public_bundle.to_dict()['frozen']['addons']}
+        self.assertIs(True, frozen['script.module.pil']['platform_provided'])
+
+    def test_bundled_add_on_cannot_be_an_ordinary_create_root(self):
+        request = replace(self.request, root_addon_ids=('script.module.pil',))
+        result = self.engine.capture(request, created_at='2026-10-06T00:00:00Z')
+        self.assertNotEqual(result.status, S.COMPLETE)
+        self.assertIsNone(result.public_bundle)
+
+    def test_platform_marker_survives_the_sanitized_bundle_round_trip(self):
+        (self.cache / 'script.module.pil-5.1.0.zip').unlink()
+        result = self.capture()
+        bundle = result.public_bundle.to_dict()
+        _, frozen, _ = _validate_bundle(json.loads(json.dumps(bundle)))
+        self.assertEqual(2, frozen.schema_version)
+        pil = next(node for node in frozen.addons if node.addon_id == 'script.module.pil')
+        self.assertTrue(pil.platform_provided)
+        self.assertIsNone(pil.artifact)
+        self.assertNotIn(str(self.base), json.dumps(bundle))

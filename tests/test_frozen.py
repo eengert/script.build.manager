@@ -1,6 +1,8 @@
 """Tests for BM-021B inventory, closure, acquisition, and manifest core."""
 
+import hashlib
 import io
+import json
 import os
 import signal
 import tempfile
@@ -24,7 +26,7 @@ from resources.lib.frozen_install import (
 )
 
 
-def _xml(addon_id, version="1.0.0", imports=()):
+def _xml(addon_id, version="1.0.0", imports=(), point=None):
     import_parts = []
     for target, minimum, optional in imports:
         optional_attr = ' optional="true"' if optional else ""
@@ -33,7 +35,9 @@ def _xml(addon_id, version="1.0.0", imports=()):
         )
     imports_xml = "".join(import_parts)
     requires = f"<requires>{imports_xml}</requires>" if imports_xml else ""
-    return f'<addon id="{addon_id}" version="{version}" name="{addon_id}">{requires}</addon>'.encode()
+    # A platform-provided add-on's type is proven by the extension point its own addon.xml declares.
+    extension = f'<extension point="{point}"/>' if point else ""
+    return f'<addon id="{addon_id}" version="{version}" name="{addon_id}">{requires}{extension}</addon>'.encode()
 
 
 def _zip(addon_id, version="1.0.0"):
@@ -234,10 +238,10 @@ class TestFrozenCapture(unittest.TestCase):
         self.assertNotEqual(manifests[0].to_dict()["build_id"], manifests[1].to_dict()["build_id"])
 
 
-def _write_addon(root, addon_id, *, version="1.0.0", imports=()):
+def _write_addon(root, addon_id, *, version="1.0.0", imports=(), point=None):
     directory = root / addon_id
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "addon.xml").write_bytes(_xml(addon_id, version=version, imports=imports))
+    (directory / "addon.xml").write_bytes(_xml(addon_id, version=version, imports=imports, point=point))
     return directory
 
 
@@ -493,7 +497,7 @@ class FrozenCaptureTruthTests(unittest.TestCase):
         self.assertNotEqual(CaptureStatus.COMPLETE, result.manifest.capture_status)
         self.assertFalse(result.complete)
 
-    def test_bundled_pil_shaped_addon_captures_its_system_edge_and_exact_artifact(self):
+    def test_bundled_pil_as_direct_root_is_rejected_and_never_acquired(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         base = Path(temporary.name).resolve()
@@ -501,7 +505,7 @@ class FrozenCaptureTruthTests(unittest.TestCase):
         home.mkdir()
         application.mkdir(parents=True)
         cache.mkdir()
-        _write_addon(application, "script.module.pil", version="5.1.0",
+        _write_addon(application, "script.module.pil", version="5.1.0", point="xbmc.python.module",
                      imports=(("xbmc.python", "3.0.0", False),))
         (cache / "script.module.pil-5.1.0.zip").write_bytes(_zip("script.module.pil", "5.1.0"))
         backend = KodiInventoryBackend(
@@ -518,13 +522,15 @@ class FrozenCaptureTruthTests(unittest.TestCase):
         self.assertFalse(pil.system)
         self.assertEqual("5.1.0", pil.version)
         self.assertEqual("xbmc.python.module", pil.addon_type)
-        self.assertEqual(CaptureStatus.COMPLETE, pil.status)
-        self.assertIsNotNone(pil.artifact)
+        self.assertTrue(pil.platform_provided)
+        self.assertEqual(CaptureStatus.PLATFORM_PROVIDED, pil.status)
+        self.assertIsNone(pil.artifact)
         self.assertEqual([("xbmc.python", "3.0.0", False)],
                          [(edge.addon_id, edge.min_version, edge.optional) for edge in pil.dependency_edges])
         self.assertTrue(nodes["xbmc.python"].system)
-        self.assertTrue(result.complete)
-        validate_frozen_manifest(result.manifest, ArtifactStore(store_dir))
+        self.assertFalse(result.complete)
+        self.assertTrue(any("platform-provided" in error for error in result.errors), result.errors)
+        self.assertIsNone(ArtifactStore(store_dir).find("script.module.pil", "5.1.0"))
 
 
 class TrustedRootAuthorityTests(unittest.TestCase):
@@ -677,3 +683,261 @@ class TrustedRootAuthorityTests(unittest.TestCase):
         )
         self.assertIsNotNone(backend.read_addon_xml("plugin.demo"))
         self.assertIsNotNone(backend.read_addon_xml("script.demo"))
+
+
+class PlatformProvidedCaptureTests(unittest.TestCase):
+    """Kodi application-bundled add-ons are platform-provided requirements (D-028)."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        self.home = self.base / "home" / "addons"
+        self.application = self.base / "application" / "addons"
+        self.cache = self.base / "packages"
+        self.store_dir = self.base / "artifacts"
+        for directory in (self.home, self.application, self.cache):
+            directory.mkdir(parents=True)
+        _write_addon(self.home, "plugin.redlight", version="2.6.8",
+                     imports=(("script.module.pil", "1.1.7", False),))
+        _write_addon(self.application, "script.module.pil", version="5.1.0", point="xbmc.python.module",
+                     imports=(("xbmc.python", "3.0.0", False),))
+        (self.cache / "plugin.redlight-2.6.8.zip").write_bytes(_zip("plugin.redlight", "2.6.8"))
+        self.entries = [
+            _kodi_entry("plugin.redlight", "special://home/addons/plugin.redlight/", "2.6.8",
+                        addon_type="xbmc.python.pluginsource"),
+            _kodi_entry("script.module.pil", "special://xbmc/addons/script.module.pil/", "5.1.0"),
+        ]
+
+    def capture(self, entries=None, roots=("plugin.redlight",)):
+        backend = KodiInventoryBackend(
+            _kodi_rpc(self.entries if entries is None else entries),
+            addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
+        )
+        return capture_frozen_build(
+            backend=backend, store=ArtifactStore(self.store_dir), root_addon_ids=list(roots),
+            build_id="platform-fixture", name="Platform fixture", created_at="2026-10-09T00:00:00Z",
+            platform="macos",
+        )
+
+    @staticmethod
+    def nodes(result):
+        return {node.addon_id: node for node in result.manifest.addons}
+
+    def test_trusted_bundled_pil_is_captured_as_platform_provided_without_an_artifact(self):
+        result = self.capture()
+        pil = self.nodes(result)["script.module.pil"]
+        self.assertTrue(pil.platform_provided)
+        self.assertEqual(CaptureStatus.PLATFORM_PROVIDED, pil.status)
+        self.assertIsNone(pil.artifact)
+        self.assertFalse(pil.system)
+        self.assertEqual("5.1.0", pil.version)
+        self.assertEqual("xbmc.python.module", pil.addon_type)
+        self.assertTrue(pil.desired_enabled)
+        self.assertEqual([("xbmc.python", "3.0.0", False)],
+                         [(edge.addon_id, edge.min_version, edge.optional) for edge in pil.dependency_edges])
+        self.assertEqual(CaptureStatus.COMPLETE, result.manifest.capture_status)
+        self.assertTrue(result.complete, result.errors)
+        self.assertIsNone(ArtifactStore(self.store_dir).find("script.module.pil", "5.1.0"))
+
+    def test_platform_node_invariants_reject_contradictory_combinations(self):
+        from resources.lib.artifacts import ArtifactMetadata
+        from resources.lib.frozen import AddonCaptureNode, CaptureError, DependencyEdge
+        edges = (DependencyEdge("xbmc.python", "3.0.0", False, ("script.module.pil",)),)
+        artifact = ArtifactMetadata(
+            sha256="a" * 64, size=10, addon_id="script.module.pil", version="5.1.0", filename="pil.zip",
+        )
+        valid = dict(
+            addon_id="script.module.pil", version="5.1.0", addon_type="xbmc.python.module",
+            desired_enabled=True, provenance=ProvenanceStatus.UNKNOWN, dependency_edges=edges,
+            platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED,
+        )
+        AddonCaptureNode(**valid)
+        contradictions = {
+            "artifact": {"artifact": artifact},
+            "system": {"system": True},
+            "version": {"version": ""},
+            "addon_type": {"addon_type": ""},
+            "addon_id": {"addon_id": ""},
+            "trusted edges": {"dependency_edges": ()},
+            "status without marker": {"platform_provided": False},
+            "marker with managed status": {"status": CaptureStatus.COMPLETE},
+        }
+        for name, change in contradictions.items():
+            with self.subTest(contradiction=name):
+                with self.assertRaises(CaptureError):
+                    AddonCaptureNode(**{**valid, **change})
+
+    def test_schema_v2_platform_node_round_trips_with_marker_and_stable_fingerprint(self):
+        manifest = self.capture().manifest
+        self.assertEqual(2, manifest.schema_version)
+        text = manifest.to_json()
+        document = json.loads(text)
+        self.assertEqual(2, document["schema_version"])
+        node_document = next(item for item in document["addons"] if item["addon_id"] == "script.module.pil")
+        self.assertIs(True, node_document["platform_provided"])
+        self.assertIsNone(node_document["artifact_sha256"])
+        decoded = FrozenBuildManifest.from_json(text)
+        self.assertEqual(manifest.fingerprint(), decoded.fingerprint())
+        self.assertEqual(text, decoded.to_json())
+        self.assertTrue(next(node for node in decoded.addons if node.addon_id == "script.module.pil").platform_provided)
+
+    def test_schema_v1_manifest_keeps_its_fingerprint_and_rejects_platform_markers(self):
+        from resources.lib.frozen import CaptureError, DependencyEdge
+        from resources.lib.frozen import AddonCaptureNode
+        node = AddonCaptureNode(
+            "plugin.v1.fixture", "1.0.0", "xbmc.python.pluginsource", True, ProvenanceStatus.UNKNOWN,
+            dependency_edges=(DependencyEdge("xbmc.python", "3.0.0", False, ("plugin.v1.fixture",)),),
+            status=CaptureStatus.COMPLETE,
+        )
+        manifest = FrozenBuildManifest(
+            schema_version=1, build_id="v1-fixture", name="v1 fixture", created_at="2026-10-09T00:00:00Z",
+            kodi_version="21.3", platform="macos", capture_status=CaptureStatus.COMPLETE, addons=(node,),
+        )
+        text = manifest.to_json()
+        self.assertEqual(
+            "497f8de9dfe6878b1061ae262433cfdaf6026241beabffe2e10fe8e0fb5b73a5", manifest.fingerprint(),
+        )
+        self.assertEqual(
+            "fcbb5ad6acc1de878c23161c62a5ceb91f1dd97e78acfa42e48a97e3a27175ad",
+            hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
+        decoded = FrozenBuildManifest.from_json(text)
+        self.assertEqual(1, decoded.schema_version)
+        self.assertEqual(manifest.fingerprint(), decoded.fingerprint())
+        mutations = {
+            "v1 node with platform marker": lambda doc: doc["addons"][0].update({"platform_provided": True}),
+            "v2 schema without platform node": lambda doc: doc.update({"schema_version": 2}),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(mutation=name):
+                document = json.loads(text)
+                mutate(document)
+                with self.assertRaises(CaptureError):
+                    FrozenBuildManifest.from_json(json.dumps(document))
+
+    def test_platform_requirement_changes_the_fingerprint(self):
+        from dataclasses import replace
+        from resources.lib.frozen import DependencyEdge
+        manifest = self.capture().manifest
+
+        def with_platform_node(**changes):
+            return FrozenBuildManifest(
+                schema_version=manifest.schema_version, build_id=manifest.build_id, name=manifest.name,
+                created_at=manifest.created_at, kodi_version=manifest.kodi_version, platform=manifest.platform,
+                capture_status=manifest.capture_status, configuration_packages=manifest.configuration_packages,
+                source_metadata=manifest.source_metadata,
+                addons=tuple(
+                    replace(node, **changes) if node.addon_id == "script.module.pil" else node
+                    for node in manifest.addons
+                ),
+            )
+
+        self.assertNotEqual(manifest.fingerprint(), with_platform_node(version="5.2.0").fingerprint())
+        self.assertNotEqual(
+            manifest.fingerprint(),
+            with_platform_node(
+                dependency_edges=(DependencyEdge("xbmc.python", "3.0.1", False, ("script.module.pil",)),),
+            ).fingerprint(),
+        )
+
+    def test_host_paths_and_trusted_origin_details_never_serialize(self):
+        text = self.capture().manifest.to_json()
+        self.assertNotIn(str(self.base), text)
+        self.assertNotIn("special://", text)
+        self.assertNotIn("APPLICATION", text)
+        self.assertNotIn("origin", text)
+
+    def test_installed_metadata_origin_is_assigned_by_the_same_trusted_root_read(self):
+        from resources.lib.frozen import InstalledOrigin
+        backend = KodiInventoryBackend(
+            _kodi_rpc(self.entries), addons_dir=self.home, package_cache_dir=self.cache,
+            application_addons_dir=self.application,
+        )
+        bundled = backend.read_installed_metadata("script.module.pil")
+        self.assertEqual(InstalledOrigin.APPLICATION, bundled.origin)
+        self.assertEqual((self.application / "script.module.pil" / "addon.xml").read_bytes(), bundled.xml_bytes)
+        self.assertEqual(InstalledOrigin.HOME, backend.read_installed_metadata("plugin.redlight").origin)
+        without_application_root = KodiInventoryBackend(
+            _kodi_rpc(self.entries), addons_dir=self.home, package_cache_dir=self.cache,
+        )
+        self.assertIsNone(without_application_root.read_installed_metadata("script.module.pil"))
+
+    def test_in_memory_backend_reports_only_its_declared_application_origin(self):
+        from resources.lib.frozen import InstalledOrigin
+        backend = InMemoryInventoryBackend(
+            self.entries,
+            {
+                "script.module.pil": _xml("script.module.pil", "5.1.0"),
+                "plugin.redlight": _xml("plugin.redlight", "2.6.8"),
+            },
+            application_addon_ids=("script.module.pil",),
+        )
+        self.assertEqual(InstalledOrigin.APPLICATION, backend.read_installed_metadata("script.module.pil").origin)
+        self.assertEqual(InstalledOrigin.HOME, backend.read_installed_metadata("plugin.redlight").origin)
+
+    def test_platform_type_must_be_declared_by_its_trusted_metadata(self):
+        _write_addon(self.application, "script.module.pil", version="5.1.0",
+                     point="xbmc.python.pluginsource", imports=(("xbmc.python", "3.0.0", False),))
+        result = self.capture()
+        pil = self.nodes(result)["script.module.pil"]
+        self.assertFalse(result.complete)
+        self.assertEqual(CaptureStatus.UNSUPPORTED, pil.status)
+
+    def test_direct_platform_root_selection_is_rejected(self):
+        result = self.capture(roots=("script.module.pil",))
+        self.assertFalse(result.complete)
+        self.assertNotEqual(CaptureStatus.COMPLETE, result.manifest.capture_status)
+        self.assertTrue(any("platform-provided" in error for error in result.errors), result.errors)
+
+    def test_disabled_or_broken_observed_platform_component_blocks_capture(self):
+        for field, value in (("enabled", False), ("broken", True)):
+            with self.subTest(field=field):
+                entries = [dict(entry) for entry in self.entries]
+                entries[1][field] = value
+                result = self.capture(entries)
+                self.assertFalse(result.complete)
+                self.assertEqual(CaptureStatus.UNSUPPORTED, self.nodes(result)["script.module.pil"].status)
+
+    def test_observed_platform_version_must_satisfy_the_incoming_minimum(self):
+        _write_addon(self.application, "script.module.pil", version="1.0.0", point="xbmc.python.module",
+                     imports=(("xbmc.python", "3.0.0", False),))
+        entries = [dict(entry) for entry in self.entries]
+        entries[1]["version"] = "1.0.0"
+        result = self.capture(entries)
+        self.assertFalse(result.complete)
+        self.assertEqual(CaptureStatus.UNSUPPORTED, self.nodes(result)["script.module.pil"].status)
+
+    def test_platform_outgoing_edges_keep_managed_children_as_exact_software(self):
+        _write_addon(self.home, "script.module.child", version="1.0.0")
+        (self.cache / "script.module.child-1.0.0.zip").write_bytes(_zip("script.module.child", "1.0.0"))
+        _write_addon(self.application, "script.module.pil", version="5.1.0", point="xbmc.python.module", imports=(
+            ("xbmc.python", "3.0.0", False), ("script.module.child", "1.0.0", False),
+        ))
+        entries = self.entries + [
+            _kodi_entry("script.module.child", "special://home/addons/script.module.child/", "1.0.0"),
+        ]
+        result = self.capture(entries)
+        nodes = self.nodes(result)
+        self.assertEqual(CaptureStatus.PLATFORM_PROVIDED, nodes["script.module.pil"].status)
+        self.assertEqual({"script.module.child", "xbmc.python"},
+                         set(nodes["script.module.pil"].required_dependency_ids))
+        self.assertIsNotNone(nodes["script.module.child"].artifact)
+        self.assertEqual(CaptureStatus.COMPLETE, nodes["script.module.child"].status)
+        self.assertTrue(result.complete, result.errors)
+
+    def test_missing_managed_child_below_a_platform_node_blocks_capture(self):
+        _write_addon(self.application, "script.module.pil", version="5.1.0", point="xbmc.python.module", imports=(
+            ("xbmc.python", "3.0.0", False), ("script.module.absent", "1.0.0", False),
+        ))
+        result = self.capture()
+        self.assertFalse(result.complete)
+        self.assertEqual(CaptureStatus.MISSING, self.nodes(result)["script.module.absent"].status)
+
+    def test_dependency_cycle_through_a_platform_node_blocks_capture(self):
+        _write_addon(self.application, "script.module.pil", version="5.1.0", point="xbmc.python.module", imports=(
+            ("xbmc.python", "3.0.0", False), ("plugin.redlight", "2.6.8", False),
+        ))
+        result = self.capture()
+        self.assertFalse(result.complete)
+        self.assertTrue(any("cycle" in error for error in result.errors), result.errors)
