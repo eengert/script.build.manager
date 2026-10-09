@@ -1098,7 +1098,7 @@ msgid "Current / Healthy"
 msgstr ""
 
 msgctxt "#32911"
-msgid "No changes needed. Everything Build Manager checked matches the applied build. Nothing was changed."
+msgid "No changes needed. Everything Build Manager checked matches this build revision. Nothing was changed."
 msgstr ""
 
 msgctxt "#32912"

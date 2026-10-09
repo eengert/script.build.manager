@@ -23,6 +23,8 @@ from resources.lib.update_repair_workflow import UpdateRepairWorkflow
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKED = '2026-10-07T12:00:00Z'
+HEALTHY_BODY = ('No changes needed. Everything Build Manager checked matches this build revision. '
+                'Nothing was changed.')
 
 
 def plan(state=PlanState.CHANGES_READY, rows=None, blockers=(), gaps=(), serial='one'):
@@ -380,6 +382,34 @@ class RepairWorkflowTests(unittest.TestCase):
         self.library.plan_target.assert_not_called()
         self.assertEqual(self.service.preview.call_args.args[0], self.applied)
 
+    def test_healthy_check_of_the_applied_revision_uses_revision_neutral_wording(self):
+        self.service.preview.return_value = plan(PlanState.NO_CHANGES)
+        dialog = Dialog([1, 4])
+        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=lambda: self.workflow).repair()
+        self.assertEqual(self.service.preview.call_args.args[0], self.applied)
+        title, body = dialog.views[0]
+        self.assertEqual(title, STRINGS[repair.S_HEALTHY_TITLE])
+        self.assertTrue(body.startswith(HEALTHY_BODY), body)
+        self.assertNotIn('applied build', body)
+
+    def test_healthy_check_of_an_alternate_revision_uses_revision_neutral_wording(self):
+        other = LibraryEntry('b' * 64, 'demo', '2.0.0', 'Friendly Build', ('other',))
+        desired = PlanTarget('/private/manifest', 'other', '/private/frozen',
+                             library_source=LibrarySource('/private/library', other.entry_id))
+        self.library.list_builds.return_value = (self.applied_entry, other)
+        self.library.plan_target.return_value = desired
+        self.service.preview.return_value = plan(PlanState.NO_CHANGES)
+        # Choose Different Revision, pick the alternate, Check for Changes, then Back.
+        dialog = Dialog([2, 1, 2, 5])
+        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=lambda: self.workflow).repair()
+        self.library.plan_target.assert_called_once_with(other.entry_id, 'other')
+        self.assertEqual(self.service.preview.call_args.args[0], desired)
+        title, body = dialog.views[0]
+        self.assertEqual(title, STRINGS[repair.S_HEALTHY_TITLE])
+        self.assertTrue(body.startswith(HEALTHY_BODY), body)
+        self.assertNotIn('applied build', body)
+        self.assert_no_apply()
+
 
 class RepairNativeTests(unittest.TestCase):
     def dialog(self, selects=(), answers=()):
@@ -460,6 +490,10 @@ class RepairStringTests(unittest.TestCase):
         self.assertIn('not supported yet', STRINGS[32303])
         self.assertNotIn('fixes a device', STRINGS[32303])
         self.assertIn('Does not reinstall everything', STRINGS[32303])
+
+    def test_healthy_wording_no_longer_claims_the_applied_build(self):
+        self.assertEqual(STRINGS[repair.S_HEALTHY_BODY], HEALTHY_BODY)
+        self.assertNotIn('applied build', STRINGS[repair.S_HEALTHY_BODY])
 
     def test_every_repair_identifier_is_defined_plain_and_bounded(self):
         for name, value in vars(repair).items():
