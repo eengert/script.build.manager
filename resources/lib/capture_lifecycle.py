@@ -1,18 +1,20 @@
 """Offline Create-only quiescence coordinator. No runtime/startup composition.
 
-Callers must resupply the exact confirmed Create request after restart. Only
-its digest is durable: this record never carries private values or arbitrary
-diagnostics. Injected operations are trusted lifecycle capabilities, not UI
+Confirmed request declarations and their digest are durable in the same atomic
+record as the hold. No captured values, results, overlays or diagnostics are
+persisted. Lifecycle COMPLETE does not mean a build has been registered.
+Injected operations are trusted lifecycle capabilities, not UI
 inputs. The restart verifier must prove a complete process restart; a changed
 window-property UUID alone is insufficient.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -60,6 +62,61 @@ def request_fingerprint(request: CreateBuildRequest) -> str:
         raise CaptureLifecycleError() from None
 
 
+def _canonical_request_metadata(request):
+    value = asdict(request)
+    value["private_resources"] = [p.resource_id for p in request.private_resources]
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _request_metadata(request):
+    """Only declared request fields, never capture results or private values."""
+    request_fingerprint(request)
+    raw = _canonical_request_metadata(request)
+    if len(raw.encode()) > 12 * 1024:
+        raise CaptureLifecycleError()
+    # Round-trip through trusted constructors before granting durable authority.
+    if _request_from_metadata(raw) != request:
+        raise CaptureLifecycleError()
+    return raw
+
+
+def _request_from_metadata(raw):
+    from resources.lib.create_capture import PublicCaptureSpecification, PublicSettingTarget
+    from resources.lib.config import ConfigSettingType
+    from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind
+    from resources.lib.redlight_resource import redlight_declaration, REDLIGHT_ADDON_ID
+    try:
+        if not isinstance(raw, str) or len(raw.encode()) > 12 * 1024:
+            raise ValueError()
+        value = json.loads(raw)
+        if set(value) != set(CreateBuildRequest.__dataclass_fields__):
+            raise ValueError()
+        # Resource definitions come from the trusted catalog, not disk constructors.
+        trusted = redlight_declaration()
+        if value['private_resources'] != [trusted.resource_id]:
+            raise ValueError()
+        value['private_resources'] = (trusted,)
+        value['root_addon_ids'] = tuple(value['root_addon_ids'])
+        if REDLIGHT_ADDON_ID not in value['root_addon_ids']:
+            raise ValueError()
+        public = value['public_capture']
+        if set(public) != {'settings', 'files'}:
+            raise ValueError()
+        value['public_capture'] = PublicCaptureSpecification(tuple(
+            PublicSettingTarget(**{**item, 'setting_type': ConfigSettingType(item['setting_type']),
+                'target_kind': SettingTargetKind(item['target_kind'])}) for item in public['settings']),
+            tuple(public['files']))
+        value['private_settings'] = tuple(PrivateSettingDeclaration(**{
+            **item, 'target_kind': SettingTargetKind(item['target_kind'])})
+            for item in value['private_settings'])
+        request = CreateBuildRequest(**value)
+        if _canonical_request_metadata(request) != raw:
+            raise ValueError()
+        return request
+    except Exception:
+        raise CaptureLifecycleError() from None
+
+
 @dataclass(frozen=True)
 class CaptureTransaction:
     operation_id: str
@@ -73,9 +130,14 @@ class CaptureTransaction:
     expires_at: float
     capture_session_id: str = ""
     outcome: str = ""
+    request_metadata: str = field(default="", repr=False)
 
     def __post_init__(self):
         try:
+            if self.request_metadata and request_fingerprint(_request_from_metadata(self.request_metadata)) != self.request_fingerprint:
+                raise ValueError()
+            if not isinstance(self.request_metadata, str):
+                raise ValueError()
             _uuid(self.operation_id)
             _uuid(self.originating_session_id)
             if self.capture_session_id:
@@ -130,6 +192,8 @@ class CaptureTransaction:
     def from_dict(cls, value):
         try:
             fields = set(cls.__dataclass_fields__)
+            if isinstance(value, dict) and "request_metadata" not in value:
+                value = {**value, "request_metadata": ""}
             if (not isinstance(value, dict) or set(value) != fields | {"schema_version", "operation_kind"}
                     or type(value["schema_version"]) is not int or value["schema_version"] != 1
                     or value["operation_kind"] != "create_capture"):
@@ -150,10 +214,48 @@ class CaptureStore:
 
     def read(self):
         try:
-            raw = read_regular_file(str(self.path), limit=16 * 1024)
+            # Open every directory component without following links, including
+            # ancestors. Reconstruction must neither create nor lock anything.
+            absolute = self.root.absolute()
+            # macOS exposes trusted temporary roots through these OS aliases.
+            # Canonicalize only the fixed alias, never caller-owned components.
+            for alias, target in (("/var", "/private/var"), ("/tmp", "/private/tmp")):
+                if str(absolute).startswith(alias + "/") and Path(alias).is_symlink():
+                    if os.readlink(alias) not in (target, target.lstrip("/")):
+                        raise CaptureLifecycleError()
+                    absolute = Path(target) / absolute.relative_to(alias)
+            fd = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                for component in absolute.parts[1:]:
+                    try:
+                        next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    except FileNotFoundError:
+                        return None
+                    os.close(fd)
+                    fd = next_fd
+                raw = read_regular_file(FILENAME, limit=16 * 1024, dir_fd=fd)
+            finally:
+                os.close(fd)
             return None if raw is None else CaptureTransaction.from_dict(json.loads(raw))
         except Exception:
             raise CaptureLifecycleError() from None
+
+    def reconstruct_request(self, operation_id, fingerprint, *, now):
+        """Creation-free read; terminal COMPLETE carries no saved-build authority.
+
+        Metadata is co-owned by the transaction, so there is no independent
+        orphan to delete. Missing/legacy metadata remains retained and blocked.
+        """
+        record = self.read()
+        if (record is None or record.operation_id != operation_id
+                or record.request_fingerprint != fingerprint
+                or not record.created_at <= now < record.expires_at
+                or not record.request_metadata):
+            raise CaptureLifecycleError()
+        request = _request_from_metadata(record.request_metadata)
+        if self.read() != record:
+            raise CaptureLifecycleError()
+        return request
 
     def locked(self):
         from resources.lib.transaction import TransactionLock
@@ -165,6 +267,8 @@ class CaptureStore:
             raise CaptureLifecycleError()
         from resources.lib.frozen_install import write_lifecycle_record, FrozenInstallStore
         try:
+            if len(json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")).encode()) + 1 > 16 * 1024:
+                raise ValueError()
             write_lifecycle_record(self.path, record.to_dict(), self.read,
                 lambda: FrozenInstallStore(self.root, create=False)._fsync_directory_strict())
             if self.read() != record:
@@ -223,10 +327,16 @@ class CaptureLifecycleCoordinator:
         except Exception:
             raise CaptureLifecycleError() from None
 
+    def reconstruct_request(self, operation_id, fingerprint):
+        """Read-only reconstruction; no operations callbacks or locks."""
+        return self.store.reconstruct_request(operation_id, fingerprint, now=self.clock())
+
     def _checked(self, operation_id, request, *, recovery=False):
         from resources.lib.frozen_install import FrozenInstallStore
         record = self.store.read()
         if (record is None or record.operation_id != operation_id
+                or not record.request_metadata
+                or record.request_metadata != _request_metadata(request)
                 or record.request_fingerprint != request_fingerprint(request)
                 or not record.created_at <= self.clock() < (float("inf") if recovery else record.expires_at)
                 or self.operations.competing_operation() is not False
@@ -273,7 +383,8 @@ class CaptureLifecycleCoordinator:
             now = self.clock()
             record = CaptureTransaction(str(uuid.uuid4()), CapturePhase.PREPARING,
                 request_fingerprint(request), REDLIGHT_ADDON_ID, REDLIGHT_VERSION,
-                enabled, self._session(), now, now + lifetime_seconds)
+                enabled, self._session(), now, now + lifetime_seconds,
+                request_metadata=_request_metadata(request))
             self.store.save(previous, record)
             return self._disable(record, request)
 

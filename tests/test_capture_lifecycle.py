@@ -80,10 +80,148 @@ class CaptureLifecycleTests(unittest.TestCase):
     def capture(self, record, callback=None):
         return self.coordinator.capture(record.operation_id, self.request, callback or (lambda verify: verify()))
 
+    def test_all_typed_declarations_round_trip_without_values(self):
+        from resources.lib.create_capture import PublicSettingTarget
+        from resources.lib.config import ConfigSettingType
+        from resources.lib.manifest import PrivateSettingDeclaration
+        self.request = replace(self.request,
+            public_capture=PublicCaptureSpecification(
+                (PublicSettingTarget('plugin.video.demo', 'public', ConfigSettingType.BOOL),),
+                ('addon_data/plugin.video.demo/demo.xml',)),
+            private_settings=(PrivateSettingDeclaration('plugin.video.demo', 'token', 'string',
+                sensitivity='token'),))
+        record = self.begin()
+        self.assertEqual(self.make_coordinator().reconstruct_request(
+            record.operation_id, record.request_fingerprint), self.request)
+        self.assertNotIn('value', json.loads(record.request_metadata)['private_settings'][0])
+        self.assertEqual(json.loads(record.request_metadata)['private_resources'], ['redlight.settings'])
+        self.assertNotIn(SECRET, self.store.path.read_text())
+
+    def test_missing_metadata_retains_hold_and_blocks_lifecycle(self):
+        record = self.begin()
+        value = json.loads(self.store.path.read_text())
+        value.pop('request_metadata')
+        self.store.path.write_text(json.dumps(value))
+        self.ops.session = SESSION_B
+        before = list(self.ops.mutations)
+        callback = Mock()
+        with self.assertRaises(CaptureLifecycleError):
+            self.capture(record, callback)
+        with self.assertRaises(CaptureLifecycleError):
+            self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(capture_activation_holds(self.root), frozenset({REDLIGHT_ADDON_ID}))
+        self.assertEqual(before, self.ops.mutations)
+        callback.assert_not_called()
+
+    def test_request_reconstruction_is_read_only_and_fresh_process(self):
+        import os
+        import subprocess
+        import sys
+        record = self.begin()
+        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        self.coordinator.operations = Mock(side_effect=AssertionError("must not call operations"))
+        restored = self.coordinator.reconstruct_request(record.operation_id, record.request_fingerprint)
+        self.assertEqual(restored, self.request)
+        self.assertEqual(request_fingerprint(restored), record.request_fingerprint)
+        code = """import sys
+from pathlib import Path
+from resources.lib.capture_lifecycle import CaptureStore, request_fingerprint
+r = CaptureStore(Path(sys.argv[1])).reconstruct_request(sys.argv[2], sys.argv[3], now=1000)
+assert request_fingerprint(r) == sys.argv[3]
+assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
+"""
+        subprocess.run([sys.executable, '-c', code, str(self.root), record.operation_id,
+                        record.request_fingerprint], check=True,
+                       env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_reconstruction_rejects_unsafe_metadata_and_bindings(self):
+        record = self.begin()
+        original = self.store.path.read_bytes()
+        for change in ('missing', 'corrupt', 'request', 'owner', 'catalog', 'oversize'):
+            value = json.loads(original)
+            if change == 'missing':
+                value.pop('request_metadata')
+            elif change == 'corrupt':
+                value['request_metadata'] = SECRET
+            elif change == 'request':
+                metadata = json.loads(value['request_metadata'])
+                metadata['description'] = 'substituted'
+                value['request_metadata'] = json.dumps(metadata, sort_keys=True, separators=(',', ':'))
+            elif change == 'owner':
+                value['owner_version'] = '2.6.9'
+            elif change == 'catalog':
+                metadata = json.loads(value['request_metadata'])
+                metadata['private_resources'] = ['untrusted.resource']
+                value['request_metadata'] = json.dumps(metadata, sort_keys=True, separators=(',', ':'))
+            else:
+                value['request_metadata'] = 'x' * 17000
+            self.store.path.write_text(json.dumps(value))
+            with self.assertRaises(CaptureLifecycleError) as error:
+                self.coordinator.reconstruct_request(record.operation_id, record.request_fingerprint)
+            self.assertNotIn(SECRET, str(error.exception))
+        self.store.path.write_bytes(original)
+        for operation, fingerprint, now in ((SESSION_B, record.request_fingerprint, 1000),
+                (record.operation_id, 'sha256:' + '0' * 64, 1000),
+                (record.operation_id, record.request_fingerprint, record.expires_at)):
+            self.now = now
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.reconstruct_request(operation, fingerprint)
+        self.now = 1000
+        target = self.root / 'retained.json'
+        target.write_bytes(original)
+        self.store.path.unlink()
+        self.store.path.symlink_to(target)
+        with self.assertRaises(CaptureLifecycleError):
+            self.coordinator.reconstruct_request(record.operation_id, record.request_fingerprint)
+        self.assertEqual(target.read_bytes(), original)
+        self.store.path.unlink()
+        self.store.path.write_bytes(original)
+        alias = self.profile / 'alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(CaptureLifecycleError):
+            CaptureStore(alias).reconstruct_request(record.operation_id, record.request_fingerprint, now=1000)
+
+    def test_request_and_hold_share_atomic_crash_boundary(self):
+        for boundary in ('replace', 'directory_sync'):
+            with self.subTest(boundary=boundary):
+                self.store.path.unlink(missing_ok=True)
+                self.ops.mutations.clear()
+                target = ('resources.lib.frozen_install.os.replace' if boundary == 'replace' else
+                          'resources.lib.frozen_install.FrozenInstallStore._fsync_directory_strict')
+                with patch(target, side_effect=OSError(SECRET)):
+                    with self.assertRaises(CaptureLifecycleError) as error:
+                        self.begin()
+                self.assertNotIn(SECRET, str(error.exception))
+                self.assertEqual(self.ops.mutations, [])
+                record = self.store.read()
+                if boundary == 'replace':
+                    self.assertIsNone(record)
+                else:
+                    self.assertTrue(record.held)
+                    self.assertEqual(self.coordinator.reconstruct_request(
+                        record.operation_id, record.request_fingerprint), self.request)
+                self.assertFalse(list(self.root.glob('.frozen-install.*.tmp')))
+
+    def test_complete_reconstruction_retains_no_capture_result_or_registration(self):
+        record = self.begin()
+        self.ops.session = SESSION_B
+        self.capture(record, lambda verify: SECRET)
+        fresh = self.make_coordinator()
+        request = fresh.reconstruct_request(record.operation_id, record.request_fingerprint)
+        self.assertEqual(request, self.request)
+        self.assertEqual(self.store.read().safe_dict()['outcome'], 'complete')
+        self.assertNotIn(SECRET, self.store.path.read_text())
+        self.assertFalse(hasattr(request, 'public_bundle'))
+        self.assertFalse(hasattr(self.store.read(), 'public_bundle'))
+
     def test_durable_before_disable_and_shared_hold_visible(self):
         def disable(owner, value):
             current = self.store.read()
             self.assertEqual(current.phase, CapturePhase.PREPARING)
+            self.assertEqual(self.coordinator.reconstruct_request(
+                current.operation_id, current.request_fingerprint), self.request)
             self.assertTrue(current.original_enabled)
             self.assertEqual(capture_activation_holds(self.root), frozenset({owner}))
             self.ops.current_enabled = value
