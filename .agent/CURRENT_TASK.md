@@ -1,11 +1,24 @@
+# Current Task — D-028 builtin authority correction
+
+- Implementation COMPLETE; STOP for independent review, before restaging.
+- Product 233bf87a245010de7830395789117bc81478c1ac; baseline 3ad2ffc (guidance-only descendant of requested 8480a25).
+- 24 new regressions / 235 subsystem PASS; full 3430 vs 3406 with only two matching baseline failures.
+- Actual bundled Python API 3.0.1 / ABI 3.0.0 authority proven through supported APIs and pinned XML.
+- Test.app stopped; accepted 9a77068 still staged; public fixtures/durable census unchanged.
+- Next: independent correction-delta review, then separately authorized runtime admission.
+- Evidence/cleanup: .qualification-evidence/d028-builtin-authority/RUN-SUMMARY.md.
+
+---
+
+# Preserved earlier task record
+
 # Current Task
 
-- Task: D-028 target closure correction, remaining P1.
-- State: implementation COMPLETE; **STOP for independent correction-delta re-review**.
+- Task: WF-testapp-launch-background-correction.
+- State: COMPLETE; guidance-only commit `3ad2ffc`.
 - Worktree/branch: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, `agent/codex`.
-- Clean start: `220a4da7d7c73ecb6dc98dc5723a1907e8b67e55`; prior correction `06bde801502395b6d0738e8757cf2b2c331b5314`.
-- Product: `9a77068455f9800bb381040458c0fbdcdc316f59`; bookkeeping separate.
-- Reproduced before correction: missing Q allowed install complete, NO_CHANGES and Healthy Repair.
-- Validation: 18 new regressions PASS; 88 D-028 focused PASS; full 3406 with only two exact-baseline import-policy failures, no errors/skips. Baseline 3388 plus five archive-history skip supplements PASS. See `.agent/D028_TARGET_CLOSURE_TEST_RESULTS.md`.
-- Next/human input: Eric relays the correction delta for independent review. No implementation or live acceptance claimed.
-- Cleanup: task scratch removed; minimum checksummed offline evidence retained; prior caches/evidence preserved.
+- Files: `AGENTS.md`, `.orchestrator/WORKFLOW.md`; exact Test.app launch/focus policy added.
+- Validation: `git diff --check` passed; no tests run for this documentation-only change.
+- Boundaries: no Test.app/device interaction, product code, matrix/Claude worktree access, or push.
+- Next: no follow-up for this guidance task. D-028 runtime admission remains stopped pending separately authorized builtin-authority correction; prior evidence remains in `.agent/HANDOFF.md` and `.qualification-evidence/d028-runtime-9a77068/RUN-SUMMARY.md`.
+- Cleanup: no task-created scratch; preserved prior D-028 evidence.
