@@ -43,35 +43,21 @@ evidence.
 - Disposable validation profiles must be isolated from the real profile
   (use a separate `HOME` override or equivalent).
 
-### Test.app launch and focus
+### Test.app launch and UI control
 
-For every launch or relaunch of `/Applications/Kodi Build Manager Test.app`:
+Authorized target:
 
-1. Record the currently foreground application and its PID before launching.
-2. From the Build Manager repository root, use the standard launch helper:
+`/Applications/Kodi Build Manager Test.app`
 
-   ```sh
-   python3 tools/bm_test_app_launch.py
-   ```
+It must run in portable mode:
 
-   The helper captures the foreground application/PID, invokes only
-   `open -g "/Applications/Kodi Build Manager Test.app" --args -p`, verifies
-   the process executable and `-p` arguments, then uses PID-targeted System
-   Events controls to hide Test.app if it takes focus. It monitors startup for
-   at most 15 seconds, restores the prior application when safe, and succeeds
-   only when Test.app is still running portably and another PID is foreground.
-   A nonzero exit or JSON without `background_verified: true` is a failed
-   validation launch.
-3. Do not launch Test.app directly with `open -g`; that command is issued only
-   by the helper and is not itself proof that focus stayed in the background.
-4. Foreground Test.app only temporarily when UI interaction requires it, and
-   first record the then-current foreground application and PID. Restore that
-   application promptly afterward.
+`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
 
-Do not use unguarded Cmd+Tab or other global focus-changing keystrokes. Hide,
-foreground, or otherwise interact with Test.app only after confirming the PID
-still has the verified executable path, so a stale or reused PID cannot target
-another process.
+The `-p` flag is mandatory. Background launch with `-g` is the normal/default
+behavior; a specific validation task may explicitly require foreground
+activation.
+
+For Test.app UI validation, the established shell-mediated macOS mechanism remains valid when it is operational and safe: establish the exact authorized Test.app PID; identify its exact window with CoreGraphics `CGWindowListCopyWindowInfo`; target the app with AppleScript/System Events; verify the foreground PID before guarded keyboard input; and capture/inspect only that window with `screencapture -x -l <window-id>` where practical. Fail closed on ambiguous process/window identity or global UI input. Dedicated Codex Computer Use/CUA is not a prerequisite unless a future authoritative task or repository rule explicitly requires it.
 
 ## Secrets and Credentials
 

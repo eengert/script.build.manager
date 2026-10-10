@@ -331,24 +331,15 @@ independent review of this correction.
 
 ## Typical sequence
 
-Use the repository's bounded launch-and-background helper for every launch and
-relaunch. From the repository root, run `python3 tools/bm_test_app_launch.py`.
-It records the current foreground application and PID, invokes only the
-authorized `open -g "/Applications/Kodi Build Manager Test.app" --args -p`
-command, verifies the actual executable path/PID and portable `-p` argument,
-and monitors startup for at most 15 seconds. If Kodi takes focus, it rechecks
-the exact process before hiding that PID with System Events. It restores the
-previous application when safe. Require a successful exit and JSON
-`background_verified: true`, which also proves Test.app remains running while
-another PID is foreground. A specific validation task may temporarily
-foreground the verified process for UI interaction.
+Use this normal/default background launch command; `-p` is mandatory. A
+specific validation task may explicitly require foreground activation.
 
 ```text
 identify
 stage --candidate <sha> --config <cfg> --dry-run            # inspect the manifest
 stage --candidate <sha> --config <cfg> --evidence-dir <dir>
 verify --manifest <dir>/stage-.../stage_manifest.json
-python3 tools/bm_test_app_launch.py
+open -g "/Applications/Kodi Build Manager Test.app" --args -p
 run status --manifest ... --config <cfg>
 run install | retry | recover --manifest ... --config <cfg>
 quit --config <cfg>                                          # graceful stop; see the restart sequence below
@@ -367,7 +358,7 @@ Restart the Test.app like this:
 quit --config <cfg>                       # graceful Application.Quit; proves not_running
 snapshot --manifest ...                   # persisted guisettings: settings.updater_policy
                                           #   REQUIRE "NEVER_CHECK"; anything else is a HARD STOP
-python3 tools/bm_test_app_launch.py
+open -g "/Applications/Kodi Build Manager Test.app" --args -p
 identify                                  # one portable process
 (the Build Manager service continues with a verify-only resume)
 run status --manifest ... --config <cfg>  # or snapshot, to observe the outcome

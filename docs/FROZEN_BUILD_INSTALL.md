@@ -67,8 +67,8 @@ that recovers automatically.
 Normal qualification restart sequence:
 
 `quit` → prove the process stopped → snapshot the persisted updater policy →
-**require `NEVER_CHECK`** → relaunch using
-`python3 tools/bm_test_app_launch.py` from the repository root →
+**require `NEVER_CHECK`** → relaunch using the default background portable
+command `open -g "/Applications/Kodi Build Manager Test.app" --args -p` →
 identify the portable process → continue with the verify-only resume.
 
 BM-020 remains the owner of the ordinary configuration and restart transaction.

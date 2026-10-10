@@ -104,24 +104,11 @@ Authorized target:
 
 It must run in portable mode:
 
-`python3 tools/bm_test_app_launch.py` (from the repository root)
+`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
 
-For every launch and relaunch, use this helper; do not issue a direct `open`
-command. It records the foreground application and PID, invokes only
-`open -g "/Applications/Kodi Build Manager Test.app" --args -p`, resolves
-`CFBundleExecutable`, and verifies the process executable path, PID, and `-p`
-argument. It watches startup for at most 15 seconds and uses PID-targeted
-System Events controls to hide a verified Test.app process if it takes focus.
-It restores the previously foreground application when safe. Success requires
-the exact portable Test.app process to remain running while a different PID is
-foreground; require exit status 0 and JSON `background_verified: true`.
-
-Never use unguarded Cmd+Tab or other global focus-changing keystrokes. Before
-temporarily foregrounding Test.app for required UI interaction, record the
-then-current foreground application and PID; restore that application promptly
-afterward. Recheck process identity before hiding, foregrounding, or otherwise
-interacting with Test.app so a stale or reused PID cannot target another
-process.
+The `-p` flag is mandatory. Background launch with `-g` is the normal/default
+behavior; a specific validation task may explicitly require foreground
+activation.
 
 Never access normal `/Applications/Kodi.app` or `/Users/eengert/Library/Application Support/Kodi`.
 

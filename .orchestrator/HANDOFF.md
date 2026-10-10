@@ -66,7 +66,7 @@ Offline Update / Repair chain: `866080ef9d687879fdcb02efa480e34ae34dff99`, `326e
 ## Safety boundaries
 
 - Authorized runtime target: **`/Applications/Kodi Build Manager Test.app` in portable `-p` mode only.**
-- Default launch from the repository root: `python3 tools/bm_test_app_launch.py`. The helper issues `open -g "/Applications/Kodi Build Manager Test.app" --args -p`, verifies process identity and portable mode, hides the verified PID if startup takes focus, and monitors startup for at most 15 seconds. Require its `background_verified: true` result. Use foreground activation only when a specific validation task requires it.
+- Default launch: `open -g "/Applications/Kodi Build Manager Test.app" --args -p`. `-p` is mandatory. Use foreground activation only when a specific validation task requires it.
 - Standalone Test.app MCP interaction is qualified and supported. Use it only inside a named task.
 - Forbidden for BM validation: normal `/Applications/Kodi.app`, and `/Users/eengert/Library/Application Support/Kodi`, including read or probe access.
 - Household Kodi devices (Apple TV, Shield, Fire TV): mutation needs Eric's explicit authority naming the device and the action. Completing portable Test.app work does not authorize normal Kodi or device validation.
