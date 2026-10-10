@@ -43,6 +43,37 @@ evidence.
 - Disposable validation profiles must be isolated from the real profile
   (use a separate `HOME` override or equivalent).
 
+### Test.app launch and focus
+
+For every launch or relaunch of `/Applications/Kodi Build Manager Test.app`:
+
+1. Record the currently foreground application and its PID before launching.
+2. Launch only with:
+
+   ```sh
+   open -g "/Applications/Kodi Build Manager Test.app" --args -p
+   ```
+
+3. Immediately identify the actual Test.app process by its executable path and
+   PID. Resolve `CFBundleExecutable` from the app bundle and verify the
+   process executable is that binary under
+   `/Applications/Kodi Build Manager Test.app/Contents/MacOS/`; an `open -g`
+   result, app display name, or Dock icon alone does not establish identity.
+4. Verify that the identified process remains running in portable mode, with
+   `-p` present in its launch arguments, and that the foreground PID is not
+   the Test.app PID. If startup gives Kodi foreground focus, promptly recheck
+   the process identity, hide/background that verified PID, and restore the
+   previously foreground application using its recorded PID and application
+   identity.
+5. Foreground Test.app only temporarily when UI interaction requires it, and
+   first record the then-current foreground application and PID. Restore that
+   application promptly afterward.
+
+Do not use unguarded Cmd+Tab or other global focus-changing keystrokes. Hide,
+foreground, or otherwise interact with Test.app only after confirming the PID
+still has the verified executable path, so a stale or reused PID cannot target
+another process.
+
 ## Secrets and Credentials
 
 - Do not log, print, or commit credentials, API keys, tokens, or private

@@ -106,9 +106,25 @@ It must run in portable mode:
 
 `open -g "/Applications/Kodi Build Manager Test.app" --args -p`
 
-The `-p` flag is mandatory. Background launch with `-g` is the normal/default
-behavior; a specific validation task may explicitly require foreground
-activation.
+For every launch and relaunch, first record the currently foreground
+application and PID. Launch only with the command above; the `-p` flag is
+mandatory. Immediately identify the actual Test.app process by executable path
+and PID, resolving `CFBundleExecutable` from the app bundle and confirming the
+process executable is that binary under
+`/Applications/Kodi Build Manager Test.app/Contents/MacOS/`. Do not infer
+identity from the app name, Dock icon, or `open -g` result.
+
+Verify the identified process remains running in portable mode, with `-p`
+present in its launch arguments, and confirm the foreground PID is not the
+Test.app PID. If Kodi takes focus during startup, promptly reconfirm the PID
+and executable path, hide/background that verified PID, and restore the
+previously foreground application using its recorded PID and application
+identity. Never use unguarded Cmd+Tab or other global focus-changing
+keystrokes. Before temporarily foregrounding Test.app for required UI
+interaction, record the then-current foreground application and PID; restore
+that application promptly afterward. Recheck process identity before hiding,
+foregrounding, or otherwise interacting with Test.app so a stale or reused
+PID cannot target another process.
 
 Never access normal `/Applications/Kodi.app` or `/Users/eengert/Library/Application Support/Kodi`.
 
