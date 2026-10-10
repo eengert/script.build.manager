@@ -44,6 +44,7 @@ from resources.lib.frozen import (
     AddonCaptureNode,
     CaptureError,
     CaptureStatus,
+    DependencyEdge,
     FrozenBuildManifest,
     InstalledMetadata,
     InstalledOrigin,
@@ -1409,6 +1410,9 @@ def _platform_unsatisfied(message: str) -> FrozenPlatformRequirementError:
 def _builtin_satisfies(installer, edge) -> bool:
     """Authoritative Kodi evidence for a builtin minimum; anything less fails closed."""
     try:
+        verifier = getattr(installer, "verify_builtin_requirement", None)
+        if callable(verifier):
+            return verifier(edge) is True
         builtin = installer.get_addon_details(edge.addon_id)
     except Exception:
         return False
@@ -1754,8 +1758,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         except (ImportError, AttributeError, RuntimeError) as exc:
             raise FrozenInstallError("Kodi VFS module is unavailable") from exc
 
-    def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
-        """Trusted addon.xml through the same root authority that capture uses (D-028)."""
+    def _inventory(self) -> KodiInventoryBackend:
         def result_rpc(method: str, params: dict) -> dict:
             response = self._rpc(method, params)
             if response.get("error") is not None:
@@ -1769,7 +1772,65 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                 package_cache_dir=addons_dir / "packages",
                 application_addons_dir=self._application_addons_dir(),
             )
-        return self._inventory_backend.read_installed_metadata(addon_id)
+        return self._inventory_backend
+
+    def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
+        """Trusted addon.xml through the same root authority that capture uses (D-028)."""
+        return self._inventory().read_installed_metadata(addon_id)
+
+    def verify_builtin_requirement(self, edge: DependencyEdge) -> bool:
+        """Prove the Python builtin using Kodi's enabled API and pinned application XML.
+
+        Kodi 21's GetAddonDetails excludes extension-point builtins (type UNKNOWN).
+        xbmcaddon.Addon instead requires an enabled registered add-on and exposes
+        its actual identity/version/path. Executing here proves the Python runtime
+        is usable. The XML's ABI floor additionally excludes incompatible Python
+        API requirements; a Kodi release number or a dependent's declaration is
+        never target evidence. Other builtin interfaces remain unverified.
+        """
+        if edge.addon_id != "xbmc.python":
+            return False
+        try:
+            import sys
+            import xml.etree.ElementTree as ET
+            import xbmcaddon
+
+            if sys.version_info.major != 3:
+                return False
+            xbmc = self._xbmc()
+
+            def usable():
+                return (xbmc.getCondVisibility("System.HasAddon(xbmc.python)") is True
+                        and xbmc.getCondVisibility("System.AddonIsEnabled(xbmc.python)") is True)
+
+            if not usable():
+                return False
+            addon = xbmcaddon.Addon("xbmc.python")
+            fields = ("id", "version", "path", "type")
+            info = tuple(addon.getAddonInfo(key) for key in fields)
+            addon_id, version, path, addon_type = info
+            if (addon_id != edge.addon_id or addon_type != "unknown"
+                    or not isinstance(version, str) or not version.startswith("3.")
+                    or not _strict_version_satisfies(version, edge.min_version)):
+                return False
+            metadata = self._inventory().read_application_builtin_metadata(addon_id, path)
+            if metadata is None or metadata.origin is not InstalledOrigin.APPLICATION:
+                return False
+            _check_addon_xml_identity(metadata.xml_bytes, addon_id, version)
+            root = ET.fromstring(metadata.xml_bytes)
+            backwards = root.findall("backwards-compatibility")
+            scripts = [point for point in root.findall("extension-point") if point.get("id") == "script"]
+            if (root.tag != "addon" or len(backwards) != 1 or len(scripts) != 1
+                    or scripts[0].get("schema") != "script.xsd" or root.findall("extension")):
+                return False
+            abi = backwards[0].get("abi")
+            if (not isinstance(abi, str) or not abi.startswith("3.")
+                    or not _strict_version_satisfies(version, abi)
+                    or not _strict_version_satisfies(edge.min_version, abi)):
+                return False
+            return usable() and tuple(addon.getAddonInfo(key) for key in fields) == info
+        except Exception:
+            return False
 
     def assert_mutable_target(self, addon_id):
         from resources.lib.platform_policy import PlatformMutationError

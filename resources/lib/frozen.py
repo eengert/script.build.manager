@@ -711,6 +711,40 @@ class KodiInventoryBackend(InventoryBackend):
             roots.append((_APPLICATION_ADDONS_PREFIX, self._application))
         return tuple(roots)
 
+    def read_application_builtin_metadata(self, addon_id: str, path_value) -> Optional[InstalledMetadata]:
+        """Read a builtin absent from JSON-RPC inventory, with pinned origin and no home shadow.
+
+        The caller must independently prove the builtin's runtime identity and usability.
+        Its reported path only selects the already-pinned application root; it grants no
+        filesystem authority. Any home entry, including a dangling link, blocks proof.
+        """
+        if (not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id)
+                or self._application is None or self._home is None
+                or self._trusted_root(addon_id, path_value) is not self._application):
+            return None
+
+        def unshadowed():
+            fd = self._home.reacquire()
+            if fd is None:
+                return False
+            try:
+                try:
+                    os.stat(addon_id, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return True
+                except OSError:
+                    return False
+                return False
+            finally:
+                os.close(fd)
+
+        if not unshadowed():
+            return None
+        xml_bytes = self._read_addon_xml_in(self._application, addon_id)
+        if xml_bytes is None or not unshadowed():
+            return None
+        return InstalledMetadata(xml_bytes, InstalledOrigin.APPLICATION)
+
     def _trusted_root(self, addon_id: str, path_value) -> Optional["_TrustedRoot"]:
         """Return the explicit trusted root that directly holds this add-on, or None.
 
