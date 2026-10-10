@@ -128,8 +128,6 @@ class AddonCaptureNode:
             raise CaptureError("platform-provided add-on cannot carry an artifact")
         if not self.addon_id or not self.version or not self.addon_type:
             raise CaptureError("platform-provided add-on requires identity, version and type")
-        if not self.dependency_edges:
-            raise CaptureError("platform-provided add-on requires trusted dependency edges")
 
     @property
     def required_dependency_ids(self) -> Tuple[str, ...]:
@@ -954,8 +952,6 @@ def _platform_node(
         return unsupported("platform-provided add-on is broken")
     if not enabled:
         return unsupported("platform-provided add-on is disabled")
-    if not edges:
-        return unsupported("platform-provided add-on has no trusted dependency metadata")
     if addon_type not in declared_points:
         return unsupported("platform-provided add-on type is not declared by its trusted metadata")
     # The observed version is evidence, so it must be parseable and must already
@@ -1042,7 +1038,7 @@ def capture_frozen_build(
                         current = system_min_versions.get(edge.addon_id, "")
                         if not current or edge.min_version > current:
                             system_min_versions[edge.addon_id] = edge.min_version
-                    walk(edge.addon_id, edge.optional)
+                    walk(edge.addon_id, optional or edge.optional)
             except CaptureError as exc:
                 errors.append(str(exc))
                 metadata_errors.add(addon_id)
@@ -1058,7 +1054,7 @@ def capture_frozen_build(
     incoming_minima: Dict[str, List[str]] = {}
     for parent_edges in edges_by_id.values():
         for edge in parent_edges:
-            if edge.min_version:
+            if edge.min_version and not edge.optional:
                 incoming_minima.setdefault(edge.addon_id, []).append(edge.min_version)
 
     nodes: List[AddonCaptureNode] = []

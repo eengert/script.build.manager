@@ -211,6 +211,7 @@ class PlanOwners:
     status: StatusOwners                       # Kodi state, build files, configuration, private data
     artifact_store: object                     # artifact_path / metadata_path / get_metadata / read_bytes
     addon_details: Callable[[str], Optional[FrozenInstalledAddon]]   # installed add-on incl. ``broken``
+    platform_backend: object = None
 
 
 def _utc_now() -> str:
@@ -687,6 +688,7 @@ class BuildPlanService:
         if not blockers or all(b.code in (BlockerCode.OPERATION_PENDING,
                                           BlockerCode.OPERATION_NEEDS_ATTENTION) for b in blockers):
             self._validate_graph(desired, frozen, policies, sw, blockers, prior)
+        material[IdentityComponent.POLICY]["verified_platform"] = getattr(sw, "platform_identity", None)
         return sw
 
     def _recorded_package(self, record: InstallResolutionRecord) -> bool:
@@ -733,13 +735,26 @@ class BuildPlanService:
         try:
             plan = validate_frozen_install_plan(
                 frozen, self._o.artifact_store, policies, skipped=tuple(sorted(sw.skipped)))
+            from resources.lib.frozen_install import verify_platform_requirements, _planned_versions, _repository_required_addon_ids
+            from resources.lib.platform_policy import reject_platform_mutations
+            reject_platform_mutations(desired, {n.addon_id for n in frozen.addons if n.platform_provided})
+            platform_versions = verify_platform_requirements(
+                plan.strict_plan, self._o.platform_backend,
+                planned_versions={**_planned_versions(plan.strict_plan, records), **sw.target_version},
+                skipped=frozenset(sw.skipped), resolutions=records,
+                required_addon_ids=_repository_required_addon_ids(self._o.artifact_store, records))
+
             skipped = frozenset(sw.skipped)
             extra_dependencies = {
                 aid: stored_repository_dependencies(
-                    self._o.artifact_store, record, plan, records, skipped)
+                    self._o.artifact_store, record, plan, records, skipped,
+                    platform_versions=platform_versions)
                 for aid, record in sorted(records.items())
                 if record.resolution is InstallResolution.REPOSITORY_CURRENT
             }
+            # Platform target version and dependency authority are part of approval freshness.
+            sw.platform_identity = [sorted(platform_versions.items()), sorted(platform_versions.dependencies.items())]
+            extra_dependencies.update(platform_versions.dependencies)
             if extra_dependencies:
                 plan = validate_frozen_install_plan(
                     frozen, self._o.artifact_store, policies, skipped=tuple(sorted(skipped)),
@@ -892,10 +907,12 @@ def default_plan_target() -> Optional[PlanTarget]:
 
 def default_plan_owners(*, log: Optional[Callable[[str], None]] = None) -> PlanOwners:
     """Production read-only collaborators, constructed without touching Kodi state."""
+    backend = KodiRuntimeFrozenArtifactBackend()
     return PlanOwners(
+        platform_backend=backend,
         status=default_status_owners(log=log),
         artifact_store=ReadOnlyArtifactStore(default_frozen_install_root() / "frozen-artifacts"),
-        addon_details=KodiRuntimeFrozenArtifactBackend().get_addon_details,
+        addon_details=backend.get_addon_details,
     )
 
 

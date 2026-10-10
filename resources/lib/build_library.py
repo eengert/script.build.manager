@@ -373,10 +373,19 @@ def _validate_bundle(bundle):
     layers = [manifest, *manifest.platform_profiles.values(), *manifest.device_profiles.values(), *manifest.optional]
     private = {(p.target_kind.value, p.addon_id, p.key) for layer in layers
                if layer.config for p in layer.config.private_settings}
+    from resources.lib.platform_policy import reject_platform_mutations
+    from types import SimpleNamespace
+    platform_ids = {node.addon_id for node in frozen.addons if node.platform_provided}
+    for layer in layers:
+        reject_platform_mutations(SimpleNamespace(
+            addons=layer.addons, repositories=getattr(layer, "repositories", ()),
+            skin=getattr(layer, "skin", None), config=layer.config), platform_ids)
     for desired in builds:
+        reject_platform_mutations(desired, platform_ids)
         if desired.config:
             required.update(desired.config.packages)
         effective = loader.resolve(desired.config)
+        reject_platform_mutations(desired, platform_ids, effective)
         for setting in effective.settings:
             if (setting.target in private or setting.addon_id == "plugin.video.redlight"
                     or _PRIVATE_KEY.search(setting.key)):
@@ -393,6 +402,8 @@ def _validate_bundle(bundle):
         if not isinstance(package["sources"], dict):
             raise _error()
         parsed = loader.load_package(pid)
+        reject_platform_mutations(SimpleNamespace(addons=(), repositories=(), skin=None, config=None),
+                                  platform_ids, parsed)
         if set(package["sources"]) != {item.source for item in parsed.files}:
             raise _error()
         if any(len(item.content) > FILE_LIMIT for item in parsed.files):

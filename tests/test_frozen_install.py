@@ -377,7 +377,10 @@ class FrozenInstallTest(unittest.TestCase):
         self.assertNotIn("xbmc.python", [node.addon_id for node in plan.install_order])
 
     def test_kodi_state_result_string_is_verified_by_readback(self):
+        from resources.lib.frozen import InstalledMetadata, InstalledOrigin
         backend = KodiRuntimeFrozenArtifactBackend()
+        backend.read_installed_metadata = lambda aid: InstalledMetadata(
+            _xml(aid, "1.0.0"), InstalledOrigin.HOME)
         backend._rpc = lambda _method, _params: {"result": "OK"}
         backend._wait_for_details = lambda addon_id: FrozenInstalledAddon(
             addon_id, "1.0.0", False

@@ -1573,7 +1573,14 @@ class PlatformProvidedPlan(PlanBase):
         h = PlanHarness(self)
         h.set_graph(platform=((self.PLATFORM, "5.1.0", "xbmc.python.module", ("xbmc.python",)),))
         h.save_overlay()
-        plan = h.plan()
+        from resources.lib.frozen import InstalledMetadata, InstalledOrigin
+        from tests.test_frozen import _xml
+        backend = frozen_install.InMemoryFrozenArtifactBackend()
+        backend.installed[self.PLATFORM] = FrozenInstalledAddon(self.PLATFORM, "5.1.0", True)
+        backend.installed["xbmc.python"] = FrozenInstalledAddon("xbmc.python", "3.0.1", True)
+        backend.platform_metadata[self.PLATFORM] = InstalledMetadata(
+            _xml(self.PLATFORM, "5.1.0", point="xbmc.python.module"), InstalledOrigin.APPLICATION)
+        plan = h.plan_service(platform_backend=backend).preview(h.plan_target())
         self.assertNotIn(self.PLATFORM, self.actions(plan))
         self.assertEqual(plan.blockers, ())
 

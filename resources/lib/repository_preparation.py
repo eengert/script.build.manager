@@ -142,7 +142,7 @@ def bind_prepared(prepared, source, profile, desired, frozen, loader, store):
         for record in checked.records:
             node = nodes[record.addon_id]
             policy = effective_policy(record.addon_id, policies)
-            if (node.system or node.is_absent_optional_dependency
+            if (node.system or node.platform_provided or node.is_absent_optional_dependency
                     or node.version != record.captured_version
                     or node.desired_enabled is not record.desired_enabled
                     or not policy.repository_fallback_allowed
@@ -239,9 +239,13 @@ class RepositoryPreparationService:
     The injected downloader must obey the bounded/redirect-safe download contract.
     Production uses the established repository downloader. No runtime owner is used.
     """
-    def __init__(self, artifact_store, *, download=_download_artifact):
+    def __init__(self, artifact_store, *, download=_download_artifact, platform_backend=None):
         self.store = artifact_store
         self.download = download
+        if platform_backend is None:
+            from resources.lib.frozen_install import KodiRuntimeFrozenArtifactBackend
+            platform_backend = KodiRuntimeFrozenArtifactBackend()
+        self.platform_backend = platform_backend
 
     def prepare(self, target):
         from resources.lib.plan_model import DecisionChoice
@@ -286,8 +290,15 @@ class RepositoryPreparationService:
                     nodes[aid].desired_enabled, repository_id, metadata.version, metadata.sha256, metadata.size)
                 packages[aid] = RepositoryPackage(aid, repository_id, metadata.version, data)
             try:
-                extra = {a: _repository_package_required_dependencies(p, plan, records, skipped)
+                from resources.lib.frozen_install import verify_platform_requirements, _planned_versions, _repository_required_addon_ids
+                versions = verify_platform_requirements(
+                    plan.strict_plan, self.platform_backend,
+                    planned_versions=_planned_versions(plan.strict_plan, records), skipped=skipped,
+                    required_addon_ids=_repository_required_addon_ids(None, packages=packages.values()))
+                extra = {a: _repository_package_required_dependencies(p, plan, records, skipped,
+                                                                       platform_versions=versions)
                          for a, p in packages.items()}
+                extra.update(versions.dependencies)
                 resolved_plan = validate_frozen_install_plan(
                     frozen, self.store, desired.frozen_install_policies,
                     skipped=tuple(skipped), extra_dependencies=extra)

@@ -527,7 +527,7 @@ def resolved_software_fingerprint(
     rows = []
     for record in sorted(records, key=lambda item: item.addon_id):
         node = nodes.get(record.addon_id)
-        if node is None or node.version != record.captured_version:
+        if node is None or node.platform_provided or node.version != record.captured_version:
             raise FrozenResolutionError("resolution record does not match captured software")
         if record.resolution is InstallResolution.SKIPPED:
             if record.desired_enabled is not node.desired_enabled:

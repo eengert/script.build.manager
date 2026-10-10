@@ -116,6 +116,7 @@ def bind_resolutions(
         if (
             node is None
             or node.system
+            or node.platform_provided
             or node.is_absent_optional_dependency
             or record.captured_version != node.version
             or record.desired_enabled is not node.desired_enabled

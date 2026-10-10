@@ -753,13 +753,13 @@ class PlatformProvidedCaptureTests(unittest.TestCase):
             platform_provided=True, status=CaptureStatus.PLATFORM_PROVIDED,
         )
         AddonCaptureNode(**valid)
+        AddonCaptureNode(**{**valid, "dependency_edges": ()})
         contradictions = {
             "artifact": {"artifact": artifact},
             "system": {"system": True},
             "version": {"version": ""},
             "addon_type": {"addon_type": ""},
             "addon_id": {"addon_id": ""},
-            "trusted edges": {"dependency_edges": ()},
             "status without marker": {"platform_provided": False},
             "marker with managed status": {"status": CaptureStatus.COMPLETE},
         }

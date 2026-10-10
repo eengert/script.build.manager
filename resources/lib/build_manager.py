@@ -346,6 +346,7 @@ class BuildManagerOwners:
     private_overlay_manager: object = None
     installed_addon_source_resolver: object = None
     frozen_manifest_loader: object = None
+    platform_backend: object = None
 
 
 def _runtime_addon_state_backend():
@@ -355,6 +356,7 @@ def _runtime_addon_state_backend():
 
 def _default_owners() -> BuildManagerOwners:
     """Construct production owners lazily, outside Kodi or test imports."""
+    from resources.lib.frozen_install import KodiRuntimeFrozenArtifactBackend
     dependency_resolver = DependencyResolver(KodiRuntimeDependencyBackend())
     config_manager = ConfigurationManager(KodiRuntimeConfigurationBackend())
     return BuildManagerOwners(
@@ -374,6 +376,7 @@ def _default_owners() -> BuildManagerOwners:
         private_overlay_manager=PrivateOverlayManager(config_manager),
         installed_addon_source_resolver=KodiInstalledAddonSourceResolver(),
         frozen_manifest_loader=_load_frozen_manifest_file,
+        platform_backend=KodiRuntimeFrozenArtifactBackend(),
     )
 
 
@@ -844,6 +847,11 @@ class BuildManager:
 
         try:
             effective = config_loader.resolve(desired.config)
+            from resources.lib.platform_policy import mutation_targets, reject_platform_mutations, reject_backend_platform_targets
+            platform_ids = {n.addon_id for n in library_frozen.addons if n.platform_provided} if library_frozen else set()
+            reject_platform_mutations(desired, platform_ids, effective)
+            if self._owners.platform_backend is not None:
+                reject_backend_platform_targets(self._owners.platform_backend, mutation_targets(desired, effective))
             private_prepared = None
             if desired.private_overlay is not None:
                 manager = self._owners.private_overlay_manager
@@ -1042,6 +1050,12 @@ class BuildManager:
                         for addon in desired.addons
                     ),
                 )
+            if self._owners.platform_backend is not None:
+                reject_backend_platform_targets(self._owners.platform_backend, {
+                    node.addon_id for node in dependency_closure.nodes
+                    if not node.optional and node.status in (
+                        DependencyStatus.INSTALLED_DISABLED, DependencyStatus.VERSION_INSUFFICIENT,
+                        DependencyStatus.MISSING)})
             protected = frozenset(
                 node.addon_id
                 for node in dependency_closure.nodes
