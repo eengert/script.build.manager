@@ -12,7 +12,7 @@ class ActivationHoldError(Exception):
 def current_activation_holds(
     provider: Optional[Callable[[], FrozenSet[str]]] = None,
 ) -> FrozenSet[str]:
-    """Read the holds from the active BM-022 transaction, failing closed."""
+    """Read shared Install/Create holds, failing closed on invalid state."""
     if provider is not None:
         result = provider()
         if not isinstance(result, (set, frozenset)):

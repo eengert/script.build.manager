@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from resources.lib.build_manager import ReconcileRequest
@@ -27,9 +29,10 @@ class _Manifest:
 
 
 class _Store:
-    def __init__(self, transaction, events):
+    def __init__(self, transaction, events, root):
         self.transaction = transaction
         self.events = events
+        self.root = root
 
     def inspect(self):
         self.events.append("reload_frozen_transaction")
@@ -113,6 +116,11 @@ class _CoordinatorFactory:
 
 
 class FrozenRegistryReadinessTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
     def _inputs(self, events, *, policy_value=AddonUpdatePolicy.NEVER_CHECK,
                 register=True, enabled=False, version=VERSION):
         request = ReconcileRequest(
@@ -146,7 +154,7 @@ class FrozenRegistryReadinessTest(unittest.TestCase):
             private_overlay_fingerprint=OVERLAY_FP,
             private_overlay_required=True,
         )
-        store = _Store(transaction, events)
+        store = _Store(transaction, events, self.root)
         registry = _Registry(
             events, register=register, enabled=enabled, version=version,
         )
@@ -237,7 +245,7 @@ class FrozenRegistryReadinessTest(unittest.TestCase):
         registry = _Registry(events, register=False)
         result = ensure_frozen_resume_registry_ready(
             SimpleNamespace(request=request), preview, SESSION_B,
-            store=_Store(tx, events), artifact_store=object(),
+            store=_Store(tx, events, self.root), artifact_store=object(),
             policy_backend=_Policy(events), registry_backend=registry,
         )
         self.assertFalse(result.allowed)
@@ -257,7 +265,7 @@ class FrozenRegistryReadinessTest(unittest.TestCase):
             originating_kodi_session_id=SESSION_A,
         )
 
-        store = _Store(transaction, events)
+        store = _Store(transaction, events, self.root)
 
         class Registry(_Registry):
             def refresh_local_addons(self):

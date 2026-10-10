@@ -185,6 +185,12 @@ class RestartCoordinator:
         if not isinstance(request, ReconcileRequest):
             return None
         try:
+            from resources.lib.capture_lifecycle import require_no_capture
+            from pathlib import Path
+            try:
+                require_no_capture(Path(self._store.directory))
+            except Exception:
+                raise TransactionError("capture lifecycle prevents reconciliation") from None
             transaction = self._inspect_transaction(transaction_access)
         except TransactionError as exc:
             return self._failed(

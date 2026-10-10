@@ -646,10 +646,18 @@ class WorkflowTests(unittest.TestCase):
     def test_native_back_before_preview_no_capture(self):
         d=NativeDialog([7]);self.ui(d);self.factory.assert_not_called()
     def test_native_preview_back_no_capture(self):
-        d=NativeDialog([0,5,3,7],inputs=['My Build']);self.ui(d)
+        before = sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*'))
+        with patch('resources.lib.capture_lifecycle.CaptureLifecycleCoordinator.begin') as begin:
+            d=NativeDialog([0,5,3,7],inputs=['My Build']);self.ui(d)
+        begin.assert_not_called()
+        self.assertEqual(before, sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*')))
         self.factory.assert_not_called();self.private_factory.assert_not_called()
     def test_native_final_no_confirmation_no_capture(self):
-        d=NativeDialog([0,5,0,7],inputs=['My Build'],confirms=[False]);self.ui(d)
+        before = sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*'))
+        with patch('resources.lib.capture_lifecycle.CaptureLifecycleCoordinator.begin') as begin:
+            d=NativeDialog([0,5,0,7],inputs=['My Build'],confirms=[False]);self.ui(d)
+        begin.assert_not_called()
+        self.assertEqual(before, sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*')))
         self.factory.assert_not_called();self.assertEqual(len(d.questions),1)
     def test_native_success_persistent_and_busy(self):
         d=NativeDialog([0,5,1,0],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)

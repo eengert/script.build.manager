@@ -734,6 +734,8 @@ class FrozenInstallStore:
 
     def create(self, transaction: FrozenInstallTransaction) -> FrozenInstallTransaction:
         with self.locked():
+            from resources.lib.capture_lifecycle import require_no_capture
+            require_no_capture(self.root)
             if self.transaction_path.exists():
                 raise FrozenInstallStateConflict("a frozen install transaction is already active")
             self._write_unlocked(transaction)
@@ -908,29 +910,8 @@ class FrozenInstallStore:
             raise FrozenInstallPersistenceError("could not read frozen transaction") from exc
 
     def _write_unlocked(self, transaction: FrozenInstallTransaction) -> None:
-        data = (json.dumps(transaction.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode()
-        staged: Optional[Path] = None
-        try:
-            fd, name = tempfile.mkstemp(prefix=".frozen-install.", suffix=".tmp", dir=self.root)
-            staged = Path(name)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(staged, self.transaction_path)
-            staged = None
-            self._fsync_directory()
-            self._read_unlocked()
-        except FrozenInstallError:
-            raise
-        except (OSError, TypeError, ValueError) as exc:
-            raise FrozenInstallPersistenceError("atomic frozen transaction write failed") from exc
-        finally:
-            if staged is not None:
-                try:
-                    staged.unlink()
-                except OSError:
-                    pass
+        write_lifecycle_record(self.transaction_path, transaction.to_dict(),
+                               self._read_unlocked, self._fsync_directory)
 
     def _fsync_directory_strict(self) -> None:
         """Positive publication authority barrier; no compatibility suppression."""
@@ -958,6 +939,33 @@ class FrozenInstallStore:
             os.close(fd)
 
 
+def write_lifecycle_record(path: Path, record: dict, verify: Callable, sync: Callable) -> None:
+    """Reuse atomic lifecycle storage without sharing Install/Apply authority."""
+    data = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    staged = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=".frozen-install.", suffix=".tmp", dir=path.parent)
+        staged = Path(name)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, path)
+        staged = None
+        sync()
+        verify()
+    except FrozenInstallError:
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        raise FrozenInstallPersistenceError("atomic lifecycle write failed") from exc
+    finally:
+        if staged is not None:
+            try:
+                staged.unlink()
+            except OSError:
+                pass
+
+
 def default_frozen_install_root() -> Path:
     try:
         import xbmcvfs
@@ -969,16 +977,20 @@ def default_frozen_install_root() -> Path:
 def active_activation_hold_ids(
     store: Optional[FrozenInstallStore] = None,
 ) -> frozenset[str]:
-    """Return held add-ons from the authoritative frozen transaction.
+    """Return held add-ons from authoritative Install and Create transactions.
 
     A corrupt or unreadable transaction propagates as an error so callers can
     fail closed. NEEDS_ATTENTION does not release a hold; only the durable
-    ``activation_hold_released`` transition does.
+    ``activation_hold_released`` transition does. Create retains its hold until
+    a terminal capture phase proves original enabled-state restoration.
     """
-    transaction = (store or FrozenInstallStore()).inspect()
+    target = store or FrozenInstallStore()
+    transaction = target.inspect()
+    from resources.lib.capture_lifecycle import capture_activation_holds
+    capture_holds = capture_activation_holds(target.root)
     if transaction is None or transaction.activation_hold_released:
-        return frozenset()
-    return frozenset(transaction.activation_hold_ids)
+        return capture_holds
+    return frozenset(transaction.activation_hold_ids) | capture_holds
 
 
 @dataclass(frozen=True)
@@ -2515,6 +2527,12 @@ class FrozenInstallCoordinator:
         prior_resolution=None,
     ) -> FrozenInstallResult:
         configuration_runner = self.configuration_runner
+        from resources.lib.capture_lifecycle import require_no_capture
+        try:
+            require_no_capture(self.store.root)
+        except Exception:
+            return FrozenInstallResult("failed", code="CAPTURE_LIFECYCLE_BLOCKED",
+                                       message="capture lifecycle prevents frozen installation")
         try:
             from resources.lib.build_library import authoritative_build_library
             try:

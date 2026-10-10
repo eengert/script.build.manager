@@ -673,6 +673,13 @@ class BuildManager:
 
     def reconcile(self, request: ReconcileRequest) -> ReconcileResult:
         """Run load → inspect → resolve → preflight → plan → execute → validate."""
+        try:
+            from resources.lib.capture_lifecycle import require_no_capture
+            from resources.lib.frozen_install import default_frozen_install_root
+            require_no_capture(default_frozen_install_root())
+        except Exception:
+            return self._failed(request, ReconcilePhase.REQUEST,
+                                "CAPTURE_LIFECYCLE_BLOCKED", "capture lifecycle prevents reconciliation")
         prepared, failure = self._prepare(request)
         if failure is not None:
             return failure

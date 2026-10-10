@@ -454,6 +454,12 @@ class TransactionStore:
     def _create_unlocked(self, transaction: RestartTransaction) -> RestartTransaction:
         if not isinstance(transaction, RestartTransaction):
             raise TransactionPersistenceError("transaction has an invalid type")
+        try:
+            from resources.lib.capture_lifecycle import require_no_capture
+            from pathlib import Path
+            require_no_capture(Path(self.directory))
+        except Exception:
+            raise TransactionStateConflict("capture lifecycle prevents restart preparation") from None
         if os.path.exists(self.transaction_path):
             raise TransactionPersistenceError(
                 "an active transaction already exists"
