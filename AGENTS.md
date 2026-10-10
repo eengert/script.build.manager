@@ -45,19 +45,59 @@ evidence.
 
 ### Test.app launch and UI control
 
-Authorized target:
+Authorized runtime target: `/Applications/Kodi Build Manager Test.app` in portable `-p` mode only.
 
-`/Applications/Kodi Build Manager Test.app`
+**Use the actual proven source, not exploratory PID-discovery code:**
+`tools/bm_test_app_window.swift` is a byte-identical, tracked copy of Claude's
+previously used read-only `tools-used/window.swift` (SHA-256
+`ccdaefe1b52a576559832d99a28227b0ab4bedd1b58aecde6a09d356f1a41915`).
+It gets `front_pid` and `front_app` through
+`NSWorkspace.shared.frontmostApplication` and window ID/`onscreen` metadata
+through CoreGraphics. It **does not** launch, activate or restore applications.
 
-It must run in portable mode:
+For a specifically authorized Test.app launch/focus check, use the following
+exact procedure from a GUI-capable macOS host shell:
 
-`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
+1. **Before launch**, run `xcrun swift tools/bm_test_app_window.swift "$$"`
+   to record its JSON `front_pid` (must be positive) and `front_app`.
+   The `$$` value is a harmless window-census target; foreground identity
+   is independent of the target argument. Do not invent a new AppleScript
+   method to obtain the foreground PID.
+2. Run `python3 tools/bm_test_app.py identify` and require
+   `state: not_running`. If Test.app is running or identity is ambiguous,
+   stop instead of launching over it.
+3. Launch exactly `open -g "/Applications/Kodi Build Manager Test.app" --args -p`.
+   `-g` **requests** background launch; it is not proof that focus stayed put.
+4. Run `python3 tools/bm_test_app.py identify`; require
+   `state: running_portable` with a verified exact Test.app PID. Run
+   `xcrun swift tools/bm_test_app_window.swift VERIFIED_TEST_APP_PID` to
+   inspect the foreground PID and Kodi window `onscreen` metadata.
+5. If Kodi took focus, first confirm that the saved original PID still
+   belongs to the saved original application, using read-only
+   `/usr/bin/osascript -e 'tell application "System Events" to get name of (first application process whose unix id is ORIGINAL_PID)'`
+   with the saved numeric PID substituted. Require a matching application
+   name; otherwise STOP. Then restore **only that PID** using the
+   previously used PID-targeted System Events control:
+   `/usr/bin/osascript -e 'tell application "System Events" to set frontmost of (first application process whose unix id is ORIGINAL_PID) to true'`
+   (replace `ORIGINAL_PID` with the verified saved positive integer).
+   Re-run the tracked Swift inspection tool to verify focus. If the user
+   switched to another app, do not steal it back. If Kodi never took focus,
+   report restoration **not exercised**.
+6. Leave Kodi visible, **not hidden or minimized**, behind the prior app.
+   Use `screencapture -x -l WINDOW_ID` for window-specific screenshots only
+   when the task authorizes captures. Do not foreground Kodi for screenshots.
 
-The `-p` flag is mandatory. Background launch with `-g` is the normal/default
-behavior; a specific validation task may explicitly require foreground
-activation.
+**Do not run `tools/bm_test_app_launch.py`.** It calls
+`visible = false` and hides Kodi; it is not approved for background UI work.
+Claude's evidence verified read-only foreground/window inspection and
+background capture, **not** restoration after Kodi steals focus. Do not
+misrepresent the latter as previously validated.
 
-For Test.app UI validation, the established shell-mediated macOS mechanism remains valid when it is operational and safe: establish the exact authorized Test.app PID; identify its exact window with CoreGraphics `CGWindowListCopyWindowInfo`; target the app with AppleScript/System Events; verify the foreground PID before guarded keyboard input; and capture/inspect only that window with `screencapture -x -l <window-id>` where practical. Fail closed on ambiguous process/window identity or global UI input. Dedicated Codex Computer Use/CUA is not a prerequisite unless a future authoritative task or repository rule explicitly requires it.
+Codex's normal coding sandbox may block these macOS GUI APIs. With On Request,
+ask for explicit out-of-sandbox approval of the necessary host commands.
+If denied, unavailable or still unable to reach the logged-in GUI session,
+STOP with the exact errors. Do not silently use RDC, disable the global
+sandbox, or invent replacement methods.
 
 ## Secrets and Credentials
 

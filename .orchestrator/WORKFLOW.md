@@ -106,9 +106,29 @@ It must run in portable mode:
 
 `open -g "/Applications/Kodi Build Manager Test.app" --args -p`
 
-The `-p` flag is mandatory. Background launch with `-g` is the normal/default
-behavior; a specific validation task may explicitly require foreground
-activation.
+The `-p` flag is mandatory. `-g` requests background launch, but does not
+guarantee Kodi will leave the previous application in the foreground.
+A specific validation task may explicitly require foreground activation.
+
+**Concrete foreground/window mechanism:** Use `tools/bm_test_app_window.swift`,
+a byte-for-byte copy of Claude's 2026-10-08 runtime-evidence
+`tools-used/window.swift`. From the repository root, run
+`xcrun swift tools/bm_test_app_window.swift "$$"` BEFORE launch to record
+`NSWorkspace` `front_pid` and `front_app`. After identifying the exact portable
+Test.app PID using `python3 tools/bm_test_app.py identify`, run the same Swift
+tool with that PID to observe foreground and CoreGraphics windows.
+The Swift tool is read-only and does not restore focus. See `AGENTS.md` for
+the guarded PID-targeted System Events restore operation. Restoration without
+hiding Kodi has not yet been independently runtime-tested.
+
+Never use `tools/bm_test_app_launch.py` for runtime work (it hides Kodi using
+`visible = false`). Never hide or minimize Kodi to restore focus, or activate
+it merely for a window-specific screenshot. Do not reinvent PID discovery.
+
+On Request authorization may permit out-of-sandbox host GUI commands;
+if the command cannot be approved or still cannot access the GUI session,
+stop with evidence. Do not silently fall back to RDC or weaken global
+sandbox permissions.
 
 Never access normal `/Applications/Kodi.app` or `/Users/eengert/Library/Application Support/Kodi`.
 

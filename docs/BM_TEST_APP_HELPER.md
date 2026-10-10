@@ -333,6 +333,11 @@ independent review of this correction.
 
 Use this normal/default background launch command; `-p` is mandatory. A
 specific validation task may explicitly require foreground activation.
+For foreground PID/window inspection use `tools/bm_test_app_window.swift`,
+the exact source copied from Claude's validated read-only runtime helper.
+See `AGENTS.md` for command sequence and guarded restoration. `open -g`
+alone does not prove unchanged focus. The obsolete
+`tools/bm_test_app_launch.py` hides Test.app and must not be used.
 
 ```text
 identify

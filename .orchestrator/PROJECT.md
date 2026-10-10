@@ -78,10 +78,11 @@ Launch in portable mode using the normal background behavior:
 
 `open -g "/Applications/Kodi Build Manager Test.app" --args -p`
 
-The `-p` flag is mandatory. `-g` is the default so Test.app does not take
-foreground focus during validation while remaining available for normal
-Test.app/MCP interaction. A specific validation task may explicitly require
-foreground activation.
+The `-p` flag is mandatory. `-g` requests background launch but is not
+proof that Test.app will not steal focus. For the specific, tracked Swift
+PID/window inspection and non-hiding focus procedure see `AGENTS.md` and
+`.orchestrator/WORKFLOW.md`. A specific validation task may explicitly
+require foreground activation.
 
 Eric has granted standing authorization for ongoing staging, testing, installation, configuration, restart/quit/relaunch, JSON-RPC interaction, temporary validation adapters, and other Build Manager validation work against this portable Test.app. Routine Test.app interaction is not a new human authorization gate, but in manual mode each agent receives the exact operation/scope in its bounded task prompt rather than continuing autonomously.
 
