@@ -243,13 +243,114 @@ class CaptureLifecycleTests(unittest.TestCase):
         self.assertEqual(recovered.phase, CapturePhase.CANCELLED)
         self.assertEqual(self.ops.mutations.count((REDLIGHT_ADDON_ID, True)), 1)
 
-    def test_unexpected_enablement_prevents_restore_or_hold_release(self):
+    def test_original_enabled_manual_restore_is_durable_noop(self):
         record = self.begin()
         self.ops.current_enabled = True
+        save = self.store.save
+        phases = []
+        def observe(expected, candidate):
+            phases.append(candidate.phase)
+            if candidate.phase is CapturePhase.CANCELLED:
+                self.assertTrue(self.store.read().held)
+            return save(expected, candidate)
+        self.store.save = observe
+        recovered = self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(phases, [CapturePhase.RESTORING, CapturePhase.CANCELLED])
+        self.assertFalse(recovered.held)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_expired_awaiting_restart_recovers_without_capture_authority(self):
+        record = self.begin()
+        self.now = record.expires_at
+        self.ops.session = SESSION_B
+        callback = Mock()
+        with self.assertRaises(CaptureLifecycleError):
+            self.capture(record, callback)
+        with self.assertRaises(CaptureLifecycleError):
+            self.begin()
+        callback.assert_not_called()
+        self.ops.verify_restart = Mock(side_effect=AssertionError('restart authority'))
+        result = self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(result.phase, CapturePhase.CANCELLED)
+        self.assertTrue(self.ops.current_enabled)
+        self.assertEqual(capture_activation_holds(self.root), frozenset())
+        self.ops.verify_restart.assert_not_called()
+
+    def test_expired_interrupted_restoration_finishes(self):
+        record = self.begin()
+        setter = self.ops.set_enabled
+        def interrupt(owner, enabled):
+            setter(owner, enabled)
+            raise RuntimeError(SECRET)
+        self.ops.set_enabled = interrupt
+        with self.assertRaises(CaptureLifecycleError) as cm:
+            self.coordinator.recover(record.operation_id, self.request, cancelled=False)
+        self.assertNotIn(SECRET, str(cm.exception))
+        self.assertEqual(self.store.read().phase, CapturePhase.RESTORING)
+        self.now = record.expires_at + 1
+        self.ops.set_enabled = Mock(side_effect=AssertionError('unnecessary setter'))
+        result = self.make_coordinator().recover(record.operation_id, self.request)
+        self.assertEqual(result.phase, CapturePhase.FAILED)
+        self.assertFalse(result.held)
+        self.ops.set_enabled.assert_not_called()
+        self.assertNotIn(SECRET, self.store.path.read_text())
+
+    def test_original_disabled_unexpected_enablement_blocks_recovery(self):
+        self.ops.current_enabled = False
+        record = self.begin()
+        self.ops.current_enabled = True
+        self.now = record.expires_at
         with self.assertRaises(CaptureLifecycleError):
             self.coordinator.recover(record.operation_id, self.request)
         self.assertEqual(self.store.read(), record)
-        self.assertEqual(len(self.ops.mutations), 1)
+        self.assertEqual(self.ops.mutations, [])
+
+    def test_expired_recovery_identity_and_authority_checks(self):
+        record = self.begin()
+        self.now = record.expires_at
+        for defect in ('request', 'operation', 'version', 'competing', 'corrupt'):
+            with self.subTest(defect=defect):
+                self.ops.version = REDLIGHT_VERSION
+                self.ops.competing = False
+                self.store.path.write_text(json.dumps(record.to_dict()))
+                request, operation = self.request, record.operation_id
+                if defect == 'request':
+                    request = replace(request, description=SECRET)
+                elif defect == 'operation':
+                    operation = SESSION_B
+                elif defect == 'version':
+                    self.ops.version = '2.6.9'
+                elif defect == 'competing':
+                    self.ops.competing = True
+                else:
+                    self.store.path.write_text(SECRET)
+                before = self.store.path.read_bytes()
+                with self.assertRaises(CaptureLifecycleError) as cm:
+                    self.coordinator.recover(operation, request)
+                self.assertNotIn(SECRET, str(cm.exception))
+                self.assertEqual(before, self.store.path.read_bytes())
+                self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_enablement_race_after_callback_verification_blocks_completion(self):
+        record = self.begin()
+        self.ops.session = SESSION_B
+        enabled = self.ops.enabled
+        reads = 0
+        def race(owner):
+            nonlocal reads
+            reads += 1
+            # Admission and post-callback verification pass; restoration races.
+            if reads == 3:
+                self.ops.current_enabled = True
+            return enabled(owner)
+        self.ops.enabled = race
+        with self.assertRaises(CaptureLifecycleError) as cm:
+            self.capture(record, lambda verify: SECRET)
+        self.assertNotIn(SECRET, str(cm.exception))
+        self.assertEqual(self.store.read().phase, CapturePhase.CAPTURING)
+        self.assertTrue(self.store.read().held)
+        self.assertNotIn(SECRET, self.store.path.read_text())
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
 
     def test_disable_failure_before_effect_is_explicitly_recoverable(self):
         self.ops.set_enabled = Mock(side_effect=RuntimeError(SECRET))
@@ -412,9 +513,9 @@ class CaptureLifecycleTests(unittest.TestCase):
         self.assertEqual(self.store.read(), record)
         self.assertEqual(len(self.ops.mutations), 1)
 
-    def test_stale_or_rolled_back_clock_retains_hold_without_restoration(self):
+    def test_rolled_back_clock_retains_hold_without_restoration(self):
         record = self.begin()
-        for now in (record.expires_at, record.created_at - 1):
+        for now in (record.created_at - 1,):
             self.now = now
             with self.assertRaises(CaptureLifecycleError):
                 self.coordinator.recover(record.operation_id, self.request)

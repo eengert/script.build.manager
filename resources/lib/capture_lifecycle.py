@@ -223,12 +223,12 @@ class CaptureLifecycleCoordinator:
         except Exception:
             raise CaptureLifecycleError() from None
 
-    def _checked(self, operation_id, request):
+    def _checked(self, operation_id, request, *, recovery=False):
         from resources.lib.frozen_install import FrozenInstallStore
         record = self.store.read()
         if (record is None or record.operation_id != operation_id
                 or record.request_fingerprint != request_fingerprint(request)
-                or not record.created_at <= self.clock() < record.expires_at
+                or not record.created_at <= self.clock() < (float("inf") if recovery else record.expires_at)
                 or self.operations.competing_operation() is not False
                 or self.restart_store.read_snapshot() is not None
                 or FrozenInstallStore.read_snapshot(self.store.root) is not None
@@ -325,24 +325,25 @@ class CaptureLifecycleCoordinator:
         with self._exclusive():
             if type(cancelled) is not bool:
                 raise CaptureLifecycleError()
-            record = self._checked(operation_id, request)
+            record = self._checked(operation_id, request, recovery=True)
             if record.phase in TERMINAL:
                 if self.operations.enabled(record.owner_id) is not record.original_enabled:
                     raise CaptureLifecycleError()
                 return record
-            return self._restore(record, request, "cancelled" if cancelled is True else "failed")
+            return self._restore(record, request, "cancelled" if cancelled is True else "failed", recovery=True)
 
-    def _restore(self, record, request, outcome):
-        current = self._checked(record.operation_id, request)
+    def _restore(self, record, request, outcome, *, recovery=False):
+        current = self._checked(record.operation_id, request, recovery=recovery)
         if current != record or not record.held:
             raise CaptureLifecycleError()
         enabled = self.operations.enabled(record.owner_id)
         if type(enabled) is not bool:
             raise CaptureLifecycleError()
         # PREPARING may have crashed before disable; RESTORING may have crashed
-        # after the owned enable. No other phase admits unexpected enablement.
+        # after the owned enable. Explicit recovery also admits a verified
+        # original-enabled no-op; capture completion never gains this authority.
         if enabled and (not record.original_enabled or record.phase not in {
-                CapturePhase.PREPARING, CapturePhase.RESTORING}):
+                CapturePhase.PREPARING, CapturePhase.RESTORING} and not recovery):
             raise CaptureLifecycleError()
         if record.phase is not CapturePhase.RESTORING:
             record = self.store.save(record, replace(record, phase=CapturePhase.RESTORING, outcome=outcome))

@@ -68,17 +68,23 @@ capability to gain Install/Apply authority.
    interruption. It never replays capture or guesses original enablement.
    `PREPARING` may still have original enablement; `RESTORING` may already
    reflect the owned setter's effect when acknowledgment was lost. Those
-   are the only phases that tolerate original enablement before release.
+   tolerate original enablement before release. Explicit recovery also accepts
+   already-restored original enablement without another setter call, persisting
+   RESTORING and the terminal outcome before releasing the hold. Capture
+   completion still rejects unexpected enablement, including after its callback.
+   Recovery may finish after ordinary expiry; preparation/retry and capture
+   admission remain expiry-bound. Clock rollback remains blocked. Recovery
+   grants neither capture nor restart authority.
    Repeating recovery for an exact terminal operation returns its record only
    while original enablement still matches; it performs no lifecycle mutation.
 
-Missing/corrupt/replaced/stale state, clock rollback, owner drift, unexpected
+Missing/corrupt/replaced state, clock rollback, owner drift, unexpected
 enablement, competing operations, and lost restart proof cannot produce a
 capture result or automatic restoration/release. An interrupted read is not
 automatically replayed. If the original-state setter fails or its effect cannot
 be verified, retain the record/hold for explicit recovery. A persistence error
 may occur after replacement: retain the published record, never erase evidence
-or roll back blindly. Stale/corrupt records require a separately designed safe
+or roll back blindly. Corrupt records require a separately designed safe
 recovery policy; Stage 1 provides no override or force-release path.
 
 ## Injected operations and remaining runtime work
