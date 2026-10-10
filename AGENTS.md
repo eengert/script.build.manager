@@ -48,24 +48,23 @@ evidence.
 For every launch or relaunch of `/Applications/Kodi Build Manager Test.app`:
 
 1. Record the currently foreground application and its PID before launching.
-2. Launch only with:
+2. From the Build Manager repository root, use the standard launch helper:
 
    ```sh
-   open -g "/Applications/Kodi Build Manager Test.app" --args -p
+   python3 tools/bm_test_app_launch.py
    ```
 
-3. Immediately identify the actual Test.app process by its executable path and
-   PID. Resolve `CFBundleExecutable` from the app bundle and verify the
-   process executable is that binary under
-   `/Applications/Kodi Build Manager Test.app/Contents/MacOS/`; an `open -g`
-   result, app display name, or Dock icon alone does not establish identity.
-4. Verify that the identified process remains running in portable mode, with
-   `-p` present in its launch arguments, and that the foreground PID is not
-   the Test.app PID. If startup gives Kodi foreground focus, promptly recheck
-   the process identity, hide/background that verified PID, and restore the
-   previously foreground application using its recorded PID and application
-   identity.
-5. Foreground Test.app only temporarily when UI interaction requires it, and
+   The helper captures the foreground application/PID, invokes only
+   `open -g "/Applications/Kodi Build Manager Test.app" --args -p`, verifies
+   the process executable and `-p` arguments, then uses PID-targeted System
+   Events controls to hide Test.app if it takes focus. It monitors startup for
+   at most 15 seconds, restores the prior application when safe, and succeeds
+   only when Test.app is still running portably and another PID is foreground.
+   A nonzero exit or JSON without `background_verified: true` is a failed
+   validation launch.
+3. Do not launch Test.app directly with `open -g`; that command is issued only
+   by the helper and is not itself proof that focus stayed in the background.
+4. Foreground Test.app only temporarily when UI interaction requires it, and
    first record the then-current foreground application and PID. Restore that
    application promptly afterward.
 

@@ -104,27 +104,24 @@ Authorized target:
 
 It must run in portable mode:
 
-`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
+`python3 tools/bm_test_app_launch.py` (from the repository root)
 
-For every launch and relaunch, first record the currently foreground
-application and PID. Launch only with the command above; the `-p` flag is
-mandatory. Immediately identify the actual Test.app process by executable path
-and PID, resolving `CFBundleExecutable` from the app bundle and confirming the
-process executable is that binary under
-`/Applications/Kodi Build Manager Test.app/Contents/MacOS/`. Do not infer
-identity from the app name, Dock icon, or `open -g` result.
+For every launch and relaunch, use this helper; do not issue a direct `open`
+command. It records the foreground application and PID, invokes only
+`open -g "/Applications/Kodi Build Manager Test.app" --args -p`, resolves
+`CFBundleExecutable`, and verifies the process executable path, PID, and `-p`
+argument. It watches startup for at most 15 seconds and uses PID-targeted
+System Events controls to hide a verified Test.app process if it takes focus.
+It restores the previously foreground application when safe. Success requires
+the exact portable Test.app process to remain running while a different PID is
+foreground; require exit status 0 and JSON `background_verified: true`.
 
-Verify the identified process remains running in portable mode, with `-p`
-present in its launch arguments, and confirm the foreground PID is not the
-Test.app PID. If Kodi takes focus during startup, promptly reconfirm the PID
-and executable path, hide/background that verified PID, and restore the
-previously foreground application using its recorded PID and application
-identity. Never use unguarded Cmd+Tab or other global focus-changing
-keystrokes. Before temporarily foregrounding Test.app for required UI
-interaction, record the then-current foreground application and PID; restore
-that application promptly afterward. Recheck process identity before hiding,
-foregrounding, or otherwise interacting with Test.app so a stale or reused
-PID cannot target another process.
+Never use unguarded Cmd+Tab or other global focus-changing keystrokes. Before
+temporarily foregrounding Test.app for required UI interaction, record the
+then-current foreground application and PID; restore that application promptly
+afterward. Recheck process identity before hiding, foregrounding, or otherwise
+interacting with Test.app so a stale or reused PID cannot target another
+process.
 
 Never access normal `/Applications/Kodi.app` or `/Users/eengert/Library/Application Support/Kodi`.
 

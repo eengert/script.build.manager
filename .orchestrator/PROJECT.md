@@ -74,14 +74,19 @@ Only this application is authorized for current BM-023A macOS live validation:
 
 `/Applications/Kodi Build Manager Test.app`
 
-Launch in portable mode using the normal background behavior:
+Launch from the Build Manager repository root through the standard
+launch-and-background helper:
 
-`open -g "/Applications/Kodi Build Manager Test.app" --args -p`
+`python3 tools/bm_test_app_launch.py`
 
-The `-p` flag is mandatory. `-g` is the default so Test.app does not take
-foreground focus during validation while remaining available for normal
-Test.app/MCP interaction. A specific validation task may explicitly require
-foreground activation.
+The helper issues only `open -g "/Applications/Kodi Build Manager Test.app"
+--args -p`, verifies the exact executable and PID plus the portable argument,
+and monitors startup for up to 15 seconds. If Test.app takes focus, the helper
+revalidates its PID and executable before hiding it with System Events; it
+restores the previously foreground application when safe. A successful run
+must report `background_verified: true` while Test.app remains running and a
+different PID is foreground. A specific validation task may temporarily
+foreground the verified process for UI interaction.
 
 Eric has granted standing authorization for ongoing staging, testing, installation, configuration, restart/quit/relaunch, JSON-RPC interaction, temporary validation adapters, and other Build Manager validation work against this portable Test.app. Routine Test.app interaction is not a new human authorization gate, but in manual mode each agent receives the exact operation/scope in its bounded task prompt rather than continuing autonomously.
 
