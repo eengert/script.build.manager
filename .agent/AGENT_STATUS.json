@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "Platform-provided bundled add-on core, Phase 1",
-  "reason": null,
-  "last_commit": "cdddbd8",
+  "status": "stopped",
+  "task": "D-028 review corrections: implementation complete; STOP for independent review",
+  "reason": "All eight corrections implemented offline; 70 focused PASS, full 3388 with two exact-baseline failures. Claude review pending; no runtime or integration authority used.",
+  "last_commit": "06bde801502395b6d0738e8757cf2b2c331b5314",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-09T23:53:48Z",
+  "updated_at": "2026-10-10T00:17:08.035899+00:00",
   "previous_task_record": {
     "active_agent": "claude",
     "status": "review_pending",
