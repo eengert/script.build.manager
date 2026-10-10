@@ -104,6 +104,24 @@ class BuiltinAuthorityTests(unittest.TestCase):
         self.api.Addon=fail
         self.assertFalse(self.satisfies())
 
+    def test_first_addon_construction_cannot_replace_unpinned_application_root(self):
+        self.assertIsNone(self.backend._inventory_backend)
+        replaced = False
+
+        def construct(aid):
+            nonlocal replaced
+            if not replaced:
+                replaced = True
+                self.app.rename(self.app.with_name('retained-application'))
+                replacement = self.app/'xbmc.python/addon.xml'
+                replacement.parent.mkdir(parents=True)
+                replacement.write_text(BUILTIN)
+            return SimpleNamespace(getAddonInfo=self.info.__getitem__)
+
+        self.api.Addon = construct
+        self.assertFalse(self.satisfies())
+        self.assertTrue(replaced)
+
     def test_missing_or_unreadable_xml_blocks_despite_api_proof(self):
         self.file.unlink();self.assertFalse(self.satisfies())
         self.file.write_text(BUILTIN)

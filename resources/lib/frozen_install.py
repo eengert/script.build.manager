@@ -1791,6 +1791,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         if edge.addon_id != "xbmc.python":
             return False
         try:
+            inventory = self._inventory()
             import sys
             import xml.etree.ElementTree as ET
             import xbmcaddon
@@ -1831,7 +1832,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                 fresh = xbmcaddon.Addon("xbmc.python")
                 return usable() and tuple(fresh.getAddonInfo(key) for key in fields) == info
 
-            return self._inventory().read_application_builtin_metadata(
+            return inventory.read_application_builtin_metadata(
                 addon_id, path, validate=validate,
             ) is not None
 
