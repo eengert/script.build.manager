@@ -296,11 +296,18 @@ class CaptureStore:
 
         No shared store construction, callbacks or lock acquisition occurs here.
         An observer pins the directory only for this read and creates nothing.
+        Directory timestamps bound both reads against transient entry movement.
+        Composition is single-threaded; the transition pin is not thread-local.
         """
         from resources.lib.frozen_install import FrozenInstallTransaction, _TRANSACTION_FILENAME
         from resources.lib.transaction import RestartTransaction, TRANSACTION_FILENAME
 
         def read(fd):
+            if type(fd) is not int or fd < 0:
+                raise CaptureLifecycleError()
+            before = os.fstat(fd)
+            if not stat.S_ISDIR(before.st_mode):
+                raise CaptureLifecycleError()
             present = False
             for name, limit, record_type in (
                     (TRANSACTION_FILENAME, 128 * 1024, RestartTransaction),
@@ -309,12 +316,16 @@ class CaptureStore:
                 if raw is not None:
                     record_type.from_dict(json.loads(raw.decode("utf-8")))
                     present = True
+            after = os.fstat(fd)
+            if (before.st_mtime_ns, before.st_ctime_ns) != (after.st_mtime_ns, after.st_ctime_ns):
+                raise CaptureLifecycleError()
             self._validate_directory(fd)
             return present
 
         try:
-            if self._transition_fd is not None:
-                return read(self._transition_fd)
+            transition_fd = self._transition_fd
+            if transition_fd is not None:
+                return read(transition_fd)
             with self._directory() as fd:
                 return False if fd is None else read(fd)
         except Exception:

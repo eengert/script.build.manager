@@ -79,8 +79,20 @@ reads during locked transitions use the same authoritative descriptor as the
 three locks, without reopening the path for record admission. Observation pins
 its own canonical descriptor and creates no directories or locks. Competing
 records use the existing bounded no-follow reader and their original typed
-validators; only missing records mean no competing transaction. Unsafe,
-unreadable, corrupt and unsupported records fail closed.
+validators; stable absence permits admission. The pinned directory's
+`st_mtime_ns` and `st_ctime_ns` are compared immediately before and after both
+competing-record reads. Any detected directory-entry change during that bounded
+observation fails closed, regardless of the returned record values. Unsafe,
+unreadable, corrupt and unsupported records also fail closed.
+
+This check relies on the trusted profile filesystem reporting entry changes in
+those timestamps, as verified for immediate synthetic record moves on macOS.
+It does not detect movement before or after the observation window or establish
+cross-process or cross-session tamper detection. It is not a filesystem integrity
+monitor. CaptureStore/coordinator composition remains single-threaded; the
+transition descriptor is sampled once per competing observation, retained by the
+existing lock scope, and cleared on exit. This does not add shared-store threading
+support or lock reentrancy.
 All three operation locks keep their existing filenames and OS flock semantics;
 lock substitution is rejected. Final state-file symlinks, nonregular/oversized
 files and malformed records remain refused. A symlinked final state directory

@@ -919,6 +919,157 @@ assert operations.mock_calls == []
                 stack.enter_context(patch('resources.lib.' + module + '.read_regular_file', side_effect=swapped))
             yield calls
 
+    @contextmanager
+    def competing_record_move(self, filename):
+        import os
+        from resources.lib.readonly_io import read_regular_file
+        path = self.root / filename
+        moved = self.root.parent / ('moved-' + filename)
+        observations = []
+
+        def read(pathname, **kwargs):
+            if Path(pathname).name != filename:
+                return read_regular_file(pathname, **kwargs)
+            fd = kwargs['dir_fd']
+            before = os.fstat(fd)
+            path.rename(moved)
+            try:
+                raw = read_regular_file(pathname, **kwargs)
+            finally:
+                moved.rename(path)
+            after = os.fstat(fd)
+            observations.append((raw, (before.st_mtime_ns, before.st_ctime_ns),
+                                 (after.st_mtime_ns, after.st_ctime_ns), fd))
+            return raw
+
+        with patch('resources.lib.capture_lifecycle.read_regular_file', side_effect=read):
+            yield observations
+
+    def assert_move_detected(self, observations):
+        self.assertTrue(observations)
+        for raw, before, after, fd in observations:
+            self.assertIsNone(raw)
+            self.assertNotEqual(before, after)
+            self.assertIsInstance(fd, int)
+
+    def test_restart_record_move_refuses_begin_without_setter(self):
+        self.assert_record_move_refuses_begin('restart')
+
+    def test_frozen_record_move_refuses_begin_without_setter(self):
+        self.assert_record_move_refuses_begin('frozen')
+
+    def assert_record_move_refuses_begin(self, kind):
+        import os
+        name, data = self.competing_fixture(kind)
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / name
+        path.write_bytes(data)
+        with self.competing_record_move(name) as observations:
+            with self.assertRaises(CaptureLifecycleError):
+                self.begin()
+        self.assert_move_detected(observations)
+        self.assertEqual(self.ops.mutations, [])
+        self.assertEqual(path.read_bytes(), data)
+        self.assertIsNone(self.store.read())
+        self.assertIsNone(self.store._transition_fd)
+        self.assertEqual(self.store._held_locks, {})
+        with self.assertRaises(OSError):
+            os.fstat(observations[-1][3])
+        # Failed observation leaves all three locks available.
+        path.unlink()
+        with self.coordinator._exclusive():
+            pass
+
+    def test_record_move_refuses_recovery_and_retains_hold(self):
+        record = self.begin()
+        name, data = self.competing_fixture('restart')
+        path = self.root / name
+        path.write_bytes(data)
+        with self.competing_record_move(name) as observations:
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.recover(record.operation_id, self.request)
+        self.assert_move_detected(observations)
+        self.assertEqual(self.store.read(), record)
+        self.assertTrue(record.held)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        self.assertFalse(self.ops.current_enabled)
+        self.assertIsNone(self.store._transition_fd)
+        self.assertEqual(self.store._held_locks, {})
+
+    def test_record_moves_refuse_activation_and_locked_checked(self):
+        record = self.begin()
+        for kind in ('restart', 'frozen'):
+            name, data = self.competing_fixture(kind)
+            path = self.root / name
+            # Hold the transition before injecting competing durable state.
+            with self.coordinator._exclusive():
+                path.write_bytes(data)
+                try:
+                    for action in (lambda: capture_activation_holds(self.root),
+                                   lambda: self.coordinator._checked(record.operation_id, self.request)):
+                        with self.subTest(kind=kind), self.competing_record_move(name) as observations:
+                            before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+                            with self.assertRaises(CaptureLifecycleError):
+                                action()
+                            self.assert_move_detected(observations)
+                            self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
+                finally:
+                    path.unlink()
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_record_move_refuses_capture_before_callback(self):
+        record = self.begin()
+        self.ops.session = SESSION_B
+        callback = Mock()
+        name, data = self.competing_fixture('restart')
+        path = self.root / name
+        path.write_bytes(data)
+        with self.competing_record_move(name) as observations:
+            with self.assertRaises(CaptureLifecycleError):
+                self.capture(record, callback)
+        self.assert_move_detected(observations)
+        callback.assert_not_called()
+        self.assertEqual(self.store.read(), record)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_transition_descriptor_sampled_once_and_invalid_descriptors_refused(self):
+        import os
+        from unittest.mock import PropertyMock
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self.store._directory() as fd:
+            with patch.object(CaptureStore, '_transition_fd', new_callable=PropertyMock, create=True) as pin:
+                pin.side_effect = [fd, None]
+                self.assertFalse(self.store.competing_records_present())
+                self.assertEqual(pin.call_count, 1)
+        for invalid in (-1, fd, True, 'invalid'):
+            with self.subTest(fd=invalid):
+                self.store._transition_fd = invalid
+                try:
+                    with patch('resources.lib.capture_lifecycle.read_regular_file') as read:
+                        with self.assertRaises(CaptureLifecycleError):
+                            self.store.competing_records_present()
+                        read.assert_not_called()
+                finally:
+                    self.store._transition_fd = None
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
+    def test_immediate_record_moves_change_timestamps_without_sleep(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        for kind in ('restart', 'frozen'):
+            name, data = self.competing_fixture(kind)
+            path = self.root / name
+            path.write_bytes(data)
+            with self.competing_record_move(name) as observations:
+                for iteration in range(50):
+                    with self.subTest(kind=kind, iteration=iteration):
+                        with self.assertRaises(CaptureLifecycleError):
+                            self.store.competing_records_present()
+            self.assertEqual(len(observations), 50)
+            self.assert_move_detected(observations)
+            self.assertEqual(path.read_bytes(), data)
+            path.unlink()
+
     def test_competing_restart_swap_blocks_begin_before_setter(self):
         name, data = self.competing_fixture('restart')
         self.root.mkdir(parents=True, exist_ok=True)
