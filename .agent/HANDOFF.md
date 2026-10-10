@@ -1,87 +1,65 @@
-# Handoff — D-028 builtin authority correction
+# D-028 builtin authority P1 correction — STOP for independent re-review
 
-## Done
-Reconciled 8480a25 to guidance-only 3ad2ffc; accepted product 9a77068 unchanged before work.
-Preserved four dirty .agent records. Actual portable Test.app probe established enabled
-xbmcaddon API id/version/path/type and pinned xbmc.python XML: 3.0.1, ABI 3.0.0.
-JSON-RPC rejects UNKNOWN-type builtins; dependency declarations are not target authority.
-Product correction 233bf87a245010de7830395789117bc81478c1ac: pinned unshadowed application metadata plus enabled
-runtime API, Python-major/type/identity/version/ABI checks; other unproven builtins block.
-Files: resources/lib/frozen.py, resources/lib/frozen_install.py,
-tests/test_d028_builtin_authority.py. 24 new PASS (dev/Apple Python), 235 subsystem PASS.
-Full candidate 3430 vs baseline 3406: same two unchanged UI import-policy failures,
-no errors; candidate no skips; five baseline archive-history supplement tests PASS.
-Two in-memory security mutations detected. Whitespace checks PASS.
+Worktree: /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex
+Branch: agent/codex; verified starting HEAD ebdd221b77e1d37a541c3ad24074fdfe3b3067db.
+Correction commit: 1feea9f (only frozen.py, frozen_install.py, test_d028_builtin_authority.py).
+Admission: fixes demonstrated D-028 runtime-admission blockers to beta exit item 8; no beta closure claimed.
 
-## Not done / next
-STOP for independent correction-delta review of 3ad2ffc..233bf87.
-No restaging/live candidate acceptance; accepted 9a77068 remains staged, Test.app stopped.
-No fixture E, Install/Repair, Apply, restart transaction, private data, normal Kodi/device,
-Agent Handoff operation, integration, push or publication. Item 8 remains open.
-After independent acceptance, separately authorize exact-candidate staging/runtime admission.
-Evidence: .qualification-evidence/d028-builtin-authority/RUN-SUMMARY.md and SHA256SUMS.txt.
+## Corrections
+- Filesystem: hold original builtin directory and XML descriptors through verification;
+  bind safe-reader bytes to the held XML object; reject changed device/inode/mode/size/
+  mtime/ctime, reacquire current pinned application root and no-follow builtin directory,
+  and recheck current XML binding and pinned home-shadow absence before success.
+  Equal-byte replacement cannot substitute for filesystem identity.
+- Registry: after parsing/checking XML identity/version/ABI, construct a fresh
+  xbmcaddon.Addon("xbmc.python"). Recheck exact id/version/path/type against the already
+  validated evidence and current boolean available/enabled state. Do this while the
+  filesystem descriptors are held, before final filesystem admission checks.
+  Unavailable fresh authority or disagreement returns false.
 
-## Cleanup
-Removed task baseline archive/test scratch and one launch-created runtime cache directory.
-Retained checksummed public XML/API evidence, tests/logs, reproducible probes and original
-four .agent file snapshots. Prior fixture/selection/settings/transactions/evidence preserved.
+## Reproduction / validation
+- Test-first on unchanged product: all six new adversarial tests failed as assertions:
+  root replacement, root symlink substitution, atomic ABI4 XML replacement, equal-byte
+  XML replacement, snapshot-handle registry 3.0.1->3.0.2, and the registry substitution
+  through verify_platform_requirements. Each previously admitted stale authority.
+- After correction: all six reject within the same attempt. Snapshot fake copies fields
+  at construction to model retained pAddon, rather than exposing a shared live dictionary.
+- Added three further tests: fresh identity/type/path/enabled disagreement; unavailable
+  fresh constructor; XML substitution during fresh constructor. All pass.
+- All original 24 builtin regressions preserved: module now 33 PASS.
+- Requested 235 focused tests + nine = 244 PASS, plus registry readiness/resolution 43:
+  combined 287 PASS (5.603s). Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest
+  tests.test_d028_builtin_authority tests.test_d028_corrections
+  tests.test_d028_target_closure tests.test_frozen tests.test_frozen_install
+  tests.test_frozen_registry_readiness tests.test_frozen_resolution.
+- Final host full suite: 3447 run, 3445 PASS, two failures, zero errors/skips (163.610s).
+  Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t .
+  Same documented baseline failures: tests.test_plan.ImportPolicy.test_the_presentation_modules_import_no_engine
+  and tests.test_ui_foundation.NativeFoundationTests.test_no_engine_imports.
+  Both still concern unchanged resources/lib/ui/plan_view.py; prior baseline logs preserved.
+- Sandbox full run: same two failures plus eight failure cases/two errors, all extra
+  cases caused by process_listing_failed in disposable real-process tests. Unchanged
+  host rerun resolves every environment failure. An earlier preliminary full run was
+  terminated after the final held-descriptor regular-file/size guard was added;
+  final full validation uses unchanged final correction source.
+- git diff --check PASS. Product diff only the two admitted methods plus stat import;
+  no D-003 artifact, schema-v1/fingerprint, ordinary metadata-read, or other-platform
+  implementation changed. Prior closure/protection tests remain intact and pass.
 
----
-
-# Preserved earlier task records
-
-# Handoff — Test.app launch/background focus correction
-
-## Done
-Updated `AGENTS.md` and `.orchestrator/WORKFLOW.md` with the standing
-Test.app launch/relaunch focus policy: capture foreground app/PID, use the
-exact portable `open -g ... --args -p` command, verify executable path/PID and
-portable arguments, keep Test.app out of foreground except for required UI,
-and restore focus through identity-checked process targeting. Guidance-only
-commit: `3ad2ffc`. `git diff --check` passed; no tests were needed.
-
-## Not done / limits
-No Test.app launch or interaction, product-code change, device access, matrix
-or Claude worktree access, push, or publication. The prior D-028 runtime
-handoff and qualification evidence are preserved below.
-
-## Next step / input
-No further action is needed for this guidance task. D-028 runtime admission
-still requires separately authorized builtin-authority investigation and
-correction before another runtime attempt.
-
-## Cleanup
-No task-created scratch artifacts. Pre-existing D-028 qualification evidence
-remains preserved as described in its prior handoff below.
-
----
-
-# Previous Handoff — D-028 Test.app runtime verification
-
-## Done
-Clean start agent/codex at 8480a25f9556c9a55c4ae663fedbe250faa51b3a;
-accepted 9a77068455f9800bb381040458c0fbdcdc316f59 ancestry/runtime-byte equality proven.
-Staged exact accepted Git objects into portable Test.app using proven helper;
-67 product / five driver files verified. Live PID 71808 portable identity proven.
-Trusted application-root PIL 5.1.0 enabled/unbroken, xbmc.python >=3.0.0 dependency,
-PLATFORM_PROVIDED/no ZIP/fallback/Skip proven. Build Manager menu and Estuary Home accessible.
-
-## Result / not done
-**NOT PASS runtime admission:** production verifier rejects xbmc.python builtin authority:
-Addons.GetAddonDetails(xbmc.python, enabled/version/broken) returns -32602 Invalid params,
-backend returns None, frozen_install.py:1581 fails closed. No product correction.
-PIL-only in-memory capture intentionally rejected as managed root; no complete build claimed.
-No fixture E, Install/Repair, Apply, restart transaction, private value, normal Kodi,
-device, Agent Handoff, integration, push or publication. No new commit/full suite.
-
-## Evidence / next step
-.qualification-evidence/d028-runtime-9a77068/RUN-SUMMARY.md and SHA256SUMS.txt.
-Authorize bounded builtin-authority investigation/correction with regressions and independent
-review, then rerun runtime admission before fixture E/restart qualification. Item 8 remains open.
-Final Test.app stopped, accepted candidate staged; five fixtures/selection, add-on states,
-settings and absent transactions unchanged in secret-blind pre/post census.
+## Boundaries / next step
+Offline fixtures only. No normal Kodi/profile access, Test.app launch/stage/install/
+restart/alteration, device interaction, Agent Handoff, integration, push, release,
+history rewrite, or runtime acceptance. Other builtin interfaces remain fail closed.
+Smallest next step: independent correction-delta review of ebdd221..1feea9f.
+No additional human input needed for that review. Runtime admission requires a later
+explicit task after independent acceptance. STOP here.
 
 ## Cleanup
-Removed staging input, Swift executable/cache, probe scratch stores, and two newly staged
-runtime cache directories. Retained checksummed report/JSON, reproducible probe sources,
-two Test.app screenshots, exact stage manifest and replaced trees. Earlier data/evidence preserved.
+Removed temporary /private/tmp full logs after retaining both validation logs with
+SHA256SUMS in .qualification-evidence/d028-builtin-authority-rereview/.
+Removed the interrupted run's exact disposable fixture/test directories
+bm-test-app-fixture-uhmnq_ja and bm-test-app-test-e80_x2yg after ancestor validation.
+Completed suites clean their own fixtures; bytecode disabled for all test runs.
+Prior qualification evidence and older uncertain-ownership scratch were preserved.
+No screenshots or new runtime/profile artifacts. Retained non-source evidence: two
+full logs and their checksum file, plus required .agent bookkeeping.

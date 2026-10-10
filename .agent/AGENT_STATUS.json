@@ -1,12 +1,12 @@
 {
   "active_agent": "codex",
-  "status": "idle",
-  "task": "D-028 builtin authority correction",
-  "reason": "Implementation complete; STOP for independent review before restaging. Supported enabled API plus pinned Python XML/ABI proof. Full candidate 3430 has only same two baseline UI import-policy failures.",
-  "last_commit": "233bf87a245010de7830395789117bc81478c1ac",
+  "status": "review_pending",
+  "task": "D-028 builtin authority P1 correction",
+  "reason": "Offline correction complete; STOP for independent re-review. 287 focused PASS; full 3447 only two unchanged baseline UI import-policy failures.",
+  "last_commit": "1feea9f",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-10-10T01:13:19Z",
+  "updated_at": "2026-10-10T02:36:35.767484+00:00",
   "previous_task_record": {
     "active_agent": "codex",
     "status": "idle",
