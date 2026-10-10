@@ -1495,16 +1495,27 @@ def verify_platform_requirements(
             if not edge.optional and edge.addon_id in plan.nodes and edge.addon_id not in required:
                 required.add(edge.addon_id)
                 pending.append(edge.addon_id)
-    incoming: Dict[str, list] = {node.addon_id: [] for node in platform_nodes}
-    for parent in plan.nodes.values():
-        if parent.system or parent.is_absent_optional_dependency or parent.addon_id in skipped or parent.addon_id not in required:
-            continue
-        for edge in parent.dependency_edges:
-            if edge.addon_id in incoming and not edge.optional:
-                incoming[edge.addon_id].append(edge.min_version)
-
     verified = VerifiedPlatformVersions()
     platform_nodes = [node for node in platform_nodes if node.addon_id in required]
+
+    def promote(addon_ids):
+        # Target metadata can require an optional managed observation. Close over
+        # its captured mandatory descendants too, discovering platform nodes for
+        # this same verification pass. Repeated promotions reach a fixed point.
+        pending = list(addon_ids)
+        while pending:
+            aid = pending.pop()
+            child = plan.nodes.get(aid)
+            if child is None or child.is_absent_optional_dependency or aid in skipped:
+                raise _platform_unsatisfied(
+                    f"target dependency closure requires {aid}, which this build does not install")
+            if child.system or aid in required:
+                continue
+            required.add(aid)
+            if child.platform_provided:
+                platform_nodes.append(child)
+            pending.extend(edge.addon_id for edge in child.dependency_edges if not edge.optional)
+
     metadata_by_id: Dict[str, InstalledMetadata] = {}
     for node in platform_nodes:
         addon_id = node.addon_id
@@ -1533,8 +1544,6 @@ def verify_platform_requirements(
             raise _platform_unsatisfied(f"{addon_id} on the target does not declare the captured add-on type")
         if not _strict_version_satisfies(details.version, ""):
             raise _platform_unsatisfied(f"{addon_id} on the target has an unverifiable version")
-        if any(not _strict_version_satisfies(details.version, minimum) for minimum in incoming[addon_id]):
-            raise _platform_unsatisfied(f"{addon_id} on the target does not satisfy the build's minimum")
         verified[addon_id] = details.version
         metadata_by_id[addon_id] = metadata
         try:
@@ -1544,10 +1553,19 @@ def verify_platform_requirements(
         verified.dependencies[addon_id] = tuple(
             edge.addon_id for edge in target_edges
             if not edge.optional and not _is_system_dependency(edge.addon_id))
-        for edge in target_edges:
-            child = plan.nodes.get(edge.addon_id)
-            if not edge.optional and child is not None and child.platform_provided and child not in platform_nodes:
-                platform_nodes.append(child)
+        promote(edge.addon_id for edge in target_edges
+                if not edge.optional and not _is_system_dependency(edge.addon_id))
+
+    # All promotions are now known. A newly required managed parent can impose
+    # a stricter captured minimum on a platform node already inspected above.
+    for parent in plan.nodes.values():
+        if parent.system or parent.is_absent_optional_dependency or parent.addon_id not in required:
+            continue
+        for edge in parent.dependency_edges:
+            if not edge.optional and edge.addon_id in verified:
+                if not _strict_version_satisfies(verified[edge.addon_id], edge.min_version):
+                    raise _platform_unsatisfied(
+                        f"{edge.addon_id} on the target does not satisfy the build's minimum")
 
     for node in platform_nodes:
         addon_id = node.addon_id
