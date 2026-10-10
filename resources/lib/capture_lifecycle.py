@@ -241,6 +241,18 @@ class CaptureStore:
             raise CaptureLifecycleError() from None
 
     def reconstruct_request(self, operation_id, fingerprint, *, now):
+        """Expiry-bound reconstruction for normal preparation/retry/capture."""
+        return self._reconstruct_request(operation_id, fingerprint, now=now, recovery=False)
+
+    def reconstruct_request_for_recovery(self, operation_id, fingerprint, *, now):
+        """Read-only request recovery after expiry; grants no lifecycle authority.
+
+        The explicit recover() transition must still validate current owner,
+        competing transactions and restoration authority under operation locks.
+        """
+        return self._reconstruct_request(operation_id, fingerprint, now=now, recovery=True)
+
+    def _reconstruct_request(self, operation_id, fingerprint, *, now, recovery):
         """Creation-free read; terminal COMPLETE carries no saved-build authority.
 
         Metadata is co-owned by the transaction, so there is no independent
@@ -249,7 +261,7 @@ class CaptureStore:
         record = self.read()
         if (record is None or record.operation_id != operation_id
                 or record.request_fingerprint != fingerprint
-                or not record.created_at <= now < record.expires_at
+                or not record.created_at <= now < (float("inf") if recovery else record.expires_at)
                 or not record.request_metadata):
             raise CaptureLifecycleError()
         request = _request_from_metadata(record.request_metadata)
@@ -330,6 +342,10 @@ class CaptureLifecycleCoordinator:
     def reconstruct_request(self, operation_id, fingerprint):
         """Read-only reconstruction; no operations callbacks or locks."""
         return self.store.reconstruct_request(operation_id, fingerprint, now=self.clock())
+
+    def reconstruct_request_for_recovery(self, operation_id, fingerprint):
+        """Read-only recovery-purpose reconstruction, including expired requests."""
+        return self.store.reconstruct_request_for_recovery(operation_id, fingerprint, now=self.clock())
 
     def _checked(self, operation_id, request, *, recovery=False):
         from resources.lib.frozen_install import FrozenInstallStore

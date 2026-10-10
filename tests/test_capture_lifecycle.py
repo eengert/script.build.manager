@@ -397,6 +397,136 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
         self.assertFalse(recovered.held)
         self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
 
+    def test_expired_reconstruction_fresh_process_then_safe_cancellation(self):
+        import os
+        import subprocess
+        import sys
+        record = self.begin()
+        self.now = record.expires_at + 1
+        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        code = """import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+from resources.lib.capture_lifecycle import CaptureStore, CaptureLifecycleCoordinator, request_fingerprint
+root = Path(sys.argv[1])
+operations = Mock()
+c = CaptureLifecycleCoordinator(store=CaptureStore(root),
+    restart_store=SimpleNamespace(directory=str(root)), operations=operations,
+    clock=lambda: float(sys.argv[4]))
+r = c.reconstruct_request_for_recovery(sys.argv[2], sys.argv[3])
+assert request_fingerprint(r) == sys.argv[3]
+assert operations.mock_calls == []
+"""
+        subprocess.run([sys.executable, '-c', code, str(self.root), record.operation_id,
+                        record.request_fingerprint, str(self.now)], check=True,
+                       env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        fresh = self.make_coordinator()
+        operations = fresh.operations
+        fresh.operations = Mock()
+        restored = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+        self.assertEqual(restored, self.request)
+        self.assertEqual(fresh.operations.mock_calls, [])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        fresh.operations = operations
+        callback = Mock()
+        for action in (lambda: fresh.reconstruct_request(record.operation_id, record.request_fingerprint),
+                       lambda: fresh.begin(restored, confirmed=True),
+                       lambda: fresh.capture(record.operation_id, restored, callback)):
+            with self.assertRaises(CaptureLifecycleError):
+                action()
+        callback.assert_not_called()
+        result = fresh.recover(record.operation_id, restored)
+        self.assertEqual(result.phase, CapturePhase.CANCELLED)
+        self.assertTrue(self.ops.current_enabled)
+        self.assertFalse(result.held)
+        self.assertEqual(capture_activation_holds(self.root), frozenset())
+        self.assertNotIn(SECRET, self.store.path.read_text())
+
+    def test_expired_reconstruction_originally_disabled_stays_disabled(self):
+        self.ops.current_enabled = False
+        record = self.begin()
+        self.now = record.expires_at
+        fresh = self.make_coordinator()
+        request = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+        result = fresh.recover(record.operation_id, request)
+        self.assertFalse(result.held)
+        self.assertFalse(self.ops.current_enabled)
+        self.assertEqual(self.ops.mutations, [])
+
+    def test_recovery_reconstruction_rollback_binding_and_unsafe_records(self):
+        record = self.begin()
+        original = self.store.path.read_bytes()
+        for operation, fingerprint, now in ((SESSION_B, record.request_fingerprint, record.expires_at),
+                (record.operation_id, 'sha256:' + '0' * 64, record.expires_at),
+                (record.operation_id, record.request_fingerprint, record.created_at - 1)):
+            self.now = now
+            with self.assertRaises(CaptureLifecycleError):
+                self.make_coordinator().reconstruct_request_for_recovery(operation, fingerprint)
+            self.assertEqual(self.store.path.read_bytes(), original)
+        self.now = record.expires_at + 1
+        for defect in ('missing', 'corrupt', 'substituted', 'symlink', 'oversize'):
+            self.store.path.unlink(missing_ok=True)
+            if defect == 'corrupt':
+                self.store.path.write_text(SECRET)
+            elif defect == 'substituted':
+                value = json.loads(original)
+                metadata = json.loads(value['request_metadata'])
+                metadata['description'] = SECRET
+                value['request_metadata'] = json.dumps(metadata, sort_keys=True, separators=(',', ':'))
+                self.store.path.write_text(json.dumps(value))
+            elif defect == 'symlink':
+                target = self.root / 'retained-request-evidence.json'
+                target.write_bytes(original)
+                self.store.path.symlink_to(target)
+            elif defect == 'oversize':
+                self.store.path.write_bytes(b'x' * 17000)
+            with self.assertRaises(CaptureLifecycleError) as error:
+                self.make_coordinator().reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+            self.assertNotIn(SECRET, str(error.exception))
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_expired_reconstructed_request_does_not_bypass_recovery_authority(self):
+        record = self.begin()
+        self.now = record.expires_at + 1
+        fresh = self.make_coordinator()
+        request = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+        for defect in ('owner', 'competing', 'restart', 'install'):
+            with self.subTest(defect=defect):
+                with patch.object(self.ops, 'owner_version', return_value='2.6.9' if defect == 'owner' else REDLIGHT_VERSION), \
+                     patch.object(self.ops, 'competing_operation', return_value=defect == 'competing'), \
+                     patch.object(self.restart, 'read_snapshot', return_value=object() if defect == 'restart' else None), \
+                     patch.object(FrozenInstallStore, 'read_snapshot', return_value=object() if defect == 'install' else None):
+                    with self.assertRaises(CaptureLifecycleError):
+                        fresh.recover(record.operation_id, request)
+                self.assertEqual(self.store.read(), record)
+                self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+                self.assertTrue(record.held)
+
+    def test_expired_complete_reconstruction_has_no_build_or_capture_result(self):
+        from resources.lib.build_library import BuildLibrary
+        library_root = self.profile.resolve() / 'synthetic-build-library'
+        library_root.mkdir()
+        library = BuildLibrary(library_root)
+        self.assertEqual(library.list_builds(), ())
+        record = self.begin()
+        self.ops.session = SESSION_B
+        self.capture(record, lambda verify: SECRET)
+        self.now = record.expires_at + 1
+        fresh = self.make_coordinator()
+        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        request = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+        result = fresh.recover(record.operation_id, request)
+        self.assertEqual(result.phase, CapturePhase.COMPLETE)
+        self.assertEqual(request, self.request)
+        self.assertFalse(hasattr(request, 'public_bundle'))
+        self.assertFalse(hasattr(result, 'public_bundle'))
+        self.assertNotIn(SECRET, self.store.path.read_text())
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
+        self.assertEqual(library.list_builds(), ())
+        self.assertEqual(list(library_root.iterdir()), [])
+
     def test_expired_awaiting_restart_recovers_without_capture_authority(self):
         record = self.begin()
         self.now = record.expires_at
@@ -427,7 +557,9 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
         self.assertEqual(self.store.read().phase, CapturePhase.RESTORING)
         self.now = record.expires_at + 1
         self.ops.set_enabled = Mock(side_effect=AssertionError('unnecessary setter'))
-        result = self.make_coordinator().recover(record.operation_id, self.request)
+        fresh = self.make_coordinator()
+        request = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+        result = fresh.recover(record.operation_id, request)
         self.assertEqual(result.phase, CapturePhase.FAILED)
         self.assertFalse(result.held)
         self.ops.set_enabled.assert_not_called()
