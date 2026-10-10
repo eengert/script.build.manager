@@ -1,9 +1,34 @@
-# D-028 correction handoff — STOP for independent review
+# Handoff — D-028 target closure correction
 
-- Product commit: `06bde801502395b6d0738e8757cf2b2c331b5314` on `agent/codex`; start `23a426809c93bb2f914bc047343acfe59e4628a0`; reviewed product `bddbe6f511caaa54914d9cbca8100653fe4938ec`.
-- Corrected all eight requested findings: pinned runtime authority, target graph edges/order/cycles, platform immutability, truthful Plan/Healthy Repair, zero-dependency capture, optional semantics, verified-version propagation through preparation/Plan/restart, platform record rejection.
-- Changes: nine library modules and four test files; 20 new regression methods plus optional-source repository variants. D-003 and schema-v1 fingerprint tests preserved.
-- Checks: 70 focused PASS; final full 3388 with only the same two UI import-policy failures as bddbe6f (3318 baseline). Baseline compiler skips resolved by a 6-test PASS supplement. Exact failures and red reproductions: `.agent/D028_CORRECTION_TEST_RESULTS.md`.
-- Not done: independent review, live qualification, device/profile/private-data access, staging, integration, publication or agent switch. All proofs are offline/disposable fixtures; Item 8 remains OPEN.
-- Next: Claude independently reviews the correction delta `23a4268..06bde801502395b6d0738e8757cf2b2c331b5314`. Human relay required to initiate that review; no implementation continuation authorized.
-- Cleanup: task archived source/raw outputs/harness removed after preserving compressed logs, summary and checksums under `.qualification-evidence/d028-review-corrections-20261009-06bde80`. Pre-existing evidence/caches preserved.
+## Done
+
+Verified clean `agent/codex` at `220a4da7d7c73ecb6dc98dc5723a1907e8b67e55`
+and read current guidance/live ownership. Reproduced the reviewed R/P/C/Q failure
+before editing product code: install complete, Plan NO_CHANGES and Healthy Repair
+with Q missing. Implemented fixed-point promotion across trusted target edges and
+captured mandatory descendants, with minima checked after complete promotion.
+
+Product commit: `9a77068455f9800bb381040458c0fbdcdc316f59`.
+Files: `resources/lib/frozen_install.py`, `tests/test_d028_target_closure.py`.
+Bookkeeping separate. 18 new regressions PASS; 88 D-028 focused PASS. Candidate
+full 3406, only two unchanged import-policy failures, no errors/skips; exact
+baseline full 3388 has the same failure identities/causes. Five archive-history
+skips separately PASS. Details: `.agent/D028_TARGET_CLOSURE_TEST_RESULTS.md`.
+
+## Not done / limits
+
+No runtime/device/private-data access, platform ZIP manufacture, switch,
+integration, push, release or history rewrite. Two pre-existing UI import-policy
+failures remain outside scope. This is offline fixture evidence; no independent
+PASS or live/beta closure claimed. Canonical planner handoff is untouched.
+
+## Next step / input
+
+**STOP.** Eric relays `220a4da..9a77068` for independent correction-delta re-review.
+No further implementation or runtime work without a new bounded task.
+
+## Cleanup
+
+Task-owned temporary archive, scripts and disposable logs removed. Minimum
+checksummed evidence remains at `.qualification-evidence/d028-target-closure-9a77068/`
+for the pending review. Earlier evidence and pre-existing caches preserved.
