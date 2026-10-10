@@ -1,4 +1,4 @@
-# Create private capture lifecycle — Stage 1
+# Create private capture lifecycle — Stages 1 and 2A
 
 This is an **offline foundation**, addressing the private Create blocker under
 macOS Beta exit item 8. It is not wired to native Create, service startup, or
@@ -18,14 +18,56 @@ injected setter for the exact audited owner's enabled state. Stage 1 admits
 profile-local directory as frozen-install and restart state. It binds a fresh
 operation UUID, phase, a canonical SHA-256 digest of **every field of the exact
 Create request**, owner/version, original enabled state, originating session,
-creation/expiration times, and the verified capture session. Request values,
-resource values, private overlays, filesystem paths and exception text are not
-serialized. `safe_dict()` exposes only operation ID, phase, hold and outcome.
+creation/expiration times, and the verified capture session. Stage 2A persists
+validated request metadata **in the same atomic record as the hold**, alongside
+the full-request digest. The metadata contains these exact categories:
 
-A caller reconstructing the coordinator after a process exit must resupply the
-exact confirmed request. Stage 1 does not persist a UI form or implement a UI
-resume affordance. A changed request or an old operation UUID never acquires
-authority over a newer record.
+- Build ID, version, free-text `build_name` and `description`.
+- Platform and device profile identifiers and their labels.
+- Root add-on IDs, the include-active-skin flag, and expected active skin ID.
+- Configuration package ID; public setting declaration identities (add-on ID,
+  key, setting type and target kind); and declared public file destinations.
+- Private setting declaration identities (add-on ID, key, setting type,
+  required flag, sensitivity classification and target kind), **not values**.
+- Trusted private resource catalog IDs (`redlight.settings`), reconstructed from
+  the catalog rather than treating persisted resource definitions as authority.
+- Private overlay ID, **not private overlay contents**.
+
+Captured public/private resource values, credentials read from resources,
+capture results and private overlay contents are not persisted in the lifecycle
+record. User-provided free text is persisted verbatim after request validation;
+validation does not guarantee that a name, description or label contains no
+secret. Callers must keep sensitive values out of those fields. `safe_dict()`
+exposes only operation ID, phase, hold and outcome; errors omit metadata and
+exception text.
+
+A caller can reconstruct the exact typed request read-only using the operation
+UUID and request fingerprint. Reconstruction validates record schema, metadata,
+full-request digest, owner/version and trusted catalog identities, and rereads
+the record to detect change. It creates no directories or lock files and invokes
+no operations callbacks. Missing/legacy metadata remains retained and blocks
+reconstruction and lifecycle transitions; it does not release an active hold.
+Normal reconstruction remains expiry-bound. Recovery-purpose reconstruction
+may occur after expiry, but still rejects clock rollback and mismatched
+identity. It grants no capture, restart, restoration or release authority:
+explicit `recover()` must independently pass the locked transition checks.
+Stage 2A does not persist a UI form or implement UI/startup resume composition.
+A changed request or an old operation UUID never acquires authority over a
+newer record. Lifecycle `COMPLETE` is not build registration.
+
+The profile root is trusted application input, using the existing restart
+store's canonical-profile model. Capture canonicalizes ancestor directories
+(including legitimate symlinked profile ancestors), retains the final state
+directory as a no-follow component, and requires the restart store to identify
+the same canonical root. The frozen store used by the coordinator receives that
+root. Opened canonical directory components are bound by device/inode identity;
+missing directories are created only by mutating transitions. Alias drift,
+replacement or loss of an already-bound component fails closed. Capture reads,
+locks, temporary writes, replacement, directory sync and temporary cleanup use
+opened directory descriptors, so a swap cannot redirect them to another root.
+All three operation locks keep their existing filenames and OS flock semantics;
+lock substitution is rejected. Final state-file symlinks, nonregular/oversized
+files and malformed records remain refused. Reconstruction only opens and reads.
 
 The phase atomically owns the activation hold: all nonterminal phases retain
 it, including interrupted preparation, capture and restoration. There is no
@@ -85,7 +127,7 @@ automatically replayed. If the original-state setter fails or its effect cannot
 be verified, retain the record/hold for explicit recovery. A persistence error
 may occur after replacement: retain the published record, never erase evidence
 or roll back blindly. Corrupt records require a separately designed safe
-recovery policy; Stage 1 provides no override or force-release path.
+recovery policy; these stages provide no override or force-release path.
 
 ## Injected operations and remaining runtime work
 

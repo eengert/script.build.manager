@@ -1,7 +1,7 @@
 """Offline Create-only quiescence coordinator. No runtime/startup composition.
 
 Confirmed request declarations and their digest are durable in the same atomic
-record as the hold. No captured values, results, overlays or diagnostics are
+record as the hold. No captured values, results, overlay contents or diagnostics are
 persisted. Lifecycle COMPLETE does not mean a build has been registered.
 Injected operations are trusted lifecycle capabilities, not UI
 inputs. The restart verifier must prove a complete process restart; a changed
@@ -15,6 +15,7 @@ from enum import Enum
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import re
 import time
@@ -206,36 +207,85 @@ class CaptureTransaction:
 class CaptureStore:
     """Separate capture authority with existing OS-lock and atomic-write primitives."""
     def __init__(self, root: Path):
-        self.root = Path(root)
+        try:
+            # Match TransactionStore's trusted profile translation, while keeping
+            # the final state directory and every state file no-follow.
+            self._source = Path(root).absolute()
+            # A missing state suffix is normal; a dangling profile alias is not.
+            for ancestor in self._source.parents:
+                if ancestor.is_symlink():
+                    ancestor.resolve(strict=True)
+            self.root = self._source.parent.resolve() / self._source.name
+            self._identities = {}
+            self._held_locks = {}
+            with self._directory():
+                pass
+        except Exception:
+            raise CaptureLifecycleError() from None
 
     @property
     def path(self):
         return self.root / FILENAME
 
+    @contextmanager
+    def _directory(self, *, create=False):
+        """Pin canonical components; all IO is relative to the opened root.
+
+        Existing components cannot disappear or change identity. Only a mutating
+        transition may create missing directories; observation never creates.
+        A trusted symlink spelling is resolved once, then checked for drift.
+        """
+        fd = None
+        try:
+            if self._source.parent.resolve() / self._source.name != self.root:
+                raise CaptureLifecycleError()
+            fd = os.open(self.root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            for index, component in enumerate(self.root.parts[1:]):
+                try:
+                    next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    if index in self._identities:
+                        raise CaptureLifecycleError()
+                    if not create:
+                        yield None
+                        return
+                    os.mkdir(component, mode=0o700, dir_fd=fd)
+                    next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                info = os.fstat(next_fd)
+                identity = (info.st_dev, info.st_ino)
+                previous = self._identities.setdefault(index, identity)
+                if identity != previous:
+                    os.close(next_fd)
+                    raise CaptureLifecycleError()
+                os.close(fd)
+                fd = next_fd
+            yield fd
+        except Exception:
+            raise CaptureLifecycleError() from None
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def _validate_directory(self, fd):
+        with self._directory() as current:
+            if current is None or self._identity(os.fstat(current)) != self._identity(os.fstat(fd)):
+                raise CaptureLifecycleError()
+            for name, identity in self._held_locks.items():
+                info = os.stat(name, dir_fd=current, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode) or self._identity(info) != identity:
+                    raise CaptureLifecycleError()
+
+    @staticmethod
+    def _identity(info):
+        return info.st_dev, info.st_ino
+
     def read(self):
         try:
-            # Open every directory component without following links, including
-            # ancestors. Reconstruction must neither create nor lock anything.
-            absolute = self.root.absolute()
-            # macOS exposes trusted temporary roots through these OS aliases.
-            # Canonicalize only the fixed alias, never caller-owned components.
-            for alias, target in (("/var", "/private/var"), ("/tmp", "/private/tmp")):
-                if str(absolute).startswith(alias + "/") and Path(alias).is_symlink():
-                    if os.readlink(alias) not in (target, target.lstrip("/")):
-                        raise CaptureLifecycleError()
-                    absolute = Path(target) / absolute.relative_to(alias)
-            fd = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                for component in absolute.parts[1:]:
-                    try:
-                        next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-                    except FileNotFoundError:
-                        return None
-                    os.close(fd)
-                    fd = next_fd
+            with self._directory() as fd:
+                if fd is None:
+                    return None
                 raw = read_regular_file(FILENAME, limit=16 * 1024, dir_fd=fd)
-            finally:
-                os.close(fd)
+                self._validate_directory(fd)
             return None if raw is None else CaptureTransaction.from_dict(json.loads(raw))
         except Exception:
             raise CaptureLifecycleError() from None
@@ -269,20 +319,68 @@ class CaptureStore:
             raise CaptureLifecycleError()
         return request
 
+    @contextmanager
+    def _lock(self, fd, filename):
+        # Same OS flock and filenames as the existing stores, but opening via
+        # the pinned root prevents a path swap from redirecting the lock.
+        import fcntl
+        handle = os.open(filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o600, dir_fd=fd)
+        try:
+            if not stat.S_ISREG(os.fstat(handle).st_mode):
+                raise CaptureLifecycleError()
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if filename in self._held_locks:
+                raise CaptureLifecycleError()
+            self._held_locks[filename] = self._identity(os.fstat(handle))
+            try:
+                self._validate_directory(fd)
+                yield
+            finally:
+                del self._held_locks[filename]
+        finally:
+            os.close(handle)
+
+    @contextmanager
     def locked(self):
-        from resources.lib.transaction import TransactionLock
-        return TransactionLock(str(self.root / "create_capture_transaction.lock"))
+        with self._directory(create=True) as fd:
+            with self._lock(fd, "create_capture_transaction.lock"):
+                yield
+
+    def _sync_directory(self, fd):
+        os.fsync(fd)
 
     def save(self, expected, record):
-        """CAS under the capture lock held by the coordinator."""
+        """CAS under the capture lock held by the coordinator; pinned-root IO."""
         if not isinstance(record, CaptureTransaction) or self.read() != expected:
             raise CaptureLifecycleError()
-        from resources.lib.frozen_install import write_lifecycle_record, FrozenInstallStore
+        staged = None
         try:
-            if len(json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")).encode()) + 1 > 16 * 1024:
+            data = (json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode()
+            if len(data) > 16 * 1024:
                 raise ValueError()
-            write_lifecycle_record(self.path, record.to_dict(), self.read,
-                lambda: FrozenInstallStore(self.root, create=False)._fsync_directory_strict())
+            with self._directory() as fd:
+                if fd is None:
+                    raise CaptureLifecycleError()
+                name = ".frozen-install." + str(uuid.uuid4()) + ".tmp"
+                try:
+                    handle = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                                     0o600, dir_fd=fd)
+                    staged = name
+                    with os.fdopen(handle, "wb") as output:
+                        output.write(data)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    self._validate_directory(fd)
+                    if self.read() != expected:
+                        raise CaptureLifecycleError()
+                    os.replace(staged, FILENAME, src_dir_fd=fd, dst_dir_fd=fd)
+                    staged = None
+                    self._sync_directory(fd)
+                    self._validate_directory(fd)
+                finally:
+                    if staged is not None:
+                        os.unlink(staged, dir_fd=fd)
             if self.read() != record:
                 raise ValueError()
         except Exception:
@@ -298,14 +396,16 @@ def require_no_capture(root: Path):
 
 
 def capture_activation_holds(root: Path):
-    record = CaptureStore(root).read()
+    store = CaptureStore(root)
+    record = store.read()
     if record is None or not record.held:
         return frozenset()
     # A competing record is a lifecycle breach, not another source of authority.
     from resources.lib.frozen_install import FrozenInstallStore
     try:
-        if (FrozenInstallStore.read_snapshot(root) is not None
-                or read_regular_file(str(Path(root) / "restart_transaction.json"), limit=128 * 1024) is not None):
+        if (FrozenInstallStore.read_snapshot(store.root) is not None
+                or read_regular_file(str(store.root / "restart_transaction.json"), limit=128 * 1024) is not None
+                or store.read() != record):
             raise CaptureLifecycleError()
     except Exception:
         raise CaptureLifecycleError() from None
@@ -322,7 +422,7 @@ class CaptureLifecycleCoordinator:
     """
     def __init__(self, *, store: CaptureStore, restart_store, operations, clock=time.time):
         self.store, self.restart_store, self.operations, self.clock = store, restart_store, operations, clock
-        if Path(restart_store.directory) != store.root:
+        if Path(restart_store.directory).resolve() != store.root:
             raise CaptureLifecycleError()
 
     @contextmanager
@@ -330,12 +430,21 @@ class CaptureLifecycleCoordinator:
         from resources.lib.frozen_install import FrozenInstallStore
         frozen = FrozenInstallStore(self.store.root, create=False)
         try:
-            # Hold both existing operation locks through callbacks and persistence.
-            with self.store.locked(), frozen.locked(), self.restart_store.locked_inspection() as pending:
-                if (pending is not None or FrozenInstallStore.read_snapshot(self.store.root) is not None
-                        or self.operations.competing_operation() is not False):
-                    raise CaptureLifecycleError()
-                yield
+            # All three stores use the same canonical directory and OS locks.
+            # Descriptor-relative lock opens cannot escape that directory.
+            from resources.lib.transaction import LOCK_FILENAME
+            with self.store._directory(create=True) as fd:
+                with self.store._lock(fd, "create_capture_transaction.lock"), \
+                        self.store._lock(fd, frozen.lock_path.name), \
+                        self.store._lock(fd, LOCK_FILENAME):
+                    if (self.restart_store.read_snapshot() is not None
+                            or FrozenInstallStore.read_snapshot(self.store.root) is not None
+                            or self.operations.competing_operation() is not False):
+                        raise CaptureLifecycleError()
+                    self._validate_root()
+                    self.store._validate_directory(fd)
+                    yield
+                    self.store._validate_directory(fd)
         except Exception:
             raise CaptureLifecycleError() from None
 
@@ -347,8 +456,17 @@ class CaptureLifecycleCoordinator:
         """Read-only recovery-purpose reconstruction, including expired requests."""
         return self.store.reconstruct_request_for_recovery(operation_id, fingerprint, now=self.clock())
 
+    def _validate_root(self):
+        if Path(self.restart_store.directory).resolve() != self.store.root:
+            raise CaptureLifecycleError()
+        with self.store._directory() as fd:
+            if fd is None:
+                raise CaptureLifecycleError()
+            self.store._validate_directory(fd)
+
     def _checked(self, operation_id, request, *, recovery=False):
         from resources.lib.frozen_install import FrozenInstallStore
+        self._validate_root()
         record = self.store.read()
         if (record is None or record.operation_id != operation_id
                 or not record.request_metadata
@@ -411,6 +529,7 @@ class CaptureLifecycleCoordinator:
         if type(enabled) is not bool or (enabled and not record.original_enabled):
             raise CaptureLifecycleError()
         if enabled:
+            self._validate_root()
             self.operations.set_enabled(record.owner_id, False)
         if self.operations.enabled(record.owner_id) is not False:
             raise CaptureLifecycleError()
@@ -475,6 +594,7 @@ class CaptureLifecycleCoordinator:
         if record.phase is not CapturePhase.RESTORING:
             record = self.store.save(record, replace(record, phase=CapturePhase.RESTORING, outcome=outcome))
         if enabled != record.original_enabled:
+            self._validate_root()
             self.operations.set_enabled(record.owner_id, record.original_enabled)
         if (self.operations.enabled(record.owner_id) is not record.original_enabled
                 or self.operations.owner_version(record.owner_id) != record.owner_version

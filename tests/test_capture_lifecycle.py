@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from resources.lib.activation import reject_held_activation, ActivationHoldError
 from resources.lib.capture_lifecycle import (
     CaptureLifecycleCoordinator, CaptureLifecycleError, CapturePhase,
-    CaptureStore, CaptureTransaction, capture_activation_holds, request_fingerprint,
+    CaptureStore, CaptureTransaction, capture_activation_holds, request_fingerprint, require_no_capture,
 )
 from resources.lib.create_capture import CreateBuildRequest, PublicCaptureSpecification
 from resources.lib.frozen_install import FrozenInstallStore, active_activation_hold_ids
@@ -79,6 +79,240 @@ class CaptureLifecycleTests(unittest.TestCase):
 
     def capture(self, record, callback=None):
         return self.coordinator.capture(record.operation_id, self.request, callback or (lambda verify: verify()))
+
+    def use_symlinked_profile(self):
+        alias = self.profile / 'userdata'
+        target = self.profile / 'trusted-userdata'
+        target.mkdir()
+        alias.symlink_to(target, target_is_directory=True)
+        self.restart = TransactionStore(str(alias))
+        # Use the spelling supplied by the profile translator, not a test-only root.
+        self.alias_root = alias / 'addon_data' / 'script.build.manager'
+        self.root = Path(self.restart.directory)
+        self.store = CaptureStore(self.alias_root)
+
+    def test_symlinked_profile_no_record_admission(self):
+        self.use_symlinked_profile()
+        require_no_capture(self.alias_root)
+        self.assertEqual(capture_activation_holds(self.alias_root), frozenset())
+        frozen = FrozenInstallStore(self.alias_root)
+        self.assertEqual(active_activation_hold_ids(frozen), frozenset())
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.alias_root):
+            reject_held_activation(REDLIGHT_ADDON_ID)
+        self.assertIsNone(self.restart.read_snapshot())
+        self.assertIsNone(FrozenInstallStore.read_snapshot(self.alias_root))
+
+    def test_symlinked_profile_begin_hold_and_readonly_reconstruction(self):
+        self.use_symlinked_profile()
+        self.coordinator = self.make_coordinator()
+        self.assertEqual(self.store.root, self.root)
+        record = self.begin()
+        self.assertEqual(self.begin(), record)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        self.assertEqual(capture_activation_holds(self.alias_root), frozenset({REDLIGHT_ADDON_ID}))
+        self.assertEqual(active_activation_hold_ids(FrozenInstallStore(self.alias_root)), frozenset({REDLIGHT_ADDON_ID}))
+        with self.assertRaises(CaptureLifecycleError):
+            require_no_capture(self.alias_root)
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.alias_root):
+            with self.assertRaises(ActivationHoldError):
+                reject_held_activation(REDLIGHT_ADDON_ID)
+        with self.assertRaises(TransactionStateConflict):
+            self.restart.create(_transaction())
+        with self.assertRaises(Exception):
+            FrozenInstallStore(self.alias_root).create(Mock())
+        before = {p.relative_to(self.profile): p.read_bytes() for p in self.profile.rglob('*') if p.is_file()}
+        self.assertEqual(self.make_coordinator().reconstruct_request(record.operation_id,
+            record.request_fingerprint), self.request)
+        self.assertEqual(before, {p.relative_to(self.profile): p.read_bytes() for p in self.profile.rglob('*') if p.is_file()})
+
+    def test_symlinked_profile_install_and_reconciliation_admission(self):
+        from resources.lib.build_manager import BuildManager
+        from resources.lib.frozen_install import FrozenInstallCoordinator
+        self.use_symlinked_profile()
+        manager = BuildManager(Mock())
+        sentinel = object()
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.alias_root), \
+                patch.object(manager, '_prepare', return_value=(None, sentinel)) as prepare:
+            self.assertIs(manager.reconcile(_transaction().request), sentinel)
+            prepare.assert_called_once()
+        self.assertIsNone(RestartCoordinator(Mock(), store=self.restart)._pending_before_reconcile(_transaction().request))
+        installer = FrozenInstallCoordinator(artifact_store=Mock(), installer=Mock(),
+            store=FrozenInstallStore(self.alias_root), policy_backend=Mock())
+        with patch('resources.lib.build_library.authoritative_build_library',
+                   side_effect=RuntimeError('synthetic admission boundary')) as next_stage:
+            with self.assertRaisesRegex(RuntimeError, 'synthetic admission boundary'):
+                installer.install(Mock(), manifest_path='/unused', device_profile_id='desk',
+                                  library_target=Mock())
+        next_stage.assert_called_once()
+        self.coordinator = self.make_coordinator()
+        self.begin()
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.alias_root), \
+                patch.object(manager, '_prepare') as prepare:
+            result = manager.reconcile(_transaction().request)
+            self.assertEqual(result.failure.code, 'CAPTURE_LIFECYCLE_BLOCKED')
+            prepare.assert_not_called()
+        with patch('resources.lib.build_library.authoritative_build_library') as next_stage:
+            result = installer.install(Mock(), manifest_path='/unused', device_profile_id='desk')
+            self.assertEqual(result.code, 'CAPTURE_LIFECYCLE_BLOCKED')
+            next_stage.assert_not_called()
+        restart_manager = Mock()
+        result = RestartCoordinator(restart_manager, store=self.restart).reconcile(_transaction().request)
+        self.assertFalse(result.reconcile_result.success)
+        restart_manager.reconcile.assert_not_called()
+
+    def test_canonical_root_matches_all_operation_stores(self):
+        self.use_symlinked_profile()
+        frozen = FrozenInstallStore(self.alias_root, create=False)
+        self.coordinator = self.make_coordinator()
+        self.assertEqual(self.store.root, Path(self.restart.directory))
+        self.assertEqual(self.store.root, frozen.root.resolve())
+        self.assertEqual(self.store.path.parent, Path(self.restart.lock_path).parent)
+        record = self.begin()
+        self.assertEqual(self.root.joinpath(self.store.path.name).read_bytes(),
+                         self.alias_root.joinpath(self.store.path.name).read_bytes())
+        self.assertEqual(self.store.read(), record)
+
+    def test_absent_reconstruction_does_not_create_directories_or_locks(self):
+        self.use_symlinked_profile()
+        before = set(self.profile.rglob('*'))
+        with self.assertRaises(CaptureLifecycleError):
+            self.store.reconstruct_request(SESSION_A, request_fingerprint(self.request), now=self.now)
+        self.assertEqual(before, set(self.profile.rglob('*')))
+        self.assertFalse(self.root.exists())
+
+    def test_root_replacement_and_alias_drift_refuse_authority(self):
+        for defect in ('directory', 'symlink', 'missing', 'alias', 'restart_root'):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                profile = Path(temporary)
+                target = profile / 'userdata'
+                target.mkdir()
+                alias = profile / 'alias'
+                alias.symlink_to(target, target_is_directory=True)
+                restart = TransactionStore(str(alias))
+                root = Path(restart.directory)
+                store = CaptureStore(alias / 'addon_data' / 'script.build.manager')
+                operations = Operations()
+                coordinator = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+                    operations=operations, clock=lambda: self.now)
+                record = coordinator.begin(self.request, confirmed=True)
+                original = store.path.read_bytes()
+                retained = root.with_name('retained')
+                if defect in ('directory', 'symlink', 'missing'):
+                    root.rename(retained)
+                    if defect == 'directory':
+                        root.mkdir()
+                        (root / store.path.name).write_bytes(original)
+                    elif defect == 'symlink':
+                        root.symlink_to(retained, target_is_directory=True)
+                else:
+                    other = profile / 'other'
+                    other.mkdir()
+                    if defect == 'alias':
+                        alias.unlink()
+                        alias.symlink_to(other, target_is_directory=True)
+                    else:
+                        restart._translated_root = str(other)
+                mutations = list(operations.mutations)
+                with self.assertRaises(CaptureLifecycleError):
+                    coordinator.recover(record.operation_id, self.request)
+                with self.assertRaises(CaptureLifecycleError):
+                    coordinator.begin(self.request, confirmed=True)
+                self.assertEqual(operations.mutations, mutations)
+                held = (retained if retained.exists() else root) / store.path.name
+                self.assertEqual(held.read_bytes(), original)
+
+    def test_descriptor_write_cannot_be_redirected_by_root_swap(self):
+        import os
+        record = self.begin()
+        original = self.store.path.read_bytes()
+        retained = self.root.with_name('retained')
+        real_replace = os.replace
+        def swap_before_replace(source, destination, **kwargs):
+            self.root.rename(retained)
+            self.root.mkdir()
+            return real_replace(source, destination, **kwargs)
+        with self.store.locked():
+            with patch('resources.lib.capture_lifecycle.os.replace', side_effect=swap_before_replace):
+                with self.assertRaises(CaptureLifecycleError):
+                    self.store.save(record, replace(record, phase=CapturePhase.RESTORING, outcome='cancelled'))
+        self.assertEqual(list(self.root.iterdir()), [])
+        held = CaptureTransaction.from_dict(json.loads((retained / self.store.path.name).read_bytes()))
+        self.assertTrue(held.held)
+        self.assertEqual(held.operation_id, record.operation_id)
+        self.assertNotEqual((retained / self.store.path.name).read_bytes(), original)
+        self.assertFalse(list(retained.glob('.frozen-install.*.tmp')))
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_staging_collision_preserves_unowned_file_and_hold(self):
+        record = self.begin()
+        retained = self.root / ('.frozen-install.' + SESSION_B + '.tmp')
+        retained.write_text('retained evidence')
+        with self.store.locked(), patch('resources.lib.capture_lifecycle.uuid.uuid4', return_value=SESSION_B):
+            with self.assertRaises(CaptureLifecycleError):
+                self.store.save(record, replace(record, phase=CapturePhase.RESTORING, outcome='cancelled'))
+        self.assertEqual(retained.read_text(), 'retained evidence')
+        self.assertEqual(self.store.read(), record)
+
+    def test_root_swap_from_state_callback_cannot_disable_owner(self):
+        retained = self.root.with_name('retained')
+        enabled = self.ops.enabled
+        calls = 0
+        def substitute(owner):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.root.rename(retained)
+                self.root.mkdir()
+            return enabled(owner)
+        self.ops.enabled = substitute
+        with self.assertRaises(CaptureLifecycleError):
+            self.begin()
+        self.assertEqual(self.ops.mutations, [])
+        self.assertEqual(list(self.root.iterdir()), [])
+        record = CaptureTransaction.from_dict(json.loads((retained / self.store.path.name).read_bytes()))
+        self.assertEqual(record.phase, CapturePhase.PREPARING)
+        self.assertTrue(record.held)
+
+    def test_lock_substitution_during_callback_blocks_restore(self):
+        record = self.begin()
+        self.ops.session = SESSION_B
+        def substitute(verify):
+            path = self.root / 'create_capture_transaction.lock'
+            path.rename(path.with_suffix('.retained'))
+            path.touch()
+            verify()
+        with self.assertRaises(CaptureLifecycleError):
+            self.capture(record, substitute)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        self.assertTrue(self.store.read().held)
+
+    def test_unsafe_root_and_lock_symlinks_fail_before_disable(self):
+        self.root.mkdir(parents=True)
+        target = self.profile / 'sentinel'
+        target.write_text('preserve')
+        for name in ('create_capture_transaction.lock', 'frozen_install_transaction.lock',
+                     Path(self.restart.lock_path).name):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.unlink(missing_ok=True)
+                path.symlink_to(target)
+                with self.assertRaises(CaptureLifecycleError):
+                    self.begin()
+                self.assertEqual(self.ops.mutations, [])
+                self.assertEqual(target.read_text(), 'preserve')
+                path.unlink()
+        unsafe = self.profile / 'not-a-directory'
+        unsafe.write_text('preserve')
+        with self.assertRaises(CaptureLifecycleError):
+            CaptureStore(unsafe / 'state')
+        dangling = self.profile / 'dangling'
+        dangling.symlink_to(self.profile / 'missing', target_is_directory=True)
+        with self.assertRaises(CaptureLifecycleError):
+            CaptureStore(dangling / 'state')
+        loop = self.profile / 'loop'
+        loop.symlink_to(loop, target_is_directory=True)
+        with self.assertRaises(CaptureLifecycleError):
+            CaptureStore(loop / 'state')
 
     def test_all_typed_declarations_round_trip_without_values(self):
         from resources.lib.create_capture import PublicSettingTarget
@@ -189,7 +423,7 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
                 self.store.path.unlink(missing_ok=True)
                 self.ops.mutations.clear()
                 target = ('resources.lib.frozen_install.os.replace' if boundary == 'replace' else
-                          'resources.lib.frozen_install.FrozenInstallStore._fsync_directory_strict')
+                          'resources.lib.capture_lifecycle.CaptureStore._sync_directory')
                 with patch(target, side_effect=OSError(SECRET)):
                     with self.assertRaises(CaptureLifecycleError) as error:
                         self.begin()
@@ -675,8 +909,8 @@ assert operations.mock_calls == []
         manager.reconcile.assert_not_called()
 
     def test_existing_transaction_locks_block_begin(self):
-        for lock in (self.restart.acquire_lock(), FrozenInstallStore(self.root).locked(), self.store.locked()):
-            with self.subTest(lock=str(lock.path)), lock:
+        for index, lock in enumerate((self.restart.acquire_lock(), FrozenInstallStore(self.root).locked(), self.store.locked())):
+            with self.subTest(lock=index), lock:
                 with self.assertRaises(CaptureLifecycleError):
                     self.begin()
                 self.assertIsNone(self.store.read())
@@ -766,7 +1000,7 @@ assert operations.mock_calls == []
         self.assertEqual(len(self.ops.mutations), 1)
 
     def test_failed_durability_before_disable_keeps_owner_unchanged(self):
-        with patch.object(FrozenInstallStore, '_fsync_directory_strict', side_effect=OSError(SECRET)):
+        with patch.object(CaptureStore, '_sync_directory', side_effect=OSError(SECRET)):
             with self.assertRaises(CaptureLifecycleError):
                 self.begin()
         self.assertEqual(self.ops.mutations, [])
