@@ -56,6 +56,27 @@ Test.app`. It exposes exactly these tools:
 - `test_app_launch` — launch only the fixed Test.app in portable `-p` mode.
 - `test_app_quit` — request graceful `Application.Quit` for that target.
 
+**Handle MCP screenshots as images, never text.** When invoking any of these
+four tools through `functions.exec`, inspect the MCP `content` array and forward
+each entry by type. Do not print/stringify the whole tool result or an image
+entry: `text(r)`, `text(JSON.stringify(r))`, `console.log(r)`, or forwarding
+`c.data` as text can flood the agent context with PNG Base64. Use the same
+pattern for *every* tool call, including follow-up `test_app_observe`:
+
+```javascript
+const r = await tools.mcp__build_manager_testapp__test_app_observe({});
+for (const c of r.content ?? []) {
+  if (c.type === "text") text(c.text);
+  else if (c.type === "image") image(c);
+}
+if (r.isError) text("MCP tool reported an error");
+```
+
+Substitute the specific tool name and validated arguments for other calls.
+Never log or paste Base64 screenshot data. On an error, report the sanitized
+error code and follow the task's stop rule. Do not make extra observation calls
+unless the task actually requires them.
+
 These are live Test.app operations. Use only the action and scope authorized by
 the current task; installing or discovering the MCP server does not authorize
 calling a live operation. Never target normal Kodi, household devices, or a
