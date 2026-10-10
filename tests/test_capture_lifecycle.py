@@ -1,4 +1,5 @@
 """Disposable, synthetic lifecycle tests. Never load Kodi or a real profile."""
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 import json
 import sqlite3
@@ -730,8 +731,12 @@ assert operations.mock_calls == []
             with self.subTest(defect=defect):
                 with patch.object(self.ops, 'owner_version', return_value='2.6.9' if defect == 'owner' else REDLIGHT_VERSION), \
                      patch.object(self.ops, 'competing_operation', return_value=defect == 'competing'), \
-                     patch.object(self.restart, 'read_snapshot', return_value=object() if defect == 'restart' else None), \
-                     patch.object(FrozenInstallStore, 'read_snapshot', return_value=object() if defect == 'install' else None):
+                     ExitStack() as stack:
+                    if defect in ('restart', 'install'):
+                        name, data = self.competing_fixture('restart' if defect == 'restart' else 'frozen')
+                        path = self.root / name
+                        path.write_bytes(data)
+                        stack.callback(path.unlink)
                     with self.assertRaises(CaptureLifecycleError):
                         fresh.recover(record.operation_id, request)
                 self.assertEqual(self.store.read(), record)
@@ -876,6 +881,167 @@ assert operations.mock_calls == []
         self.assertEqual(self.store.read(), crashed)
         self.coordinator.recover(record.operation_id, self.request, cancelled=False)
         self.assertEqual(self.store.read().phase, CapturePhase.FAILED)
+
+    def competing_fixture(self, kind):
+        if kind == 'restart':
+            return 'restart_transaction.json', _transaction().to_json().encode()
+        from resources.lib.frozen_install import FrozenInstallTransaction, FrozenInstallPhase
+        from resources.lib.update_guard import AddonUpdatePolicy
+        record = FrozenInstallTransaction(
+            transaction_id=SESSION_B, build_id='fixture', manifest_path='/fixture.json',
+            device_profile_id='desk', manifest_fingerprint='a' * 64,
+            phase=FrozenInstallPhase.AWAITING_RESTART,
+            originating_kodi_session_id=SESSION_A,
+            original_update_policy=AddonUpdatePolicy.AUTOMATIC,
+            created_at='2026-09-21T00:00:00Z', updated_at='2026-09-21T00:00:00Z')
+        return 'frozen_install_transaction.json', json.dumps(record.to_dict()).encode()
+
+    @contextmanager
+    def competing_read_swap(self, filename):
+        from resources.lib.readonly_io import read_regular_file
+        retained = self.root.with_name('retained-state')
+        calls = []
+
+        def swapped(path, **kwargs):
+            if Path(path).name != filename:
+                return read_regular_file(path, **kwargs)
+            calls.append(kwargs.get('dir_fd'))
+            self.root.rename(retained)
+            self.root.mkdir()
+            try:
+                return read_regular_file(path, **kwargs)
+            finally:
+                self.root.rmdir()
+                retained.rename(self.root)
+
+        with ExitStack() as stack:
+            for module in ('capture_lifecycle', 'transaction', 'frozen_install'):
+                stack.enter_context(patch('resources.lib.' + module + '.read_regular_file', side_effect=swapped))
+            yield calls
+
+    def test_competing_restart_swap_blocks_begin_before_setter(self):
+        name, data = self.competing_fixture('restart')
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.joinpath(name).write_bytes(data)
+        with self.competing_read_swap(name) as calls:
+            with self.assertRaises(CaptureLifecycleError):
+                self.begin()
+        self.assertTrue(calls)
+        self.assertTrue(all(fd is not None for fd in calls))
+        self.assertIsNone(self.store._transition_fd)
+        self.assertEqual(self.store._held_locks, {})
+        self.assertEqual(self.ops.mutations, [])
+        self.assertEqual(self.root.joinpath(name).read_bytes(), data)
+        self.assertIsNone(self.store.read())
+
+    def test_competing_frozen_swap_blocks_begin_before_setter(self):
+        name, data = self.competing_fixture('frozen')
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.joinpath(name).write_bytes(data)
+        with self.competing_read_swap(name) as calls:
+            with self.assertRaises(CaptureLifecycleError):
+                self.begin()
+        self.assertTrue(calls)
+        self.assertTrue(all(fd is not None for fd in calls))
+        self.assertIsNone(self.store._transition_fd)
+        self.assertEqual(self.store._held_locks, {})
+        self.assertEqual(self.ops.mutations, [])
+        self.assertEqual(self.root.joinpath(name).read_bytes(), data)
+        self.assertIsNone(self.store.read())
+
+    def test_competing_swaps_block_activation_and_checked_without_writes(self):
+        record = self.begin()
+        for kind in ('restart', 'frozen'):
+            name, data = self.competing_fixture(kind)
+            path = self.root / name
+            path.write_bytes(data)
+            for action in (lambda: capture_activation_holds(self.root),
+                           lambda: self.coordinator._checked(record.operation_id, self.request)):
+                with self.subTest(kind=kind, action=action), self.competing_read_swap(name) as calls:
+                    before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+                    with self.assertRaises(CaptureLifecycleError):
+                        action()
+                    self.assertTrue(calls)
+                    self.assertTrue(all(fd is not None for fd in calls))
+                    self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
+            path.unlink()
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_locked_checked_uses_transition_descriptor_and_cleans_up(self):
+        import os
+        record = self.begin()
+        for kind in ('restart', 'frozen'):
+            with self.subTest(kind=kind):
+                name, data = self.competing_fixture(kind)
+                path = self.root / name
+                with self.coordinator._exclusive():
+                    fd = self.store._transition_fd
+                    path.write_bytes(data)
+                    try:
+                        with self.competing_read_swap(name) as calls:
+                            with self.assertRaises(CaptureLifecycleError):
+                                self.coordinator._checked(record.operation_id, self.request)
+                        self.assertEqual(calls, [fd])
+                    finally:
+                        path.unlink()
+                self.assertIsNone(self.store._transition_fd)
+                self.assertEqual(self.store._held_locks, {})
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+
+    def test_capture_transition_excludes_existing_store_locks(self):
+        with self.coordinator._exclusive():
+            for lock in (self.restart.acquire_lock(), FrozenInstallStore(self.root, create=False).locked()):
+                acquired = False
+                with self.assertRaises(Exception):
+                    with lock:
+                        acquired = True
+                self.assertFalse(acquired)
+        with self.restart.acquire_lock(), FrozenInstallStore(self.root, create=False).locked():
+            pass
+        self.assertIsNone(self.store._transition_fd)
+        self.assertEqual(self.store._held_locks, {})
+
+    def test_absent_competing_observation_creates_nothing_and_clean_begin_succeeds(self):
+        before = set(self.profile.rglob('*'))
+        self.assertFalse(self.store.competing_records_present())
+        self.assertEqual(capture_activation_holds(self.root), frozenset())
+        self.assertEqual(before, set(self.profile.rglob('*')))
+        record = self.begin()
+        self.assertEqual(record.phase, CapturePhase.AWAITING_RESTART)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+        self.assertFalse(self.store.competing_records_present())
+        self.assertEqual(capture_activation_holds(self.root), frozenset({REDLIGHT_ADDON_ID}))
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
+
+    def test_invalid_competing_records_fail_closed_at_all_read_sites(self):
+        from resources.lib.readonly_io import read_regular_file, ReadOnlyStateError
+        record = self.begin()
+        for kind in ('restart', 'frozen'):
+            name, data = self.competing_fixture(kind)
+            path = self.root / name
+            for defect in ('malformed', 'unsupported', 'symlink', 'oversize', 'unreadable'):
+                with self.subTest(kind=kind, defect=defect):
+                    if defect == 'symlink':
+                        path.symlink_to(self.store.path)
+                    else:
+                        path.write_bytes(b'{' if defect == 'malformed' else
+                            b'{"schema_version":999}' if defect == 'unsupported' else
+                            b'x' * (4 * 1024 * 1024 + 1) if defect == 'oversize' else data)
+                    def read(pathname, **kwargs):
+                        if defect == 'unreadable' and Path(pathname).name == name:
+                            raise ReadOnlyStateError('synthetic denied read')
+                        return read_regular_file(pathname, **kwargs)
+                    with patch('resources.lib.capture_lifecycle.read_regular_file', side_effect=read):
+                        for action in (self.begin, lambda: capture_activation_holds(self.root),
+                                       lambda: self.coordinator._checked(record.operation_id, self.request)):
+                            with self.assertRaises(CaptureLifecycleError):
+                                action()
+                    path.unlink()
+        self.assertEqual(self.store.read(), record)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
 
     def test_competing_durable_restart_or_frozen_state_blocks_begin(self):
         self.restart.create(_transaction())

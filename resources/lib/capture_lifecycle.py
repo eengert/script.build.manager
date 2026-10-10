@@ -218,6 +218,7 @@ class CaptureStore:
             self.root = self._source.parent.resolve() / self._source.name
             self._identities = {}
             self._held_locks = {}
+            self._transition_fd = None
             with self._directory():
                 pass
         except Exception:
@@ -287,6 +288,35 @@ class CaptureStore:
                 raw = read_regular_file(FILENAME, limit=16 * 1024, dir_fd=fd)
                 self._validate_directory(fd)
             return None if raw is None else CaptureTransaction.from_dict(json.loads(raw))
+        except Exception:
+            raise CaptureLifecycleError() from None
+
+    def competing_records_present(self):
+        """Validated no-follow reads; reuse the locked transition's root pin.
+
+        No shared store construction, callbacks or lock acquisition occurs here.
+        An observer pins the directory only for this read and creates nothing.
+        """
+        from resources.lib.frozen_install import FrozenInstallTransaction, _TRANSACTION_FILENAME
+        from resources.lib.transaction import RestartTransaction, TRANSACTION_FILENAME
+
+        def read(fd):
+            present = False
+            for name, limit, record_type in (
+                    (TRANSACTION_FILENAME, 128 * 1024, RestartTransaction),
+                    (_TRANSACTION_FILENAME, 4 * 1024 * 1024, FrozenInstallTransaction)):
+                raw = read_regular_file(name, limit=limit, dir_fd=fd)
+                if raw is not None:
+                    record_type.from_dict(json.loads(raw.decode("utf-8")))
+                    present = True
+            self._validate_directory(fd)
+            return present
+
+        try:
+            if self._transition_fd is not None:
+                return read(self._transition_fd)
+            with self._directory() as fd:
+                return False if fd is None else read(fd)
         except Exception:
             raise CaptureLifecycleError() from None
 
@@ -401,10 +431,8 @@ def capture_activation_holds(root: Path):
     if record is None or not record.held:
         return frozenset()
     # A competing record is a lifecycle breach, not another source of authority.
-    from resources.lib.frozen_install import FrozenInstallStore
     try:
-        if (FrozenInstallStore.read_snapshot(store.root) is not None
-                or read_regular_file(str(store.root / "restart_transaction.json"), limit=128 * 1024) is not None
+        if (store.competing_records_present()
                 or store.read() != record):
             raise CaptureLifecycleError()
     except Exception:
@@ -437,14 +465,19 @@ class CaptureLifecycleCoordinator:
                 with self.store._lock(fd, "create_capture_transaction.lock"), \
                         self.store._lock(fd, frozen.lock_path.name), \
                         self.store._lock(fd, LOCK_FILENAME):
-                    if (self.restart_store.read_snapshot() is not None
-                            or FrozenInstallStore.read_snapshot(self.store.root) is not None
-                            or self.operations.competing_operation() is not False):
+                    if self.store._transition_fd is not None:
                         raise CaptureLifecycleError()
-                    self._validate_root()
-                    self.store._validate_directory(fd)
-                    yield
-                    self.store._validate_directory(fd)
+                    self.store._transition_fd = fd
+                    try:
+                        if (self.store.competing_records_present()
+                                or self.operations.competing_operation() is not False):
+                            raise CaptureLifecycleError()
+                        self._validate_root()
+                        self.store._validate_directory(fd)
+                        yield
+                        self.store._validate_directory(fd)
+                    finally:
+                        self.store._transition_fd = None
         except Exception:
             raise CaptureLifecycleError() from None
 
@@ -465,7 +498,6 @@ class CaptureLifecycleCoordinator:
             self.store._validate_directory(fd)
 
     def _checked(self, operation_id, request, *, recovery=False):
-        from resources.lib.frozen_install import FrozenInstallStore
         self._validate_root()
         record = self.store.read()
         if (record is None or record.operation_id != operation_id
@@ -474,8 +506,7 @@ class CaptureLifecycleCoordinator:
                 or record.request_fingerprint != request_fingerprint(request)
                 or not record.created_at <= self.clock() < (float("inf") if recovery else record.expires_at)
                 or self.operations.competing_operation() is not False
-                or self.restart_store.read_snapshot() is not None
-                or FrozenInstallStore.read_snapshot(self.store.root) is not None
+                or self.store.competing_records_present()
                 or self.operations.owner_version(record.owner_id) != record.owner_version):
             raise CaptureLifecycleError()
         return record

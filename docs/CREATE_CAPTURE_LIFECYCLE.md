@@ -51,23 +51,41 @@ Normal reconstruction remains expiry-bound. Recovery-purpose reconstruction
 may occur after expiry, but still rejects clock rollback and mismatched
 identity. It grants no capture, restart, restoration or release authority:
 explicit `recover()` must independently pass the locked transition checks.
+Persisted owner/version identifies the audited resource; reconstruction is not
+fresh verification of the installed owner. Mutating transitions separately
+check the installed owner through the injected operations capability.
+Private setting declarations are not scoped to root add-ons at Stage 2A admission.
 Stage 2A does not persist a UI form or implement UI/startup resume composition.
 A changed request or an old operation UUID never acquires authority over a
 newer record. Lifecycle `COMPLETE` is not build registration.
 
-The profile root is trusted application input, using the existing restart
-store's canonical-profile model. Capture canonicalizes ancestor directories
+The profile filesystem is trusted, and the profile root is trusted application
+input, using the existing restart store's canonical-profile model. Capture canonicalizes ancestor directories
 (including legitimate symlinked profile ancestors), retains the final state
 directory as a no-follow component, and requires the restart store to identify
 the same canonical root. The frozen store used by the coordinator receives that
 root. Opened canonical directory components are bound by device/inode identity;
 missing directories are created only by mutating transitions. Alias drift,
-replacement or loss of an already-bound component fails closed. Capture reads,
-locks, temporary writes, replacement, directory sync and temporary cleanup use
-opened directory descriptors, so a swap cannot redirect them to another root.
+replacement or loss of an already-bound component fails closed within that
+CaptureStore instance. This detection does not persist across independent
+operations or sessions that construct a new store. Replacing or deleting durable
+state can defeat new-instance discovery; cross-session state-tampering recovery
+is deferred.
+
+Capture reads, competing frozen-install/restart record reads, locks, temporary
+writes, replacement, directory sync and temporary cleanup use opened directory
+descriptors, so a pathname swap cannot redirect them to another root. Competing
+reads during locked transitions use the same authoritative descriptor as the
+three locks, without reopening the path for record admission. Observation pins
+its own canonical descriptor and creates no directories or locks. Competing
+records use the existing bounded no-follow reader and their original typed
+validators; only missing records mean no competing transaction. Unsafe,
+unreadable, corrupt and unsupported records fail closed.
 All three operation locks keep their existing filenames and OS flock semantics;
 lock substitution is rejected. Final state-file symlinks, nonregular/oversized
-files and malformed records remain refused. Reconstruction only opens and reads.
+files and malformed records remain refused. A symlinked final state directory
+also fails closed and may block profile-wide admission and activation; Stage 2A
+does not change that policy. Reconstruction only opens and reads.
 
 The phase atomically owns the activation hold: all nonterminal phases retain
 it, including interrupted preparation, capture and restoration. There is no
