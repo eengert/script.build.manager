@@ -1813,22 +1813,28 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                     or not isinstance(version, str) or not version.startswith("3.")
                     or not _strict_version_satisfies(version, edge.min_version)):
                 return False
-            metadata = self._inventory().read_application_builtin_metadata(addon_id, path)
-            if metadata is None or metadata.origin is not InstalledOrigin.APPLICATION:
-                return False
-            _check_addon_xml_identity(metadata.xml_bytes, addon_id, version)
-            root = ET.fromstring(metadata.xml_bytes)
-            backwards = root.findall("backwards-compatibility")
-            scripts = [point for point in root.findall("extension-point") if point.get("id") == "script"]
-            if (root.tag != "addon" or len(backwards) != 1 or len(scripts) != 1
-                    or scripts[0].get("schema") != "script.xsd" or root.findall("extension")):
-                return False
-            abi = backwards[0].get("abi")
-            if (not isinstance(abi, str) or not abi.startswith("3.")
-                    or not _strict_version_satisfies(version, abi)
-                    or not _strict_version_satisfies(edge.min_version, abi)):
-                return False
-            return usable() and tuple(addon.getAddonInfo(key) for key in fields) == info
+            def validate(metadata):
+                if metadata is None or metadata.origin is not InstalledOrigin.APPLICATION:
+                    return False
+                _check_addon_xml_identity(metadata.xml_bytes, addon_id, version)
+                root = ET.fromstring(metadata.xml_bytes)
+                backwards = root.findall("backwards-compatibility")
+                scripts = [point for point in root.findall("extension-point") if point.get("id") == "script"]
+                if (root.tag != "addon" or len(backwards) != 1 or len(scripts) != 1
+                        or scripts[0].get("schema") != "script.xsd" or root.findall("extension")):
+                    return False
+                abi = backwards[0].get("abi")
+                if (not isinstance(abi, str) or not abi.startswith("3.")
+                        or not _strict_version_satisfies(version, abi)
+                        or not _strict_version_satisfies(edge.min_version, abi)):
+                    return False
+                fresh = xbmcaddon.Addon("xbmc.python")
+                return usable() and tuple(fresh.getAddonInfo(key) for key in fields) == info
+
+            return self._inventory().read_application_builtin_metadata(
+                addon_id, path, validate=validate,
+            ) is not None
+
         except Exception:
             return False
 

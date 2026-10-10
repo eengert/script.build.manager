@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import weakref
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -711,7 +712,9 @@ class KodiInventoryBackend(InventoryBackend):
             roots.append((_APPLICATION_ADDONS_PREFIX, self._application))
         return tuple(roots)
 
-    def read_application_builtin_metadata(self, addon_id: str, path_value) -> Optional[InstalledMetadata]:
+    def read_application_builtin_metadata(
+        self, addon_id: str, path_value, *, validate=None,
+    ) -> Optional[InstalledMetadata]:
         """Read a builtin absent from JSON-RPC inventory, with pinned origin and no home shadow.
 
         The caller must independently prove the builtin's runtime identity and usability.
@@ -740,10 +743,66 @@ class KodiInventoryBackend(InventoryBackend):
 
         if not unshadowed():
             return None
-        xml_bytes = self._read_addon_xml_in(self._application, addon_id)
-        if xml_bytes is None or not unshadowed():
+        # Hold both objects through the proof, preventing inode reuse from making
+        # an atomic replacement look like the original authority.
+        descriptors = []
+        try:
+            root_fd = self._application.reacquire()
+            if root_fd is None:
+                return None
+            descriptors.append(root_fd)
+            flags = os.O_RDONLY | os.O_NOFOLLOW
+            directory_fd = os.open(addon_id, flags | os.O_DIRECTORY, dir_fd=root_fd)
+            descriptors.append(directory_fd)
+            file_fd = os.open("addon.xml", flags | os.O_NONBLOCK, dir_fd=directory_fd)
+            descriptors.append(file_fd)
+
+            def binding(info):
+                return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns)
+
+            directory_identity = binding(os.fstat(directory_fd))
+            file_info = os.fstat(file_fd)
+            if not stat.S_ISREG(file_info.st_mode) or file_info.st_size > _ADDON_XML_LIMIT:
+                return None
+            file_identity = binding(file_info)
+            xml_bytes = read_regular_file("addon.xml", limit=_ADDON_XML_LIMIT,
+                                          dir_fd=directory_fd)
+            if xml_bytes is None:
+                return None
+            # Bind the safe reader's bytes to the held metadata object as well as
+            # its pathname; equal bytes never replace the identity checks below.
+            held_bytes = bytearray()
+            while len(held_bytes) <= _ADDON_XML_LIMIT:
+                chunk = os.read(file_fd, min(65536, _ADDON_XML_LIMIT + 1 - len(held_bytes)))
+                if not chunk:
+                    break
+                held_bytes.extend(chunk)
+            if bytes(held_bytes) != xml_bytes:
+                return None
+            metadata = InstalledMetadata(xml_bytes, InstalledOrigin.APPLICATION)
+            # Runtime validation happens before the final filesystem check, while
+            # the original directory and metadata descriptors remain held.
+            if validate is not None and validate(metadata) is not True:
+                return None
+            current_root = self._application.reacquire()
+            if current_root is None:
+                return None
+            descriptors.append(current_root)
+            current_directory = os.open(addon_id, flags | os.O_DIRECTORY, dir_fd=current_root)
+            descriptors.append(current_directory)
+            if (binding(os.fstat(current_directory)) != directory_identity
+                    or binding(os.fstat(file_fd)) != file_identity
+                    or binding(os.stat("addon.xml", dir_fd=current_directory,
+                                       follow_symlinks=False)) != file_identity
+                    or not unshadowed()):
+                return None
+            return metadata
+        except Exception:
             return None
-        return InstalledMetadata(xml_bytes, InstalledOrigin.APPLICATION)
+        finally:
+            for fd in reversed(descriptors):
+                os.close(fd)
 
     def _trusted_root(self, addon_id: str, path_value) -> Optional["_TrustedRoot"]:
         """Return the explicit trusted root that directly holds this add-on, or None.

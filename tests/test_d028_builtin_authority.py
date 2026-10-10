@@ -228,3 +228,108 @@ class BuiltinAuthorityTests(unittest.TestCase):
     def test_runtime_python_major_must_match_builtin_api(self):
         with patch('sys.version_info',SimpleNamespace(major=2)):
             self.assertFalse(self.satisfies())
+
+    def _platform_probe(self):
+        node = AddonCaptureNode('script.module.pil', '5.1.0', 'xbmc.python.module', True,
+            ProvenanceStatus.UNKNOWN, dependency_edges=(self.edge,),
+            status=CaptureStatus.PLATFORM_PROVIDED, platform_provided=True)
+        manifest = FrozenBuildManifest(2, 'probe', 'probe', '2026-10-09T00:00:00Z',
+            '21.3', 'macos', CaptureStatus.COMPLETE, (node,))
+        return verify_platform_requirements(SimpleNamespace(manifest=manifest,
+            nodes={node.addon_id: node}), self.backend, planned_versions={})
+
+    def _during_read(self, change):
+        from resources.lib.frozen import read_regular_file
+        changed = False
+        def read_then_change(*args, **kwargs):
+            nonlocal changed
+            data = read_regular_file(*args, **kwargs)
+            if not changed and os.stat(args[0], dir_fd=kwargs["dir_fd"]).st_ino == self.file.stat().st_ino:
+                changed = True
+                change()
+            return data
+        return patch('resources.lib.frozen.read_regular_file', side_effect=read_then_change)
+
+    def test_same_attempt_application_root_replacement(self):
+        def change():
+            self.app.rename(self.app.with_name('retained'))
+            self.file.parent.mkdir(parents=True)
+            self.file.write_text(BUILTIN)
+        with self._during_read(change):
+            self.assertFalse(self.satisfies())
+
+    def test_same_attempt_application_root_symlink_substitution(self):
+        def change():
+            retained = self.app.with_name('retained')
+            self.app.rename(retained)
+            self.app.symlink_to(retained, target_is_directory=True)
+        with self._during_read(change):
+            self.assertFalse(self.satisfies())
+
+    def test_same_attempt_atomic_xml_substitution(self):
+        def change():
+            replacement = self.file.with_name('replacement.xml')
+            replacement.write_text(BUILTIN.replace('abi="3.0.0"', 'abi="4.0.0"'))
+            replacement.replace(self.file)
+        with self._during_read(change):
+            self.assertFalse(self.satisfies())
+
+    def test_same_attempt_equal_bytes_xml_replacement(self):
+        def change():
+            replacement = self.file.with_name('replacement.xml')
+            replacement.write_text(BUILTIN)
+            replacement.replace(self.file)
+        with self._during_read(change):
+            self.assertFalse(self.satisfies())
+
+    def _snapshot_registry(self):
+        def construct(aid):
+            snapshot = dict(self.info)
+            return SimpleNamespace(getAddonInfo=snapshot.__getitem__)
+        self.api.Addon = construct
+
+    def test_same_attempt_snapshot_handle_registry_version_change(self):
+        self._snapshot_registry()
+        with self._during_read(lambda: self.info.update(version='3.0.2')):
+            self.assertFalse(self.satisfies())
+
+    def test_production_caller_rejects_snapshot_registry_substitution(self):
+        self._snapshot_registry()
+        with self._during_read(lambda: self.info.update(version='3.0.2')):
+            with self.assertRaises(FrozenPlatformRequirementError):
+                self._platform_probe()
+
+    def test_fresh_registry_fields_and_enabled_state_are_required(self):
+        self._snapshot_registry()
+        for key, value in [('id', 'xbmc.gui'), ('type', 'xbmc.python.module'),
+                           ('path', str(self.home/'xbmc.python'))]:
+            with self.subTest(key=key):
+                original = self.info[key]
+                with self._during_read(lambda: self.info.update({key: value})):
+                    self.assertFalse(self.satisfies())
+                self.info[key] = original
+        with self._during_read(lambda: self.conditions.update(
+                {'System.AddonIsEnabled(xbmc.python)': False})):
+            self.assertFalse(self.satisfies())
+
+    def test_fresh_registry_authority_unavailable_fails_closed(self):
+        self._snapshot_registry()
+        def unavailable(aid):
+            raise RuntimeError('registry unavailable')
+        with self._during_read(lambda: setattr(self.api, 'Addon', unavailable)):
+            self.assertFalse(self.satisfies())
+
+    def test_filesystem_substitution_during_fresh_registry_check_is_rejected(self):
+        constructions = 0
+        def construct(aid):
+            nonlocal constructions
+            constructions += 1
+            snapshot = dict(self.info)
+            if constructions == 2:
+                replacement = self.file.with_name('replacement.xml')
+                replacement.write_text(BUILTIN.replace('abi="3.0.0"', 'abi="4.0.0"'))
+                replacement.replace(self.file)
+            return SimpleNamespace(getAddonInfo=snapshot.__getitem__)
+        self.api.Addon = construct
+        self.assertFalse(self.satisfies())
+        self.assertEqual(constructions, 2)
