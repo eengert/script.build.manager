@@ -586,6 +586,22 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
         self.assertTrue(self.ops.current_enabled)
         self.assertEqual(self.coordinator.recover(record.operation_id, self.request), result)
 
+    def test_first_terminal_directory_failure_retains_visible_hold(self):
+        record = self.begin()
+        sync = self.store._sync_directory
+        observed = []
+        def fail_terminal(fd):
+            current = CaptureStore(self.root).read()
+            if current.phase is CapturePhase.CANCELLED:
+                observed.append(capture_activation_holds(self.root))
+                raise OSError('synthetic terminal barrier failure')
+            sync(fd)
+        with patch.object(self.store, '_sync_directory', side_effect=fail_terminal):
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(observed, [frozenset({REDLIGHT_ADDON_ID})])
+        self.assertTrue(CaptureStore(self.root).read().held)
+
     def test_capture_failure_restores_and_sanitizes_exception(self):
         record = self.begin()
         self.ops.session = SESSION_B
@@ -616,6 +632,18 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
         self.assertEqual(recovered.phase, CapturePhase.CANCELLED)
         self.assertEqual(self.ops.mutations.count((REDLIGHT_ADDON_ID, True)), 1)
 
+    def test_owner_setter_failure_before_effect_never_publishes_terminal(self):
+        record = self.begin()
+        with patch.object(self.ops, 'set_enabled', side_effect=OSError('synthetic setter failure')) as setter:
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.recover(record.operation_id, self.request)
+        setter.assert_called_once_with(REDLIGHT_ADDON_ID, True)
+        current = self.store.read()
+        self.assertEqual(current.phase, CapturePhase.RESTORING)
+        self.assertFalse(current.commit_pending)
+        self.assertTrue(current.held)
+        self.assertFalse(self.ops.current_enabled)
+
     def test_original_enabled_manual_restore_is_durable_noop(self):
         record = self.begin()
         self.ops.current_enabled = True
@@ -628,7 +656,7 @@ assert r.private_resources[0].owner_addon_id == 'plugin.video.redlight'
             return save(expected, candidate)
         self.store.save = observe
         recovered = self.coordinator.recover(record.operation_id, self.request)
-        self.assertEqual(phases, [CapturePhase.RESTORING, CapturePhase.CANCELLED])
+        self.assertEqual(phases, [CapturePhase.RESTORING, CapturePhase.CANCELLED, CapturePhase.CANCELLED])
         self.assertFalse(recovered.held)
         self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
 
@@ -1443,14 +1471,371 @@ assert operations.mock_calls == []
                         continue
                     if current.phase is CapturePhase.COMPLETE:
                         self.assertIs(ops.current_enabled, True)
-                        self.assertFalse(current.held)
-                        continue
+                        self.assertTrue(current.commit_pending)
                     self.assertTrue(current.held)
                     fresh = CaptureLifecycleCoordinator(store=store, restart_store=restart,
                         operations=ops, clock=lambda: 1000)
                     recovered = fresh.recover(current.operation_id, self.request)
                     self.assertIs(ops.current_enabled, True)
                     self.assertFalse(recovered.held)
+
+    def test_terminal_publication_failure_matrix(self):
+        import os
+        for outcome in ('cancelled', 'failed', 'complete'):
+            for original in (False, True):
+                for boundary in ('write', 'file_sync', 'pending_replace', 'pending_sync',
+                                 'release_replace', 'release_sync'):
+                    with self.subTest(outcome=outcome, original=original, boundary=boundary), \
+                            tempfile.TemporaryDirectory() as profile:
+                        restart = TransactionStore(profile)
+                        store = CaptureStore(Path(restart.directory))
+                        ops = Operations(original)
+                        coordinator = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+                            operations=ops, clock=lambda: 1000)
+                        record = coordinator.begin(self.request, confirmed=True)
+                        # The owner setter has completed, but no terminal was published.
+                        restoring = replace(record, phase=CapturePhase.RESTORING, outcome=outcome,
+                            capture_session_id=SESSION_B if outcome == 'complete' else '')
+                        with store.locked():
+                            store.save(record, restoring)
+                        ops.current_enabled = original
+                        mutations = list(ops.mutations)
+                        replace_file, fsync, fdopen, sync = os.replace, os.fsync, os.fdopen, store._sync_directory
+                        publications, barriers = [], []
+                        def publish(source, destination, **kwargs):
+                            stage = 'release' if publications else 'pending'
+                            if boundary == stage + '_replace':
+                                raise OSError('synthetic replace failure')
+                            replace_file(source, destination, **kwargs)
+                            current = CaptureStore(store.root).read()
+                            publications.append(current)
+                            self.assertEqual(current.commit_pending, stage == 'pending')
+                            self.assertEqual(ops.mutations, mutations)
+                        def barrier(fd):
+                            stage = 'pending' if len(publications) == 1 else 'release'
+                            barriers.append(stage)
+                            if boundary == stage + '_sync':
+                                raise OSError('synthetic directory barrier failure')
+                            sync(fd)
+                        def file_sync(fd):
+                            if boundary == 'file_sync':
+                                raise OSError('synthetic file barrier failure')
+                            fsync(fd)
+                        def open_output(*args, **kwargs):
+                            output = fdopen(*args, **kwargs)
+                            if boundary == 'write':
+                                proxy = Mock(wraps=output)
+                                proxy.write.side_effect = OSError('synthetic write failure')
+                                proxy.__enter__ = Mock(return_value=proxy)
+                                proxy.__exit__ = Mock(side_effect=lambda *unused: output.close())
+                                return proxy
+                            return output
+                        with patch('resources.lib.capture_lifecycle.os.replace', side_effect=publish), \
+                                patch('resources.lib.capture_lifecycle.os.fsync', side_effect=file_sync), \
+                                patch('resources.lib.capture_lifecycle.os.fdopen', side_effect=open_output), \
+                                patch.object(store, '_sync_directory', side_effect=barrier):
+                            with self.assertRaises(CaptureLifecycleError):
+                                coordinator.recover(record.operation_id, self.request)
+                        current = CaptureStore(store.root).read()
+                        self.assertEqual(current.held, boundary != 'release_sync')
+                        self.assertEqual(current.outcome, outcome)
+                        self.assertEqual(ops.mutations, mutations)
+                        self.assertFalse(list(store.root.glob('*.tmp')))
+                        if boundary in ('release_replace', 'release_sync'):
+                            self.assertEqual(barriers[0], 'pending')
+                        # Fresh retry keeps the outcome even if cancellation is requested.
+                        saves = []
+                        save = store.save
+                        def retry_save(expected, candidate):
+                            saves.append(candidate)
+                            return save(expected, candidate)
+                        with patch.object(store, 'save', side_effect=retry_save):
+                            result = coordinator.recover(record.operation_id, self.request)
+                            self.assertEqual(coordinator.recover(record.operation_id, self.request), result)
+                        self.assertEqual(result.outcome, outcome)
+                        self.assertFalse(result.held)
+                        self.assertEqual(ops.mutations, mutations)
+                        if current.commit_pending:
+                            self.assertEqual([r.commit_pending for r in saves], [True, False])
+                        elif not current.held:
+                            self.assertEqual(saves, [])
+
+    def test_all_ordinary_outcomes_use_two_terminal_publications(self):
+        for outcome in ('cancelled', 'failed', 'complete'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as profile:
+                restart = TransactionStore(profile)
+                store = CaptureStore(Path(restart.directory))
+                ops = Operations()
+                coordinator = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+                    operations=ops, clock=lambda: 1000)
+                record = coordinator.begin(self.request, confirmed=True)
+                sync = store._sync_directory
+                observations = []
+                def barrier(fd):
+                    current = CaptureStore(store.root).read()
+                    if current.phase.value == outcome:
+                        observations.append((current.commit_pending, current.held, list(ops.mutations)))
+                    sync(fd)
+                with patch.object(store, '_sync_directory', side_effect=barrier):
+                    if outcome == 'cancelled':
+                        coordinator.recover(record.operation_id, self.request)
+                    else:
+                        ops.session = SESSION_B
+                        def callback(verify):
+                            verify()
+                            if outcome == 'failed':
+                                raise ValueError('synthetic capture failure')
+                        if outcome == 'failed':
+                            with self.assertRaises(CaptureLifecycleError):
+                                coordinator.capture(record.operation_id, self.request, callback)
+                        else:
+                            coordinator.capture(record.operation_id, self.request, callback)
+                self.assertEqual([(p, h) for p, h, _ in observations], [(True, True), (False, False)])
+                self.assertEqual(observations[0][2], observations[1][2])
+
+    def pending_terminal(self, outcome='cancelled'):
+        record = self.begin()
+        pending = replace(record, phase=CapturePhase(outcome), outcome=outcome, commit_pending=True,
+                          capture_session_id=SESSION_B if outcome == 'complete' else '')
+        with self.store.locked():
+            self.store.save(record, pending)
+        self.ops.current_enabled = record.original_enabled
+        return pending
+
+    def test_pending_terminal_refuses_drift_and_wrong_request_without_setter(self):
+        record = self.pending_terminal('complete')
+        mutations = list(self.ops.mutations)
+        before = self.store.path.read_bytes()
+        for defect in ('version', 'enablement', 'unknown', 'request', 'operation', 'competing'):
+            with self.subTest(defect=defect):
+                self.ops.version = '2.6.9' if defect == 'version' else REDLIGHT_VERSION
+                self.ops.current_enabled = False if defect == 'enablement' else None if defect == 'unknown' else True
+                self.ops.competing = defect == 'competing'
+                with self.assertRaises(CaptureLifecycleError):
+                    self.coordinator.recover(SESSION_B if defect == 'operation' else record.operation_id,
+                        replace(self.request, description='changed') if defect == 'request' else self.request)
+                self.assertEqual(self.store.path.read_bytes(), before)
+                self.assertEqual(self.ops.mutations, mutations)
+                self.assertTrue(self.store.read().held)
+
+    def test_pending_finalization_failure_requires_fresh_publication_again(self):
+        record = self.pending_terminal('failed')
+        mutations = list(self.ops.mutations)
+        replacements = []
+        import os
+        publish = os.replace
+        def observe(*args, **kwargs):
+            publish(*args, **kwargs)
+            replacements.append(CaptureStore(self.root).read())
+        with patch('resources.lib.capture_lifecycle.os.replace', side_effect=observe), \
+                patch.object(self.store, '_sync_directory', side_effect=OSError('failed retry barrier')):
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(replacements, [record])
+        self.assertEqual(self.store.read(), record)
+        self.assertTrue(self.store.read().held)
+        with patch('resources.lib.capture_lifecycle.os.replace', side_effect=observe):
+            released = self.make_coordinator().recover(record.operation_id, self.request)
+        self.assertEqual(replacements, [record, record, replace(record, commit_pending=False)])
+        self.assertEqual(released, replace(record, commit_pending=False))
+        self.assertEqual(self.ops.mutations, mutations)
+
+    def test_drift_between_terminal_publications_preserves_pending_hold(self):
+        for drift in ('version', 'enablement', 'record'):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as profile:
+                restart = TransactionStore(profile)
+                store = CaptureStore(Path(restart.directory))
+                ops = Operations()
+                c = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+                    operations=ops, clock=lambda: 1000)
+                record = c.begin(self.request, confirmed=True)
+                sync = store._sync_directory
+                def barrier(fd):
+                    sync(fd)
+                    current = store.read()
+                    if current.commit_pending:
+                        if drift == 'version':
+                            ops.version = '2.6.9'
+                        elif drift == 'enablement':
+                            ops.current_enabled = False
+                        else:
+                            store.path.write_text(json.dumps(replace(current,
+                                operation_id=SESSION_B).to_dict()))
+                with patch.object(store, '_sync_directory', side_effect=barrier):
+                    with self.assertRaises(CaptureLifecycleError):
+                        c.recover(record.operation_id, self.request)
+                self.assertTrue(store.read().commit_pending)
+                self.assertTrue(store.read().held)
+                self.assertEqual(ops.mutations, [(REDLIGHT_ADDON_ID, False), (REDLIGHT_ADDON_ID, True)])
+
+    def test_pending_terminal_shared_guards_are_creation_free_and_block_admission(self):
+        import os
+        record = self.pending_terminal()
+        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        original_open = os.open
+        def readonly(path, flags, *args, **kwargs):
+            self.assertFalse(flags & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC))
+            return original_open(path, flags, *args, **kwargs)
+        with patch('os.open', side_effect=readonly), \
+                patch.object(CaptureStore, '_lock', side_effect=AssertionError('new lock')):
+            self.assertEqual(capture_activation_holds(self.root), frozenset({REDLIGHT_ADDON_ID}))
+            self.assertEqual(active_activation_hold_ids(FrozenInstallStore(self.root, create=False)),
+                             frozenset({REDLIGHT_ADDON_ID}))
+            with self.assertRaises(CaptureLifecycleError):
+                require_no_capture(self.root)
+            with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.root):
+                with self.assertRaises(ActivationHoldError):
+                    reject_held_activation(REDLIGHT_ADDON_ID)
+        callback = Mock()
+        mutations = list(self.ops.mutations)
+        for action in (lambda: self.begin(), lambda: self.capture(record, callback),
+                       lambda: self.restart.create(_transaction()),
+                       lambda: FrozenInstallStore(self.root).create(Mock())):
+            with self.assertRaises(Exception):
+                action()
+        from resources.lib.build_manager import BuildManager
+        from resources.lib.frozen_install import FrozenInstallCoordinator
+        manager = BuildManager(Mock())
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.root), \
+                patch.object(manager, '_prepare') as prepare:
+            self.assertEqual(manager.reconcile(_transaction().request).failure.code, 'CAPTURE_LIFECYCLE_BLOCKED')
+            prepare.assert_not_called()
+        installer = FrozenInstallCoordinator(artifact_store=Mock(), installer=Mock(),
+            store=FrozenInstallStore(self.root), policy_backend=Mock())
+        with patch('resources.lib.build_library.authoritative_build_library') as next_stage:
+            self.assertEqual(installer.install(Mock(), manifest_path='/unused', device_profile_id='desk').code,
+                             'CAPTURE_LIFECYCLE_BLOCKED')
+            next_stage.assert_not_called()
+        restart_manager = Mock()
+        self.assertFalse(RestartCoordinator(restart_manager, store=self.restart)
+                         .reconcile(_transaction().request).reconcile_result.success)
+        restart_manager.reconcile.assert_not_called()
+        callback.assert_not_called()
+        self.assertEqual(self.ops.mutations, mutations)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
+
+    def test_commit_pending_strict_validation_and_legacy_released_recovery(self):
+        record = self.pending_terminal()
+        raw = record.to_dict()
+        for value in (None, 0, 1, 'true', [], {}):
+            with self.subTest(value=value):
+                self.store.path.write_text(json.dumps({**raw, 'commit_pending': value}))
+                with self.assertRaises(CaptureLifecycleError):
+                    capture_activation_holds(self.root)
+        for phase in (CapturePhase.PREPARING, CapturePhase.AWAITING_RESTART,
+                      CapturePhase.CAPTURING, CapturePhase.RESTORING):
+            with self.assertRaises(CaptureLifecycleError):
+                replace(record, phase=phase, outcome='cancelled' if phase is CapturePhase.RESTORING else '',
+                        capture_session_id=SESSION_B if phase is CapturePhase.CAPTURING else '')
+        with self.assertRaises(CaptureLifecycleError):
+            replace(record, outcome='failed')
+        legacy = {**raw}
+        del legacy['commit_pending']
+        self.store.path.write_text(json.dumps(legacy))
+        before = self.store.path.read_bytes()
+        with patch.object(self.store, 'save', side_effect=AssertionError('legacy mutation')):
+            result = self.coordinator.recover(record.operation_id, self.request)
+        self.assertFalse(result.held)
+        self.assertEqual(before, self.store.path.read_bytes())
+
+    def test_cross_process_terminal_visibility_at_both_barriers(self):
+        import os
+        import subprocess
+        import sys
+        record = self.begin()
+        sync = self.store._sync_directory
+        observed = []
+        code = '''import sys
+from pathlib import Path
+from resources.lib.capture_lifecycle import CaptureStore, capture_activation_holds
+root = Path(sys.argv[1])
+r = CaptureStore(root).read()
+assert r.operation_id == sys.argv[2]
+assert r.commit_pending is (sys.argv[3] == 'True')
+assert r.held is r.commit_pending
+assert capture_activation_holds(root) == (frozenset({r.owner_id}) if r.commit_pending else frozenset())
+'''
+        def observe(fd):
+            current = self.store.read()
+            if current.phase is CapturePhase.CANCELLED:
+                subprocess.run([sys.executable, '-c', code, str(self.root), record.operation_id,
+                                str(current.commit_pending)], check=True,
+                               env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                observed.append(current.commit_pending)
+            sync(fd)
+        with patch.object(self.store, '_sync_directory', side_effect=observe):
+            self.coordinator.recover(record.operation_id, self.request)
+        self.assertEqual(observed, [True, False])
+
+    def test_process_exit_at_each_terminal_publication_and_barrier(self):
+        import os
+        import subprocess
+        import sys
+        code = '''import os, sys
+from pathlib import Path
+from unittest.mock import patch
+from resources.lib.capture_lifecycle import CaptureStore, CaptureLifecycleCoordinator
+from resources.lib.transaction import TransactionStore
+from tests.test_capture_lifecycle import Operations
+root = Path(sys.argv[1])
+store = CaptureStore(root)
+record = store.read()
+ops = Operations(record.original_enabled)
+ops.set_enabled = lambda *args: os._exit(91)
+c = CaptureLifecycleCoordinator(store=store, restart_store=TransactionStore(sys.argv[2]),
+    operations=ops, clock=lambda: 1000)
+request = c.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
+stage, event, timing = sys.argv[3:]
+counts = {'replace': 0, 'sync': 0}
+publish, sync = os.replace, store._sync_directory
+def boundary(kind, operation, *args, **kwargs):
+    counts[kind] += 1
+    current_stage = 'pending' if counts[kind] == 1 else 'release'
+    hit = current_stage == stage and kind == event
+    if hit and timing == 'before': os._exit(73)
+    result = operation(*args, **kwargs)
+    if hit and timing == 'after': os._exit(73)
+    return result
+with patch('resources.lib.capture_lifecycle.os.replace',
+           side_effect=lambda *a, **kw: boundary('replace', publish, *a, **kw)), \
+     patch.object(store, '_sync_directory', side_effect=lambda fd: boundary('sync', sync, fd)):
+    c.recover(record.operation_id, request)
+os._exit(92)
+'''
+        for stage in ('pending', 'release'):
+            for event in ('replace', 'sync'):
+                for timing in ('before', 'after'):
+                    with self.subTest(stage=stage, event=event, timing=timing), \
+                            tempfile.TemporaryDirectory() as profile:
+                        restart = TransactionStore(profile)
+                        store = CaptureStore(Path(restart.directory))
+                        ops = Operations()
+                        c = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+                            operations=ops, clock=lambda: 1000)
+                        record = c.begin(self.request, confirmed=True)
+                        restoring = replace(record, phase=CapturePhase.RESTORING, outcome='cancelled')
+                        with store.locked():
+                            store.save(record, restoring)
+                        ops.current_enabled = True
+                        result = subprocess.run([sys.executable, '-c', code, str(store.root), profile,
+                                                 stage, event, timing],
+                                                env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                        self.assertEqual(result.returncode, 73)
+                        current = CaptureStore(store.root).read()
+                        released = stage == 'release' and (event == 'sync' or timing == 'after')
+                        self.assertEqual(current.held, not released)
+                        if stage == 'pending' and event == 'replace' and timing == 'before':
+                            self.assertEqual(current, restoring)
+                        elif not released:
+                            self.assertTrue(current.commit_pending)
+                        self.assertEqual(current.operation_id, record.operation_id)
+                        self.assertEqual(current.request_metadata, record.request_metadata)
+                        mutations = list(ops.mutations)
+                        recovered = c.recover(record.operation_id, self.request)
+                        self.assertFalse(recovered.held)
+                        self.assertEqual(recovered.outcome, 'cancelled')
+                        self.assertEqual(c.recover(record.operation_id, self.request), recovered)
+                        self.assertEqual(ops.mutations, mutations)
 
     def test_crash_after_disable_and_after_enable_is_recoverable(self):
         for value in (False, True):

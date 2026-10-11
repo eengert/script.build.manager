@@ -132,6 +132,37 @@ class RecoveryAssessorTests(unittest.TestCase):
                                      'OPERATOR_ENABLEMENT_REVIEW')
                     self.assertIs(mismatch.safe_dict()['advisory_only'], True)
 
+    def test_pending_terminal_advice_and_precedence(self):
+        for phase in (CapturePhase.COMPLETE, CapturePhase.CANCELLED, CapturePhase.FAILED):
+            for original in (False, True):
+                with self.subTest(phase=phase, original=original):
+                    pending = replace(self.record, phase=phase, outcome=phase.value,
+                        capture_session_id=CAPTURE_SESSION if phase is CapturePhase.COMPLETE else '',
+                        original_enabled=original, commit_pending=True)
+                    self.write(pending)
+                    self.ops.enabled.return_value = original
+                    advice = self.assess(R.TERMINAL_FINALIZATION_PENDING)
+                    self.assertEqual(advice.safe_dict()['next_step'], 'REVIEW_EXPLICIT_RECOVERY')
+                    self.ops.enabled.return_value = not original
+                    self.assess(R.UNEXPECTED_ENABLEMENT)
+                    self.ops.enabled.return_value = None
+                    self.assess(R.OBSERVATIONS_UNVERIFIABLE)
+                    self.ops.owner_version.return_value = '2.6.9'
+                    self.assess(R.OWNER_IDENTITY_UNVERIFIED)
+                    self.ops.competing_operation.return_value = True
+                    self.assess(R.OBSERVATIONS_UNVERIFIABLE)
+                    self.ops.owner_version.return_value = REDLIGHT_VERSION
+                    self.ops.competing_operation.return_value = False
+                    self.ops.enabled.return_value = original
+                    self.write(replace(pending, request_metadata=''))
+                    self.assess(R.LEGACY_REQUEST_UNAVAILABLE)
+                    self.write(pending)
+                    with patch.object(CaptureStore, 'competing_records_present', return_value=True):
+                        self.assess(R.OBSERVATIONS_UNVERIFIABLE)
+                    for malformed in (None, 1, 'true', []):
+                        self.store_path.write_text(json.dumps({**pending.to_dict(), 'commit_pending': malformed}))
+                        self.assess(R.STATE_UNVERIFIABLE)
+
     def test_identity_problems_take_priority_over_d2(self):
         self.write(replace(self.record, original_enabled=False))
         self.ops.enabled.return_value = True

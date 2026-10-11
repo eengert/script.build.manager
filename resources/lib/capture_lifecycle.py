@@ -132,6 +132,7 @@ class CaptureTransaction:
     capture_session_id: str = ""
     outcome: str = ""
     request_metadata: str = field(default="", repr=False)
+    commit_pending: bool = False
 
     def __post_init__(self):
         try:
@@ -166,6 +167,8 @@ class CaptureTransaction:
                 raise ValueError()
             if self.phase in TERMINAL and self.outcome != self.phase.value:
                 raise ValueError()
+            if type(self.commit_pending) is not bool or (self.commit_pending and self.phase not in TERMINAL):
+                raise ValueError()
             if self.phase is CapturePhase.COMPLETE and not self.capture_session_id:
                 raise ValueError()
             if self.phase in {CapturePhase.PREPARING, CapturePhase.AWAITING_RESTART} and self.capture_session_id:
@@ -177,8 +180,8 @@ class CaptureTransaction:
 
     @property
     def held(self):
-        # Hold ownership and phase are one atomic record, never independent flags.
-        return self.phase not in TERMINAL
+        # Phase and commitment own the hold together in the same atomic record.
+        return self.phase not in TERMINAL or self.commit_pending
 
     def to_dict(self):
         result = asdict(self)
@@ -195,6 +198,8 @@ class CaptureTransaction:
             fields = set(cls.__dataclass_fields__)
             if isinstance(value, dict) and "request_metadata" not in value:
                 value = {**value, "request_metadata": ""}
+            if isinstance(value, dict) and "commit_pending" not in value:
+                value = {**value, "commit_pending": False}
             if (not isinstance(value, dict) or set(value) != fields | {"schema_version", "operation_kind"}
                     or type(value["schema_version"]) is not int or value["schema_version"] != 1
                     or value["operation_kind"] != "create_capture"):
@@ -425,7 +430,8 @@ class CaptureStore:
             if self.read() != record:
                 raise ValueError()
         except Exception:
-            # A replacement may already be durable. Retain it and its hold.
+            # Retain published evidence. Pending terminals still hold; release
+            # publication can fail its barrier after the outcome was committed.
             raise CaptureLifecycleError() from None
         return record
 
@@ -617,6 +623,12 @@ class CaptureLifecycleCoordinator:
             if record.phase in TERMINAL:
                 if self.operations.enabled(record.owner_id) is not record.original_enabled:
                     raise CaptureLifecycleError()
+                if record.commit_pending:
+                    # A prior first barrier may have failed. Fresh publication
+                    # and a successful barrier establish commitment on this retry.
+                    self._terminal_checked(record, request, recovery=True)
+                    record = self.store.save(record, record)
+                    return self._release_terminal(record, request, recovery=True)
                 return record
             return self._restore(record, request, "cancelled" if cancelled is True else "failed", recovery=True)
 
@@ -642,4 +654,18 @@ class CaptureLifecycleCoordinator:
                 or self.operations.owner_version(record.owner_id) != record.owner_version
                 or self.store.read() != record):
             raise CaptureLifecycleError()
-        return self.store.save(record, replace(record, phase=CapturePhase(record.outcome)))
+        self._terminal_checked(record, request, recovery=recovery)
+        pending = self.store.save(record, replace(record, phase=CapturePhase(record.outcome), commit_pending=True))
+        return self._release_terminal(pending, request, recovery=recovery)
+
+    def _terminal_checked(self, record, request, *, recovery):
+        if (self._checked(record.operation_id, request, recovery=recovery) != record
+                or self.operations.enabled(record.owner_id) is not record.original_enabled):
+            raise CaptureLifecycleError()
+
+    def _release_terminal(self, record, request, *, recovery):
+        """Only after a successful pending publication/barrier; never a setter."""
+        if record.phase not in TERMINAL or not record.commit_pending:
+            raise CaptureLifecycleError()
+        self._terminal_checked(record, request, recovery=recovery)
+        return self.store.save(record, replace(record, commit_pending=False))

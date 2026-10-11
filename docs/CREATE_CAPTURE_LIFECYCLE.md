@@ -100,9 +100,13 @@ files and malformed records remain refused. A symlinked final state directory
 also fails closed and may block profile-wide admission and activation; Stage 2A
 does not change that policy. Reconstruction only opens and reads.
 
-The phase atomically owns the activation hold: all nonterminal phases retain
-it, including interrupted preparation, capture and restoration. There is no
-independent release flag that can drift from the operation phase. Shared
+The phase and strictly validated `commit_pending` Boolean atomically own the
+activation hold in one record: all nonterminal phases retain it, including
+interrupted preparation, capture and restoration. A terminal phase retains the
+hold while `commit_pending=True`; only a terminal with `commit_pending=False`
+releases it. True is valid only with a terminal phase and its matching outcome.
+Malformed types or inconsistent combinations fail closed. There is no separate
+transaction sidecar. Shared
 `active_activation_hold_ids()` includes Create holds, so existing activation
 guards and private-resource hold readers see them. Corrupt capture state, or
 a competing durable transaction while capture is held, fails closed.
@@ -138,8 +142,8 @@ authority.
    a build was registered, installed, or accepted in Test.app.
 4. Persist `RESTORING` and the intended outcome before restoring precisely the
    original enabled state. Verify owner/version, record identity and enabled
-   state before entering `COMPLETE`, `CANCELLED`, or `FAILED`, releasing the
-   hold. Originally disabled owners remain disabled.
+   state before entering `COMPLETE`, `CANCELLED`, or `FAILED` using the two
+   terminal publications below. Originally disabled owners remain disabled.
 5. Explicit `recover()` cancels or records failure, including after process
    interruption. It never replays capture or guesses original enablement.
    `PREPARING` may still have original enablement; `RESTORING` may already
@@ -151,15 +155,63 @@ authority.
    Recovery may finish after ordinary expiry; preparation/retry and capture
    admission remain expiry-bound. Clock rollback remains blocked. Recovery
    grants neither capture nor restart authority.
-   Repeating recovery for an exact terminal operation returns its record only
-   while original enablement still matches; it performs no lifecycle mutation.
+   Repeating recovery for an exact released terminal operation returns its record
+   only while original enablement still matches; it performs no lifecycle mutation.
+
+### P5 terminal commitment and release
+
+All three outcomes use the existing capture/frozen/restart locks, CAS, pinned
+directory, no-follow IO and lock-identity checks throughout both publications:
+
+1. After verifying the exact request/operation, audited owner/version, and
+   original enabled-state postcondition, publish the terminal outcome with
+   `commit_pending=True`. The temporary file is written, flushed and synced,
+   then atomically replaces the transaction. Readers still see an activation
+   hold. Complete the directory durability barrier and identity/readback checks
+   successfully before proceeding.
+2. Revalidate identity and original enablement, then publish the same terminal
+   outcome with `commit_pending=False`. Release becomes visible at this second
+   atomic replacement. Perform the final directory durability barrier and
+   identity/readback checks. No owner mutation occurs between publications.
+
+Temporary write/sync failure or first replacement failure leaves the preceding
+protected record. First directory-barrier failure or second replacement failure
+leaves a protected pending terminal. Publication alone does not prove durability.
+
+**Approved post-commit exception:** once the first barrier succeeds, the terminal
+outcome is committed. If release is published but its final directory sync fails,
+the caller reports the sanitized `CAPTURE_LIFECYCLE_BLOCKED` persistence error
+even though independent readers can already see release. Keep the published
+evidence; do not blindly restore the hold or repeat enablement changes. Following
+a crash the filesystem may retain the released record or the previously committed
+pending terminal. The caller's error does not itself identify which remains.
+
+Explicit recovery treats a pending terminal as protected work requiring
+finalization. It validates exact request/operation binding, installed owner/version,
+and enabled state equal to the recorded original. Drift or ambiguous observations
+refuse finalization and preserve the hold; no setter, capture or restart is called.
+The recorded outcome and all operation identity/evidence remain unchanged, even
+if recovery's `cancelled` argument requests another outcome. Recovery freshly
+republishes the pending record and completes its directory barrier before freshly
+publishing release and completing the final barrier. This also handles an unknown
+or failed first barrier from an earlier attempt; retrying fsync alone cannot repair
+that failure. Repeated recovery of the released terminal is a read-only no-op.
+
+Schema-version-1 records missing `commit_pending` decode as False, preserving
+legacy released-terminal behavior and the existing missing-metadata limitations.
+Read-only guards and observers create no directories, records or locks. The
+recovery assessor reports a verified pending terminal as
+`TERMINAL_FINALIZATION_PENDING` with advisory `REVIEW_EXPLICIT_RECOVERY`, after
+the existing corruption, competing-operation, identity, observation, legacy-request
+and enablement-mismatch checks. This advice grants no mutation authority.
 
 Missing/corrupt/replaced state, clock rollback, owner drift, unexpected
 enablement, competing operations, and lost restart proof cannot produce a
 capture result or automatic restoration/release. An interrupted read is not
 automatically replayed. If the original-state setter fails or its effect cannot
 be verified, retain the record/hold for explicit recovery. A persistence error
-may occur after replacement: retain the published record, never erase evidence
+may occur after replacement: retain the published record (including the approved
+post-commit released record), never erase evidence
 or roll back blindly. Corrupt records require a separately designed safe
 recovery policy; these stages provide no override or force-release path.
 
@@ -198,3 +250,14 @@ One test calls the real Red Light adapter against a disposable existing WAL
 SQLite resource, forbids initialize/Apply, and compares database/sidecar bytes.
 This is offline evidence only; no Kodi, Test.app, household profile or device
 is accessed.
+
+P5 tests inject write, file-sync, replacement and directory-barrier failures,
+observe both terminal publications from independent processes, and terminate
+synthetic writer processes immediately before/after both replacements and barriers.
+They verify protected pending state, explicit finalization without setters, and
+the approved post-commit error behavior. Process exit and injected failures are
+deterministic synthetic evidence, not real power-loss durability proof. The protocol
+assumes atomic replacement, successful file and directory fsync providing the
+required persistence ordering, a trusted filesystem, and cooperating locked writers.
+Storage hardware, operating-system crash recovery and filesystem durability on
+actual supported profile storage remain unqualified by these tests.

@@ -18,6 +18,7 @@ class RecoveryReason(str, Enum):
     NO_RECORD_OBSERVED = "NO_RECORD_OBSERVED"
     ORDINARY_RECOVERY_POTENTIAL = "ORDINARY_RECOVERY_POTENTIAL"
     TERMINAL_NO_CAPTURE_HOLD = "TERMINAL_NO_CAPTURE_HOLD"
+    TERMINAL_FINALIZATION_PENDING = "TERMINAL_FINALIZATION_PENDING"
     OWNER_IDENTITY_UNVERIFIED = "OWNER_IDENTITY_UNVERIFIED"
     UNEXPECTED_ENABLEMENT = "UNEXPECTED_ENABLEMENT"
     STATE_UNVERIFIABLE = "STATE_UNVERIFIABLE"
@@ -40,6 +41,7 @@ _NEXT = {
     RecoveryReason.NO_RECORD_OBSERVED: RecoveryNextStep.NO_RECOVERY_PROPOSED,
     RecoveryReason.ORDINARY_RECOVERY_POTENTIAL: RecoveryNextStep.REVIEW_EXPLICIT_RECOVERY,
     RecoveryReason.TERMINAL_NO_CAPTURE_HOLD: RecoveryNextStep.NO_RECOVERY_PROPOSED,
+    RecoveryReason.TERMINAL_FINALIZATION_PENDING: RecoveryNextStep.REVIEW_EXPLICIT_RECOVERY,
     RecoveryReason.OWNER_IDENTITY_UNVERIFIED: RecoveryNextStep.OPERATOR_IDENTITY_REVIEW,
     RecoveryReason.UNEXPECTED_ENABLEMENT: RecoveryNextStep.OPERATOR_ENABLEMENT_REVIEW,
     RecoveryReason.STATE_UNVERIFIABLE: RecoveryNextStep.OPERATOR_EVIDENCE_REVIEW,
@@ -72,8 +74,8 @@ def assess_capture_recovery(root: Path, operations) -> CaptureRecoveryAssessment
     Expiry, clock, restart proof and future-action eligibility are not authorized
     or certified by ORDINARY_RECOVERY_POTENTIAL.
     UNEXPECTED_ENABLEMENT also covers a verified terminal restoration-postcondition
-    mismatch in either direction. A terminal mismatch is not an active hold or
-    unfinished Create recovery.
+    mismatch in either direction. A pending terminal retains its hold and needs
+    explicit finalization review; a released terminal mismatch grants no hold.
     """
     def result(reason):
         return CaptureRecoveryAssessment(reason)
@@ -120,6 +122,10 @@ def assess_capture_recovery(root: Path, operations) -> CaptureRecoveryAssessment
         return result(RecoveryReason.OBSERVATIONS_UNVERIFIABLE)
     if not record.request_metadata:
         return result(RecoveryReason.LEGACY_REQUEST_UNAVAILABLE)
+    if record.commit_pending:
+        if enabled[0] != record.original_enabled:
+            return result(RecoveryReason.UNEXPECTED_ENABLEMENT)
+        return result(RecoveryReason.TERMINAL_FINALIZATION_PENDING)
     if not record.held:
         if enabled[0] != record.original_enabled:
             return result(RecoveryReason.UNEXPECTED_ENABLEMENT)
