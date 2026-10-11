@@ -158,6 +158,75 @@ authority.
    Repeating recovery for an exact released terminal operation returns its record
    only while original enablement still matches; it performs no lifecycle mutation.
 
+### D2 explicitly confirmed restoration of original disabled state
+
+This offline entrypoint handles a validated nonterminal transaction whose
+`original_enabled` is exactly False while the audited Red Light owner is
+currently exactly True. It restores disabled state and cancels Create; it
+grants no capture, restart, registration, Install, Apply or startup authority.
+
+`prepare_d2_confirmation(operation_id, request)` validates under the existing
+capture -> frozen-install -> restart locks and returns a `D2Confirmation` with
+the entire validated durable transaction snapshot and a fresh consent UUID.
+The fixed proposal is observed True -> target False, outcome CANCELLED.
+Preparation is not consent and writes no lifecycle record (normal lock files
+may be opened). The trusted caller must present this exact proposal and invoke
+`recover_d2(..., confirmation=snapshot, confirmed=True)` only after explicit
+operator agreement. False, non-Boolean consent or missing confirmation refuses
+before locks or writes. A generic True without the snapshot grants no authority.
+
+The dedicated transition revalidates the full snapshot, request declarations
+and digest, exact operation, original False, owner/version and current True
+under those same locks. Terminal records, including P5 pending terminals,
+cannot obtain D2 authority. All canonical-directory, descriptor, lock identity,
+competing durable-record and active-operation checks remain in force.
+
+Before any setter, it atomically publishes RESTORING with outcome `cancelled`
+and three strictly validated receipt fields in the same held record:
+
+- `d2_consent_id`: the explicit confirmation's canonical UUID.
+- `d2_source_digest`: SHA-256 of the complete validated reviewed transaction,
+  including the request and any preceding receipt.
+- `d2_binding`: SHA-256 binding that source digest and consent ID to the whole
+  restoration record and the fixed explicit consent/action/observed True/target
+  False/CANCELLED proposal. Only phase and `commit_pending` are normalized so
+  the same receipt remains valid across restoration and P5 finalization.
+
+The receipt contains no capture results or private values. It is a binding
+checksum over trusted evidence, not proof of consent from arbitrary forged
+disk bytes. Schema-version-1 legacy records with all three fields absent remain
+readable as no D2 receipt; partial, malformed or contradictory fields refuse.
+Receipts are valid only for original False, available validated request metadata,
+RESTORING/CANCELLED and outcome `cancelled`. They never change original state.
+
+The intent save must finish its file-sync, replacement, directory barrier and
+readback/identity checks successfully before an in-memory permission for one
+setter attempt exists. A visible receipt after any save failure is insufficient.
+After successful persistence the transition freshly validates authority and exact
+Boolean state. If still enabled it calls only `set_enabled(plugin.video.redlight,
+False)` once. If already disabled it skips the setter. It then uses ordinary
+restoration verification and the unchanged two-publication P5 cancellation
+protocol. Owner/state/transaction drift or ambiguous setter effects retain the
+hold, subject to P5's explicitly approved post-commit release exception below.
+
+**No persisted setter replay authority:** after an interrupted or failed attempt,
+an enabled observation cannot distinguish an unperformed disable from a later
+external re-enablement. Generic `recover()` therefore still refuses enabled
+state even with a valid D2 receipt. The previous confirmation is stale once its
+record changes. An enabled retry must obtain a fresh reviewed snapshot and
+renewed explicit agreement, and publish a new receipt with a successful fresh
+durability barrier before one new attempt. No action-completion evidence is
+invented. If already disabled, explicit ordinary recovery verifies and completes
+the recorded cancellation without another setter. P5 pending-terminal recovery
+never gains owner-mutation authority. Expired recovery remains supported;
+clock rollback remains blocked. No recovery is started automatically.
+
+Matching owner/version strings do not prove installed package-byte provenance.
+The injected operations must target the audited owner; these checks do not
+eliminate all races with external actors between observation and mutation.
+Future runtime/UI composition must satisfy that same trusted-operation contract
+and explicitly obtain operator consent. It is outside this implementation.
+
 ### P5 terminal commitment and release
 
 All three outcomes use the existing capture/frozen/restart locks, CAS, pinned
@@ -261,3 +330,7 @@ assumes atomic replacement, successful file and directory fsync providing the
 required persistence ordering, a trusted filesystem, and cooperating locked writers.
 Storage hardware, operating-system crash recovery and filesystem durability on
 actual supported profile storage remain unqualified by these tests.
+
+D2 tests additionally cover intent write/flush/sync/publication failures,
+single-attempt consent, renewed confirmation after external re-enablement,
+interrupted setter/verification/finalization, and D2 pending-terminal guards.

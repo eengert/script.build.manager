@@ -133,6 +133,9 @@ class CaptureTransaction:
     outcome: str = ""
     request_metadata: str = field(default="", repr=False)
     commit_pending: bool = False
+    d2_consent_id: str = ""
+    d2_source_digest: str = ""
+    d2_binding: str = ""
 
     def __post_init__(self):
         try:
@@ -175,6 +178,17 @@ class CaptureTransaction:
                 raise ValueError()
             if self.phase not in TERMINAL | {CapturePhase.RESTORING} and self.outcome:
                 raise ValueError()
+            if any(type(value) is not str for value in (
+                    self.d2_consent_id, self.d2_source_digest, self.d2_binding)):
+                raise ValueError()
+            if any((self.d2_consent_id, self.d2_source_digest, self.d2_binding)):
+                _uuid(self.d2_consent_id)
+                if (not re.fullmatch(r"sha256:[0-9a-f]{64}", self.d2_source_digest)
+                        or self.original_enabled is not False or not self.request_metadata
+                        or self.outcome != "cancelled"
+                        or self.phase not in {CapturePhase.RESTORING, CapturePhase.CANCELLED}
+                        or self.d2_binding != _d2_binding(self)):
+                    raise ValueError()
         except Exception:
             raise CaptureLifecycleError() from None
 
@@ -200,11 +214,64 @@ class CaptureTransaction:
                 value = {**value, "request_metadata": ""}
             if isinstance(value, dict) and "commit_pending" not in value:
                 value = {**value, "commit_pending": False}
+            # Only wholly absent D2 fields are a legacy record. Partial fields
+            # cannot silently downgrade a malformed consent receipt to legacy.
+            d2_fields = {"d2_consent_id", "d2_source_digest", "d2_binding"}
+            if isinstance(value, dict) and not d2_fields.intersection(value):
+                value = {**value, **dict.fromkeys(d2_fields, "")}
             if (not isinstance(value, dict) or set(value) != fields | {"schema_version", "operation_kind"}
                     or type(value["schema_version"]) is not int or value["schema_version"] != 1
                     or value["operation_kind"] != "create_capture"):
                 raise ValueError()
             return cls(**{key: CapturePhase(value[key]) if key == "phase" else value[key] for key in fields})
+        except Exception:
+            raise CaptureLifecycleError() from None
+
+
+def _digest(value):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _d2_binding(record):
+    """Bind the consent receipt across restoration and P5 finalization only.
+
+    A checksum validates the binding, not authenticity of arbitrary disk edits.
+    The trusted confirmation caller supplies explicit consent, never disk alone.
+    """
+    return _d2_binding_values(asdict(record))
+
+
+def _d2_binding_values(values):
+    bound = dict(values)
+    bound.pop("d2_binding")
+    bound.update(phase="restoring", commit_pending=False)
+    return _digest({"record": bound, "explicitly_confirmed": True,
+        "observed_enabled": True, "target_enabled": False, "outcome": "cancelled",
+        "action": "restore_original_disabled_and_cancel_create"})
+
+
+@dataclass(frozen=True)
+class D2Confirmation:
+    """Trusted review snapshot for one fixed disable-and-cancel action.
+
+    Preparing a snapshot is not consent. recover_d2 requires confirmed=True and
+    compares the whole snapshot under all three locks before persisting consent.
+    """
+    record: CaptureTransaction = field(repr=False)
+    consent_id: str
+    observed_enabled: bool = True
+    target_enabled: bool = False
+    outcome: str = "cancelled"
+
+    def __post_init__(self):
+        try:
+            _uuid(self.consent_id)
+            if (type(self.record) is not CaptureTransaction
+                    or self.observed_enabled is not True or self.target_enabled is not False
+                    or self.outcome != "cancelled" or self.record.phase in TERMINAL
+                    or self.record.original_enabled is not False or not self.record.request_metadata):
+                raise ValueError()
         except Exception:
             raise CaptureLifecycleError() from None
 
@@ -613,6 +680,62 @@ class CaptureLifecycleCoordinator:
                 raise CaptureLifecycleError() from None
             self._restore(record, request, "complete")
             return result
+
+    def prepare_d2_confirmation(self, operation_id, request):
+        """Explicit review preparation; no lifecycle writes or owner mutation."""
+        with self._exclusive():
+            record = self._checked(operation_id, request, recovery=True)
+            self._d2_candidate(record, request)
+            return D2Confirmation(record, str(uuid.uuid4()))
+
+    def _d2_candidate(self, record, request):
+        if (record.phase in TERMINAL or record.original_enabled is not False
+                or self.operations.enabled(record.owner_id) is not True
+                or self._checked(record.operation_id, request, recovery=True) != record):
+            raise CaptureLifecycleError()
+
+    def recover_d2(self, operation_id, request, *, confirmation=None, confirmed=False):
+        """Authorize one disabling attempt, then cancel via the accepted P5 path.
+
+        Persisted intent NEVER authorizes setter replay. If a fresh coordinator
+        finds enabled state after interruption, it requires renewed confirmation:
+        trusted observations cannot distinguish no effect from external re-enable.
+        Already-disabled recovery needs no setter and can use ordinary recover().
+        """
+        if confirmed is not True or type(confirmation) is not D2Confirmation:
+            raise CaptureLifecycleError()
+        # Validate even a caller-forged dataclass before any filesystem changes.
+        replace(confirmation)
+        with self._exclusive():
+            record = self._checked(operation_id, request, recovery=True)
+            self._d2_candidate(record, request)
+            if record != confirmation.record:
+                raise CaptureLifecycleError()
+            # A new receipt includes the exact reviewed source (including any
+            # prior receipt), and the explicit fixed action. Never infer consent.
+            values = dict(phase=CapturePhase.RESTORING, outcome="cancelled",
+                d2_consent_id=confirmation.consent_id,
+                d2_source_digest=_digest(record.to_dict()))
+            # Compute the binding without constructing an invalid partial receipt.
+            bound = asdict(record)
+            bound.update(values, commit_pending=False)
+            binding = _d2_binding_values(bound)
+            intended = replace(record, **values, d2_binding=binding)
+            # save() must return successfully, including its durability barrier.
+            # A visible receipt after an error grants no in-memory setter permit.
+            record = self.store.save(record, intended)
+            if self._checked(operation_id, request, recovery=True) != record:
+                raise CaptureLifecycleError()
+            enabled = self.operations.enabled(record.owner_id)
+            if type(enabled) is not bool:
+                raise CaptureLifecycleError()
+            if enabled:
+                if self._checked(operation_id, request, recovery=True) != record:
+                    raise CaptureLifecycleError()
+                self.operations.set_enabled(record.owner_id, False)
+            # The ordinary path verifies disabled state and owner and performs
+            # P5. It still refuses unexpected enablement, even with this receipt.
+            return self._restore(record, request, "cancelled", recovery=True)
 
     def recover(self, operation_id, request, *, cancelled=True):
         """Explicit cancellation/failure recovery, including interrupted restoration."""
