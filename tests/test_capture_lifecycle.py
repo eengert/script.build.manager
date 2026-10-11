@@ -2361,6 +2361,73 @@ class D2RecoveryTests(unittest.TestCase):
             self.assertEqual(self.store.read().phase, CapturePhase.RESTORING)
             self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
 
+    def test_confirmation_cannot_cross_profile_with_copied_record(self):
+        record, confirmation = self.candidate()
+        other = D2RecoveryTests()
+        other.setUp()
+        self.addCleanup(other.doCleanups)
+        with other.store.locked():
+            other.store.save(None, record)
+        other.ops.current_enabled = True
+        before = other.store.path.read_bytes()
+        with self.assertRaises(CaptureLifecycleError):
+            other.coordinator.recover_d2(record.operation_id, self.request,
+                confirmation=confirmation, confirmed=True)
+        self.assertEqual(other.store.path.read_bytes(), before)
+        self.assertEqual(other.ops.mutations, [])
+        self.assertTrue(other.store.read().held)
+        # A fresh explicit proposal made for B may authorize B independently.
+        renewed = other.coordinator.prepare_d2_confirmation(record.operation_id, self.request)
+        result = other.coordinator.recover_d2(record.operation_id, self.request,
+            confirmation=renewed, confirmed=True)
+        self.assertFalse(result.held)
+        self.assertEqual(other.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        self.assertEqual(self.ops.mutations, [])
+        self.assert_protected()
+
+    def test_confirmation_cannot_cross_replaced_root_with_same_record(self):
+        record, confirmation = self.candidate()
+        retained = self.root.with_name('retained-root')
+        self.root.rename(retained)
+        self.root.mkdir()
+        self.store = CaptureStore(self.root)
+        self.coordinator = self.make_coordinator()
+        with self.store.locked():
+            self.store.save(None, record)
+        before = self.store.path.read_bytes()
+        with self.assertRaises(CaptureLifecycleError):
+            self.confirm(record, confirmation)
+        self.assertEqual(before, self.store.path.read_bytes())
+        self.assertEqual(self.ops.mutations, [])
+        self.assert_protected()
+
+    def test_confirmation_aliases_share_the_same_canonical_profile_binding(self):
+        CaptureLifecycleTests.use_symlinked_profile(self)
+        self.coordinator = self.make_coordinator()
+        record, confirmation = self.candidate()
+        canonical = CaptureLifecycleCoordinator(store=CaptureStore(self.root),
+            restart_store=self.restart, operations=self.ops, clock=lambda: self.now)
+        result = canonical.recover_d2(record.operation_id, self.request,
+            confirmation=confirmation, confirmed=True)
+        self.assertFalse(result.held)
+        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+        self.assertNotIn(str(self.root), self.store.path.read_text())
+        self.assertNotIn(str(self.root), repr(confirmation))
+
+    def test_confirmation_invalid_or_mismatched_root_binding_fails_closed(self):
+        record, confirmation = self.candidate()
+        for value in ('', None, True, 'sha256:bad', SECRET):
+            with self.assertRaises(CaptureLifecycleError) as error:
+                replace(confirmation, root_binding=value)
+            self.assertNotIn(SECRET, str(error.exception))
+        wrong = replace(confirmation, root_binding='sha256:' + '0' * 64)
+        before = self.store.path.read_bytes()
+        with self.assertRaises(CaptureLifecycleError):
+            self.confirm(record, wrong)
+        self.assertEqual(before, self.store.path.read_bytes())
+        self.assertEqual(self.ops.mutations, [])
+        self.assert_protected()
+
     def test_disabled_during_consent_publication_skips_setter(self):
         record, confirmation = self.candidate()
         save = self.store.save

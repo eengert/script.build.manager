@@ -260,6 +260,7 @@ class D2Confirmation:
     """
     record: CaptureTransaction = field(repr=False)
     consent_id: str
+    root_binding: str = field(default="", repr=False)
     observed_enabled: bool = True
     target_enabled: bool = False
     outcome: str = "cancelled"
@@ -268,6 +269,8 @@ class D2Confirmation:
         try:
             _uuid(self.consent_id)
             if (type(self.record) is not CaptureTransaction
+                    or type(self.root_binding) is not str
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", self.root_binding)
                     or self.observed_enabled is not True or self.target_enabled is not False
                     or self.outcome != "cancelled" or self.record.phase in TERMINAL
                     or self.record.original_enabled is not False or not self.record.request_metadata):
@@ -686,7 +689,16 @@ class CaptureLifecycleCoordinator:
         with self._exclusive():
             record = self._checked(operation_id, request, recovery=True)
             self._d2_candidate(record, request)
-            return D2Confirmation(record, str(uuid.uuid4()))
+            return D2Confirmation(record, str(uuid.uuid4()), self._d2_root_binding())
+
+    def _d2_root_binding(self):
+        """Opaque profile binding from the canonical root pinned by all locks."""
+        fd = self.store._transition_fd
+        if type(fd) is not int or fd < 0:
+            raise CaptureLifecycleError()
+        self.store._validate_directory(fd)
+        identity = self.store._identity(os.fstat(fd))
+        return _digest({"canonical_root": str(self.store.root), "identity": identity})
 
     def _d2_candidate(self, record, request):
         if (record.phase in TERMINAL or record.original_enabled is not False
@@ -709,13 +721,15 @@ class CaptureLifecycleCoordinator:
         with self._exclusive():
             record = self._checked(operation_id, request, recovery=True)
             self._d2_candidate(record, request)
-            if record != confirmation.record:
+            if (record != confirmation.record
+                    or self._d2_root_binding() != confirmation.root_binding):
                 raise CaptureLifecycleError()
             # A new receipt includes the exact reviewed source (including any
             # prior receipt), and the explicit fixed action. Never infer consent.
             values = dict(phase=CapturePhase.RESTORING, outcome="cancelled",
                 d2_consent_id=confirmation.consent_id,
-                d2_source_digest=_digest(record.to_dict()))
+                d2_source_digest=_digest({"root_binding": confirmation.root_binding,
+                                         "transaction": record.to_dict()}))
             # Compute the binding without constructing an invalid partial receipt.
             bound = asdict(record)
             bound.update(values, commit_pending=False)
@@ -724,13 +738,15 @@ class CaptureLifecycleCoordinator:
             # save() must return successfully, including its durability barrier.
             # A visible receipt after an error grants no in-memory setter permit.
             record = self.store.save(record, intended)
-            if self._checked(operation_id, request, recovery=True) != record:
+            if (self._checked(operation_id, request, recovery=True) != record
+                    or self._d2_root_binding() != confirmation.root_binding):
                 raise CaptureLifecycleError()
             enabled = self.operations.enabled(record.owner_id)
             if type(enabled) is not bool:
                 raise CaptureLifecycleError()
             if enabled:
-                if self._checked(operation_id, request, recovery=True) != record:
+                if (self._checked(operation_id, request, recovery=True) != record
+                        or self._d2_root_binding() != confirmation.root_binding):
                     raise CaptureLifecycleError()
                 self.operations.set_enabled(record.owner_id, False)
             # The ordinary path verifies disabled state and owner and performs

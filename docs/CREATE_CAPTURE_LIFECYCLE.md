@@ -167,7 +167,8 @@ grants no capture, restart, registration, Install, Apply or startup authority.
 
 `prepare_d2_confirmation(operation_id, request)` validates under the existing
 capture -> frozen-install -> restart locks and returns a `D2Confirmation` with
-the entire validated durable transaction snapshot and a fresh consent UUID.
+the entire validated durable transaction snapshot, a fresh consent UUID, and an
+opaque binding to the canonical profile root and pinned directory identity.
 The fixed proposal is observed True -> target False, outcome CANCELLED.
 Preparation is not consent and writes no lifecycle record (normal lock files
 may be opened). The trusted caller must present this exact proposal and invoke
@@ -177,7 +178,11 @@ before locks or writes. A generic True without the snapshot grants no authority.
 
 The dedicated transition revalidates the full snapshot, request declarations
 and digest, exact operation, original False, owner/version and current True
-under those same locks. Terminal records, including P5 pending terminals,
+under those same locks, including the profile binding before publication and
+again before any setter. Copying the same record to another profile or replacing
+the root cannot make the original confirmation authorize that destination.
+Canonical trusted aliases to the same pinned directory retain the same binding.
+Terminal records, including P5 pending terminals,
 cannot obtain D2 authority. All canonical-directory, descriptor, lock identity,
 competing durable-record and active-operation checks remain in force.
 
@@ -186,7 +191,9 @@ and three strictly validated receipt fields in the same held record:
 
 - `d2_consent_id`: the explicit confirmation's canonical UUID.
 - `d2_source_digest`: SHA-256 of the complete validated reviewed transaction,
-  including the request and any preceding receipt.
+  including the request and any preceding receipt, together with its opaque
+  profile binding. The canonical path and filesystem identity are not persisted
+  as raw fields or emitted in confirmation diagnostics.
 - `d2_binding`: SHA-256 binding that source digest and consent ID to the whole
   restoration record and the fixed explicit consent/action/observed True/target
   False/CANCELLED proposal. Only phase and `commit_pending` are normalized so
