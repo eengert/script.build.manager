@@ -81,18 +81,19 @@ its own canonical descriptor and creates no directories or locks. Competing
 records use the existing bounded no-follow reader and their original typed
 validators; stable absence permits admission. The pinned directory's
 `st_mtime_ns` and `st_ctime_ns` are compared immediately before and after both
-competing-record reads. Any detected directory-entry change during that bounded
+competing-record reads. Any detected directory timestamp change during that bounded
 observation fails closed, regardless of the returned record values. Unsafe,
 unreadable, corrupt and unsupported records also fail closed.
 
-This check relies on the trusted profile filesystem reporting entry changes in
-those timestamps, as verified for immediate synthetic record moves on macOS.
-It does not detect movement before or after the observation window or establish
-cross-process or cross-session tamper detection. It is not a filesystem integrity
-monitor. CaptureStore/coordinator composition remains single-threaded; the
-transition descriptor is sampled once per competing observation, retained by the
-existing lock scope, and cleared on exit. This does not add shared-store threading
-support or lock reentrancy.
+This timestamp-based check depends on the trusted profile filesystem reporting
+those changes at sufficiently fine timestamp resolution. It was verified for
+immediate synthetic record moves on macOS/APFS and is not guaranteed for
+coarse-resolution filesystems. It does not detect movement before or after the
+observation window or establish cross-process or cross-session tamper detection.
+It is not a filesystem integrity monitor. CaptureStore/coordinator composition
+remains single-threaded; the transition descriptor is sampled once per competing
+observation, retained by the existing lock scope, and cleared on exit. This does
+not add shared-store threading support or lock reentrancy.
 All three operation locks keep their existing filenames and OS flock semantics;
 lock substitution is rejected. Final state-file symlinks, nonregular/oversized
 files and malformed records remain refused. A symlinked final state directory
@@ -110,10 +111,13 @@ Install admission and frozen/restart transaction creation reject a held
 capture. Restart coordination and direct BuildManager reconciliation reject
 capture before invoking their mutating owners. Capture takes the existing
 frozen-install and restart OS locks, plus its own OS lock, throughout a
-transition and its callbacks. It rejects busy locks, any pending Install or
-restart record, and an injected in-flight-operation conflict. It does not
-borrow a `RestartTransaction`, `ReconcileRequest`, or transaction-access
-capability to gain Install/Apply authority.
+transition and its callbacks. It rejects busy locks, pending Install or restart
+transactions detected by its bounded competing-record observation, and an
+injected in-flight-operation conflict. This guarantee applies only when their
+records are present during that observation; a record moved away before
+observation begins is outside it. It does not borrow a `RestartTransaction`,
+`ReconcileRequest`, or transaction-access capability to gain Install/Apply
+authority.
 
 ## Transitions and recovery
 
