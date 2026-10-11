@@ -71,6 +71,9 @@ def assess_capture_recovery(root: Path, operations) -> CaptureRecoveryAssessment
     Repeated observations detect disagreement, not every possible external race.
     Expiry, clock, restart proof and future-action eligibility are not authorized
     or certified by ORDINARY_RECOVERY_POTENTIAL.
+    UNEXPECTED_ENABLEMENT also covers a verified terminal restoration-postcondition
+    mismatch in either direction. A terminal mismatch is not an active hold or
+    unfinished Create recovery.
     """
     def result(reason):
         return CaptureRecoveryAssessment(reason)
@@ -117,10 +120,10 @@ def assess_capture_recovery(root: Path, operations) -> CaptureRecoveryAssessment
         return result(RecoveryReason.OBSERVATIONS_UNVERIFIABLE)
     if not record.request_metadata:
         return result(RecoveryReason.LEGACY_REQUEST_UNAVAILABLE)
-    if not record.original_enabled and enabled[0]:
-        return result(RecoveryReason.UNEXPECTED_ENABLEMENT)
     if not record.held:
         if enabled[0] != record.original_enabled:
-            return result(RecoveryReason.OBSERVATIONS_UNVERIFIABLE)
+            return result(RecoveryReason.UNEXPECTED_ENABLEMENT)
         return result(RecoveryReason.TERMINAL_NO_CAPTURE_HOLD)
+    if not record.original_enabled and enabled[0]:
+        return result(RecoveryReason.UNEXPECTED_ENABLEMENT)
     return result(RecoveryReason.ORDINARY_RECOVERY_POTENTIAL)

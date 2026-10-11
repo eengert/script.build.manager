@@ -127,7 +127,10 @@ class RecoveryAssessorTests(unittest.TestCase):
                     self.ops.enabled.return_value = original
                     self.assess(R.TERMINAL_NO_CAPTURE_HOLD)
                     self.ops.enabled.return_value = not original
-                    self.assess(R.OBSERVATIONS_UNVERIFIABLE if original else R.UNEXPECTED_ENABLEMENT)
+                    mismatch = self.assess(R.UNEXPECTED_ENABLEMENT)
+                    self.assertEqual(mismatch.safe_dict()['next_step'],
+                                     'OPERATOR_ENABLEMENT_REVIEW')
+                    self.assertIs(mismatch.safe_dict()['advisory_only'], True)
 
     def test_identity_problems_take_priority_over_d2(self):
         self.write(replace(self.record, original_enabled=False))
@@ -138,6 +141,14 @@ class RecoveryAssessorTests(unittest.TestCase):
                 self.assess(R.OWNER_IDENTITY_UNVERIFIED)
         self.ops.owner_version.side_effect = RuntimeError(SECRET)
         self.assess(R.OWNER_IDENTITY_UNVERIFIED)
+        self.ops.owner_version.side_effect = None
+        self.ops.owner_version.return_value = '2.6.9'
+        for original, current in ((False, True), (True, False)):
+            with self.subTest(terminal_original=original, terminal_current=current):
+                self.write(replace(self.record, phase=CapturePhase.COMPLETE, outcome='complete',
+                    capture_session_id=CAPTURE_SESSION, original_enabled=original))
+                self.ops.enabled.return_value = current
+                self.assess(R.OWNER_IDENTITY_UNVERIFIED)
 
     def test_inconsistent_identity_and_enablement(self):
         self.write()
