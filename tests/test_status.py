@@ -1945,3 +1945,141 @@ class PrivateUnreadabilityPrecedence(StatusBase):
         self.assertEqual({item.kind: item.level for item in result.private.items}, {
             PrivateItemKind.SETTINGS: AreaLevel.CHANGES_NEEDED,
             PrivateItemKind.RESOURCE: AreaLevel.UNAVAILABLE})
+
+
+class CreateStatusIntegrationTests(StatusBase):
+    def observe(self, observation, **owners):
+        from resources.lib.status_model import CreateObservation
+        h = self.current()
+        with h.instrumented():
+            result = h.service(create_observer=lambda: observation, **owners).check(h.target())
+        self.assertEqual(h.touched, [])
+        self.assertEqual(h.config_backend.mutations, [])
+        self.assertEqual(h.deps.mutations, [])
+        return h, result
+
+    def test_no_record_preserves_status(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        self.assertEqual(h.service(create_observer=lambda: C.NO_RECORD_OBSERVED).check(h.target()),
+                         h.service().check(h.target()))
+
+    def test_all_observed_states_and_unknown_eligibility(self):
+        from resources.lib.status_model import CreateObservation as C
+        for value in C:
+            with self.subTest(value=value):
+                _, result = self.observe(value)
+                unresolved = value in (C.HELD, C.TERMINAL_PENDING, C.UNVERIFIABLE)
+                self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION if unresolved
+                                 else OverallStatus.CURRENT)
+                self.assertEqual(result.operation.protection_active, value in (C.HELD, C.TERMINAL_PENDING))
+                self.assertEqual(result.operation.protection_unknown, value is C.UNVERIFIABLE)
+                self.assertEqual(result.operation.create_observation, value)
+                self.assertNotIn('recovery_eligible', result.to_safe_dict()['operation'])
+
+    def test_failed_or_untyped_observer_is_sanitized(self):
+        from resources.lib.status_model import CreateObservation as C
+        def broken():
+            raise RuntimeError(SECRET + '/private/profile')
+        h = self.current()
+        for observer in (broken, lambda: SECRET, lambda: None):
+            result = h.service(create_observer=observer).check(h.target())
+            self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+            self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+            self.assertTrue(result.operation.protection_unknown)
+            self.assertSecretFree(result, h.logs)
+            self.assertNotIn('/private/profile', safe_text(result))
+
+    def test_fresh_observer_on_every_check(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        values = iter((C.HELD, C.TERMINAL_PENDING, C.TERMINAL_RELEASED, C.NO_RECORD_OBSERVED))
+        service = h.service(create_observer=lambda: next(values))
+        self.assertEqual([service.check(h.target()).operation.create_observation for _ in range(4)],
+                         [C.HELD, C.TERMINAL_PENDING, C.TERMINAL_RELEASED, C.NO_RECORD_OBSERVED])
+
+    def test_overlap_retains_restart_publication_and_holds(self):
+        from resources.lib.status_model import CreateObservation as C
+        for create in C:
+            with self.subTest(create=create):
+                h = self.current()
+                h.restart_transaction()
+                h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART, hold=(DEMO,), released=False)
+                result = h.service(create_observer=lambda: create,
+                                   publication_snapshot=lambda: object()).check(h.target())
+                self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+                self.assertEqual(result.operation.status_code, 'APPLIED_PUBLICATION_PENDING')
+                self.assertIn(OperationCode.AWAITING_RESTART, result.operation.other_codes)
+                self.assertTrue(result.operation.protection_active)
+                self.assertEqual(result.operation.create_observation, create)
+
+    def test_create_raises_severity_without_losing_restart(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        h.restart_transaction()
+        result = h.service(create_observer=lambda: C.HELD).check(h.target())
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertIn(OperationCode.AWAITING_RESTART, result.operation.other_codes)
+        self.assertTrue(result.operation.protection_active)
+
+    def test_frozen_failure_is_not_hidden_by_create(self):
+        from resources.lib.status_model import CreateObservation as C
+        def broken():
+            raise frozen_install.FrozenInstallStateUnreadable()
+        h, result = self.observe(C.HELD, frozen_snapshot=broken)
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertIn(OperationCode.TRANSACTION_UNREADABLE, result.operation.other_codes)
+        self.assertIn(CheckGap.OPERATION_STATE_UNAVAILABLE, result.gaps)
+        self.assertTrue(result.operation.protection_active)
+        self.assertTrue(result.operation.protection_unknown)
+
+    def test_model_rejects_false_hold_and_unknown_claims(self):
+        from resources.lib.status_model import CreateObservation as C
+        for value in (C.HELD, C.TERMINAL_PENDING, C.UNVERIFIABLE):
+            with self.assertRaises(ValueError):
+                OperationStatus(create_observation=value)
+        with self.assertRaises(ValueError):
+            OperationStatus(other_codes=(SECRET,))
+
+
+    def test_restart_observation_failure_does_not_erase_create_hold(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        h.restart_transaction()
+        def broken_session():
+            raise RuntimeError(SECRET)
+        result = h.service(create_observer=lambda: C.HELD, session_id=broken_session).check(h.target())
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertTrue(result.operation.protection_active)
+        self.assertIn(OperationCode.TRANSACTION_UNREADABLE, result.operation.other_codes)
+        self.assertSecretFree(result)
+
+
+    def test_check_with_real_reader_creates_nothing_and_takes_no_capture_lock(self):
+        from resources.lib.capture_lifecycle import CaptureStore, CaptureLifecycleCoordinator
+        from resources.lib.create_status import observe_create_state
+        from resources.lib.status_model import CreateObservation as C
+        h = Harness(self)
+        self.assertFalse(h.frozen_root.exists())
+        before = tuple(h.profile.rglob('*'))
+        service = h.service(create_observer=lambda: observe_create_state(h.frozen_root))
+        flags = []
+        original_open = os.open
+        def read_open(path, value, *args, **kwargs):
+            flags.append(value)
+            return original_open(path, value, *args, **kwargs)
+        with patch('os.open', side_effect=read_open), \
+             patch('os.mkdir', side_effect=AssertionError('mkdir')) as mkdir, \
+             patch.object(CaptureStore, '_lock', side_effect=AssertionError('lock')) as lock, \
+             patch.object(CaptureStore, 'save', side_effect=AssertionError('save')) as save, \
+             patch.object(CaptureLifecycleCoordinator, 'recover', side_effect=AssertionError('recover')) as recover, \
+             h.instrumented():
+            result = service.check()
+        for tripwire in (mkdir, lock, save, recover):
+            tripwire.assert_not_called()
+        self.assertFalse(any(value & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC)
+                             for value in flags))
+        self.assertEqual(tuple(h.profile.rglob('*')), before)
+        self.assertFalse(h.frozen_root.exists())
+        self.assertEqual(result.operation.create_observation, C.NO_RECORD_OBSERVED)
+        self.assertEqual(h.touched, [])

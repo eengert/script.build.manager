@@ -7,7 +7,7 @@ only reference an allowlisted string identifier.
 """
 from dataclasses import dataclass
 from resources.lib.status_model import (
-    AreaLevel, BuildStatus, CheckGap, OperationCode, OperationKind, OverallStatus,
+    CreateObservation, AreaLevel, BuildStatus, CheckGap, OperationCode, OperationKind, OverallStatus,
     PrivateItemKind, SoftwareItemState,
 )
 from resources.lib.ui.models import Semantic
@@ -79,6 +79,14 @@ ITEM_STATE = {
     SoftwareItemState.WRONG_ENABLED_STATE: 32492, SoftwareItemState.UNCHECKABLE: 32493,
 }
 PRIVATE_KIND = {PrivateItemKind.SETTINGS: 32520, PrivateItemKind.RESOURCE: 32521}
+CREATE_TEXT = {
+    CreateObservation.HELD: 32563,
+    CreateObservation.TERMINAL_PENDING: 32564,
+    CreateObservation.TERMINAL_RELEASED: 32565,
+    CreateObservation.UNVERIFIABLE: 32566,
+}
+S_PROTECTION_UNKNOWN = 32567
+
 OPERATION_TEXT = {     # TRANSACTION_UNREADABLE is explained by its check gap instead
     OperationCode.RESUME_PENDING: 32530, OperationCode.OPERATION_NOT_FINISHED: 32531,
     OperationCode.TRANSACTION_INVALID: 32532,
@@ -95,6 +103,7 @@ STATUS_TEXT_IDS = frozenset(
      S_SELECTED_NOT_APPLIED, S_SELECTED_NOTE, S_SELECTED_UNREADABLE, S_UNNAMED_BUILD]
     + list(OVERALL_LABEL.values()) + list(OVERALL_SENTENCE.values())
     + list(AREA_STATE.values()) + list(GAP_TEXT.values()) + list(ITEM_STATE.values())
+    + list(CREATE_TEXT.values()) + [S_PROTECTION_UNKNOWN]
     + list(PRIVATE_KIND.values()) + list(OPERATION_TEXT.values())
     + [i for table in BULLET.values() for i in table.values()])
 
@@ -286,6 +295,15 @@ def _overall_detail(status):
     operation = status.operation
     if operation.kind is not OperationKind.NONE and operation.code in OPERATION_TEXT:
         lines.append(Text(OPERATION_TEXT[operation.code]))
+    for code in operation.other_codes:
+        if code is OperationCode.AWAITING_RESTART:
+            lines.append(Text(OVERALL_SENTENCE[OverallStatus.RESTART_REQUIRED]))
+        elif code in OPERATION_TEXT:
+            lines.append(Text(OPERATION_TEXT[code]))
+    if operation.create_observation in CREATE_TEXT:
+        lines.append(Text(CREATE_TEXT[operation.create_observation]))
+    if operation.protection_unknown:
+        lines.append(Text(S_PROTECTION_UNKNOWN))
     if operation.protection_active:
         lines.append(Text(S_PROTECTION))
     if status.build_selected:

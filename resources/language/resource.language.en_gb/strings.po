@@ -1116,3 +1116,23 @@ msgstr ""
 msgctxt "#32916"
 msgid "Desired revision: %s %s\n\nChoosing a revision changes only this session. The applied build stays the same until a completed apply is verified."
 msgstr ""
+
+msgctxt "#32563"
+msgid "Create Build has unfinished work. Protection stays on. Recovery readiness has not been checked."
+msgstr ""
+
+msgctxt "#32564"
+msgid "Create Build still needs final checks before protection can be released. Recovery readiness has not been checked."
+msgstr ""
+
+msgctxt "#32565"
+msgid "Released Create Build work was observed. It adds no protection. Other work may still be protected."
+msgstr ""
+
+msgctxt "#32566"
+msgid "Create Build progress could not be verified. Recovery readiness has not been checked."
+msgstr ""
+
+msgctxt "#32567"
+msgid "Some protection state could not be verified."
+msgstr ""

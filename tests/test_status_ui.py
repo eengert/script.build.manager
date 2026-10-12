@@ -326,7 +326,7 @@ class Language(unittest.TestCase):
     def test_every_status_string_exists_and_is_plain(self):
         for identifier in sorted(STATUS_TEXT_IDS):
             self.assertIn(identifier, STRINGS, identifier)
-        for identifier in range(32401, 32563):
+        for identifier in range(32401, 32568):
             if identifier not in STRINGS:
                 continue
             lowered = STRINGS[identifier].lower()
@@ -334,8 +334,8 @@ class Language(unittest.TestCase):
                 self.assertNotIn(term, lowered, (identifier, term))
 
     def test_the_status_blocks_are_all_used(self):
-        defined = {i for i in STRINGS if 32401 <= i <= 32562}
-        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32563)))
+        defined = {i for i in STRINGS if 32401 <= i <= 32567}
+        self.assertEqual(defined, set(STATUS_TEXT_IDS) & set(range(32401, 32568)))
 
     def test_every_view_text_renders_without_falling_back_to_a_raw_template(self):
         ui = NativeDialogs(Addon(), Dialog([]), lambda ms: None)
@@ -629,3 +629,39 @@ class AppliedAndSelected(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CreateObservationPresentation(unittest.TestCase):
+    def test_create_states_are_plain_and_do_not_offer_recovery(self):
+        from resources.lib.status_model import CreateObservation as C
+        for value, text in ((C.HELD, 'unfinished work'),
+                            (C.TERMINAL_PENDING, 'final checks'),
+                            (C.TERMINAL_RELEASED, 'Released Create Build'),
+                            (C.UNVERIFIABLE, 'could not be verified')):
+            held = value in (C.HELD, C.TERMINAL_PENDING)
+            unresolved = value is not C.TERMINAL_RELEASED
+            operation = OperationStatus(
+                OperationKind.NEEDS_ATTENTION if unresolved else OperationKind.NONE,
+                OperationCode.OPERATION_NOT_FINISHED if unresolved else OperationCode.NONE,
+                protection_active=held, create_observation=value,
+                protection_unknown=value is C.UNVERIFIABLE)
+            result = status(overall=OverallStatus.NEEDS_ATTENTION if unresolved
+                            else OverallStatus.CURRENT, operation=operation)
+            _, dialog, _ = open_status(lambda: result, 0)
+            detail = dialog.details[0][1]
+            self.assertIn(text, detail)
+            if value is C.UNVERIFIABLE:
+                self.assertIn('Some protection state could not be verified', detail)
+            if held:
+                self.assertIn('protection stays on', detail)
+            self.assertNotIn('Recover now', detail)
+
+    def test_overlapping_restart_and_create_are_both_visible(self):
+        from resources.lib.status_model import CreateObservation as C
+        result = status(overall=OverallStatus.NEEDS_ATTENTION, operation=OperationStatus(
+            OperationKind.NEEDS_ATTENTION, OperationCode.OPERATION_NOT_FINISHED,
+            protection_active=True, create_observation=C.HELD,
+            other_codes=(OperationCode.AWAITING_RESTART,)))
+        _, dialog, _ = open_status(lambda: result, 0)
+        self.assertIn('unfinished work', dialog.details[0][1])
+        self.assertIn('Fully close Kodi and open it again', dialog.details[0][1])

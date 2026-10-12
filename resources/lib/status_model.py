@@ -68,6 +68,16 @@ class PrivateItemKind(str, Enum):
     RESOURCE = "resource"
 
 
+class CreateObservation(str, Enum):
+    """Record observation only; owner and recovery eligibility remain unassessed."""
+
+    NO_RECORD_OBSERVED = "no_record_observed"
+    HELD = "held"
+    TERMINAL_PENDING = "terminal_pending"
+    TERMINAL_RELEASED = "terminal_released"
+    UNVERIFIABLE = "unverifiable"
+
+
 class OperationKind(str, Enum):
     NONE = "none"
     RESTART_REQUIRED = "restart_required"
@@ -233,9 +243,28 @@ class OperationStatus:
     kind: OperationKind = OperationKind.NONE
     code: OperationCode = OperationCode.NONE
     status_code: str = ""            # sanitized product status code, or ""
-    protection_active: bool = False  # an activation hold is still in force
+    protection_active: bool = False  # at least one verified activation hold is in force
+
+    create_observation: CreateObservation = CreateObservation.NO_RECORD_OBSERVED
+    protection_unknown: bool = False  # another hold may exist but could not be verified
+    other_codes: Tuple[OperationCode, ...] = ()
 
     def __post_init__(self) -> None:
+        _require(type(self.create_observation) is CreateObservation, "unsupported Create observation")
+        _require(type(self.protection_unknown) is bool, "unsupported protection uncertainty")
+        _require(isinstance(self.other_codes, tuple)
+                 and len(self.other_codes) <= len(OperationCode)
+                 and all(type(code) is OperationCode and code is not OperationCode.NONE
+                         for code in self.other_codes)
+                 and len(set(self.other_codes)) == len(self.other_codes),
+                 "unsupported additional operation codes")
+        _require(self.create_observation is not CreateObservation.UNVERIFIABLE
+                 or self.protection_unknown, "unverified Create protection must remain unknown")
+        _require(self.create_observation not in (CreateObservation.HELD, CreateObservation.TERMINAL_PENDING)
+                 or self.protection_active, "observed Create hold must be protected")
+        _require(self.create_observation not in (CreateObservation.HELD, CreateObservation.TERMINAL_PENDING,
+                                                 CreateObservation.UNVERIFIABLE)
+                 or self.kind is OperationKind.NEEDS_ATTENTION, "unresolved Create needs attention")
         _require(isinstance(self.kind, OperationKind), "unsupported operation kind")
         _require(isinstance(self.code, OperationCode), "unsupported operation code")
         _require(isinstance(self.status_code, str)
@@ -445,6 +474,9 @@ class BuildStatus:
                 "code": self.operation.code.value,
                 "status_code": self.operation.status_code,
                 "protection_active": self.operation.protection_active,
+                "protection_unknown": self.operation.protection_unknown,
+                "create_observation": self.operation.create_observation.value,
+                "other_codes": [code.value for code in self.operation.other_codes],
             },
             "gaps": [gap.value for gap in self.gaps],
         }

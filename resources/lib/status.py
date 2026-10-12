@@ -85,6 +85,7 @@ from resources.lib.session import peek_current_kodi_session_id
 from resources.lib.startup import StartupClassification, classify_startup_transaction
 from resources.lib.status_model import (
     AreaLevel,
+    CreateObservation,
     BuildIdentity,
     BuildPresentation,
     build_display_name,
@@ -201,6 +202,7 @@ class StatusOwners:
     log: Callable[[str], None]
     name_resolver: Optional[Callable[[str], str]] = None
     publication_snapshot: Optional[Callable[[], object]] = None
+    create_observer: Optional[Callable[[], CreateObservation]] = None
 
 
 class _ReadOnlyDependencyBackend(DependencyBackend):
@@ -402,30 +404,55 @@ class BuildStatusService:
     # -- operation state --------------------------------------------------
 
     def _operation(self, gaps: List[CheckGap]) -> OperationStatus:
+        create = CreateObservation.NO_RECORD_OBSERVED
+        if self._o.create_observer is not None:
+            try:
+                create = self._o.create_observer()
+                if type(create) is not CreateObservation:
+                    create = CreateObservation.UNVERIFIABLE
+            except Exception:
+                create = CreateObservation.UNVERIFIABLE
+        try:
+            restart = self._restart_operation()
+        except Exception:
+            restart = OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE)
+        frozen, frozen_hold = self._frozen_operation()
+        protection = frozen_hold or create in (CreateObservation.HELD,
+                                               CreateObservation.TERMINAL_PENDING)
+        unknown = (create is CreateObservation.UNVERIFIABLE
+                   or frozen.code in (OperationCode.TRANSACTION_UNREADABLE,
+                                      OperationCode.TRANSACTION_INVALID))
+        publication = OperationStatus()
         if self._o.publication_snapshot is not None:
             try:
                 if self._o.publication_snapshot() is not None:
-                    return OperationStatus(OperationKind.NEEDS_ATTENTION,
-                                           OperationCode.OPERATION_NOT_FINISHED,
-                                           "APPLIED_PUBLICATION_PENDING",
-                                           protection_active=self._frozen_operation()[1])
+                    publication = OperationStatus(OperationKind.NEEDS_ATTENTION,
+                                                  OperationCode.OPERATION_NOT_FINISHED,
+                                                  "APPLIED_PUBLICATION_PENDING")
             except Exception:
-                return OperationStatus(OperationKind.NEEDS_ATTENTION,
-                                       OperationCode.TRANSACTION_INVALID,
-                                       "APPLIED_PUBLICATION_INVALID",
-                                       protection_active=self._frozen_operation()[1])
-        restart = self._restart_operation()
-        frozen = self._frozen_operation()
-        protection = frozen[1]
-        operations = (restart, frozen[0])
+                publication = OperationStatus(OperationKind.NEEDS_ATTENTION,
+                                              OperationCode.TRANSACTION_INVALID,
+                                              "APPLIED_PUBLICATION_INVALID")
+        operations = (publication, restart, frozen)
+        chosen = OperationStatus()
         for kind in (OperationKind.NEEDS_ATTENTION, OperationKind.RESTART_REQUIRED,
                      OperationKind.UNAVAILABLE):
-            chosen = next((op for op in operations if op.kind is kind), None)
-            if chosen is not None:
-                if kind is OperationKind.UNAVAILABLE:
-                    gaps.append(CheckGap.OPERATION_STATE_UNAVAILABLE)
-                return replace(chosen, protection_active=protection)
-        return OperationStatus(protection_active=protection)
+            candidate = next((op for op in operations if op.kind is kind), None)
+            if candidate is not None:
+                chosen = candidate
+                break
+        unresolved = create in (CreateObservation.HELD, CreateObservation.TERMINAL_PENDING,
+                                CreateObservation.UNVERIFIABLE)
+        if unresolved and chosen.kind is not OperationKind.NEEDS_ATTENTION:
+            chosen = OperationStatus(OperationKind.NEEDS_ATTENTION,
+                                     OperationCode.OPERATION_NOT_FINISHED)
+        if any(op.kind is OperationKind.UNAVAILABLE for op in operations):
+            gaps.append(CheckGap.OPERATION_STATE_UNAVAILABLE)
+        # Retain overlapping reasons even when Create raises the overall severity.
+        other = tuple(dict.fromkeys(op.code for op in operations
+                                    if op.code not in (OperationCode.NONE, chosen.code)))
+        return replace(chosen, protection_active=protection, protection_unknown=unknown,
+                       create_observation=create, other_codes=other)
 
     def _restart_operation(self) -> OperationStatus:
         try:
@@ -899,6 +926,13 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
 
     from resources.lib.build_library import default_build_library
     restart_store = TransactionStore()
+
+    def create_observer() -> CreateObservation:
+        from pathlib import Path
+        from resources.lib.create_status import observe_create_state
+        # directory translates the canonical profile lazily; it creates nothing.
+        return observe_create_state(Path(restart_store.directory))
+
     return StatusOwners(
         inspector=KodiStateInspector(KodiRuntimeBackend()),
         manifest_loader=load_manifest_file,
@@ -920,6 +954,7 @@ def default_status_owners(*, log: Optional[Callable[[str], None]] = None) -> Sta
         log=log or (lambda message: None),
         name_resolver=_resolve_installed_addon_name,
         publication_snapshot=lambda: default_build_library().pending_publication(),
+        create_observer=create_observer,
     )
 
 
