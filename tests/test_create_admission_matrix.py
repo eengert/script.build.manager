@@ -1,4 +1,5 @@
 """Synthetic Create holds across supported admission/activation entry points."""
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -7,9 +8,13 @@ import unittest
 from unittest.mock import Mock, patch
 
 from resources.lib.activation import reject_held_activation, ActivationHoldError
+from resources.lib.addon_state import AddonStateError, KodiRuntimeAddonStateBackend
 from resources.lib.addons import KodiRuntimeAddonBackend, AddonInstallError
+from resources.lib.dependencies import DependencyError, KodiRuntimeDependencyBackend
 from resources.lib.capture_lifecycle import CapturePhase, CaptureTransaction, CaptureLifecycleError, capture_activation_holds, require_no_capture
 from resources.lib.frozen_install import FrozenInstallStore, FrozenInstallCoordinator, KodiRuntimeFrozenArtifactBackend, FrozenInstallError
+from resources.lib.frozen_install import active_activation_hold_ids
+from resources.lib.repository import KodiRuntimeRepositoryBackend, RepositoryInstallError
 from resources.lib.restart_coordinator import RestartCoordinator
 from resources.lib.transaction import TransactionStore, TransactionStateConflict
 from resources.lib.redlight_resource import REDLIGHT_ADDON_ID, REDLIGHT_VERSION
@@ -20,6 +25,19 @@ def held_record():
     return CaptureTransaction('22222222-2222-4222-8222-222222222222', CapturePhase.AWAITING_RESTART,
         'sha256:' + 'a'*64, REDLIGHT_ADDON_ID, REDLIGHT_VERSION, False,
         '11111111-1111-4111-8111-111111111111', 1000, 2000)
+
+
+@contextmanager
+def held_create_profile():
+    """Expose one valid held Create record through the normal hold lookup."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary) / 'addon_data/script.build.manager'
+        root.mkdir(parents=True)
+        (root / 'create_capture_transaction.json').write_text(
+            json.dumps(held_record().to_dict())
+        )
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=root):
+            yield root
 
 
 class AdmissionMatrixTests(unittest.TestCase):
@@ -103,3 +121,51 @@ class AdmissionMatrixTests(unittest.TestCase):
             with self.subTest(value_type=type(value).__name__):
                 with self.assertRaises(ActivationHoldError):
                     reject_held_activation(REDLIGHT_ADDON_ID, provider=lambda: value)
+
+    def test_dependency_backend_refuses_held_redlight_before_kodi_activation(self):
+        backend = KodiRuntimeDependencyBackend()
+        xbmc = Mock()
+        xbmc.executeJSONRPC.return_value = json.dumps({'jsonrpc': '2.0', 'result': 'OK', 'id': 1})
+        with held_create_profile():
+            self.assertEqual(active_activation_hold_ids(), frozenset({REDLIGHT_ADDON_ID}))
+            with patch.object(backend, '_xbmc', return_value=xbmc) as kodi_module:
+                with self.assertRaisesRegex(DependencyError, 'activation is held'):
+                    backend.set_addon_enabled(REDLIGHT_ADDON_ID, True)
+                kodi_module.assert_not_called()
+            xbmc.executeJSONRPC.assert_not_called()
+            xbmc.executebuiltin.assert_not_called()
+
+    def test_addon_state_backend_refuses_held_redlight_before_kodi_activation(self):
+        backend = KodiRuntimeAddonStateBackend()
+        xbmc = Mock()
+        xbmc.executeJSONRPC.return_value = json.dumps({'jsonrpc': '2.0', 'result': 'OK', 'id': 1})
+        with held_create_profile():
+            self.assertEqual(active_activation_hold_ids(), frozenset({REDLIGHT_ADDON_ID}))
+            with patch.object(backend, '_xbmc', return_value=xbmc) as kodi_module:
+                with self.assertRaisesRegex(AddonStateError, 'activation is held'):
+                    backend.set_addon_enabled(REDLIGHT_ADDON_ID, True)
+                kodi_module.assert_not_called()
+            xbmc.executeJSONRPC.assert_not_called()
+            xbmc.executebuiltin.assert_not_called()
+
+    def test_repository_backend_refuses_held_registered_redlight_before_enablement(self):
+        backend = KodiRuntimeRepositoryBackend()
+        xbmc = Mock()
+        # If the held-activation guard is removed, prove Red Light is registered
+        # so enable_addon reaches its Addons.SetAddonEnabled mutation path.
+        xbmc.executeJSONRPC.side_effect = [
+            json.dumps({
+                'jsonrpc': '2.0',
+                'result': {'addons': [{'addonid': REDLIGHT_ADDON_ID, 'enabled': False}]},
+                'id': 1,
+            }),
+            json.dumps({'jsonrpc': '2.0', 'result': 'OK', 'id': 1}),
+        ]
+        with held_create_profile():
+            self.assertEqual(active_activation_hold_ids(), frozenset({REDLIGHT_ADDON_ID}))
+            with patch.object(backend, '_xbmc', return_value=xbmc) as kodi_module:
+                with self.assertRaisesRegex(RepositoryInstallError, 'activation is held'):
+                    backend.enable_addon(REDLIGHT_ADDON_ID)
+                kodi_module.assert_not_called()
+            xbmc.executeJSONRPC.assert_not_called()
+            xbmc.executebuiltin.assert_not_called()
