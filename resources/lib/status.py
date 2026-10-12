@@ -404,7 +404,7 @@ class BuildStatusService:
     # -- operation state --------------------------------------------------
 
     def _operation(self, gaps: List[CheckGap]) -> OperationStatus:
-        create = CreateObservation.NO_RECORD_OBSERVED
+        create = CreateObservation.UNVERIFIABLE
         if self._o.create_observer is not None:
             try:
                 create = self._o.create_observer()

@@ -20,6 +20,7 @@ from resources.lib import (
     frozen_install, private_overlay, private_resource, redlight_resource, repository,
     restart_coordinator, resume, session, skin, startup, transaction, update_guard,
 )
+from resources.lib.create_status import observe_create_state
 from resources.lib.build_identity import (
     IdentityCode, IdentityMismatch, bind_resolutions,
 )
@@ -373,6 +374,7 @@ class Harness:
                 {RedLightSettingsAdapter.adapter_id: RedLightSettingsAdapter(self.profile)}),
             restart_snapshot=TransactionStore(str(self.profile)).read_snapshot,
             frozen_snapshot=lambda: FrozenInstallStore.read_snapshot(self.frozen_root),
+            create_observer=lambda: observe_create_state(self.frozen_root),
             session_id=lambda: SESSION_A,
             clock=lambda: NOW,
             log=self.logs.append,
@@ -2083,3 +2085,78 @@ class CreateStatusIntegrationTests(StatusBase):
         self.assertFalse(h.frozen_root.exists())
         self.assertEqual(result.operation.create_observation, C.NO_RECORD_OBSERVED)
         self.assertEqual(h.touched, [])
+
+
+class MissingCreateObserverCorrectionTests(StatusBase):
+    def test_missing_observer_on_healthy_build_fails_closed_and_is_safe(self):
+        from resources.lib.status_model import CreateObservation as C
+        from tests.test_status_ui import open_status
+        h = self.current()
+        before = {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                  for p in h.profile.rglob('*')}
+        flags = []
+        original_open = os.open
+        def read_open(path, value, *args, **kwargs):
+            flags.append(value)
+            return original_open(path, value, *args, **kwargs)
+        with h.instrumented(), patch('os.open', side_effect=read_open), \
+             patch('os.mkdir', side_effect=AssertionError('mkdir')) as mkdir:
+            result = h.service(create_observer=None).check(h.target())
+        mkdir.assert_not_called()
+        self.assertEqual(h.touched, [])
+        self.assertEqual(h.config_backend.mutations, [])
+        self.assertEqual(h.deps.mutations, [])
+        self.assertFalse(any(value & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC)
+                             for value in flags))
+        self.assertEqual(before, {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                                  for p in h.profile.rglob('*')})
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+        self.assertTrue(result.operation.protection_unknown)
+        self.assertFalse(result.operation.protection_active)
+        safe = result.to_safe_dict()['operation']
+        self.assertEqual(safe['create_observation'], 'unverifiable')
+        self.assertTrue(safe['protection_unknown'])
+        self.assertNotIn('recovery_eligible', safe)
+        self.assertNotIn(str(h.profile), safe_text(result))
+        self.assertSecretFree(result, h.logs)
+        _, dialog, _ = open_status(lambda: result, 0)
+        self.assertIn('Create Build progress could not be verified', dialog.details[0][1])
+        self.assertIn('Some protection state could not be verified', dialog.details[0][1])
+        self.assertIn('Recovery readiness has not been checked', dialog.details[0][1])
+
+    def test_missing_observer_preserves_restart_frozen_and_verified_hold(self):
+        from resources.lib.status_model import CreateObservation as C
+        for restart, frozen, held in ((True, False, False), (False, True, False),
+                                      (False, True, True), (True, True, True)):
+            with self.subTest(restart=restart, frozen=frozen, held=held):
+                h = self.current()
+                if restart:
+                    h.restart_transaction()
+                if frozen:
+                    h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART,
+                                         hold=(DEMO,) if held else (), released=not held)
+                with h.instrumented():
+                    result = h.service(create_observer=None).check(h.target())
+                self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+                self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+                self.assertTrue(result.operation.protection_unknown)
+                self.assertEqual(result.operation.protection_active, held)
+                self.assertIn(OperationCode.AWAITING_RESTART, result.operation.other_codes)
+                self.assertEqual(h.touched, [])
+
+    def test_present_empty_observer_and_bad_observer_are_distinct(self):
+        from resources.lib.status_model import CreateObservation as C
+        from resources.lib.create_status import observe_create_state
+        h = self.current()
+        def broken():
+            raise RuntimeError(SECRET)
+        for observer, expected in ((None, C.UNVERIFIABLE), (broken, C.UNVERIFIABLE),
+                                   (lambda: 'invalid', C.UNVERIFIABLE),
+                                   (lambda: observe_create_state(h.frozen_root), C.NO_RECORD_OBSERVED)):
+            with self.subTest(expected=expected, observer=observer):
+                result = h.service(create_observer=observer).check(h.target())
+                self.assertEqual(result.operation.create_observation, expected)
+                self.assertEqual(result.operation.protection_unknown, expected is C.UNVERIFIABLE)
+                self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION
+                                 if expected is C.UNVERIFIABLE else OverallStatus.CURRENT)
