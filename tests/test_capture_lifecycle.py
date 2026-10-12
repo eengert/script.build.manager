@@ -1881,20 +1881,20 @@ os._exit(92)
 
 
 class D2RecoveryTests(unittest.TestCase):
+    """Option A: external owner restoration, then explicit P5 recovery only."""
     setUp = CaptureLifecycleTests.setUp
     make_coordinator = CaptureLifecycleTests.make_coordinator
     begin = CaptureLifecycleTests.begin
-    capture = CaptureLifecycleTests.capture
 
     def candidate(self):
         self.ops.current_enabled = False
         record = self.begin()
         self.ops.current_enabled = True
-        return record, self.coordinator.prepare_d2_confirmation(record.operation_id, self.request)
-
-    def confirm(self, record, confirmation, confirmed=True):
-        return self.coordinator.recover_d2(record.operation_id, self.request,
-            confirmation=confirmation, confirmed=confirmed)
+        # Construct an old valid snapshot without invoking the retired API.
+        from resources.lib.capture_lifecycle import _digest
+        binding = _digest({'canonical_root': str(self.store.root),
+                           'identity': self.store._identity(self.store.root.stat())})
+        return record, D2Confirmation(record, SESSION_B, binding)
 
     def assert_protected(self):
         self.assertTrue(CaptureStore(self.root).read().held)
@@ -1903,277 +1903,193 @@ class D2RecoveryTests(unittest.TestCase):
                          frozenset({REDLIGHT_ADDON_ID}))
         with self.assertRaises(CaptureLifecycleError):
             require_no_capture(self.root)
+        with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.root):
+            with self.assertRaises(ActivationHoldError):
+                reject_held_activation(REDLIGHT_ADDON_ID)
+        with self.assertRaises(TransactionStateConflict):
+            self.restart.create(_transaction())
+        with self.assertRaises(Exception):
+            FrozenInstallStore(self.root).create(Mock())
+        self.assertEqual(self.ops.mutations, [])
         self.assertEqual(self.store._held_locks, {})
         self.assertIsNone(self.store._transition_fd)
 
-    def test_decline_or_missing_confirmation_is_creation_free(self):
+    def receipt(self, record):
+        from resources.lib.capture_lifecycle import _d2_binding_values
+        values = record.to_dict()
+        values.pop('schema_version')
+        values.pop('operation_kind')
+        values.update(phase=CapturePhase.RESTORING, outcome='cancelled',
+                      d2_consent_id=SESSION_B, d2_source_digest='sha256:' + '2' * 64)
+        values['d2_binding'] = _d2_binding_values(values)
+        historical = CaptureTransaction(**values)
+        with self.store.locked():
+            self.store.save(record, historical)
+        return historical
+
+    def test_old_apis_fail_before_locks_writes_or_setters(self):
         record, confirmation = self.candidate()
-        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
-        with patch.object(self.store, '_lock', side_effect=AssertionError('lock on decline')):
-            for consent, confirmed in ((confirmation, False), (confirmation, 1), (None, True)):
-                with self.assertRaises(CaptureLifecycleError):
-                    self.confirm(record, consent, confirmed)
-        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
-        self.assertEqual(self.ops.mutations, [])
-        self.assertFalse(self.store.read().d2_consent_id)
+        before = self.store.path.read_bytes()
+        with patch.object(self.coordinator, '_exclusive', side_effect=AssertionError('locks')), \
+                patch.object(self.store, 'save', side_effect=AssertionError('writes')), \
+                patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+            for value in (True, False, 1, None):
+                with self.subTest(confirmed=value), self.assertRaises(CaptureLifecycleError):
+                    self.coordinator.recover_d2(record.operation_id, self.request,
+                        confirmation=confirmation, confirmed=value)
+            with self.assertRaises(CaptureLifecycleError):
+                self.coordinator.prepare_d2_confirmation(record.operation_id, self.request)
+        self.assertEqual(self.store.path.read_bytes(), before)
         self.assert_protected()
 
-    def test_success_durable_consent_exact_owner_lock_order_and_p5(self):
+    def test_b1_complete_external_sequence_cannot_authorize_disable(self):
         record, confirmation = self.candidate()
-        setter, sync = self.ops.set_enabled, self.store._sync_directory
-        barriers = []
-        def barrier(fd):
-            current = CaptureStore(self.root).read()
-            barriers.append((current.phase, current.commit_pending, current.held))
-            if current.held:
-                self.assertEqual(capture_activation_holds(self.root), frozenset({REDLIGHT_ADDON_ID}))
-            sync(fd)
-        def disable(owner, value):
-            current = CaptureStore(self.root).read()
-            self.assertEqual(barriers, [(CapturePhase.RESTORING, False, True)])
-            self.assertEqual(current.d2_consent_id, confirmation.consent_id)
-            self.assertEqual(current.outcome, 'cancelled')
-            self.assertFalse(current.original_enabled)
-            self.assertEqual(list(self.store._held_locks), ['create_capture_transaction.lock',
-                'frozen_install_transaction.lock', Path(self.restart.lock_path).name])
-            self.assertEqual((owner, value), (REDLIGHT_ADDON_ID, False))
-            setter(owner, value)
-        with patch.object(self.store, '_sync_directory', side_effect=barrier), \
-                patch.object(self.ops, 'set_enabled', side_effect=disable):
-            result = self.confirm(record, confirmation)
-        self.assertEqual(barriers, [(CapturePhase.RESTORING, False, True),
-            (CapturePhase.CANCELLED, True, True), (CapturePhase.CANCELLED, False, False)])
-        self.assertEqual(result, self.store.read())
-        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-        self.assertFalse(result.held)
-        self.assertEqual(self.make_coordinator().recover(record.operation_id, self.request, cancelled=False), result)
-        self.assertNotIn(SECRET, self.store.path.read_text())
-        self.assertNotIn('request_metadata', repr(confirmation))
-        self.assertEqual(set(result.safe_dict()), {'operation_id', 'phase', 'held', 'outcome'})
-
-    def test_intent_io_failure_matrix_requires_fresh_consent_and_barrier(self):
-        import os
-        for boundary in ('write', 'flush', 'file_sync', 'replace', 'directory_sync'):
-            with self.subTest(boundary=boundary):
-                self.setUp()
-                record, confirmation = self.candidate()
-                fdopen, fsync, publish, sync = os.fdopen, os.fsync, os.replace, self.store._sync_directory
-                def open_output(*args, **kwargs):
-                    output = fdopen(*args, **kwargs)
-                    if boundary in ('write', 'flush'):
-                        proxy = Mock(wraps=output)
-                        getattr(proxy, boundary).side_effect = OSError(SECRET)
-                        proxy.__enter__ = Mock(return_value=proxy)
-                        proxy.__exit__ = Mock(side_effect=lambda *unused: output.close())
-                        return proxy
-                    return output
-                def file_sync(fd):
-                    if boundary == 'file_sync':
-                        raise OSError(SECRET)
-                    return fsync(fd)
-                def replace_file(*args, **kwargs):
-                    if boundary == 'replace':
-                        raise OSError(SECRET)
-                    return publish(*args, **kwargs)
-                def barrier(fd):
-                    if boundary == 'directory_sync':
-                        raise OSError(SECRET)
-                    return sync(fd)
-                with patch('resources.lib.capture_lifecycle.os.fdopen', side_effect=open_output), \
-                        patch('resources.lib.capture_lifecycle.os.fsync', side_effect=file_sync), \
-                        patch('resources.lib.capture_lifecycle.os.replace', side_effect=replace_file), \
-                        patch.object(self.store, '_sync_directory', side_effect=barrier):
-                    with self.assertRaises(CaptureLifecycleError) as error:
-                        self.confirm(record, confirmation)
-                self.assertNotIn(SECRET, str(error.exception))
-                self.assertEqual(self.ops.mutations, [])
-                self.assert_protected()
-                self.assertFalse(list(self.root.glob('*.tmp')))
-                current = self.store.read()
-                self.assertEqual(bool(current.d2_consent_id), boundary == 'directory_sync')
-                fresh = self.make_coordinator()
-                with self.assertRaises(CaptureLifecycleError):
-                    fresh.recover(record.operation_id, self.request)
-                renewed = fresh.prepare_d2_confirmation(record.operation_id, self.request)
-                barrier_observations = []
-                def retry_barrier(fd):
-                    barrier_observations.append(self.store.read().d2_consent_id)
-                    return sync(fd)
-                setter = self.ops.set_enabled
-                def retry_setter(owner, value):
-                    self.assertEqual(barrier_observations, [renewed.consent_id])
-                    setter(owner, value)
-                with patch.object(self.store, '_sync_directory', side_effect=retry_barrier), \
-                        patch.object(self.ops, 'set_enabled', side_effect=retry_setter):
-                    result = fresh.recover_d2(record.operation_id, self.request,
-                        confirmation=renewed, confirmed=True)
-                self.assertFalse(result.held)
-                self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-
-    def test_crash_boundaries_before_during_after_setter(self):
-        for boundary in ('before_intent', 'after_intent', 'setter_before', 'setter_after',
-                         'after_verification', 'before_pending', 'after_pending', 'before_release', 'after_release'):
-            with self.subTest(boundary=boundary):
-                self.setUp()
-                record, confirmation = self.candidate()
-                save, setter = self.store.save, self.ops.set_enabled
-                checked = self.coordinator._terminal_checked
-                def publication(expected, replacement):
-                    stage = ('intent' if replacement.phase is CapturePhase.RESTORING else
-                             'pending' if replacement.commit_pending else 'release')
-                    if boundary == 'before_' + stage:
-                        raise KeyboardInterrupt()
-                    result = save(expected, replacement)
-                    if boundary == 'after_' + stage:
-                        raise KeyboardInterrupt()
-                    return result
-                def mutation(owner, value):
-                    if boundary == 'setter_before':
-                        raise KeyboardInterrupt()
-                    setter(owner, value)
-                    if boundary == 'setter_after':
-                        raise KeyboardInterrupt()
-                def verification(*args, **kwargs):
-                    checked(*args, **kwargs)
-                    if boundary == 'after_verification':
-                        raise KeyboardInterrupt()
-                with patch.object(self.store, 'save', side_effect=publication), \
-                        patch.object(self.ops, 'set_enabled', side_effect=mutation), \
-                        patch.object(self.coordinator, '_terminal_checked', side_effect=verification):
-                    with self.assertRaises(KeyboardInterrupt):
-                        self.confirm(record, confirmation)
-                current = self.store.read()
-                self.assertEqual(current.held, boundary != 'after_release')
-                self.assertEqual(self.store._held_locks, {})
-                self.assertIsNone(self.store._transition_fd)
-                fresh = self.make_coordinator()
-                reconstructed = fresh.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
-                if self.ops.current_enabled:
-                    mutations = list(self.ops.mutations)
-                    with self.assertRaises(CaptureLifecycleError):
-                        fresh.recover(record.operation_id, reconstructed)
-                    self.assertEqual(mutations, self.ops.mutations)
-                    renewed = fresh.prepare_d2_confirmation(record.operation_id, reconstructed)
-                    result = fresh.recover_d2(record.operation_id, reconstructed,
-                        confirmation=renewed, confirmed=True)
-                else:
-                    result = fresh.recover(record.operation_id, reconstructed, cancelled=False)
-                self.assertEqual(result.phase, CapturePhase.CANCELLED)
-                self.assertFalse(result.held)
-                self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-
-    def test_external_reenable_after_uncertain_setter_requires_renewed_consent(self):
-        record, confirmation = self.candidate()
-        setter = self.ops.set_enabled
-        def uncertain(owner, value):
-            setter(owner, value)
-            raise RuntimeError(SECRET)
-        with patch.object(self.ops, 'set_enabled', side_effect=uncertain):
+        before = self.store.path.read_bytes()
+        for enabled in (True, False, True):
+            self.ops.current_enabled = enabled
+        # The same old snapshot follows a full external disable/re-enable cycle.
+        for enabled in (True, False, True):
+            self.ops.current_enabled = enabled
             with self.assertRaises(CaptureLifecycleError):
-                self.confirm(record, confirmation)
-        self.ops.current_enabled = True  # Later independent operator action.
-        fresh = self.make_coordinator()
+                self.coordinator.recover_d2(record.operation_id, self.request,
+                    confirmation=confirmation, confirmed=True)
+            self.assertEqual(self.store.path.read_bytes(), before)
+            self.assertIs(self.ops.current_enabled, enabled)
+            self.assert_protected()
+        with self.assertRaises(CaptureLifecycleError):
+            self.make_coordinator().recover(record.operation_id, self.request)
+        self.assertEqual(self.store.path.read_bytes(), before)
+        self.assert_protected()
+
+    def test_retired_apis_without_profile_are_creation_free(self):
+        unused = self.profile / 'never-created'
+        restart = TransactionStore(str(unused))
+        store = CaptureStore(Path(restart.directory))
+        coordinator = CaptureLifecycleCoordinator(store=store, restart_store=restart,
+            operations=self.ops, clock=lambda: self.now)
+        for snapshot in (None, True, object()):
+            with self.assertRaises(CaptureLifecycleError):
+                coordinator.recover_d2(SESSION_A, self.request,
+                    confirmation=snapshot, confirmed=True)
+        with self.assertRaises(CaptureLifecycleError):
+            coordinator.prepare_d2_confirmation(SESSION_A, self.request)
+        self.assertFalse(unused.exists())
+        self.assertEqual(self.ops.mutations, [])
+
+    def test_expired_manual_recovery_and_clock_rollback(self):
+        record, _ = self.candidate()
+        self.ops.current_enabled = False
+        self.now = record.created_at - 1
         before = self.store.path.read_bytes()
         with self.assertRaises(CaptureLifecycleError):
-            fresh.recover(record.operation_id, self.request)
-        with self.assertRaises(CaptureLifecycleError):
-            fresh.recover_d2(record.operation_id, self.request, confirmation=confirmation, confirmed=True)
+            self.coordinator.recover(record.operation_id, self.request)
         self.assertEqual(before, self.store.path.read_bytes())
-        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
         self.assert_protected()
-        renewed = fresh.prepare_d2_confirmation(record.operation_id, self.request)
-        result = fresh.recover_d2(record.operation_id, self.request, confirmation=renewed, confirmed=True)
-        self.assertFalse(result.held)
-        self.assertNotEqual(result.d2_consent_id, confirmation.consent_id)
-        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)] * 2)
+        self.now = record.expires_at + 1
+        with patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+            self.assertFalse(self.coordinator.recover(record.operation_id, self.request).held)
 
-    def test_ambiguous_effect_remains_held_without_generic_replay(self):
-        for effect in ('enabled', None, 1):
-            self.setUp()
-            record, confirmation = self.candidate()
-            def setter(owner, value):
-                self.ops.current_enabled = True if effect == 'enabled' else effect
-            with patch.object(self.ops, 'set_enabled', side_effect=setter):
+    def test_manual_restoration_explicit_p5_and_idempotence(self):
+        for historical in ('empty', 'legacy', 'receipt'):
+            with self.subTest(evidence=historical):
+                self.setUp()
+                record, _ = self.candidate()
+                if historical == 'receipt':
+                    record = self.receipt(record)
+                elif historical == 'legacy':
+                    raw = record.to_dict()
+                    for field in ('d2_consent_id', 'd2_source_digest', 'd2_binding'):
+                        del raw[field]
+                    self.store.path.write_text(json.dumps(raw))
+                before = self.store.path.read_bytes()
                 with self.assertRaises(CaptureLifecycleError):
-                    self.confirm(record, confirmation)
-            self.assert_protected()
-            with patch.object(self.ops, 'set_enabled', side_effect=AssertionError('replay')):
-                with self.assertRaises(CaptureLifecycleError):
-                    self.make_coordinator().recover(record.operation_id, self.request)
+                    self.coordinator.recover(record.operation_id, self.request)
+                self.assertEqual(self.store.path.read_bytes(), before)
+                self.assert_protected()
+                self.ops.current_enabled = False  # operator action outside Build Manager
+                self.assert_protected()  # manual restoration alone never releases
+                sync = self.store._sync_directory
+                barriers = []
+                def barrier(fd):
+                    current = CaptureStore(self.root).read()
+                    barriers.append((current.phase, current.commit_pending, current.held))
+                    sync(fd)
+                with patch.object(self.store, '_sync_directory', side_effect=barrier), \
+                        patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                    result = self.make_coordinator().recover(record.operation_id, self.request)
+                expected = [] if historical == 'receipt' else [(CapturePhase.RESTORING, False, True)]
+                self.assertEqual(barriers, expected + [(CapturePhase.CANCELLED, True, True),
+                    (CapturePhase.CANCELLED, False, False)])
+                self.assertEqual(result.d2_binding, record.d2_binding)
+                self.assertFalse(result.held)
+                self.assertEqual(self.ops.mutations, [])
+                with patch.object(self.store, 'save', side_effect=AssertionError('write')), \
+                        patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                    self.assertEqual(self.make_coordinator().recover(record.operation_id,
+                        self.request, cancelled=False), result)
+                require_no_capture(self.root)
+                with patch('resources.lib.frozen_install.default_frozen_install_root', return_value=self.root):
+                    reject_held_activation(REDLIGHT_ADDON_ID)
+                self.assertEqual(active_activation_hold_ids(FrozenInstallStore(self.root)), frozenset())
 
-    def test_p5_write_and_barrier_failures_keep_d2_outcome_and_no_replay(self):
-        import os
-        for stage in ('pending', 'release'):
-            for boundary in ('write', 'flush', 'file_sync', 'replace', 'directory_sync'):
-                with self.subTest(stage=stage, boundary=boundary):
+    def test_restoring_preserves_all_established_outcomes(self):
+        for outcome in ('complete', 'failed', 'cancelled'):
+            with self.subTest(outcome=outcome):
+                self.setUp()
+                record, _ = self.candidate()
+                restoring = replace(record, phase=CapturePhase.RESTORING, outcome=outcome,
+                    capture_session_id=SESSION_B if outcome == 'complete' else '')
+                with self.store.locked():
+                    self.store.save(record, restoring)
+                self.ops.current_enabled = False
+                with patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                    result = self.coordinator.recover(record.operation_id, self.request)
+                self.assertEqual(result.phase, CapturePhase(outcome))
+                self.assertEqual(result.outcome, outcome)
+                self.assertFalse(result.held)
+
+    def test_receipt_pending_failure_and_crash_recovery_never_sets(self):
+        for failure in (OSError, KeyboardInterrupt):
+            for stage in ('restoring', 'pending'):
+                with self.subTest(failure=failure, stage=stage):
                     self.setUp()
-                    record, confirmation = self.candidate()
-                    save, fdopen, fsync, publish, sync = self.store.save, os.fdopen, os.fsync, os.replace, self.store._sync_directory
-                    current_stage = ''
-                    def saving(expected, replacement):
-                        nonlocal current_stage
-                        current_stage = ('intent' if replacement.phase is CapturePhase.RESTORING else
-                                         'pending' if replacement.commit_pending else 'release')
-                        return save(expected, replacement)
-                    def fail_at(name):
-                        if current_stage == stage and boundary == name:
-                            raise OSError(SECRET)
-                    def open_output(*args, **kwargs):
-                        output = fdopen(*args, **kwargs)
-                        if current_stage == stage and boundary in ('write', 'flush'):
-                            proxy = Mock(wraps=output)
-                            getattr(proxy, boundary).side_effect = OSError(SECRET)
-                            proxy.__enter__ = Mock(return_value=proxy)
-                            proxy.__exit__ = Mock(side_effect=lambda *unused: output.close())
-                            return proxy
-                        return output
-                    def file_sync(fd):
-                        fail_at('file_sync')
-                        return fsync(fd)
-                    def replace_file(*args, **kwargs):
-                        fail_at('replace')
-                        return publish(*args, **kwargs)
-                    def barrier(fd):
-                        fail_at('directory_sync')
-                        return sync(fd)
-                    with patch.object(self.store, 'save', side_effect=saving), \
-                            patch('resources.lib.capture_lifecycle.os.fdopen', side_effect=open_output), \
-                            patch('resources.lib.capture_lifecycle.os.fsync', side_effect=file_sync), \
-                            patch('resources.lib.capture_lifecycle.os.replace', side_effect=replace_file), \
-                            patch.object(self.store, '_sync_directory', side_effect=barrier):
-                        with self.assertRaises(CaptureLifecycleError) as error:
-                            self.confirm(record, confirmation)
-                    self.assertNotIn(SECRET, str(error.exception))
+                    record, _ = self.candidate()
+                    record = self.receipt(record)
+                    self.ops.current_enabled = False
+                    save = self.store.save
+                    def interrupted(expected, replacement):
+                        if stage == 'pending':
+                            save(expected, replacement)
+                        raise failure()
+                    with patch.object(self.store, 'save', side_effect=interrupted), \
+                            patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                        with self.assertRaises((CaptureLifecycleError, KeyboardInterrupt)):
+                            self.coordinator.recover(record.operation_id, self.request)
+                    self.assert_protected()
                     current = self.store.read()
-                    self.assertEqual(current.held, (stage, boundary) != ('release', 'directory_sync'))
-                    self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-                    if current.held:
-                        self.assert_protected()
-                    result = self.make_coordinator().recover(record.operation_id, self.request, cancelled=False)
-                    self.assertEqual(result.phase, CapturePhase.CANCELLED)
+                    self.assertEqual(current.d2_binding, record.d2_binding)
+                    with patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                        result = self.make_coordinator().recover(record.operation_id, self.request)
                     self.assertFalse(result.held)
-                    self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
+                    self.assertEqual(result.d2_binding, record.d2_binding)
 
-    def test_stale_and_mismatched_evidence_refused_without_write(self):
-        for defect in ('operation', 'request', 'record', 'version', 'unknown', 'disabled',
-                       'active', 'restart', 'frozen', 'corrupt', 'legacy'):
+    def test_manual_recovery_invalid_identity_and_competition_fail_closed(self):
+        for defect in ('operation', 'request', 'version', 'unknown', 'active',
+                       'restart', 'frozen', 'corrupt', 'owner', 'receipt'):
             with self.subTest(defect=defect):
                 self.setUp()
-                record, confirmation = self.candidate()
+                record, _ = self.candidate()
+                record = self.receipt(record)
+                self.ops.current_enabled = False
                 operation, request = record.operation_id, self.request
                 if defect == 'operation':
                     operation = SESSION_B
                 elif defect == 'request':
                     request = replace(request, build_name='Changed')
-                elif defect == 'record':
-                    with self.store.locked():
-                        self.store.save(record, replace(record, expires_at=record.expires_at - 1))
                 elif defect == 'version':
                     self.ops.version = 'changed'
                 elif defect == 'unknown':
                     self.ops.current_enabled = 1
-                elif defect == 'disabled':
-                    self.ops.current_enabled = False
                 elif defect == 'active':
                     self.ops.competing = True
                 elif defect == 'restart':
@@ -2181,264 +2097,45 @@ class D2RecoveryTests(unittest.TestCase):
                 elif defect == 'frozen':
                     name, raw = CaptureLifecycleTests.competing_fixture(self, 'frozen')
                     self.root.joinpath(name).write_bytes(raw)
-                elif defect == 'corrupt':
-                    self.store.path.write_text('{}')
                 else:
-                    with self.store.locked():
-                        self.store.save(record, replace(record, request_metadata=''))
+                    raw = record.to_dict()
+                    if defect == 'owner':
+                        raw['owner_id'] = 'other.owner'
+                    elif defect == 'receipt':
+                        raw['d2_binding'] = 'sha256:' + '0' * 64
+                    else:
+                        raw = {}
+                    self.store.path.write_text(json.dumps(raw))
                 before = self.store.path.read_bytes()
-                with self.assertRaises(CaptureLifecycleError):
-                    self.coordinator.recover_d2(operation, request, confirmation=confirmation, confirmed=True)
-                self.assertEqual(before, self.store.path.read_bytes())
+                with patch.object(self.ops, 'set_enabled', side_effect=AssertionError('setter')):
+                    with self.assertRaises(CaptureLifecycleError):
+                        self.coordinator.recover(operation, request)
+                self.assertEqual(self.store.path.read_bytes(), before)
                 self.assertEqual(self.ops.mutations, [])
-                self.assertEqual(self.store._held_locks, {})
-                self.assertIsNone(self.store._transition_fd)
+                with self.assertRaises(CaptureLifecycleError):
+                    require_no_capture(self.root)
 
-    def test_terminal_pending_and_originally_enabled_cannot_acquire_consent(self):
-        for source in ('enabled', 'terminal', 'pending'):
-            self.setUp()
-            self.ops.current_enabled = source == 'enabled'
-            record = self.begin()
-            if source != 'enabled':
-                record = self.coordinator.recover(record.operation_id, self.request)
-                if source == 'pending':
-                    with self.store.locked():
-                        record = self.store.save(record, replace(record, commit_pending=True))
-            self.ops.current_enabled = True
-            before = self.store.path.read_bytes()
-            with self.assertRaises(CaptureLifecycleError):
-                self.coordinator.prepare_d2_confirmation(record.operation_id, self.request)
-            with self.assertRaises(CaptureLifecycleError):
-                D2Confirmation(record, SESSION_B)
-            self.assertEqual(before, self.store.path.read_bytes())
-
-    def test_strict_d2_schema_and_legacy_compatibility(self):
-        record, confirmation = self.candidate()
+    def test_strict_historical_receipt_and_legacy_decoding(self):
+        record, _ = self.candidate()
         legacy = record.to_dict()
         for field in ('d2_consent_id', 'd2_source_digest', 'd2_binding', 'commit_pending'):
             del legacy[field]
         self.assertEqual(CaptureTransaction.from_dict(legacy), record)
-        self.confirm(record, confirmation)
-        raw = self.store.read().to_dict()
+        record = self.receipt(record)
+        raw = record.to_dict()
+        self.assertEqual(CaptureTransaction.from_dict(raw), record)
         for field, value in (('d2_consent_id', ''), ('d2_consent_id', SESSION_A),
                              ('d2_source_digest', ''), ('d2_binding', True),
                              ('d2_binding', 'sha256:' + '0' * 64), ('original_enabled', True),
                              ('operation_id', SESSION_B), ('request_metadata', ''),
                              ('phase', 'failed'), ('outcome', 'failed')):
-            with self.subTest(field=field):
-                with self.assertRaises(CaptureLifecycleError):
-                    CaptureTransaction.from_dict({**raw, field: value})
+            with self.subTest(field=field), self.assertRaises(CaptureLifecycleError):
+                CaptureTransaction.from_dict({**raw, field: value})
         for field in ('d2_consent_id', 'd2_source_digest', 'd2_binding'):
             incomplete = dict(raw)
             del incomplete[field]
             with self.assertRaises(CaptureLifecycleError):
                 CaptureTransaction.from_dict(incomplete)
-        for field, value in (('observed_enabled', 1), ('target_enabled', 0), ('outcome', 'failed')):
-            with self.assertRaises(CaptureLifecycleError):
-                replace(confirmation, **{field: value})
-
-    def test_unconfirmed_generic_recovery_and_expired_d2(self):
-        record, confirmation = self.candidate()
-        self.now = record.expires_at + 1
-        with self.assertRaises(CaptureLifecycleError):
-            self.coordinator.recover(record.operation_id, self.request)
-        with self.assertRaises(CaptureLifecycleError):
-            self.coordinator.reconstruct_request(record.operation_id, record.request_fingerprint)
-        request = self.coordinator.reconstruct_request_for_recovery(record.operation_id, record.request_fingerprint)
-        result = self.coordinator.recover_d2(record.operation_id, request, confirmation=confirmation, confirmed=True)
-        self.assertFalse(result.held)
-        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-
-    def test_drift_after_intent_barrier_blocks_owner_mutation(self):
-        for defect in ('owner', 'active', 'record', 'root', 'lock', 'unknown'):
-            with self.subTest(defect=defect):
-                self.setUp()
-                record, confirmation = self.candidate()
-                save = self.store.save
-                def drift(expected, replacement):
-                    result = save(expected, replacement)
-                    if defect == 'owner':
-                        self.ops.version = 'changed'
-                    elif defect == 'active':
-                        self.ops.competing = True
-                    elif defect == 'record':
-                        self.store.path.write_text('{}')
-                    elif defect == 'root':
-                        self.root.rename(self.root.with_name('retained-root'))
-                        self.root.mkdir()
-                    elif defect == 'lock':
-                        lock = self.root / 'create_capture_transaction.lock'
-                        lock.rename(lock.with_suffix('.retained'))
-                        lock.write_text('')
-                    else:
-                        self.ops.current_enabled = None
-                    return result
-                with patch.object(self.store, 'save', side_effect=drift):
-                    with self.assertRaises(CaptureLifecycleError):
-                        self.confirm(record, confirmation)
-                self.assertEqual(self.ops.mutations, [])
-                self.assertEqual(self.store._held_locks, {})
-                self.assertIsNone(self.store._transition_fd)
-
-    def pending_terminal(self):
-        record, confirmation = self.candidate()
-        save = self.store.save
-        def stop_pending(expected, replacement):
-            result = save(expected, replacement)
-            if replacement.commit_pending:
-                raise KeyboardInterrupt()
-            return result
-        with patch.object(self.store, 'save', side_effect=stop_pending):
-            with self.assertRaises(KeyboardInterrupt):
-                self.confirm(record, confirmation)
-        return self.store.read()
-
-    def test_d2_pending_terminal_shared_guards(self):
-        CaptureLifecycleTests.test_pending_terminal_shared_guards_are_creation_free_and_block_admission(self)
-
-    def test_d2_lock_contention_retains_snapshot_and_closes_descriptors(self):
-        import os
-        record, confirmation = self.candidate()
-        before = self.store.path.read_bytes()
-        for lock in (self.restart.acquire_lock(), FrozenInstallStore(self.root).locked(), self.store.locked()):
-            with lock:
-                with self.assertRaises(CaptureLifecycleError):
-                    self.confirm(record, confirmation)
-            self.assertEqual(before, self.store.path.read_bytes())
-            self.assertEqual(self.ops.mutations, [])
-            self.assertEqual(self.store._held_locks, {})
-            self.assertIsNone(self.store._transition_fd)
-        opened = []
-        original = self.store._directory
-        @contextmanager
-        def directory(*args, **kwargs):
-            with original(*args, **kwargs) as fd:
-                if fd is not None:
-                    opened.append(fd)
-                yield fd
-        with patch.object(self.store, '_directory', side_effect=directory):
-            self.confirm(record, confirmation)
-        for fd in set(opened):
-            with self.assertRaises(OSError):
-                os.fstat(fd)
-
-    def test_d2_assessor_remains_advisory_and_truthful(self):
-        from resources.lib.capture_recovery_assessor import assess_capture_recovery, RecoveryReason
-        record = self.pending_terminal()
-        before = self.store.path.read_bytes()
-        mutations = list(self.ops.mutations)
-        self.assertEqual(assess_capture_recovery(self.root, self.ops).reason,
-                         RecoveryReason.TERMINAL_FINALIZATION_PENDING)
-        self.ops.current_enabled = True
-        self.assertEqual(assess_capture_recovery(self.root, self.ops).reason,
-                         RecoveryReason.UNEXPECTED_ENABLEMENT)
-        with self.assertRaises(CaptureLifecycleError):
-            self.coordinator.recover(record.operation_id, self.request)
-        self.assertEqual(before, self.store.path.read_bytes())
-        self.assertEqual(mutations, self.ops.mutations)
-        self.ops.current_enabled = False
-        self.coordinator.recover(record.operation_id, self.request)
-        self.assertEqual(assess_capture_recovery(self.root, self.ops).reason,
-                         RecoveryReason.TERMINAL_NO_CAPTURE_HOLD)
-
-    def test_owner_and_competition_drift_in_setter_never_terminalize(self):
-        for defect in ('owner', 'active', 'enabled'):
-            self.setUp()
-            record, confirmation = self.candidate()
-            setter = self.ops.set_enabled
-            def drift(owner, value):
-                setter(owner, value)
-                if defect == 'owner':
-                    self.ops.version = 'changed'
-                elif defect == 'active':
-                    self.ops.competing = True
-                else:
-                    self.ops.current_enabled = True
-            with patch.object(self.ops, 'set_enabled', side_effect=drift):
-                with self.assertRaises(CaptureLifecycleError):
-                    self.confirm(record, confirmation)
-            self.assertTrue(self.store.read().held)
-            self.assertEqual(self.store.read().phase, CapturePhase.RESTORING)
-            self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-
-    def test_confirmation_cannot_cross_profile_with_copied_record(self):
-        record, confirmation = self.candidate()
-        other = D2RecoveryTests()
-        other.setUp()
-        self.addCleanup(other.doCleanups)
-        with other.store.locked():
-            other.store.save(None, record)
-        other.ops.current_enabled = True
-        before = other.store.path.read_bytes()
-        with self.assertRaises(CaptureLifecycleError):
-            other.coordinator.recover_d2(record.operation_id, self.request,
-                confirmation=confirmation, confirmed=True)
-        self.assertEqual(other.store.path.read_bytes(), before)
-        self.assertEqual(other.ops.mutations, [])
-        self.assertTrue(other.store.read().held)
-        # A fresh explicit proposal made for B may authorize B independently.
-        renewed = other.coordinator.prepare_d2_confirmation(record.operation_id, self.request)
-        result = other.coordinator.recover_d2(record.operation_id, self.request,
-            confirmation=renewed, confirmed=True)
-        self.assertFalse(result.held)
-        self.assertEqual(other.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-        self.assertEqual(self.ops.mutations, [])
-        self.assert_protected()
-
-    def test_confirmation_cannot_cross_replaced_root_with_same_record(self):
-        record, confirmation = self.candidate()
-        retained = self.root.with_name('retained-root')
-        self.root.rename(retained)
-        self.root.mkdir()
-        self.store = CaptureStore(self.root)
-        self.coordinator = self.make_coordinator()
-        with self.store.locked():
-            self.store.save(None, record)
-        before = self.store.path.read_bytes()
-        with self.assertRaises(CaptureLifecycleError):
-            self.confirm(record, confirmation)
-        self.assertEqual(before, self.store.path.read_bytes())
-        self.assertEqual(self.ops.mutations, [])
-        self.assert_protected()
-
-    def test_confirmation_aliases_share_the_same_canonical_profile_binding(self):
-        CaptureLifecycleTests.use_symlinked_profile(self)
-        self.coordinator = self.make_coordinator()
-        record, confirmation = self.candidate()
-        canonical = CaptureLifecycleCoordinator(store=CaptureStore(self.root),
-            restart_store=self.restart, operations=self.ops, clock=lambda: self.now)
-        result = canonical.recover_d2(record.operation_id, self.request,
-            confirmation=confirmation, confirmed=True)
-        self.assertFalse(result.held)
-        self.assertEqual(self.ops.mutations, [(REDLIGHT_ADDON_ID, False)])
-        self.assertNotIn(str(self.root), self.store.path.read_text())
-        self.assertNotIn(str(self.root), repr(confirmation))
-
-    def test_confirmation_invalid_or_mismatched_root_binding_fails_closed(self):
-        record, confirmation = self.candidate()
-        for value in ('', None, True, 'sha256:bad', SECRET):
-            with self.assertRaises(CaptureLifecycleError) as error:
-                replace(confirmation, root_binding=value)
-            self.assertNotIn(SECRET, str(error.exception))
-        wrong = replace(confirmation, root_binding='sha256:' + '0' * 64)
-        before = self.store.path.read_bytes()
-        with self.assertRaises(CaptureLifecycleError):
-            self.confirm(record, wrong)
-        self.assertEqual(before, self.store.path.read_bytes())
-        self.assertEqual(self.ops.mutations, [])
-        self.assert_protected()
-
-    def test_disabled_during_consent_publication_skips_setter(self):
-        record, confirmation = self.candidate()
-        save = self.store.save
-        def external_disable(expected, replacement):
-            result = save(expected, replacement)
-            self.ops.current_enabled = False
-            return result
-        with patch.object(self.store, 'save', side_effect=external_disable):
-            result = self.confirm(record, confirmation)
-        self.assertFalse(result.held)
-        self.assertEqual(self.ops.mutations, [])
 
 
 if __name__ == '__main__':

@@ -158,81 +158,59 @@ authority.
    Repeating recovery for an exact released terminal operation returns its record
    only while original enablement still matches; it performs no lifecycle mutation.
 
-### D2 explicitly confirmed restoration of original disabled state
+### D2 Option A: strict safety with manual owner restoration
 
-This offline entrypoint handles a validated nonterminal transaction whose
-`original_enabled` is exactly False while the audited Red Light owner is
-currently exactly True. It restores disabled state and cancels Create; it
-grants no capture, restart, registration, Install, Apply or startup authority.
+The approved Option A policy supersedes the unaccepted automatic D2 consent /
+disable authority in commits `2d446946` and `98509f8`. For a transaction with
+`original_enabled=False` and current Red Light enablement True, Build Manager
+must refuse recovery and retain the activation hold. This condition requires
+operator attention. It must never automatically disable the owner: Kodi 21.3
+provides neither a trusted enablement generation nor an atomic conditional
+setter. A stale confirmation can otherwise overwrite a newer enablement action,
+including a complete external True -> False -> True sequence. Timestamps,
+checksums, confirmation consumption, polling and retries cannot grant authority.
 
-`prepare_d2_confirmation(operation_id, request)` validates under the existing
-capture -> frozen-install -> restart locks and returns a `D2Confirmation` with
-the entire validated durable transaction snapshot, a fresh consent UUID, and an
-opaque binding to the canonical profile root and pinned directory identity.
-The fixed proposal is observed True -> target False, outcome CANCELLED.
-Preparation is not consent and writes no lifecycle record (normal lock files
-may be opened). The trusted caller must present this exact proposal and invoke
-`recover_d2(..., confirmation=snapshot, confirmed=True)` only after explicit
-operator agreement. False, non-Boolean consent or missing confirmation refuses
-before locks or writes. A generic True without the snapshot grants no authority.
+The compatibility names `prepare_d2_confirmation()` and `recover_d2()` now
+unconditionally fail before locks, lifecycle writes or owner setters, even with
+a valid historical `D2Confirmation`. The snapshot type remains strictly validated
+for compatibility; it grants no action authority. No new D2 receipts are emitted.
+Normal Create restoration for originally enabled owners remains supported.
 
-The dedicated transition revalidates the full snapshot, request declarations
-and digest, exact operation, original False, owner/version and current True
-under those same locks, including the profile binding before publication and
-again before any setter. Copying the same record to another profile or replacing
-the root cannot make the original confirmation authorize that destination.
-Canonical trusted aliases to the same pinned directory retain the same binding.
-Terminal records, including P5 pending terminals,
-cannot obtain D2 authority. All canonical-directory, descriptor, lock identity,
-competing durable-record and active-operation checks remain in force.
+The operator must manually disable Red Light in Kodi. Manual owner restoration
+does not release transaction protection. Install, Restart and activation remain
+blocked until explicit `recover(operation_id, request)` verifies the exact held
+transaction, request, audited owner/version, Boolean original disabled state and
+absence of competing operations. It finalizes without an owner setter, capture
+or restart replay, using the accepted P5 pending-terminal commitment and release
+below. A recorded RESTORING outcome remains unchanged, including COMPLETE or
+FAILED; recovery does not silently replace it with CANCELLED. Already released
+recovery is idempotent, and pending-terminal recovery never calls a setter.
 
-Before any setter, it atomically publishes RESTORING with outcome `cancelled`
-and three strictly validated receipt fields in the same held record:
+Strict schema-version-1 decoding is retained for historical receipts:
+`d2_consent_id`, `d2_source_digest` and `d2_binding`. The binding checksum retains
+its historical fixed proposal and phase/commit normalization so valid records
+can finalize through P5 without erasing their evidence. All three absent fields
+remain legacy-compatible. Receipts still require original False, validated request
+metadata, RESTORING or CANCELLED phase and outcome `cancelled`. Partial, malformed
+or contradictory evidence refuses; valid receipts grant no owner mutation authority. If current state is enabled,
+recovery refuses regardless of receipt validity. If already disabled and all
+checks pass, explicit recovery can complete the established cancellation without
+a setter. Persistence failures retain protection subject to P5's accepted
+post-commit release exception. Expired recovery remains supported; clock rollback
+remains blocked. No automatic recovery is authorized.
 
-- `d2_consent_id`: the explicit confirmation's canonical UUID.
-- `d2_source_digest`: SHA-256 of the complete validated reviewed transaction,
-  including the request and any preceding receipt, together with its opaque
-  profile binding. The canonical path and filesystem identity are not persisted
-  as raw fields or emitted in confirmation diagnostics.
-- `d2_binding`: SHA-256 binding that source digest and consent ID to the whole
-  restoration record and the fixed explicit consent/action/observed True/target
-  False/CANCELLED proposal. Only phase and `commit_pending` are normalized so
-  the same receipt remains valid across restoration and P5 finalization.
+The read-only assessor retains its accepted classifications and advisory recovery
+information for unexpected enablement. A future Needs Attention workflow should
+explain the retained hold, direct the operator to manually disable Red Light,
+then offer explicit transaction recovery after re-observation. UI/status/startup
+composition is deferred; an advisory never authorizes owner mutation.
 
-The receipt contains no capture results or private values. It is a binding
-checksum over trusted evidence, not proof of consent from arbitrary forged
-disk bytes. Schema-version-1 legacy records with all three fields absent remain
-readable as no D2 receipt; partial, malformed or contradictory fields refuse.
-Receipts are valid only for original False, available validated request metadata,
-RESTORING/CANCELLED and outcome `cancelled`. They never change original state.
-
-The intent save must finish its file-sync, replacement, directory barrier and
-readback/identity checks successfully before an in-memory permission for one
-setter attempt exists. A visible receipt after any save failure is insufficient.
-After successful persistence the transition freshly validates authority and exact
-Boolean state. If still enabled it calls only `set_enabled(plugin.video.redlight,
-False)` once. If already disabled it skips the setter. It then uses ordinary
-restoration verification and the unchanged two-publication P5 cancellation
-protocol. Owner/state/transaction drift or ambiguous setter effects retain the
-hold, subject to P5's explicitly approved post-commit release exception below.
-
-**No persisted setter replay authority:** after an interrupted or failed attempt,
-an enabled observation cannot distinguish an unperformed disable from a later
-external re-enablement. Generic `recover()` therefore still refuses enabled
-state even with a valid D2 receipt. The previous confirmation is stale once its
-record changes. An enabled retry must obtain a fresh reviewed snapshot and
-renewed explicit agreement, and publish a new receipt with a successful fresh
-durability barrier before one new attempt. No action-completion evidence is
-invented. If already disabled, explicit ordinary recovery verifies and completes
-the recorded cancellation without another setter. P5 pending-terminal recovery
-never gains owner-mutation authority. Expired recovery remains supported;
-clock rollback remains blocked. No recovery is started automatically.
-
-Matching owner/version strings do not prove installed package-byte provenance.
-The injected operations must target the audited owner; these checks do not
-eliminate all races with external actors between observation and mutation.
-Future runtime/UI composition must satisfy that same trusted-operation contract
-and explicitly obtain operator consent. It is outside this implementation.
+Remaining assumptions: the profile filesystem and cooperating locked writers are
+trusted, receipt checksums are integrity bindings rather than authentication,
+and matching owner/version strings do not prove installed package-byte provenance.
+The injected operations must target the audited owner. Observation and external
+owner actions are not atomic; races cannot be eliminated by these observations.
+P5's filesystem and durability assumptions remain as stated below.
 
 ### P5 terminal commitment and release
 
@@ -338,6 +316,8 @@ required persistence ordering, a trusted filesystem, and cooperating locked writ
 Storage hardware, operating-system crash recovery and filesystem durability on
 actual supported profile storage remain unqualified by these tests.
 
-D2 tests additionally cover intent write/flush/sync/publication failures,
-single-attempt consent, renewed confirmation after external re-enablement,
-interrupted setter/verification/finalization, and D2 pending-terminal guards.
+Option A tests cover unconditional retirement of old D2 APIs before locks or
+writes, the external True -> False -> True regression, continued shared guards,
+manual restoration followed by setter-free explicit recovery, historical receipt
+and legacy decoding, established outcome preservation, pending-terminal crash /
+persistence recovery and invalid identity/evidence or competing operations.
