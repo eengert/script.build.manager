@@ -329,7 +329,7 @@ class BuildStatusService:
     # -- public ---------------------------------------------------------
 
     def check(self, target: Optional[StatusTarget] = None) -> BuildStatus:
-        """Never raises and never mutates; failures become ``INCOMPLETE``."""
+        """Never raises or mutates; unverified protection requires attention."""
         try:
             return self._check(target)
         except Exception as exc:
@@ -343,8 +343,7 @@ class BuildStatusService:
             operation = self._operation(gaps)
         except Exception as exc:
             self._log_failure("operation", exc)
-            operation = OperationStatus(OperationKind.UNAVAILABLE,
-                                        OperationCode.TRANSACTION_UNREADABLE)
+            operation = self._unverifiable_operation()
             gaps.append(CheckGap.OPERATION_STATE_UNAVAILABLE)
         if target is None:
             software, skin, configuration, private = _unavailable_areas()
@@ -364,29 +363,45 @@ class BuildStatusService:
         }
         if target is not None and all(l is AreaLevel.NOT_APPLICABLE for l in levels.values()):
             gaps.append(CheckGap.NOTHING_TO_COMPARE)    # a build that lists nothing proves nothing
-        overall = combine_overall(target is not None, levels, operation)
-        status = BuildStatus(
-            overall=overall,
-            checked_at=checked_at,
-            build_selected=target is not None,
-            software=software,
-            skin=skin,
-            configuration=configuration,
-            private=private,
-            operation=operation,
-            gaps=tuple(dict.fromkeys(gaps)) if overall is not OverallStatus.CURRENT else (),
-        )
-        self._log("Build Status check: " + status.overall.value)
-        return status
+        try:
+            overall = combine_overall(target is not None, levels, operation)
+            status = BuildStatus(
+                overall=overall,
+                checked_at=checked_at,
+                build_selected=target is not None,
+                software=software,
+                skin=skin,
+                configuration=configuration,
+                private=private,
+                operation=operation,
+                gaps=tuple(dict.fromkeys(gaps)) if overall is not OverallStatus.CURRENT else (),
+            )
+            self._log("Build Status check: " + status.overall.value)
+            return status
+        except Exception as exc:
+            self._log_failure("result", exc)
+            return self._failed_status(operation)
 
-    def _failed_status(self) -> BuildStatus:
+    @staticmethod
+    def _unverifiable_operation(observed: Optional[OperationStatus] = None) -> OperationStatus:
+        """Retain verified protection/reasons; failed observation proves no absence."""
+        observed = observed or OperationStatus()
+        reasons = tuple(dict.fromkeys(code for code in (observed.code, *observed.other_codes)
+                                      if code not in (OperationCode.NONE,
+                                                      OperationCode.TRANSACTION_UNREADABLE)))
+        return replace(observed, kind=OperationKind.NEEDS_ATTENTION,
+                       code=OperationCode.TRANSACTION_UNREADABLE,
+                       create_observation=CreateObservation.UNVERIFIABLE,
+                       protection_unknown=True, other_codes=reasons)
+
+    def _failed_status(self, observed: Optional[OperationStatus] = None) -> BuildStatus:
         software, skin, configuration, private = _unavailable_areas()
         return BuildStatus(
-            overall=OverallStatus.INCOMPLETE, checked_at=self._timestamp(),
+            overall=OverallStatus.NEEDS_ATTENTION, checked_at=_utc_now(),
             build_selected=False, software=software, skin=skin, configuration=configuration,
             private=private,
-            operation=OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE),
-            gaps=(CheckGap.INSPECTION_FAILED,),
+            operation=self._unverifiable_operation(observed),
+            gaps=(CheckGap.INSPECTION_FAILED, CheckGap.OPERATION_STATE_UNAVAILABLE),
         )
 
     def _timestamp(self) -> str:
@@ -416,7 +431,11 @@ class BuildStatusService:
             restart = self._restart_operation()
         except Exception:
             restart = OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE)
-        frozen, frozen_hold = self._frozen_operation()
+        try:
+            frozen, frozen_hold = self._frozen_operation()
+        except Exception:
+            frozen = OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE)
+            frozen_hold = False
         protection = frozen_hold or create in (CreateObservation.HELD,
                                                CreateObservation.TERMINAL_PENDING)
         unknown = (create is CreateObservation.UNVERIFIABLE
@@ -490,7 +509,12 @@ class BuildStatusService:
         protection = bool(transaction.activation_hold_ids) and not transaction.activation_hold_released
         code = _safe_status_code(transaction.status_code)
         if transaction.phase is FrozenInstallPhase.AWAITING_RESTART:
-            session = self._o.session_id() or transaction.originating_kodi_session_id
+            try:
+                session = self._o.session_id() or transaction.originating_kodi_session_id
+            except Exception:
+                # The validated hold was read before session classification failed.
+                return OperationStatus(OperationKind.UNAVAILABLE,
+                                       OperationCode.TRANSACTION_UNREADABLE), protection
             if transaction.originating_kodi_session_id == session:
                 return OperationStatus(OperationKind.RESTART_REQUIRED,
                                        OperationCode.AWAITING_RESTART, code), protection

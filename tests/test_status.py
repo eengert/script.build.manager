@@ -2160,3 +2160,167 @@ class MissingCreateObserverCorrectionTests(StatusBase):
                 self.assertEqual(result.operation.protection_unknown, expected is C.UNVERIFIABLE)
                 self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION
                                  if expected is C.UNVERIFIABLE else OverallStatus.CURRENT)
+
+
+class InspectionFailureCorrectionTests(StatusBase):
+    def test_frozen_session_failure_preserves_create_and_frozen_hold(self):
+        from resources.lib.status_model import CreateObservation as C
+        for observer in (None, lambda: C.HELD, lambda: C.UNVERIFIABLE):
+            for frozen_hold in (False, True):
+                with self.subTest(observer=observer, frozen_hold=frozen_hold):
+                    h = self.current()
+                    h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART,
+                        hold=(DEMO,) if frozen_hold else (), released=not frozen_hold)
+                    def broken_session():
+                        raise RuntimeError(SECRET + '/private/profile')
+                    with h.instrumented():
+                        result = h.service(create_observer=observer,
+                                           session_id=broken_session).check(h.target())
+                    expected = observer() if observer is not None else C.UNVERIFIABLE
+                    self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+                    self.assertEqual(result.operation.create_observation, expected)
+                    self.assertEqual(result.operation.protection_active,
+                                     frozen_hold or expected is C.HELD)
+                    self.assertTrue(result.operation.protection_unknown)
+                    self.assertIn(CheckGap.OPERATION_STATE_UNAVAILABLE, result.gaps)
+                    self.assertSecretFree(result, h.logs)
+                    self.assertNotIn('/private/profile', safe_text(result))
+                    self.assertEqual(h.touched, [])
+                    self.assertEqual(h.config_backend.mutations, [])
+                    self.assertEqual(h.deps.mutations, [])
+
+    def test_operation_exception_fallback_is_explicitly_unknown(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        service = h.service()
+        with patch.object(service, '_operation', side_effect=RuntimeError(SECRET)):
+            result = service.check(h.target())
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+        self.assertTrue(result.operation.protection_unknown)
+        self.assertSecretFree(result, h.logs)
+
+    def test_total_failure_preserves_verified_hold_or_marks_unknown(self):
+        from resources.lib.status_model import CreateObservation as C
+        for create in (C.NO_RECORD_OBSERVED, C.HELD, C.UNVERIFIABLE):
+            h = self.current()
+            h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART, hold=(DEMO,), released=False)
+            with patch('resources.lib.status.combine_overall', side_effect=RuntimeError(SECRET)):
+                result = h.service(create_observer=lambda: create).check(h.target())
+            self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+            self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+            self.assertTrue(result.operation.protection_unknown)
+            self.assertTrue(result.operation.protection_active)
+            self.assertSecretFree(result, h.logs)
+        h = self.current()
+        with patch('resources.lib.status.combine_overall', side_effect=RuntimeError(SECRET)):
+            result = h.service(create_observer=lambda: C.HELD).check(h.target())
+        self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+        self.assertTrue(result.operation.protection_active)  # Create alone supplied the verified hold.
+        self.assertTrue(result.operation.protection_unknown)
+        h = self.current()
+        service = h.service()
+        with patch.object(service, '_check', side_effect=RuntimeError(SECRET)):
+            result = service.check(h.target())
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertEqual(result.operation.create_observation, C.UNVERIFIABLE)
+        self.assertTrue(result.operation.protection_unknown)
+
+    def test_unexpected_frozen_failure_retains_other_observations(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        h.restart_transaction()
+        service = h.service(create_observer=lambda: C.HELD, publication_snapshot=lambda: object())
+        with patch.object(service, '_frozen_operation', side_effect=RuntimeError(SECRET)):
+            result = service.check(h.target())
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+        self.assertEqual(result.operation.create_observation, C.HELD)
+        self.assertTrue(result.operation.protection_active)
+        self.assertTrue(result.operation.protection_unknown)
+        self.assertEqual(result.operation.status_code, 'APPLIED_PUBLICATION_PENDING')
+        self.assertIn(OperationCode.AWAITING_RESTART, result.operation.other_codes)
+        self.assertIn(OperationCode.TRANSACTION_UNREADABLE, result.operation.other_codes)
+        self.assertSecretFree(result, h.logs)
+
+    def test_unreadable_or_invalid_snapshot_preserves_create(self):
+        from resources.lib.status_model import CreateObservation as C
+        for error in (frozen_install.FrozenInstallStateUnreadable(), RuntimeError(SECRET)):
+            h = self.current()
+            def broken():
+                raise error
+            result = h.service(create_observer=lambda: C.HELD, frozen_snapshot=broken).check(h.target())
+            self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+            self.assertEqual(result.operation.create_observation, C.HELD)
+            self.assertTrue(result.operation.protection_active)
+            self.assertTrue(result.operation.protection_unknown)
+            self.assertSecretFree(result)
+
+    def test_successful_readers_preserve_63_overlap_cases(self):
+        from resources.lib.status_model import CreateObservation as C
+        cases = 0
+        for observation in (None, *tuple(C), 'invalid'):
+            for restart in ('none', 'awaiting', 'resume'):
+                for frozen in ('none', 'awaiting', 'held'):
+                    with self.subTest(create=observation, restart=restart, frozen=frozen):
+                        h = self.current()
+                        if restart != 'none':
+                            h.restart_transaction(session_id=SESSION_B if restart == 'resume' else SESSION_A)
+                        if frozen != 'none':
+                            h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART,
+                                hold=(DEMO,) if frozen == 'held' else (), released=frozen != 'held')
+                        observer = None if observation is None else lambda: observation
+                        result = h.service(create_observer=observer).check(h.target())
+                        create = observation if type(observation) is C else C.UNVERIFIABLE
+                        unresolved = create in (C.HELD, C.TERMINAL_PENDING, C.UNVERIFIABLE)
+                        expected = (OverallStatus.NEEDS_ATTENTION if unresolved or restart == 'resume'
+                                    else OverallStatus.RESTART_REQUIRED if restart != 'none' or frozen != 'none'
+                                    else OverallStatus.CURRENT)
+                        self.assertEqual(result.overall, expected)
+                        self.assertEqual(result.operation.create_observation, create)
+                        self.assertEqual(result.operation.protection_active,
+                                         frozen == 'held' or create in (C.HELD, C.TERMINAL_PENDING))
+                        self.assertEqual(result.operation.protection_unknown, create is C.UNVERIFIABLE)
+                        cases += 1
+        self.assertEqual(cases, 63)
+
+    def test_error_paths_are_creation_free_and_do_not_acquire_mutation_locks(self):
+        from resources.lib.capture_lifecycle import CaptureStore
+        from resources.lib.status_model import CreateObservation as C
+        for failure in ('session', 'operation', 'overall'):
+            h = self.current()
+            h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART, hold=(DEMO,), released=False)
+            def broken():
+                raise RuntimeError(SECRET)
+            service = h.service(create_observer=lambda: C.HELD, session_id=broken)
+            before = {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                      for p in h.profile.rglob('*')}
+            flags = []
+            opened = os.open
+            def read_open(path, value, *args, **kwargs):
+                flags.append(value)
+                return opened(path, value, *args, **kwargs)
+            from contextlib import ExitStack
+            with ExitStack() as stack:
+                stack.enter_context(h.instrumented())
+                stack.enter_context(patch('os.open', side_effect=read_open))
+                mkdir = stack.enter_context(patch('os.mkdir', side_effect=AssertionError('mkdir')))
+                lock = stack.enter_context(patch.object(CaptureStore, '_lock', side_effect=AssertionError('lock')))
+                save = stack.enter_context(patch.object(CaptureStore, 'save', side_effect=AssertionError('save')))
+                restart_lock = stack.enter_context(patch.object(TransactionStore, 'acquire_lock', side_effect=AssertionError('lock')))
+                if failure == 'operation':
+                    stack.enter_context(patch.object(service, '_operation', side_effect=RuntimeError(SECRET)))
+                elif failure == 'overall':
+                    stack.enter_context(patch('resources.lib.status.combine_overall', side_effect=RuntimeError(SECRET)))
+                result = service.check(h.target())
+            for tripwire in (mkdir, lock, save, restart_lock):
+                tripwire.assert_not_called()
+            self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+            self.assertTrue(result.operation.protection_unknown)
+            self.assertEqual(h.touched, [])
+            self.assertEqual(h.config_backend.mutations, [])
+            self.assertEqual(h.deps.mutations, [])
+            self.assertFalse(any(value & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC)
+                                 for value in flags))
+            self.assertEqual(before, {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                                      for p in h.profile.rglob('*')})
+            self.assertSecretFree(result, h.logs)
