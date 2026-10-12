@@ -1136,3 +1136,35 @@ msgstr ""
 msgctxt "#32567"
 msgid "Some protection state could not be verified."
 msgstr ""
+
+msgctxt "#33000"
+msgid "Create Build progress"
+msgstr ""
+
+msgctxt "#33001"
+msgid "No saved Create Build progress was observed. This does not show whether a build was created before."
+msgstr ""
+
+msgctxt "#33002"
+msgid "Create Build has unfinished work. Protection stays on. Recovery is not ready to use; further checks and your confirmation are needed."
+msgstr ""
+
+msgctxt "#33003"
+msgid "Create Build still needs final checks before protection can be released. Recovery is not ready to use."
+msgstr ""
+
+msgctxt "#33004"
+msgid "Released Create Build progress was observed. It adds no protection. Other work may still need attention."
+msgstr ""
+
+msgctxt "#33005"
+msgid "Red Light was verified as unexpectedly enabled. Disable Red Light manually, then return for fresh checks. Build Manager will not disable it automatically. Recovery still needs validation and your confirmation."
+msgstr ""
+
+msgctxt "#33006"
+msgid "Create Build needs attention. Red Light's state could not be confirmed as ready for recovery. Review the problem before making changes. Recovery is not ready to use."
+msgstr ""
+
+msgctxt "#33007"
+msgid "Create Build progress or its supporting checks could not be verified. Review the problem and check again later. Recovery is not ready to use."
+msgstr ""
