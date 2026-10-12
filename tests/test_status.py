@@ -2324,3 +2324,171 @@ class InspectionFailureCorrectionTests(StatusBase):
             self.assertEqual(before, {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                                       for p in h.profile.rglob('*')})
             self.assertSecretFree(result, h.logs)
+
+
+class EvidenceAssemblyCorrectionTests(StatusBase):
+    def test_r1_r2_r2prime_r3_preserve_verified_hold(self):
+        from contextlib import ExitStack
+        from unittest.mock import Mock
+        from resources.lib import status as module
+        from resources.lib.status_model import CreateObservation as C
+        for route in ('R1', 'R2', 'R2prime', 'R3'):
+            for create, frozen in ((C.HELD, False), (C.HELD, True), (C.UNVERIFIABLE, True)):
+                with self.subTest(route=route, create=create, frozen=frozen):
+                    h = self.current()
+                    if frozen:
+                        h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART, hold=(DEMO,), released=False)
+                    observer = Mock(return_value=create)
+                    service = h.service(create_observer=observer)
+                    with ExitStack() as stack:
+                        stack.enter_context(h.instrumented())
+                        if route == 'R1':
+                            real = module.replace
+                            calls = [0]
+                            def once(*args, **kwargs):
+                                calls[0] += 1
+                                if calls[0] == 1:
+                                    raise RuntimeError(SECRET)
+                                return real(*args, **kwargs)
+                            stack.enter_context(patch.object(module, 'replace', side_effect=once))
+                        elif route in ('R2', 'R2prime'):
+                            stack.enter_context(patch.object(module, 'combine_overall', side_effect=RuntimeError(SECRET)))
+                            name = '_unverifiable_operation' if route == 'R2' else '_failed_status'
+                            real = getattr(service, name)
+                            calls = [0]
+                            def once(*args, **kwargs):
+                                calls[0] += 1
+                                if calls[0] == 1:
+                                    raise RuntimeError(SECRET)
+                                return real(*args, **kwargs)
+                            stack.enter_context(patch.object(service, name, side_effect=once))
+                        else:
+                            stack.enter_context(patch.object(service, '_check_target', return_value=(object(),) * 4))
+                        result = service.check(h.target())
+                    self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+                    self.assertTrue(result.operation.protection_active)
+                    self.assertTrue(result.operation.protection_unknown)
+                    self.assertNotEqual(result.operation.create_observation, C.NO_RECORD_OBSERVED)
+                    observer.assert_called_once_with()
+                    self.assertEqual(h.touched, [])
+                    self.assertSecretFree(result, h.logs)
+                    self.assertNotIn(str(h.profile), safe_text(result))
+
+    def test_evidence_is_fresh_after_failure_without_reobserving(self):
+        from unittest.mock import Mock
+        from resources.lib import status as module
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        observer = Mock(side_effect=(C.HELD, C.TERMINAL_RELEASED, C.NO_RECORD_OBSERVED))
+        frozen = Mock(return_value=None)
+        service = h.service(create_observer=observer, frozen_snapshot=frozen)
+        real = module.replace
+        calls = [0]
+        def once(*args, **kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError(SECRET)
+            return real(*args, **kwargs)
+        with patch.object(module, 'replace', side_effect=once):
+            results = [service.check(h.target()) for _ in range(3)]
+        self.assertEqual([r.operation.protection_active for r in results], [True, False, False])
+        self.assertEqual([r.overall for r in results],
+                         [OverallStatus.NEEDS_ATTENTION, OverallStatus.CURRENT, OverallStatus.CURRENT])
+        self.assertEqual(results[1].operation.create_observation, C.TERMINAL_RELEASED)
+        self.assertEqual(results[2].operation.create_observation, C.NO_RECORD_OBSERVED)
+        self.assertEqual(observer.call_count, 3)
+        self.assertEqual(frozen.call_count, 3)
+
+    def test_simultaneous_checks_do_not_share_evidence(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier, local
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        state, barrier = local(), Barrier(2)
+        def observe():
+            barrier.wait(timeout=5)
+            return state.create
+        service = h.service(create_observer=observe, frozen_snapshot=lambda: None,
+                            restart_snapshot=lambda: None)
+        def run(create):
+            state.create = create
+            return service.check()
+        with patch('resources.lib.status.combine_overall', side_effect=RuntimeError(SECRET)), \
+             ThreadPoolExecutor(max_workers=2) as pool:
+            one = pool.submit(run, C.HELD)
+            two = pool.submit(run, C.TERMINAL_RELEASED)
+            held, released = one.result(timeout=10), two.result(timeout=10)
+        self.assertTrue(held.operation.protection_active)
+        self.assertFalse(released.operation.protection_active)
+        self.assertTrue(held.operation.protection_unknown)
+        self.assertTrue(released.operation.protection_unknown)
+
+    def test_one_shot_constructor_and_persistent_constructor_contract(self):
+        from resources.lib import status as module
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        service = h.service(create_observer=lambda: C.TERMINAL_PENDING)
+        real, calls = module.BuildStatus, [0]
+        def once(*args, **kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError(SECRET)
+            return real(*args, **kwargs)
+        with patch.object(module, 'BuildStatus', side_effect=once):
+            result = service.check(h.target())
+        self.assertTrue(result.operation.protection_active)
+        self.assertTrue(result.operation.protection_unknown)
+        with patch.object(module, 'BuildStatus', side_effect=RuntimeError(SECRET)) as broken:
+            with self.assertRaisesRegex(RuntimeError, '^Build Status result construction unavailable$'):
+                service.check(h.target())
+        self.assertEqual(broken.call_count, 4)  # Main, ordinary fallback, two emergency attempts.
+
+    def test_r3_fallback_is_creation_free_and_secret_blind(self):
+        from resources.lib.capture_lifecycle import CaptureStore
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        before = {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                  for p in h.profile.rglob('*')}
+        service = h.service(create_observer=lambda: C.HELD)
+        flags, opened = [], os.open
+        def read_open(path, value, *args, **kwargs):
+            flags.append(value)
+            return opened(path, value, *args, **kwargs)
+        with h.instrumented(), patch.object(service, '_check_target', return_value=(object(),) * 4), \
+             patch('os.open', side_effect=read_open), \
+             patch('os.mkdir', side_effect=AssertionError('mkdir')) as mkdir, \
+             patch.object(CaptureStore, '_lock', side_effect=AssertionError('lock')) as lock, \
+             patch.object(CaptureStore, 'save', side_effect=AssertionError('save')) as save:
+            result = service.check(h.target())
+        for tripwire in (mkdir, lock, save):
+            tripwire.assert_not_called()
+        self.assertFalse(any(value & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC)
+                             for value in flags))
+        self.assertEqual(before, {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+                                  for p in h.profile.rglob('*')})
+        self.assertTrue(result.operation.protection_active)
+        self.assertEqual(h.touched, [])
+        self.assertEqual(h.config_backend.mutations, [])
+        self.assertEqual(h.deps.mutations, [])
+        self.assertSecretFree(result, h.logs)
+        self.assertNotIn(str(h.profile), safe_text(result))
+
+    def test_verified_frozen_hold_survives_late_code_assembly_fault(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        h.frozen_transaction(FrozenInstallPhase.AWAITING_RESTART, hold=(DEMO,), released=False)
+        with patch('resources.lib.status._safe_status_code', side_effect=RuntimeError(SECRET)):
+            result = h.service(create_observer=lambda: C.UNVERIFIABLE).check(h.target())
+        self.assertTrue(result.operation.protection_active)
+        self.assertTrue(result.operation.protection_unknown)
+        self.assertEqual(result.overall, OverallStatus.NEEDS_ATTENTION)
+
+    def test_operation_guard_entry_retains_evidence_on_assembly_fault(self):
+        from resources.lib.status_model import CreateObservation as C
+        h = self.current()
+        service = h.service(create_observer=lambda: C.HELD)
+        with patch('resources.lib.status.replace', side_effect=RuntimeError(SECRET)):
+            result = service.inspect_operation([])
+        self.assertTrue(result.protection_active)
+        self.assertTrue(result.protection_unknown)
+        self.assertEqual(result.kind, OperationKind.NEEDS_ATTENTION)

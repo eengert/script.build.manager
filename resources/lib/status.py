@@ -320,6 +320,15 @@ def combine_overall(
     return OverallStatus.CURRENT
 
 
+@dataclass
+class _StatusEvidence:
+    """Sanitized observations owned by one call, never cached on the service."""
+
+    protection_active: bool = False
+    operation: Optional[OperationStatus] = None
+    other_codes: Tuple[OperationCode, ...] = ()
+
+
 class BuildStatusService:
     """Performs one fresh, read-only check per ``check()`` call."""
 
@@ -329,22 +338,36 @@ class BuildStatusService:
     # -- public ---------------------------------------------------------
 
     def check(self, target: Optional[StatusTarget] = None) -> BuildStatus:
-        """Never raises or mutates; unverified protection requires attention."""
+        """Read once; ordinary exceptions and one-shot assembly faults fail closed.
+
+        Two bounded emergency construction attempts retain per-call evidence.
+        Persistently broken core result constructors cannot promise a BuildStatus;
+        exhaustion raises a sanitized error without retrying observations.
+        """
+        evidence = _StatusEvidence()
         try:
-            return self._check(target)
+            return self._check(target, evidence)
         except Exception as exc:
             self._log_failure("check", exc)
-            return self._failed_status()
+        for _ in range(2):
+            try:
+                return self._emergency_status(evidence)
+            except Exception as exc:
+                self._log_failure("fallback", exc)
+        raise RuntimeError("Build Status result construction unavailable") from None
 
-    def _check(self, target: Optional[StatusTarget]) -> BuildStatus:
+    def _check(self, target: Optional[StatusTarget],
+               evidence: Optional[_StatusEvidence] = None) -> BuildStatus:
+        evidence = evidence if evidence is not None else _StatusEvidence()
         checked_at = self._timestamp()
         gaps: List[CheckGap] = []
         try:
-            operation = self._operation(gaps)
+            operation = self._operation(gaps, evidence)
         except Exception as exc:
             self._log_failure("operation", exc)
-            operation = self._unverifiable_operation()
+            operation = self._evidence_operation(evidence)
             gaps.append(CheckGap.OPERATION_STATE_UNAVAILABLE)
+        evidence.operation = operation
         if target is None:
             software, skin, configuration, private = _unavailable_areas()
             gaps.append(CheckGap.NO_BUILD_SELECTED)
@@ -355,15 +378,15 @@ class BuildStatusService:
                 self._log_failure("target", exc)
                 software, skin, configuration, private = _unavailable_areas()
                 gaps.append(CheckGap.INSPECTION_FAILED)
-        levels = {
-            StatusArea.SOFTWARE: software.level,
-            StatusArea.SKIN: skin.level,
-            StatusArea.CONFIGURATION: configuration.level,
-            StatusArea.PRIVATE: private.level,
-        }
-        if target is not None and all(l is AreaLevel.NOT_APPLICABLE for l in levels.values()):
-            gaps.append(CheckGap.NOTHING_TO_COMPARE)    # a build that lists nothing proves nothing
         try:
+            levels = {
+                StatusArea.SOFTWARE: software.level,
+                StatusArea.SKIN: skin.level,
+                StatusArea.CONFIGURATION: configuration.level,
+                StatusArea.PRIVATE: private.level,
+            }
+            if target is not None and all(l is AreaLevel.NOT_APPLICABLE for l in levels.values()):
+                gaps.append(CheckGap.NOTHING_TO_COMPARE)    # a build that lists nothing proves nothing
             overall = combine_overall(target is not None, levels, operation)
             status = BuildStatus(
                 overall=overall,
@@ -404,6 +427,28 @@ class BuildStatusService:
             gaps=(CheckGap.INSPECTION_FAILED, CheckGap.OPERATION_STATE_UNAVAILABLE),
         )
 
+    @staticmethod
+    def _evidence_operation(evidence: _StatusEvidence) -> OperationStatus:
+        observed = evidence.operation or OperationStatus()
+        reasons = tuple(dict.fromkeys(code for code in
+                        (observed.code, *observed.other_codes, *evidence.other_codes)
+                        if code not in (OperationCode.NONE, OperationCode.TRANSACTION_UNREADABLE)))
+        # Construct directly: a failed replace/helper must not erase verified holds.
+        return OperationStatus(
+            OperationKind.NEEDS_ATTENTION, OperationCode.TRANSACTION_UNREADABLE,
+            status_code=observed.status_code,
+            protection_active=evidence.protection_active or observed.protection_active,
+            create_observation=CreateObservation.UNVERIFIABLE,
+            protection_unknown=True, other_codes=reasons)
+
+    def _emergency_status(self, evidence: _StatusEvidence) -> BuildStatus:
+        software, skin, configuration, private = _unavailable_areas()
+        return BuildStatus(
+            overall=OverallStatus.NEEDS_ATTENTION, checked_at=_utc_now(),
+            build_selected=False, software=software, skin=skin, configuration=configuration,
+            private=private, operation=self._evidence_operation(evidence),
+            gaps=(CheckGap.INSPECTION_FAILED, CheckGap.OPERATION_STATE_UNAVAILABLE))
+
     def _timestamp(self) -> str:
         try:
             return self._o.clock()
@@ -418,7 +463,9 @@ class BuildStatusService:
 
     # -- operation state --------------------------------------------------
 
-    def _operation(self, gaps: List[CheckGap]) -> OperationStatus:
+    def _operation(self, gaps: List[CheckGap],
+                   evidence: Optional[_StatusEvidence] = None) -> OperationStatus:
+        evidence = evidence if evidence is not None else _StatusEvidence()
         create = CreateObservation.UNVERIFIABLE
         if self._o.create_observer is not None:
             try:
@@ -427,17 +474,18 @@ class BuildStatusService:
                     create = CreateObservation.UNVERIFIABLE
             except Exception:
                 create = CreateObservation.UNVERIFIABLE
+        evidence.protection_active = create in (CreateObservation.HELD, CreateObservation.TERMINAL_PENDING)
         try:
             restart = self._restart_operation()
         except Exception:
             restart = OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE)
         try:
-            frozen, frozen_hold = self._frozen_operation()
+            frozen, frozen_hold = self._frozen_operation(evidence)
         except Exception:
             frozen = OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE)
             frozen_hold = False
-        protection = frozen_hold or create in (CreateObservation.HELD,
-                                               CreateObservation.TERMINAL_PENDING)
+        evidence.protection_active = evidence.protection_active or frozen_hold
+        protection = evidence.protection_active
         unknown = (create is CreateObservation.UNVERIFIABLE
                    or frozen.code in (OperationCode.TRANSACTION_UNREADABLE,
                                       OperationCode.TRANSACTION_INVALID))
@@ -470,6 +518,8 @@ class BuildStatusService:
         # Retain overlapping reasons even when Create raises the overall severity.
         other = tuple(dict.fromkeys(op.code for op in operations
                                     if op.code not in (OperationCode.NONE, chosen.code)))
+        evidence.operation = chosen
+        evidence.other_codes = other
         return replace(chosen, protection_active=protection, protection_unknown=unknown,
                        create_observation=create, other_codes=other)
 
@@ -497,7 +547,7 @@ class BuildStatusService:
                                    OperationCode.OPERATION_NOT_FINISHED, code)
         return OperationStatus(OperationKind.NEEDS_ATTENTION, OperationCode.TRANSACTION_INVALID, code)
 
-    def _frozen_operation(self) -> Tuple[OperationStatus, bool]:
+    def _frozen_operation(self, evidence: Optional[_StatusEvidence] = None) -> Tuple[OperationStatus, bool]:
         try:
             transaction = self._o.frozen_snapshot()
         except FrozenInstallStateUnreadable:
@@ -507,6 +557,8 @@ class BuildStatusService:
         if transaction is None:
             return OperationStatus(), False
         protection = bool(transaction.activation_hold_ids) and not transaction.activation_hold_released
+        if evidence is not None:
+            evidence.protection_active = evidence.protection_active or protection
         code = _safe_status_code(transaction.status_code)
         if transaction.phase is FrozenInstallPhase.AWAITING_RESTART:
             try:
@@ -781,7 +833,13 @@ class BuildStatusService:
 
     def inspect_operation(self, gaps: List[CheckGap]) -> OperationStatus:
         """Durable restart / needs-attention state, read without locks or creation."""
-        return self._operation(gaps)
+        evidence = _StatusEvidence()
+        try:
+            return self._operation(gaps, evidence)
+        except Exception as exc:
+            self._log_failure("operation", exc)
+            gaps.append(CheckGap.OPERATION_STATE_UNAVAILABLE)
+            return self._evidence_operation(evidence)
 
     def _inspect_private(
         self, desired: ResolvedBuild, frozen, gaps: List[CheckGap],
