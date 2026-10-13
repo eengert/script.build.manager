@@ -7,6 +7,7 @@ in the kernel; operation, fingerprint, profile and session strings are assertion
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import json
+import os
 from pathlib import Path
 import select
 import subprocess
@@ -27,6 +28,55 @@ if select.select([sys.stdin], [], [], 7)[0]:
     command = sys.stdin.readline().strip()
     if command == 'exec':
         os.execv(sys.executable, [sys.executable, '-c', 'import time; time.sleep(.15)'])
+'''
+
+# This process, not the unittest runner, is the witness's actual launcher and
+# socket connector. Native stdout is inherited directly by the witness: the
+# parent never reads or constructs native witness output. It does validate a
+# harness-relayed copy of readiness for PID consistency. The harness keeps
+# the pipe reader open after reaping the parent. No session detachment,
+# signal, daemon installation, or production process is involved.
+PARENT = r'''
+import json, os, select, socket, subprocess, sys
+def command():
+    if not select.select([sys.stdin], [], [], 9)[0]:
+        raise RuntimeError('synthetic_parent_command_timeout')
+    line = sys.stdin.readline()
+    if not line:
+        raise RuntimeError('synthetic_parent_command_missing')
+    return json.loads(line)
+def report(value):
+    print(json.dumps(value), file=sys.stderr, flush=True)
+witness = subprocess.Popen([sys.argv[1], 'witness', sys.argv[2]],
+    stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# Redirect the parent's stdout writer to /dev/null without leaving fd 1
+# available for socket reuse. Only the witness retains the harness pipe's
+# writer, so EOF tracks its completion even while the parent is alive.
+with open(os.devnull, 'w') as sink:
+    os.dup2(sink.fileno(), sys.stdout.fileno())
+report(dict(kind='spawned', parent_pid=os.getpid(), witness_pid=witness.pid,
+            harness_pid=os.getppid()))
+if command() != 'connect':
+    raise RuntimeError('synthetic_parent_connect_missing')
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+s.connect(sys.argv[2])
+payload = sys.argv[3]
+if sys.argv[4] == 'incomplete':
+    s.sendall(payload.encode())
+    s.shutdown(socket.SHUT_WR)
+else:
+    s.sendall((payload + '\n').encode())
+    ready = command()
+    if (ready.get('kind') != 'ready' or ready.get('witness_pid') != witness.pid
+            or ready.get('old', {}).get('pid') != os.getpid()
+            or ready.get('authenticated', {}).get('incarnation') != ready['old']):
+        raise RuntimeError('synthetic_parent_readiness_missing')
+    report(dict(kind='ready_ack', parent_pid=os.getpid(), witness_pid=witness.pid))
+if command() != 'exit':
+    raise RuntimeError('synthetic_parent_exit_missing')
+# Ordinary interpreter exit, with the socket closed naturally. Do not wait for
+# the witness here: its NOTE_EXIT requires this process to finish first.
 '''
 
 
@@ -126,9 +176,10 @@ class RestartWitnessTests(unittest.TestCase):
                     profile='synthetic-canonical-profile', session=session,
                     pid=999999, application='ASSERTED-ONLY')
 
-    def line(self, proc):
-        self.assertTrue(select.select([proc.stdout], [], [], 9)[0], 'probe output missing')
-        line = proc.stdout.readline()
+    def line(self, proc, stream=None):
+        stream = proc.stdout if stream is None else stream
+        self.assertTrue(select.select([stream], [], [], 9)[0], 'probe output missing')
+        line = stream.readline()
         self.assertTrue(line, 'probe unexpectedly closed output')
         return json.loads(line)
 
@@ -166,6 +217,98 @@ class RestartWitnessTests(unittest.TestCase):
 
     def path(self):
         return self.directory / (uuid.uuid4().hex[:12] + '.sock')
+
+    @contextmanager
+    def witness_parent(self, mode='complete'):
+        path = self.path()
+        claim = self.claim('old-parent')
+        # Even an asserted exit must not replace an actual kernel event.
+        claim['kernel_note_exit'] = True
+        parent = subprocess.Popen([sys.executable, '-c', PARENT,
+            str(self.binary), str(path), json.dumps(claim), mode],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        try:
+            launched = self.line(parent, parent.stderr)
+            self.assertEqual(launched['kind'], 'spawned', launched)
+            self.assertEqual(launched['parent_pid'], parent.pid)
+            self.assertEqual(launched['harness_pid'], os.getpid())
+            listening = self.line(parent)
+            self.assertEqual(listening['kind'], 'listening', listening)
+            self.assertEqual(listening['witness_pid'], launched['witness_pid'])
+            self.parent_command(parent, 'connect')
+            yield parent, launched
+        finally:
+            if not parent.stdin.closed:
+                try:
+                    parent.stdin.close()  # bounded failure path: parent sees EOF
+                except BrokenPipeError:
+                    pass  # parent already exited; still collect it and pipe EOF
+            parent.stdin = None
+            # communicate waits for parent AND inherited witness-pipe EOF.
+            # Neither process receives signals, even on assertion failures.
+            parent.communicate(timeout=15)
+            self.assertFalse(path.exists(), 'witness socket must be removed')
+
+    def parent_command(self, parent, value):
+        parent.stdin.write(json.dumps(value) + '\n')
+        parent.stdin.flush()
+
+    def parent_ready(self, parent, launched):
+        ready = self.line(parent)
+        self.assertEqual(ready['kind'], 'ready', ready)
+        self.assertEqual(ready['witness_pid'], launched['witness_pid'])
+        self.assertEqual(ready['old']['pid'], parent.pid)
+        self.assertEqual(ready['old'], ready['authenticated']['incarnation'])
+        self.assertGreater(ready['authenticated']['audit_pidversion'], 0)
+        self.assertNotEqual(ready['old']['pid'], ready['asserted']['pid'])
+        self.assertIsNone(parent.poll(), 'parent must remain alive until ready acknowledgement')
+        self.parent_command(parent, ready)
+        acknowledged = self.line(parent, parent.stderr)
+        self.assertEqual(acknowledged, dict(kind='ready_ack', parent_pid=parent.pid,
+                                          witness_pid=launched['witness_pid']))
+        self.assertIsNone(parent.poll(), 'parent must acknowledge before exiting')
+        return ready, acknowledged
+
+    def test_actual_parent_exit_survival_with_direct_native_evidence(self):
+        with self.witness_parent() as (parent, launched):
+            ready, acknowledged = self.parent_ready(parent, launched)
+            self.parent_command(parent, 'exit')
+            self.assertEqual(parent.wait(timeout=10), 0)
+            exited = self.line(parent)
+            self.assertEqual(exited['kind'], 'exit', exited)
+            self.assertIs(exited['kernel_note_exit'], True)
+            self.assertEqual(exited['old'], ready['old'])
+            self.assertEqual(exited['witness_pid'], launched['witness_pid'])
+            # Native NOTE_EXIT can only be emitted by a witness executing after
+            # its registered parent has exited. EOF proves its own bounded exit;
+            # it need not still be running when Python finishes reaping parent.
+            self.assertTrue(select.select([parent.stdout], [], [], 9)[0])
+            self.assertEqual(parent.stdout.read(), '')
+            print('PARENT_EXIT_EVIDENCE ' + json.dumps(dict(launched=launched,
+                ready=ready, acknowledged=acknowledged, exited=exited,
+                parent_returncode=parent.returncode, witness_stdout_eof=True), sort_keys=True))
+
+    def test_actual_parent_incomplete_claim_refuses_readiness_and_exit_proof(self):
+        with self.witness_parent('incomplete') as (parent, launched):
+            refused = self.line(parent)
+            self.assertEqual(refused, dict(kind='refused', code='claim_incomplete'))
+            self.assertIsNone(parent.poll())
+            self.parent_command(parent, 'exit')
+            self.assertEqual(parent.wait(timeout=10), 0)
+            self.assertTrue(select.select([parent.stdout], [], [], 9)[0])
+            self.assertEqual(parent.stdout.read(), '', 'no native ready or exit proof')
+
+    def test_actual_parent_missing_exit_event_refuses_asserted_exit(self):
+        with self.witness_parent() as (parent, launched):
+            ready, acknowledged = self.parent_ready(parent, launched)
+            self.assertIs(ready['asserted']['kernel_note_exit'], True)
+            self.assertEqual(self.line(parent), dict(kind='refused', code='exit_evidence_missing'))
+            self.assertIsNone(parent.poll(), 'parent stays alive through native timeout')
+            self.assertTrue(select.select([parent.stdout], [], [], 9)[0])
+            self.assertEqual(parent.stdout.read(), '', 'assertions cannot produce native exit proof')
+            self.parent_command(parent, 'exit')
+            self.assertEqual(parent.wait(timeout=10), 0)
 
     def observed_peer(self, claim=None):
         path = self.path()

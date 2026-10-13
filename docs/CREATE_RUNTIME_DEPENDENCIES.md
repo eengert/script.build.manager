@@ -138,13 +138,14 @@ removed automatically):
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_create_restart_witness -v
 ```
 
-Final source/test run: **14 tests passed in 13.530 seconds**. Each native test
+Original accepted source/test run: **14 tests passed in 13.530 seconds**. Each native test
 uses fresh disposable subprocesses and temporary sockets. Clients wait for the
 harness to receive readiness before exiting naturally; no signals are sent.
 The witness is a separate subprocess and remains running across the old
 process's exit. It emits the actual kernel-observed exit and exits naturally.
-There is no daemon persistence claim. The witness and old client are siblings
-under the harness; survival across a parent-process exit was not tested.
+There is no daemon persistence claim. In that original run, the witness and
+old client were siblings, so it did not test parent-exit survival. See the
+later 'Synthetic witness parent-exit survival' section for that evidence.
 
 One retained positive observation from that run:
 
@@ -266,3 +267,118 @@ files and this minimal historical observation remain. The four pre-existing
 dirty `.agent` files were preserved without handoff or usage edits, as explicitly
 required by this task. No staging, commits, full suite, Kodi harness, Test.app,
 normal profile/device access, push, merge, release or deployment occurred.
+
+## Synthetic witness parent-exit survival (2026-10-13)
+
+This bounded experiment advances only the missing parent-exit survival evidence
+for the Item 8 restart-witness investigation. Worktree:
+`/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch
+`agent/codex`, exact unchanged HEAD
+`e4e50e97ff63d9cc0d34a2dadc48041cf238aef7`. The reviewed Swift implementation
+was kept byte-identical, SHA-256
+`96bb268047d27cabae1d16445329115c9860c0f974e728e95063bd2cfca4ed0e`.
+Only `tests/test_create_restart_witness.py` and this document changed.
+
+### Process relationship and evidence transport
+
+The Python unittest runner launches a disposable Python old process. That old
+process directly calls `subprocess.Popen` to launch the Swift witness as its
+actual child, without session detachment or daemon/service installation. The
+same old process connects to the existing UNIX socket and sends its synthetic
+claim. Its launched-child PID is compared with native listening, readiness and
+exit witness PIDs. The kernel-authenticated socket incarnation is compared with
+the old process's PID supplied by the harness's own `Popen` object. Parent
+launch/acknowledgement metadata uses stderr; it is harness coordination, not
+kernel exit proof.
+
+Witness stdout goes directly to a pipe whose reader belongs to the unittest
+runner. After launch, the old process redirects its stdout pipe writer to
+/dev/null, leaving only the witness holding that pipe's writer. The parent
+does not read the witness's native output pipe or construct native evidence.
+The harness receives native readiness, checks authenticated identity, and
+relays a copy through its control pipe. The parent validates that copy against
+its own PID and launched witness PID and acknowledges before the harness
+permits ordinary interpreter exit. The witness retains the output writer after
+the old process exits. The harness reaps the old process with status zero, then
+captures the native exit record and pipe EOF. No exit record is synthesized by
+Python, and parent exit status, EOF or asserted fields cannot replace NOTE_EXIT.
+
+The unchanged Swift `ready` path requires a successful `EV_RECEIPT` registration,
+matching start identity before/after registration and no queued event before
+readiness. The receipt itself is not emitted as JSON; `ready` acknowledges that
+checked registration. Its `exit` path emits `kernel_note_exit: true` only after
+`kevent` returns the matching `EVFILT_PROC` / `NOTE_EXIT` event without NOTE_EXEC.
+Thus the witness was executing after its actual parent's exit with the same PID
+and registered old incarnation. It can finish before the harness returns from
+reaping the parent; no arbitrary post-exit residence time is claimed. The harness
+is not the orphan witness's parent and does not collect its exit status; native
+output, pipe EOF and removed socket establish the observed bounded completion.
+
+### Retained result and negative cases
+
+Final focused run, using the command in the preceding section:
+**17 tests passed in 17.637 seconds**, comprising the existing 14 tests unchanged
+and three new real-kernel parent/child cases. Class setup compiled the unchanged
+Swift source successfully with `xcrun swiftc -warnings-as-errors -lbsm`, using a
+scratch module cache and binary. Toolchain: Apple Swift **6.3.2**, target
+`x86_64-apple-macosx26.0`. Test source SHA-256:
+`7e5caadb3476af3e82adec3243fa3d2aa85db3a93465e6a210bacfb8050d5ea5`.
+
+One genuine positive observation printed as `PARENT_EXIT_EVIDENCE`:
+
+| Observation | Value |
+| --- | --- |
+| Synthetic operation assertion | `9feb19ec-d665-4869-bff5-f7b724356ef7` |
+| Harness PID / actual old parent PID | `91601 / 91720` |
+| Launched witness / native ready / native exit PID | `91721 / 91721 / 91721` |
+| Native old PID/start at ready and exit | `91720 / 1791911128.745117` |
+| Socket audit PID version / effective UID | `983912 / 501` |
+| Caller-asserted PID | `999999` (not identity authority) |
+| Parent acknowledgement | `ready_ack`, parent `91720`, witness `91721`, before permitted exit |
+| Parent exit status | `0`, collected by harness |
+| Native event | `kind: exit`, `kernel_note_exit: true`, matching old incarnation |
+| Exit callback observation time | `1791911129.147995` (not the kernel exit timestamp) |
+| Witness output completion / socket cleanup | EOF observed / socket absent |
+
+These are historical observations, never reusable live process identifiers.
+
+- **Positive:** actual parent exits only after registered readiness is received
+  and acknowledged; the same witness emits the genuine matching parent exit.
+- **Incomplete readiness:** old parent sends an unterminated claim and shuts
+  down the socket's write direction. Native output is `claim_incomplete`, with
+  no ready or exit record, including after the parent's later natural exit.
+- **Missing exit evidence:** parent acknowledges readiness but stays alive past
+  the witness's five-second event deadline. Native output is
+  `exit_evidence_missing`; no exit record appears, even though the claim contains
+  `kernel_note_exit: true`. The parent then exits normally. Assertion-based proof
+  remains refused. Existing incomplete/corrupt-evidence policy negatives also pass.
+
+The initial three-test iteration exposed a harness EOF bug: the old parent's
+duplicate stdout writer delayed EOF in the timeout case until its own command
+deadline, causing a broken pipe on release. Closing that duplicate writer and
+collecting processes even on a broken control pipe corrected the harness; the
+final 17-test run passed without resource warnings. No Swift change was needed.
+
+### Remaining boundaries and cleanup
+
+**Result: synthetic parent-exit survival and genuine kernel parent-exit evidence
+demonstrated on this host.** This establishes neither a complete Kodi restart nor
+Item 8 acceptance. The pipe reader remains alive in the harness; this is not
+durable authenticated receipt storage or a daemon persistence guarantee. No
+forced PID reuse, race-safe incarnation binding, exec/delegation exclusion,
+race-safe replacement ordering, Kodi application/profile identity, genuine
+Create-operation binding, global Kodi inactivity, recovery or reservation
+clearance was established. All production prerequisites and trust limitations
+listed above remain unresolved. `verify_restart()` was neither implemented nor
+wired. Independent review of this exact test/document delta is the next gate.
+
+Cleanup: scratch binary, module cache, sockets and temporary directories were
+removed automatically. Each parent is bounded by command deadlines; native
+witness accept/read/event waits are bounded. Final cases collected each parent's
+natural exit and the witness's pipe EOF, and checked socket removal. No signals
+were sent. No persistent runtime artifacts were added; this document retains the
+minimum unaccepted observation for independent review. The four pre-existing
+dirty `.agent` files remain byte-identical, overriding the routine handoff/usage
+update instructions for this task. No staging, commit, push, merge, release,
+production integration, Kodi/Test.app/profile/device/service access, Agent
+Handoff or ai-supervisor operation occurred.
