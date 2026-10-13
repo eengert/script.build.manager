@@ -5,6 +5,12 @@ P5, D2 Option A, and Stage 2B1A (including B3) are independently accepted
 offline. This inventory grants no runtime authority and does not establish
 beta qualification.
 
+## Initial-beta disposition (Eric decision, 2026-10-13)
+
+The advanced protected interrupted-Create recovery described in this inventory is **no longer required for initial macOS beta qualification**. The external-Kodi-operation admission feasibility assessment found NO-GO under the current strict production competing_operation() contract. That blocker does not justify weakening the contract, returning false without evidence, or wiring the accepted offline prototypes into ordinary Create.
+
+Ordinary supported Create Build, strict data preservation under BM-controlled failure paths, truthful error/Needs Attention presentation, and supported Install/Update/Repair restart/resume remain on the beta path. Private/protected Create captures that require unavailable admission and restart proof remain fail-closed, not silently downgraded. This scope change alone does not mark separately required private-resource capture as beta-qualified. Future recovery may aim for a **known safe state** instead of exact pre-failure restoration, with verified no BM-caused data loss and, where trustworthy evidence exists, a report of the last confirmed state and safe manual remediation. Automated Create recovery and a new durable crash-report subsystem are post-beta goals. P5, D2 Option A and activation holds remain unchanged. See the 2026-10-13 scope decision in BUILD_MANAGER_PROJECT_PLAN.md and D-029 in .orchestrator/DECISIONS.md.
+
 ## Existing capabilities and limits
 
 | Capability | Source contract | Trust and limitation |

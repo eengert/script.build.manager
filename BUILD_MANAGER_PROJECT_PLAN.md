@@ -11,13 +11,13 @@ Establish enough trustworthy backend and complete user-facing workflow evidence 
 Initial macOS beta territory is reached only when all eight evidence items are satisfied:
 
 1. **Clean trustworthy candidate** — one clearly identified product candidate suitable for beta qualification.
-2. **Restart/resume/recovery** — required restart, resume, and recovery behavior works end-to-end in portable macOS Test.app.
+2. **Supported restart/resume/recovery** — required Install/Update/Repair restart, resume, and supported recovery behavior works end-to-end in portable macOS Test.app. Advanced interrupted-Create recovery is deferred past the initial beta.
 3. **Frozen install/artifact truth** — frozen software/artifact behavior is validated and reports truthful state.
 4. **Configuration/skin/private resources** — required configuration, skin state, and structured private resources reach their intended state.
 5. **Truthful final validation** — final validation correctly distinguishes success from failure.
 6. **Second reconciliation** — a second run demonstrates idempotence or basic repair/reconciliation behavior.
 7. **No harmful residual state** — normal Kodi is undamaged; no secret/private data is exposed; no unsafe restart, updater quarantine, activation hold, or transaction state remains.
-8. **Complete User-Facing Workflow** — The candidate provides a coherent, remote-friendly Kodi frontend for Create Build, Install Build, Update / Repair Build, Build Status, Settings, and Help / Information. Ordinary supported build creation, selection, plan review, explicit artifact decisions, application, truthful status/validation, and restart/resume/recovery are usable through the Kodi UI without host-side harnesses, temporary validation adapters, hand-written manifests, or developer commands. Meaningful mutations are reviewed and confirmed before execution; unmanaged add-ons are left alone; private values are never rendered. The complete frontend is manually validated in authorized portable Test.app, including Estuary, restart/resume, error states, and second-run/no-op presentation, with durable evidence tied to the exact candidate. Backend qualification alone does not satisfy product beta readiness.
+8. **Complete User-Facing Workflow** — The candidate provides a coherent, remote-friendly Kodi frontend for Create Build, Install Build, Update / Repair Build, Build Status, Settings, and Help / Information. Ordinary supported build creation, selection, plan review, explicit artifact decisions, application, truthful status/validation, and supported Install/Update/Repair restart/resume and error handling are usable through the Kodi UI without host-side harnesses, temporary validation adapters, hand-written manifests, or developer commands. Meaningful mutations are reviewed and confirmed before execution; unmanaged add-ons are left alone; private values are never rendered. The complete frontend is manually validated in authorized portable Test.app, including Estuary, restart/resume, error states, and second-run/no-op presentation, with durable evidence tied to the exact candidate. Backend qualification alone does not satisfy product beta readiness.
 
 Normal/live Mac Kodi and Shield testing begins only after item 8 is accepted. Acceptance of item 8 does not itself authorize live access: a subsequent task must explicitly name the target and permitted actions.
 
@@ -25,9 +25,21 @@ The original seven backend criteria and their accepted qualification evidence re
 
 Each criterion requires durable evidence tied to the exact candidate and authorized portable Test.app profile. A task is in this milestone only when it advances one item or removes a demonstrated blocker to one. If it maps to neither, defer it post-beta.
 
+### Initial-beta Create failure scope (Eric decision, 2026-10-13)
+
+**Removed as a beta prerequisite:** advanced recovery/resumption of an interrupted Create operation that depends on unproven global Kodi-operation exclusion, operation-bound native restart proof, or guaranteed restoration of the exact pre-Create state. Do not resume building those providers to close beta item 8. Preserve the accepted offline reservation/witness research without wiring it into runtime or weakening its contracts.
+
+**Still required:** ordinary *supported* Create Build works end-to-end through the native UI; supported Install/Update/Repair restart/resume and existing safety/recovery behavior remain beta requirements; blocked/failed/uncertain outcomes are truthful. A protected Create capture path requiring the unproven lifecycle must remain unavailable/fail-closed rather than substituting a BM-only lock, polling, UUID change or constant no-competition answer. This deferral does not silently waive separately required private-resource coverage; reconcile any such target against the actual beta scope before claiming qualification.
+
+**Data preservation is a hard beta gate:** Build Manager must not cause loss or destructive overwrite of existing user settings, add-on resources, databases/WAL, credentials, configuration, or unrelated builds during supported Create and its failures. Existing data and transaction evidence must not be deleted merely to clear a blocker. Verify preservation with bounded failure-path evidence; do not claim it is already proved or guarantee protection from unrelated external actors. When safety cannot be established, stop without further mutations.
+
+**Truthful manual recovery guidance is preferred:** where trustworthy state is observable or persisted, Build Status/Create failure UI should report the last verified phase, what is known to be incomplete, any held/uncertain state, and specific safe manual next steps. Never claim prior-state restoration, successful capture, or safe-to-retry when unproven; never display secrets or private values. An abrupt crash can prevent immediate reporting. A new durable automated Create recovery/reporting subsystem is not required for this beta, but existing error and Needs Attention presentation must remain honest.
+
+**Post-beta direction:** consider a simpler, separately reviewed recovery mechanism that brings Kodi to a known safe state without necessarily recreating the pre-failure state, prioritizes zero BM-caused data loss, and supports manual repair with an accurate report. This is not advance authority for automatic restoration, clearing holds, disabling unexpectedly enabled Red Light, or overriding P5 / D2 Option A. Those accepted protections remain unchanged until a separate explicit design decision.
+
 ### Critical-path admission
 
-Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required restart/resume/recovery behavior, prevent completion or trustworthy evaluation of the complete user-facing workflow required by item 8, or represent a demonstrated blocker in the manual workflow or its safe host-side helpers (not retired ai-supervisor infrastructure) to one of those outcomes.
+Admit work to the macOS beta critical path only when failure to do it would prevent safe install/reconciliation on the current beta platform, risk data/configuration damage, expose secrets/private data, make success/failure materially untrustworthy, prevent required supported Install/Update/Repair restart/resume/recovery or safe ordinary Create behavior, prevent completion or trustworthy evaluation of the complete user-facing workflow required by item 8, or represent a demonstrated blocker in the manual workflow or its safe host-side helpers (not retired ai-supervisor infrastructure) to one of those outcomes.
 
 ### Frontend design authority and early visual review
 
@@ -52,8 +64,8 @@ Remaining frontend sequence:
 
 1. Help simplification / package baseline (BM-UI-002A).
 2. Truthful read-only Status / plan interfaces.
-3. Create Build end-to-end.
-4. Install + Update/Repair + Status + restart/recovery presentation.
+3. Supported Create Build end-to-end, including truthful failure/uncertainty presentation; no advanced interrupted-Create recovery requirement.
+4. Install + Update/Repair + Status + supported restart/resume and failure presentation.
 5. Full frontend qualification and Eengert Repository publication.
 
 Phase exit: install Build Manager from the Eengert Repository into a clean/authorized portable Test.app and verify the distributed package, custom icon, metadata, native UI, Help, and complete workflows. Normal Kodi and Shield remain prohibited until that exit is accepted and a later task explicitly authorizes the live target/action. Publication happens only at the completed-candidate boundary, not earlier.

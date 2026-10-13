@@ -184,3 +184,12 @@ Build Manager never downloads, installs, replaces, downgrades, enables, disables
 D-003 continues to govern Build Manager-managed exact-artifact software. Platform-provided requirements are not BM-managed payloads. They do not create a source-tree packaging provenance class, and locally packaging official Kodi source into a substitute artifact is not a permitted route.
 
 The frozen manifest carries this meaning as schema version 2, emitted only when a platform-provided node is present. Schema version 1 keeps its exact prior meaning and fingerprints and cannot represent a platform-provided node. Presentation of platform rows is a separate follow-up and does not change this policy.
+
+
+## D-029 — Advanced interrupted-Create recovery is post-beta (2026-10-13)
+
+Eric removed advanced Create failure recovery from initial macOS beta prerequisites. The beta still requires an ordinary supported Create Build UI workflow, safe failure with no BM-caused loss of existing user data, honest failure/status presentation, and the already-required Install/Update/Repair restart/resume and recovery evidence. No private/Red Light Create path may silently use unproven external-operation exclusion or restart proof.
+
+The post-beta recovery goal can be a **known safe Kodi state** rather than exact restoration of every pre-failure setting. Prefer a truthful diagnostic of the last confirmed operation phase, incomplete or uncertain work, and safe manual steps; do not invent observations, delete held transaction evidence, disclose private values, or present an unknown state as restored. More sophisticated durable failure reporting and automatic Create recovery are not initial-beta gates.
+
+The independently accepted offline BM reservation and synthetic macOS witness are preserved as research, not runtime authority. Production protected Create admission remains NO-GO on supported Kodi mechanisms for external operation exclusion; do not weaken the fail-closed competing_operation() and verify_restart() contracts, P5, D2 Option A, or existing activation holds. This decision does not authorize normal Kodi/device access, a push, release, or integration to matrix. Consult BUILD_MANAGER_PROJECT_PLAN.md for the exact amended eight-item beta exit checklist.
