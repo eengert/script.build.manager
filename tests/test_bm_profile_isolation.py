@@ -195,7 +195,7 @@ class IsolationTests(unittest.TestCase):
                 self.run_phase('preserve')
 
     def test_hold_and_stage_refusal(self):
-        for name in ('frozen_install_transaction.json', 'restart_transaction.lock', 'activation_hold.json'):
+        for name in ('frozen_install_transaction.json', 'restart_transaction.json', 'activation_hold.json'):
             path = self.target.bm_data_dir / name
             path.write_bytes(PRIVATE)
             with self.assertRaisesRegex(p.Refusal, 'transaction_or_hold'):
@@ -406,6 +406,366 @@ class IsolationTests(unittest.TestCase):
                                     case.run_phase('recover')
                 finally:
                     case.doCleanups()
+
+
+class CorrectionTests(unittest.TestCase):
+    setUp = IsolationTests.setUp
+    fabricate = IsolationTests.fabricate
+    run_phase = IsolationTests.run_phase
+    fresh = IsolationTests.fresh
+
+    def torn(self, action, phase):
+        original_save = self.helper.save
+        def save(journal, rec, index):
+            if rec['phase'] != phase:
+                return original_save(journal, rec, index)
+            self.torn_index = index
+            self.torn_bytes = p.encoded(rec)[:len(p.encoded(rec)) // 2]
+            self.torn_record = rec
+            handle = os.open('%03d.json' % index, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+                             dir_fd=journal)
+            try:
+                os.write(handle, self.torn_bytes)
+                self.helper.native.sync(handle, regular=True)
+            finally:
+                os.close(handle)
+            self.helper.native.sync(journal)
+            raise Crash('fabricated torn journal')
+        with mock.patch.object(self.helper, 'save', side_effect=save):
+            with self.assertRaises(Crash):
+                self.run_phase(action)
+        self.repair = self.parent / self.paths['record'] / ('reconcile-%03d' % self.torn_index)
+
+    def arrange_torn(self, action, phase):
+        if action != 'preserve':
+            self.run_phase('preserve')
+            self.fresh()
+        if action == 'restore':
+            self.run_phase('park')
+        self.torn(action, phase)
+
+    def assert_reconciles(self, expected):
+        with mock.patch.object(self.helper.native, 'rename_between', wraps=self.helper.native.rename_between) as moves:
+            result = self.run_phase('reconcile')
+        self.assertEqual(result['phase'], expected)
+        for call in moves.call_args_list:
+            self.assertFalse(call.args[1].startswith('portable_data'))
+            self.assertFalse(call.args[3].startswith('portable_data'))
+        self.assertEqual((self.repair / 'quarantine.bin').read_bytes(), self.torn_bytes)
+        with p.directory(self.parent) as fd:
+            original_name = self.paths['active'] if expected == 'restored' else self.paths['original']
+            p.verify(fd, original_name, self.before, self.helper.native)
+        return result
+
+    def test_BF1_final_preserve(self):
+        self.arrange_torn('preserve', 'preserved')
+        self.assert_reconciles('preserved')
+        self.fresh()
+        self.run_phase('park')
+        self.run_phase('restore')
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+
+    def test_BF1_final_park(self):
+        self.arrange_torn('park', 'parked')
+        self.assert_reconciles('parked')
+        self.run_phase('restore')
+
+    def test_BF1_final_restore(self):
+        self.arrange_torn('restore', 'restored')
+        self.assert_reconciles('restored')
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+
+    def test_BF1_intent_park(self):
+        self.arrange_torn('park', 'parking')
+        self.assert_reconciles('preserved')
+        self.run_phase('park')
+        self.run_phase('restore')
+
+    def test_BF1_intent_restore(self):
+        self.arrange_torn('restore', 'restoring')
+        self.assert_reconciles('parked')
+        self.run_phase('restore')
+
+    def test_BF1_requires_own_confirmation(self):
+        self.arrange_torn('preserve', 'preserved')
+        for confirm, portable in (('recover', True), (None, True), ('reconcile', False)):
+            with self.assertRaises(p.Refusal):
+                self.helper.run('reconcile', OP, confirm=confirm, portable=portable)
+        self.assertFalse(self.repair.exists())
+
+    def test_BF1_first_record_manual_boundary(self):
+        self.torn('preserve', 'prepared')
+        with self.assertRaisesRegex(p.Refusal, 'no_trusted_prefix'):
+            self.run_phase('reconcile')
+        self.assertTrue(self.target.portable_data.exists())
+        self.assertFalse(self.repair.exists())
+
+    def test_BF1_bad_prefix_and_unexpected_artifacts(self):
+        self.arrange_torn('park', 'parked')
+        journal = self.parent / self.paths['record']
+        prefix = journal / '000.json'
+        original = prefix.read_bytes()
+        for damaged in (b'{broken', p.encoded(dict(json.loads(original), operation='b' * 32)),
+                        p.encoded(dict(json.loads(original), previous='0' * 64))):
+            prefix.write_bytes(damaged)
+            with self.assertRaises((p.Refusal, ValueError, bm.HelperError)):
+                self.run_phase('reconcile')
+            self.assertFalse(self.repair.exists())
+        prefix.write_bytes(original)
+        unexpected = journal / 'unclassified'
+        unexpected.write_bytes(PRIVATE)
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+        self.assertFalse(self.repair.exists())
+
+    def test_BF1_nonprefix_and_valid_corruption_refused(self):
+        self.arrange_torn('preserve', 'preserved')
+        tail = self.parent / self.paths['record'] / ('%03d.json' % self.torn_index)
+        for damaged in (b'{"unrelated":', b'{}'):
+            tail.write_bytes(damaged)
+            with self.assertRaises(p.Refusal):
+                self.run_phase('reconcile')
+            self.assertFalse(self.repair.exists())
+
+    def test_BF1_ambiguous_topology_and_stale_identity(self):
+        self.arrange_torn('preserve', 'preserved')
+        self.target.portable_data.mkdir()
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+        self.target.portable_data.rmdir()
+        original = self.parent / self.paths['original']
+        original.rename(self.parent / 'retained-original')
+        original.mkdir()
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+        self.assertFalse(self.repair.exists())
+
+    def test_BF1_quarantine_collision_and_invalid_identity(self):
+        self.arrange_torn('preserve', 'preserved')
+        def collide(point):
+            if point == 'before_quarantine':
+                (self.repair / 'quarantine.bin').write_bytes(PRIVATE)
+                (self.repair / 'quarantine.bin').chmod(0o600)
+        self.helper.fault = collide
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+        self.assertEqual((self.repair / 'quarantine.bin').read_bytes(), PRIVATE)
+        self.helper.fault = lambda point: None
+        with self.assertRaises(p.Refusal):
+            self.run_phase('reconcile')
+        self.assertTrue((self.parent / self.paths['record'] / '001.json').exists())
+
+    def test_BF1_quarantine_altered_or_replaced_after_move(self):
+        self.arrange_torn('preserve','preserved')
+        def fail(point):
+            if point=='after_quarantine':raise Crash(point)
+        self.helper.fault=fail
+        with self.assertRaises(Crash):self.run_phase('reconcile')
+        self.helper.fault=lambda point:None
+        quarantine=self.repair/'quarantine.bin'
+        quarantine.rename(self.repair/'retained-quarantine')
+        quarantine.write_bytes(self.torn_bytes);quarantine.chmod(0o600)
+        # Refuse unexpected evidence AND a same-byte substitute inode.
+        with self.assertRaises(p.Refusal):self.run_phase('reconcile')
+        (self.repair/'retained-quarantine').rename(self.parent/'retained-quarantine')
+        with self.assertRaisesRegex(p.Refusal,'quarantine_identity_invalid'):
+            self.run_phase('reconcile')
+        self.assertEqual((self.parent/'retained-quarantine').read_bytes(),self.torn_bytes)
+
+    def test_BF1_multiple_torn_or_symlink_records(self):
+        self.arrange_torn('park','parked')
+        journal=self.parent/self.paths['record']
+        earlier=journal/'001.json'
+        old=earlier.read_bytes();earlier.write_bytes(old[:20])
+        with self.assertRaises((p.Refusal,ValueError,bm.HelperError)):self.run_phase('reconcile')
+        earlier.write_bytes(old)
+        tail=journal/('%03d.json'%self.torn_index)
+        tail.rename(self.parent/'retained-tail')
+        tail.symlink_to(self.parent/'retained-tail')
+        with self.assertRaises(OSError):self.run_phase('reconcile')
+        self.assertFalse(self.repair.exists())
+
+    def test_BF1_repair_journal_identity_and_fragments_refused(self):
+        self.arrange_torn('preserve','preserved')
+        def fail(point):
+            if point=='after_quarantine':raise Crash(point)
+        self.helper.fault=fail
+        with self.assertRaises(Crash):self.run_phase('reconcile')
+        self.helper.fault=lambda point:None
+        plan_path=self.repair/'plan.json'
+        raw=plan_path.read_bytes()
+        for field in ('journal','repair','parent'):
+            plan=json.loads(raw);plan[field]=[0,0];plan_path.write_bytes(p.encoded(plan))
+            with self.assertRaises(p.Refusal):self.run_phase('reconcile')
+        plan_path.write_bytes(raw)
+        fake=self.repair/('fragment-plan.json-'+'0'*64+'-0')
+        fake.write_bytes(PRIVATE);fake.chmod(0o600)
+        with self.assertRaises(p.Refusal):self.run_phase('reconcile')
+
+    def test_BF1_failure_boundaries(self):
+        points = ['before_reconciliation_create', 'after_reconciliation_create',
+                  'after_reconciliation_create_sync', 'before_quarantine', 'after_quarantine',
+                  'after_quarantine_sync']
+        for name in ('plan.json', '002.json', '003.json'):
+            points += [edge + '_reconciliation_' + name for edge in
+                       ('before_write', 'after_write', 'after_file_sync',
+                        'before_publish', 'after_publish', 'after_sync')]
+        for point in points:
+            with self.subTest(point=point):
+                case = CorrectionTests('test_BF1_intent_park');case.setUp()
+                try:
+                    case.arrange_torn('park', 'parking')  # intent index 2; replacement index 2 + 3
+                    def fail(where):
+                        if where == point:raise Crash(point)
+                    case.helper.fault = fail
+                    with self.assertRaises(Crash):case.run_phase('reconcile')
+                    case.helper.fault = lambda where:None
+                    # Atomic final publication may already have completed.
+                    try:case.assert_reconciles('preserved')
+                    except p.Refusal as e:
+                        self.assertEqual(str(e), 'trailing_record_not_torn')
+                        self.assertEqual((case.repair/'quarantine.bin').read_bytes(), case.torn_bytes)
+                    case.run_phase('park');case.run_phase('restore')
+                finally:case.doCleanups()
+
+    def test_BF1_torn_reconciliation_stages_and_fragments(self):
+        for target in ('plan.json', '001.json'):
+            for fragment_point in ('before_fragment_', 'after_fragment_'):
+                with self.subTest(target=target, fragment=fragment_point):
+                    case=CorrectionTests('test_BF1_final_preserve');case.setUp()
+                    try:
+                        case.arrange_torn('preserve','preserved')
+                        real_write=os.write
+                        armed=[]
+                        def arm(point):
+                            if point == 'before_write_reconciliation_' + target:armed.append(True)
+                        def partial(fd,data):
+                            if armed:
+                                if len(armed)==1:
+                                    armed.append(True);return real_write(fd,data[:11])
+                                raise OSError('fabricated torn staging write')
+                            return real_write(fd,data)
+                        case.helper.fault=arm
+                        with mock.patch.object(os,'write',side_effect=partial):
+                            with self.assertRaises(OSError):case.run_phase('reconcile')
+                        def interrupt(point):
+                            if point==fragment_point+target:raise Crash(point)
+                        case.helper.fault=interrupt
+                        with self.assertRaises(Crash):case.run_phase('reconcile')
+                        case.helper.fault=lambda where:None
+                        case.assert_reconciles('preserved')
+                        fragments=list(case.repair.glob('fragment-*'))
+                        self.assertEqual(len(fragments),1)
+                        self.assertEqual(len(fragments[0].read_bytes()),11)
+                    finally:case.doCleanups()
+
+    def actual_locks(self):
+        from resources.lib.transaction import TransactionStore
+        from resources.lib.frozen_install import FrozenInstallStore
+        from resources.lib.build_library import BuildLibrary
+        from resources.lib.capture_lifecycle import CaptureStore
+        return (TransactionStore(str(self.target.userdata_dir)).locked,
+                FrozenInstallStore(self.target.bm_data_dir).locked,
+                CaptureStore(self.target.bm_data_dir).locked,
+                BuildLibrary(self.target.build_library_dir)._writer)
+
+    def test_BF2_actual_inert_locks_round_trip(self):
+        for producer in self.actual_locks():
+            with producer():pass
+        paths=[self.target.bm_data_dir / n for n in
+               ('restart_transaction.lock','frozen_install_transaction.lock','create_capture_transaction.lock')]
+        paths.append(self.target.build_library_dir/'library.lock')
+        evidence=[(x.stat().st_ino,x.read_bytes()) for x in paths]
+        self.run_phase('preserve');self.fresh();self.run_phase('park');self.run_phase('restore')
+        self.assertEqual(evidence,[(x.stat().st_ino,x.read_bytes()) for x in paths])
+
+    def test_BF2_BF3_actual_held_locks_refused(self):
+        for producer in self.actual_locks():
+            with producer():
+                with self.assertRaises(BlockingIOError):self.run_phase('preserve')
+        self.assertTrue(self.target.portable_data.exists())
+
+    def test_BF2_invalid_lock_types_links_ownership_and_permissions(self):
+        path=self.target.bm_data_dir/'restart_transaction.lock'
+        path.symlink_to(self.tmp.name)
+        with self.assertRaises(OSError):self.run_phase('preserve')
+        path.unlink();path.mkdir()
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        path.rmdir();path.write_bytes(PRIVATE);path.chmod(0o666)
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        path.chmod(0o600)
+        os.link(path, path.with_name('retained-hardlink'))
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+
+    def test_BF2_lock_owner_permission_and_no_create_probe(self):
+        path=self.target.bm_data_dir/'restart_transaction.lock'
+        with p.directory(self.target.bm_data_dir) as fd:
+            self.helper.probe_lock(fd,path.name)
+        self.assertFalse(path.exists())
+        from resources.lib.transaction import TransactionStore
+        with TransactionStore(str(self.target.userdata_dir)).locked():pass
+        with mock.patch.object(os,'getuid',return_value=os.getuid()+1):
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        real_open=os.open
+        def denied(name,*args,**kwargs):
+            if name==path.name:raise PermissionError('fabricated denied lock')
+            return real_open(name,*args,**kwargs)
+        with mock.patch.object(os,'open',side_effect=denied):
+            with self.assertRaises(PermissionError):self.run_phase('preserve')
+        self.assertTrue(path.exists())
+
+    def test_BF3_actual_pending_and_acknowledged_publication_refused(self):
+        from resources.lib.build_library import (BuildLibrary,AppliedPublication,
+            AppliedBuildAssociation,_atomic)
+        library=BuildLibrary(self.target.build_library_dir)
+        for state in ('pending','acknowledged'):
+            publication=AppliedPublication('12345678-1234-1234-1234-123456789abc',
+                AppliedBuildAssociation('1'*64,'fixture-device','2'*64),None,state)
+            with library._writer() as fd:
+                _atomic(fd,'applied-publication.json',p.encoded(publication.to_dict()))
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+
+    def test_BF3_nested_publication_and_transient_refusal(self):
+        for root,name in ((self.target.build_library_dir,'applied-publication.json'),
+                          (self.target.build_library_dir,'.stage-fixture'),
+                          (self.target.bm_data_dir,'.frozen-install.fixture.tmp'),
+                          (self.target.bm_data_dir,'create_capture_transaction.json'),
+                          (self.target.bm_data_dir,'unknown.lock')):
+            path=root/name;path.write_bytes(b'{"state":"completed"}')
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+            path.unlink()
+
+    def completed_resolution(self):
+        from resources.lib.frozen_resolution import (FrozenInstallResolutionManifest,
+            InstallResolutionRecord, InstallResolution, ResolutionState,
+            _resolved_fingerprint_from_records)
+        from resources.lib.frozen_install import FrozenInstallStore
+        records=(InstallResolutionRecord('fixture.addon','1.0',InstallResolution.SKIPPED,
+                                         ResolutionState.SKIPPED),)
+        manifest=FrozenInstallResolutionManifest('fixture-build','1'*64,'2'*64,
+            _resolved_fingerprint_from_records('1'*64,records),records)
+        store=FrozenInstallStore(self.target.bm_data_dir)
+        return store.save_resolution_manifest(manifest)
+
+    def test_BF3_completed_resolution_and_saved_state_allowed(self):
+        path=self.completed_resolution()
+        evidence=path.read_bytes()
+        self.run_phase('preserve');self.fresh();self.run_phase('park');self.run_phase('restore')
+        self.assertEqual(path.read_bytes(),evidence)
+
+    def test_BF3_unfinished_unknown_and_invalid_resolutions_refused(self):
+        path=self.completed_resolution()
+        directory=path.parent
+        for name in ('.resolution.fixture.tmp','unclassified.json','unknown.lock','nested'):
+            item=directory/name;item.write_bytes(PRIVATE)
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+            item.unlink()
+        raw=json.loads(path.read_bytes())
+        raw['records'][0]['state']='selected'
+        path.write_bytes(p.encoded(raw))
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
 
 
 if __name__ == '__main__':

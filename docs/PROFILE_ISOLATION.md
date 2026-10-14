@@ -27,6 +27,7 @@ python3 tools/bm_profile_isolation.py preserve --operation ID --confirm preserve
 python3 tools/bm_profile_isolation.py park --operation ID --confirm park --portable
 python3 tools/bm_profile_isolation.py restore --operation ID --confirm restore --portable
 python3 tools/bm_profile_isolation.py recover --operation ID --confirm recover --portable
+python3 tools/bm_profile_isolation.py reconcile --operation ID --confirm reconcile --portable
 ```
 
 Preserve moves the entire stopped original to `portable_data.bm-original-ID`.
@@ -56,9 +57,11 @@ Transitions:
   becomes terminal `cancelled`; parking/restoring that never renamed return to
   the previous verified phase and require another explicit action gate.
 
-There is no automatic rollback. Empty, partial, corrupt or missing records,
-both/neither rename endpoints, changed identities, unexpected trees, or invalid
-history stop with all available trees and records retained. An interruption
+There is no automatic rollback. Ordinary operations refuse partial, corrupt or
+missing records, both/neither rename endpoints, changed identities, unexpected
+trees, and invalid history. The separately confirmed `reconcile` action handles
+only the identifiable torn trailing record described below; all other uncertainty
+stops with every tree and record retained. An interruption
 before the first complete record needs manual reconciliation; guessing an
 original tree is prohibited. Terminal phases refuse repetition. Any existing
 operation blocks a new preservation, including completed records. Retirement
@@ -78,9 +81,32 @@ parent, from `/`. A parent descriptor remains anchored across an operation and
 is compared with a newly opened chain before mutations. Tree traversal uses
 relative descriptors and refuses symlinks, special files, and multiply linked
 regular files. These unsupported trees require separate reconciliation, never
-copy or a weakened check. Any persisted transaction/hold/lock filename in the
-Build Manager data directory, or a `.bm-stage` area, blocks the move, including
-terminal transaction evidence: this helper does not clear or interpret it.
+copy or a weakened check. Guards follow the actual coordinator layouts:
+
+- At the BM data root, frozen/restart/Create transaction JSON (including terminal
+  records), hold artifacts, unknown locks, `.frozen-install.*` transient files,
+  and the profile's `.bm-stage` area block movement.
+- Known `restart_transaction.lock`, `frozen_install_transaction.lock`, and
+  `create_capture_transaction.lock` are opened without creation or symlink
+  following. A nonblocking exclusive flock probe permits a valid unlocked
+  regular file owned by the current user, with one link and no group/world write
+  permission. Held, inaccessible, substituted or uncertain locks refuse. Contents,
+  identity and pathname remain intact; closing the descriptor releases the probe.
+- At `build-library`, any `applied-publication.json` blocks, including acknowledged
+  state. `library.lock` uses the same probe. Transaction/hold/unknown-lock artifacts
+  and `.stage-*` leftovers also block. Ordinary registry, selection, applied,
+  saved build and other saved data remain profile content.
+- At the BM root's `install_resolutions` (the actual `FrozenInstallStore` location),
+  only regular, single-link, current-user-owned, non-group/world-writable
+  `64-lowercase-hex.json` files are classified as completed resolution evidence.
+  The production manifest validator checks completed/skipped records, semantic
+  fingerprints and filename binding. `.resolution.*.tmp`, unknown names, nested
+  nodes, unfinished manifests, symlinks and contradictory records refuse. Empty
+  directories and valid immutable completed manifests are permitted.
+
+The guard does not decode private overlay values or classify all JSON as active
+transactions. It does not clear, unlink, replace or repair product coordinator
+state. Probes serialize only the observation; external quiescence remains required.
 
 All moves remain in the same parent directory, require matching filesystem
 identity, and use macOS `renameatx_np(RENAME_EXCL)` rather than overwrite-capable
@@ -137,11 +163,12 @@ by Eric/ChatGPT Supervisor. No reviewer is autonomously dispatched.
 
 Separate authorization is required for live opaque hashing/metadata traversal,
 original-profile preservation, fresh-profile creation and qualification use,
-parking, restoration or recovery, and each launch/quit/restart action. No live
+parking, restoration, recovery or torn-record reconciliation, and each launch/quit/restart action. No live
 operation occurred during this implementation. Existing qualification archives,
 installed candidate, normal Kodi/profile and household devices remain untouched.
 
-Validation recorded for this candidate:
+Historical validation for reviewed candidate `bf8b41ac` (the independent review
+subsequently found BF-1/BF-2/BF-3; these results do not establish correction acceptance):
 
 - Focused helper: 23 tests passed; 36 injected boundary cases verify original
   and fresh preservation, explicit non-renaming recovery, or fail-closed refusal.
@@ -162,4 +189,99 @@ Validation recorded for this candidate:
 The ACL wrapper's treatment of missing ACLs was reconciled against
 [Apple's fd ACL retrieval source](https://github.com/apple-oss-distributions/Libc/blob/main/posix1e/acl_file.c)
 and the local SDK constants; scratch tests prove both absence and a real ACL.
-Implementation is ready for independent review, with live use separately gated.
+The original candidate was NOT PASS. The correction remains subject to independent
+re-review, and live use remains separately gated.
+
+
+## BF-1: separately confirmed torn trailing record reconciliation
+
+`reconcile --operation ID --confirm reconcile --portable` is a narrow journal
+operation. It never renames a profile, truncates a file, overwrites a destination,
+or deletes damaged evidence. The ordinary reader continues to refuse a torn
+record; there is no implicit reconciliation during preserve/park/restore/recover.
+
+Admission requires a nonempty, contiguous fully validated prefix and exactly one
+incomplete trailing numbered JSON record. Valid JSON with an invalid schema/hash
+chain is corruption, not a torn-write candidate. Non-trailing damage, multiple
+bad records, unknown artifacts, symlinks or identity changes stop. The damaged
+bytes must be a strict byte prefix of the canonical encoding of a supported next
+record derived from that prefix and uniquely verified current topology.
+
+For a torn final record following `prepared`, `parking` or `restoring`, the
+existing identity/topology recovery rules determine the verified phase. Torn
+parking/restoring intent records following `preserved`/`parked` require the exact
+pre-rename topology: complete durable intent publication is a prerequisite to
+any profile rename. A torn parking intent with no prior fresh evidence captures
+and binds the distinct stopped active fresh tree now; the available torn bytes
+must agree with that complete evidence. It does not claim knowledge of data
+never durably recorded. A prior fresh binding must still match exactly.
+Reconciliation publishes the reconstructed intent plus its verified previous
+phase, preserving the existing legal chain and requiring a new explicit park or
+restore action. The five regression cases are torn finals after preserve, park,
+and restore, and torn intents before park and restore.
+
+A mode-0700 `reconcile-NNN/` directory contains a durable mode-0600 canonical plan
+binding operation, journal/parent/repair directory identities, index, prefix
+hash, damaged file device/inode, size and byte hash, and exact replacement records.
+The damaged numbered file is moved with `RENAME_EXCL` into `quarantine.bin`,
+retaining its inode and bytes. Both directories are strictly flushed. Complete
+replacement records publish by exclusive rename from flushed staging files;
+they extend only the validated supported chain. Ordinary load audits the plan,
+quarantine identity/bytes and published records on future invocations.
+
+Interruption behavior:
+
+| Boundary | Next explicitly confirmed reconciliation |
+| --- | --- |
+| Before/after repair-directory creation and its flush | Revalidate the unchanged trailing record and prefix; continue with the existing empty container if identity/permissions are safe. |
+| Before/after plan write, file flush, exclusive publication or directory flush | Reconstruct the exact expected plan; validate any surviving stage and resume publication. |
+| Partial plan or replacement staging write | Verify it is a byte prefix of the expected bytes; exclusively rename it to an identity/hash-named retained fragment; write a new stage. No damaged bytes are discarded. |
+| Before/after fragment rename or its flush | Revalidate the surviving stage/fragment identity, prefix and hash; continue. Collision or alteration stops. |
+| Before/after quarantine and its directory flushes | Resume only when source or quarantine uniquely matches the plan's exact inode and bytes. Collisions, substitutes or unexpected evidence stop. |
+| Before/after each replacement write, flush, publication or directory flush | Verify published records and stages against the plan, recheck unchanged profile topology, and finish missing publications. |
+| After final publication | Repeat invocation refuses without a second transition; ordinary guarded operations can read the repaired chain. |
+| Incomplete first record, empty damaged record, or no trusted prefix | STOP/manual reconciliation. All available records/trees remain retained. |
+| Unclassifiable corruption, changed identities, uncertain topology, or artifacts exceeding the bounded record limit | STOP/manual reconciliation with all evidence retained. No force option. |
+
+Reconciliation has the same OS-reported durability, external-actor and metadata
+limitations as the existing helper. Injections model interruptions and partial
+writes; physical power loss is not claimed. Evidence retirement remains a
+separate manually authorized decision. Product/profile source and installed
+candidate are outside this correction.
+
+## Correction handoff: BF-1 / BF-2 / BF-3
+
+The bounded correction starts at reviewed NOT PASS candidate
+`bf8b41ac3eee8c2df4cae99fd199696e52190ed8` on `agent/codex`; its parent is
+`1ad67d2e0583d66d125eeade172a23dca7baa6b9`. Only this helper, its synthetic tests,
+and this document changed. Product installation/lifecycle/library/UI code and
+qualification archives did not change.
+
+Baseline reproduction confirmed the genuine mode-0600 torn-final failure,
+blocking of actual inert restart/frozen locks, and bypass of an acknowledged
+publication fence written by the real library atomic producer. Regression tests
+now reconcile all five specified torn-record cases, retain exact damaged bytes,
+continue normal park/restore, allow valid inert producer locks, refuse held
+producer locks and publication fences, allow production-completed resolution
+manifests and saved state, and refuse unfinished/unknown resolution artifacts.
+
+Validation: 47 focused tests passed (all 23 original test methods retained,
+plus 24 BF regressions). The obsolete inert-lock-existence assertion in the
+original hold test now checks persistent transaction JSON; held and inert locks
+are covered with actual restart, frozen, Create and library producers. All 460
+existing Test.app helper tests passed in one permitted run, scoped to fabricated
+profiles/processes and loopback fixtures. Compilation/AST checks and diff checks
+passed. New failure coverage includes 24 named reconciliation-boundary subcases
+and four partial-stage/fragment interruption scenarios, in addition to the
+original 36 preservation/parking/restoration boundaries.
+
+Disposition: ready for independent re-review; not independent acceptance and
+not authorization for live use. The smallest next step is Supervisor-directed
+review of the focused correction commit. No reviewer or live qualification was
+dispatched. Usage remains unavailable; the four dirty `.agent` files are
+preserved byte-for-byte instead of updating their handoff or usage rows.
+
+Cleanup: all task-created fabricated profile trees and compiler fixtures were
+removed by their temporary-directory cleanup. The temporary method-assembly
+file was removed; no task-created caches, logs, images or scratch artifacts
+remain. Existing qualification evidence and dirty agent metadata remain intact.

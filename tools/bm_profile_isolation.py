@@ -136,7 +136,10 @@ class Native:
 
     def rename(self, fd, source, destination):
         # RENAME_EXCL makes the absence check atomic, including case collisions.
-        result = self.lib.renameatx_np(fd, os.fsencode(source), fd,
+        self.rename_between(fd, source, fd, destination)
+
+    def rename_between(self, source_fd, source, destination_fd, destination):
+        result = self.lib.renameatx_np(source_fd, os.fsencode(source), destination_fd,
                                       os.fsencode(destination), 0x4)
         if result:
             raise Refusal('exclusive_rename_failed')
@@ -268,7 +271,8 @@ class Isolation:
                     'preserve': 'active original present; original and parked destinations absent',
                     'park': 'verified original preserved; distinct fresh active present; parked absent',
                     'restore': 'verified original and parked fresh present; active absent',
-                    'recover': 'valid pending intent; exactly one identity-verified source or destination'},
+                    'recover': 'valid pending intent; exactly one identity-verified source or destination',
+                    'reconcile': 'one identifiable torn trailing record; valid prefix and unique verified topology'},
                 'state': 'unobserved; guarded operations establish state'}
 
     def guard(self, fd):
@@ -276,9 +280,53 @@ class Isolation:
         with directory(self.parent) as now:
             need(identity(os.fstat(now)) == identity(os.fstat(fd)), 'parent_identity_changed')
 
+    def probe_lock(self, directory_fd, name):
+        observed = exists(directory_fd, name)
+        if observed is None:
+            return
+        lock = os.open(name, FILE, dir_fd=directory_fd)  # intentionally no O_CREAT
+        try:
+            st = os.fstat(lock)
+            need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == os.getuid()
+                 and not st.st_mode & 0o022 and identity(st) == identity(observed),
+                 'lock_identity_invalid')
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            attached = exists(directory_fd, name)
+            need(attached is not None and identity(attached) == identity(st), 'lock_identity_changed')
+        finally:
+            os.close(lock)  # releases only our advisory probe; never alters the file
+
+    def resolution_guard(self, fd):
+        from resources.lib.frozen_resolution import FrozenInstallResolutionManifest
+        for name in os.listdir(fd):
+            need(re.fullmatch('[0-9a-f]{64}\.json', name), 'resolution_artifact_uncertain')
+            raw, _ = self.read_record(fd, name, strict_mode=False)
+            try:
+                manifest = FrozenInstallResolutionManifest.from_dict(bm.parse_json_strict(raw))
+                need(manifest.resolution_fingerprint == name[:-5], 'resolution_identity_invalid')
+            except Exception:
+                raise Refusal('resolution_artifact_uncertain') from None
+
+    def coordinator_guard(self, fd, *, library=False):
+        locks = {'library.lock'} if library else {
+            'restart_transaction.lock', 'frozen_install_transaction.lock', 'create_capture_transaction.lock'}
+        for name in os.listdir(fd):
+            if name in locks:
+                self.probe_lock(fd, name)
+            elif ('transaction' in name or 'hold' in name or name.endswith('.lock') or
+                  name == 'applied-publication.json' or name.startswith(('.stage-', '.frozen-install.'))):
+                raise Refusal('transaction_or_hold_requires_reconciliation')
+            elif not library and name in ('build-library', 'install_resolutions'):
+                nested = os.open(name, DIR, dir_fd=fd)
+                try:
+                    if name == 'build-library':
+                        self.coordinator_guard(nested, library=True)
+                    else:
+                        self.resolution_guard(nested)
+                finally:
+                    os.close(nested)
+
     def clear_transactions(self, fd, name):
-        # Conservative: any persisted coordinator/hold evidence requires separate
-        # reconciliation, even a terminal record. No decoding of private values.
         rel = ('userdata', 'addon_data', bm.BUILD_MANAGER_ID)
         root = os.open(name, DIR, dir_fd=fd)
         try:
@@ -289,9 +337,8 @@ class Isolation:
                 nxt = os.open(part, DIR, dir_fd=root)
                 os.close(root)
                 root = nxt
-            names = os.listdir(root) if st is not None else []
-            need(not any('transaction' in n or 'hold' in n or n.endswith('.lock') for n in names),
-                 'transaction_or_hold_requires_reconciliation')
+            if st is not None:
+                self.coordinator_guard(root)
         finally:
             os.close(root)
         stage_fd = os.open(name, DIR, dir_fd=fd)
@@ -299,6 +346,26 @@ class Isolation:
             need(exists(stage_fd, bm.STAGE_AREA_NAME) is None, 'stage_requires_reconciliation')
         finally:
             os.close(stage_fd)
+
+    def read_record(self, fd, name, *, strict_mode=True):
+        observed = exists(fd, name)
+        rf = os.open(name, FILE, dir_fd=fd)
+        try:
+            st = os.fstat(rf)
+            need(observed is not None and identity(observed) == identity(st) and
+                 stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == os.getuid()
+                 and (stat.S_IMODE(st.st_mode) == 0o600 if strict_mode else not st.st_mode & 0o022),
+                 'record_invalid')
+            with os.fdopen(os.dup(rf), 'rb') as stream:
+                raw = stream.read(64 * 1024 * 1024 + 1)
+            need(len(raw) <= 64 * 1024 * 1024, 'record_invalid')
+            after = os.fstat(rf)
+            need((st.st_size, st.st_mtime_ns, st.st_ctime_ns) ==
+                 (after.st_size, after.st_mtime_ns, after.st_ctime_ns), 'record_changed')
+            self.native.sync(rf, regular=True)
+            return raw, identity(st)
+        finally:
+            os.close(rf)
 
     def save(self, journal, record, index):
         self.fault('before_record_' + record['phase'])
@@ -325,26 +392,15 @@ class Isolation:
         self.native.sync(journal)
         self.fault('after_record_' + record['phase'])
 
-    def load(self, journal, op, fd):
-        names = sorted(os.listdir(journal))
+    def prefix(self, journal, op, fd, names):
         need(names and names == ['%03d.json' % i for i in range(len(names))], 'record_invalid')
         prior = None
         allowed = {None: {'prepared'}, 'prepared': {'preserved', 'cancelled'},
                    'preserved': {'parking'}, 'parking': {'parked', 'preserved'},
                    'parked': {'restoring'}, 'restoring': {'restored', 'parked'}}
         for i, name in enumerate(names):
-            rf = os.open(name, FILE, dir_fd=journal)
-            try:
-                st = os.fstat(rf)
-                need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and
-                     stat.S_IMODE(st.st_mode) == 0o600 and st.st_uid == os.getuid(), 'record_invalid')
-                with os.fdopen(os.dup(rf), 'rb') as stream:
-                    raw = stream.read(64 * 1024 * 1024 + 1)
-                need(len(raw) <= 64 * 1024 * 1024, 'record_invalid')
-                rec = bm.parse_json_strict(raw)
-                self.native.sync(rf, regular=True)
-            finally:
-                os.close(rf)
+            raw, _ = self.read_record(journal, name)
+            rec = bm.parse_json_strict(raw)
             need(isinstance(rec, dict) and set(rec) == {'version', 'operation', 'target', 'paths',
                  'parent', 'bundle', 'phase', 'previous', 'original', 'fresh'}, 'record_invalid')
             need(rec['version'] == 1 and rec['operation'] == op and rec['target'] == str(self.target.root)
@@ -364,6 +420,283 @@ class Isolation:
         self.native.sync(journal)
         need(rec['bundle'] == bm.inspect_bundle(self.target).info_plist_sha256, 'bundle_identity_changed')
         return rec, len(names)
+
+    def inventory(self, journal):
+        records, repairs = [], []
+        for name in sorted(os.listdir(journal)):
+            if re.fullmatch(r'\d{3,}\.json', name):
+                records.append(name)
+            elif re.fullmatch(r'reconcile-\d{3,}', name):
+                repairs.append(name)
+            else:
+                raise Refusal('journal_unexpected_artifact')
+        need(records == ['%03d.json' % i for i in range(len(records))], 'record_invalid')
+        return records, repairs
+
+    def plan_read(self, repair):
+        raw, _ = self.read_record(repair, 'plan.json')
+        plan = bm.parse_json_strict(raw)
+        need(isinstance(plan, dict) and set(plan) == {'version', 'operation', 'journal', 'parent',
+             'repair', 'index', 'prefix', 'source_id', 'source_sha', 'source_size', 'replacements'},
+             'reconciliation_plan_invalid')
+        need(plan['version'] == 1 and type(plan['index']) is int and plan['index'] > 0 and
+             isinstance(plan['replacements'], list) and 1 <= len(plan['replacements']) <= 2,
+             'reconciliation_plan_invalid')
+        need(raw == encoded(plan), 'reconciliation_plan_invalid')
+        return plan
+
+    def repair_artifacts(self, repair, plan, *, complete):
+        expected = {'plan.json': encoded(plan)}
+        expected.update({'%03d.json' % (plan['index'] + i): encoded(rec)
+                         for i, rec in enumerate(plan['replacements'])})
+        for name in os.listdir(repair):
+            if name in ('plan.json', 'quarantine.bin'):
+                self.read_record(repair, name)
+                continue
+            if name.endswith('.pending') and name[:-8] in expected and not complete:
+                raw, _ = self.read_record(repair, name)
+                need(expected[name[:-8]].startswith(raw), 'reconciliation_stage_invalid')
+                continue
+            match = re.fullmatch(r'fragment-(plan\.json|\d{3,}\.json)-([0-9a-f]{64})-(\d+)', name)
+            need(match and match[1] in expected, 'reconciliation_unexpected_artifact')
+            raw, ident = self.read_record(repair, name)
+            need(digest(raw) == match[2] and ident[1] == int(match[3]) and
+                 expected[match[1]].startswith(raw) and len(raw) < len(expected[match[1]]),
+                 'reconciliation_fragment_invalid')
+
+    def audit_plan(self, journal, repair, plan, op, fd, names, *, complete):
+        index = plan['index']
+        need(stat.S_IMODE(os.fstat(repair).st_mode) == 0o700 and
+             os.fstat(repair).st_uid == os.getuid(), 'reconciliation_identity_invalid')
+        need(plan['operation'] == op and plan['journal'] == identity(os.fstat(journal)) and
+             plan['parent'] == identity(os.fstat(fd)) and plan['repair'] == identity(os.fstat(repair)),
+             'reconciliation_identity_invalid')
+        prior, _ = self.prefix(journal, op, fd, names[:index])
+        need(plan['prefix'] == digest(encoded(prior)), 'reconciliation_prefix_invalid')
+        self.repair_artifacts(repair, plan, complete=complete)
+        if complete:
+            raw, ident = self.read_record(repair, 'quarantine.bin')
+            need(ident == plan['source_id'] and digest(raw) == plan['source_sha'] and
+                 len(raw) == plan['source_size'], 'quarantine_identity_invalid')
+            first = encoded(plan['replacements'][0])
+            need(raw and len(raw) < len(first) and first.startswith(raw),
+                 'trailing_record_not_identifiable')
+            try:
+                json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            else:
+                raise Refusal('trailing_record_not_torn')
+            for i, rec in enumerate(plan['replacements']):
+                raw, _ = self.read_record(journal, '%03d.json' % (index + i))
+                need(raw == encoded(rec), 'reconciliation_publication_invalid')
+            self.native.sync(repair)
+            self.native.sync(journal)
+        return prior
+
+    def load(self, journal, op, fd):
+        names, repairs = self.inventory(journal)
+        rec, index = self.prefix(journal, op, fd, names)
+        for name in repairs:
+            repair = os.open(name, DIR, dir_fd=journal)
+            try:
+                plan = self.plan_read(repair)
+                need(name == 'reconcile-%03d' % plan['index'], 'reconciliation_plan_invalid')
+                self.audit_plan(journal, repair, plan, op, fd, names, complete=True)
+            finally:
+                os.close(repair)
+        return rec, index
+
+    def derive_replacement(self, fd, prior, raw):
+        paths = prior['paths']
+        if prior['phase'] in ('prepared', 'parking', 'restoring'):
+            phase = self.recover(fd, prior)
+            replacements = [dict(prior, phase=phase, previous=digest(encoded(prior)))]
+        elif prior['phase'] in ('preserved', 'parked'):
+            verify(fd, paths['original'], prior['original'], self.native)
+            need(exists(fd, paths['parked'] if prior['phase'] == 'preserved' else paths['active'])
+                 is None, 'recovery_ambiguous')
+            if prior['phase'] == 'preserved':
+                fresh = snapshot(fd, paths['active'], self.native, durable=True)
+                if prior['fresh'] is not None:
+                    need(fresh == prior['fresh'], 'fresh_identity_invalid')
+                need(fresh[digest(b'')]['id'] != prior['original'][digest(b'')]['id'],
+                     'fresh_identity_invalid')
+                intent = dict(prior, phase='parking', fresh=fresh, previous=digest(encoded(prior)))
+            else:
+                verify(fd, paths['parked'], prior['fresh'], self.native)
+                intent = dict(prior, phase='restoring', previous=digest(encoded(prior)))
+            # An incomplete intent cannot precede a completed profile rename:
+            # run() requires a complete durable intent before attempting it.
+            replacements = [intent, dict(intent, phase=prior['phase'], previous=digest(encoded(intent)))]
+        else:
+            raise Refusal('phase_refused')
+        need(raw and len(raw) < len(encoded(replacements[0])) and
+             encoded(replacements[0]).startswith(raw), 'trailing_record_not_identifiable')
+        try:
+            json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        else:
+            raise Refusal('trailing_record_not_torn')
+        for key in ('active', 'original', 'parked'):
+            if exists(fd, paths[key]) is not None:
+                self.clear_transactions(fd, paths[key])
+        return replacements
+
+    def publish_reconciliation(self, repair, name, destination, data, check):
+        """Atomic no-overwrite publication; incomplete stage bytes are retained."""
+        need(len(data) <= 64 * 1024 * 1024, 'record_too_large')
+        check()
+        if exists(destination, name) is not None:
+            raw, _ = self.read_record(destination, name)
+            need(raw == data, 'reconciliation_destination_collision')
+            return
+        stage = name + '.pending'
+        if exists(repair, stage) is not None:
+            raw, ident = self.read_record(repair, stage)
+            need(data.startswith(raw), 'reconciliation_stage_invalid')
+            if raw != data:
+                fragment = 'fragment-' + name + '-' + digest(raw) + '-' + str(ident[1])
+                self.fault('before_fragment_' + name)
+                check()
+                self.native.rename(repair, stage, fragment)
+                self.native.sync(repair)
+                self.fault('after_fragment_' + name)
+        if exists(repair, stage) is None:
+            self.fault('before_write_reconciliation_' + name)
+            check()
+            handle = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=repair)
+            try:
+                view = memoryview(data)
+                while view:
+                    n = os.write(handle, view)
+                    need(n > 0, 'record_write_failed')
+                    view = view[n:]
+                self.fault('after_write_reconciliation_' + name)
+                self.native.sync(handle, regular=True)
+                self.fault('after_file_sync_reconciliation_' + name)
+            finally:
+                os.close(handle)
+        # Re-open and flush a surviving complete stage before publication.
+        raw, _ = self.read_record(repair, stage)
+        need(raw == data, 'reconciliation_stage_invalid')
+        self.fault('before_publish_reconciliation_' + name)
+        check()
+        self.native.rename_between(repair, stage, destination, name)
+        self.fault('after_publish_reconciliation_' + name)
+        self.native.sync(repair)
+        self.native.sync(destination)
+        self.fault('after_sync_reconciliation_' + name)
+
+    def reconcile(self, journal, op, fd):
+        names, repairs = self.inventory(journal)
+        pending = []
+        for name in repairs:
+            repair = os.open(name, DIR, dir_fd=journal)
+            try:
+                if exists(repair, 'plan.json') is None:
+                    pending.append(name)
+                else:
+                    plan = self.plan_read(repair)
+                    need(name == 'reconcile-%03d' % plan['index'], 'reconciliation_plan_invalid')
+                    self.audit_plan(journal, repair, plan, op, fd, names, complete=False)
+                    if (exists(repair, 'quarantine.bin') is None or
+                        any(exists(journal, '%03d.json' % (plan['index'] + i)) is None
+                            for i in range(len(plan['replacements'])))):
+                        pending.append(name)
+                    else:
+                        self.audit_plan(journal, repair, plan, op, fd, names, complete=True)
+            finally:
+                os.close(repair)
+        need(len(pending) <= 1, 'multiple_damaged_records')
+        if pending:
+            repair_name = pending[0]
+            index = int(repair_name.split('-')[1])
+        else:
+            need(len(names) >= 2, 'no_trusted_prefix')
+            index = len(names) - 1
+            # Validate the WHOLE prefix before treating the last record as torn.
+            self.prefix(journal, op, fd, names[:index])
+            raw, _ = self.read_record(journal, names[index])
+            try:
+                json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            else:
+                raise Refusal('trailing_record_not_torn')
+            repair_name = 'reconcile-%03d' % index
+        prior, _ = self.prefix(journal, op, fd, names[:index])
+        source = '%03d.json' % index
+        need(len(names) <= index + 2, 'multiple_damaged_records')
+        if exists(journal, repair_name) is None:
+            # Classify and verify all trees BEFORE creating reconciliation state.
+            raw, _ = self.read_record(journal, source)
+            self.derive_replacement(fd, prior, raw)
+            self.fault('before_reconciliation_create')
+            self.guard(fd)
+            os.mkdir(repair_name, 0o700, dir_fd=journal)
+            self.fault('after_reconciliation_create')
+            self.native.sync(journal)
+            self.fault('after_reconciliation_create_sync')
+        repair = os.open(repair_name, DIR, dir_fd=journal)
+        try:
+            need(stat.S_IMODE(os.fstat(repair).st_mode) == 0o700 and
+                 os.fstat(repair).st_uid == os.getuid(), 'reconciliation_identity_invalid')
+            def check():
+                self.guard(fd)
+                attached = exists(fd, self.paths(op)['record'])
+                child = exists(journal, repair_name)
+                need(attached is not None and identity(attached) == identity(os.fstat(journal)) and
+                     child is not None and identity(child) == identity(os.fstat(repair)),
+                     'reconciliation_identity_invalid')
+            check()
+            planned = exists(repair, 'plan.json') is not None
+            if planned:
+                plan = self.plan_read(repair)
+                self.audit_plan(journal, repair, plan, op, fd, names, complete=False)
+                raw, ident = self.read_record(repair if exists(repair, 'quarantine.bin') else journal,
+                                             'quarantine.bin' if exists(repair, 'quarantine.bin') else source)
+                need(ident == plan['source_id'] and digest(raw) == plan['source_sha'] and
+                     len(raw) == plan['source_size'], 'quarantine_identity_invalid')
+            else:
+                need(set(os.listdir(repair)) <= {'plan.json.pending'} or
+                     all(n == 'plan.json.pending' or n.startswith('fragment-plan.json-')
+                         for n in os.listdir(repair)), 'reconciliation_unexpected_artifact')
+                raw, ident = self.read_record(journal, source)
+                plan = {'version': 1, 'operation': op, 'journal': identity(os.fstat(journal)),
+                        'parent': identity(os.fstat(fd)), 'repair': identity(os.fstat(repair)),
+                        'index': index, 'prefix': digest(encoded(prior)), 'source_id': ident,
+                        'source_sha': digest(raw), 'source_size': len(raw),
+                        'replacements': self.derive_replacement(fd, prior, raw)}
+                self.repair_artifacts(repair, plan, complete=False)
+                self.publish_reconciliation(repair, 'plan.json', repair, encoded(plan), check)
+            need(plan['replacements'] == self.derive_replacement(fd, prior, raw),
+                 'reconciliation_topology_changed')
+            check()
+            if exists(repair, 'quarantine.bin') is None:
+                self.fault('before_quarantine')
+                check()
+                current, current_id = self.read_record(journal, source)
+                need(current == raw and current_id == ident, 'trailing_identity_changed')
+                self.native.rename_between(journal, source, repair, 'quarantine.bin')
+                self.fault('after_quarantine')
+            self.native.sync(journal)
+            self.native.sync(repair)
+            self.fault('after_quarantine_sync')
+            for i, rec in enumerate(plan['replacements']):
+                self.publish_reconciliation(repair, '%03d.json' % (index + i), journal,
+                                            encoded(rec), check)
+            # The ordinary reader must accept the complete chain and evidence.
+            rec, _ = self.load(journal, op, fd)
+            need(plan['replacements'] == self.derive_replacement(fd, prior, raw),
+                 'reconciliation_topology_changed')
+            self.guard(fd)
+            return {'operation': op, 'phase': rec['phase'], 'original_verified': True,
+                    'automatic_deletion': False, 'reconciled_trailing_index': index}
+        finally:
+            os.close(repair)
 
     def rename(self, fd, source, dest, evidence, phase):
         self.guard(fd)
@@ -387,7 +720,7 @@ class Isolation:
         self.guard(fd)
 
     def run(self, action, op, *, confirm, portable):
-        need(action in ('preserve', 'park', 'restore', 'recover'), 'action_invalid')
+        need(action in ('preserve', 'park', 'restore', 'recover', 'reconcile'), 'action_invalid')
         need(confirm == action and portable is True, 'explicit_gate_required')
         paths = self.paths(op)
         self.safety()
@@ -422,6 +755,8 @@ class Isolation:
             try:
                 need(stat.S_IMODE(os.fstat(journal).st_mode) == 0o700 and
                      os.fstat(journal).st_uid == os.getuid(), 'record_invalid')
+                if action == 'reconcile':
+                    return self.reconcile(journal, op, fd)
                 if action == 'preserve':
                     self.save(journal, rec, 0)
                     index = 1
@@ -485,9 +820,9 @@ class Isolation:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('preview', 'preserve', 'park', 'restore', 'recover'))
+    parser.add_argument('action', choices=('preview', 'preserve', 'park', 'restore', 'recover', 'reconcile'))
     parser.add_argument('--operation', required=True, help='32 lowercase hex characters; choose once')
-    parser.add_argument('--confirm', choices=('preserve', 'park', 'restore', 'recover'))
+    parser.add_argument('--confirm', choices=('preserve', 'park', 'restore', 'recover', 'reconcile'))
     parser.add_argument('--portable', action='store_true')
     args = parser.parse_args(argv)
     try:
