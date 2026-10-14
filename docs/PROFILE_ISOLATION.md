@@ -95,7 +95,9 @@ copy or a weakened check. Guards follow the actual coordinator layouts:
 - At `build-library`, any `applied-publication.json` blocks, including acknowledged
   state. `library.lock` uses the same probe. Transaction/hold/unknown-lock artifacts
   and `.stage-*` leftovers also block. Ordinary registry, selection, applied,
-  saved build and other saved data remain profile content.
+  saved build and other saved data remain profile content. The `builds/` child
+  additionally permits only regular SHA-addressed `.json` envelopes; `.stage-*`
+  and unexpected lock/transaction/fence or malformed entries refuse.
 - At the BM root's `install_resolutions` (the actual `FrozenInstallStore` location),
   only regular, single-link, current-user-owned, non-group/world-writable
   `64-lowercase-hex.json` files are classified as completed resolution evidence.
@@ -103,6 +105,18 @@ copy or a weakened check. Guards follow the actual coordinator layouts:
   fingerprints and filename binding. `.resolution.*.tmp`, unknown names, nested
   nodes, unfinished manifests, symlinks and contradictory records refuse. Empty
   directories and valid immutable completed manifests are permitted.
+
+- At `private_overlays`, `create.lock` uses the accepted non-creating lock probe.
+  Completed overlays are regular `<safe-overlay-id>.json` files, classified only
+  by the producer's lowercase ID filename grammar. Values are never parsed or
+  validated by the isolation helper. `.create-*`, `.private-overlay.*.tmp`, other
+  unfinished/unknown names and non-regular nodes refuse. Directory opens are
+  descriptor-relative, no-follow and identity-checked before/after inspection.
+- At `frozen-artifacts`, the sole producer child is `artifacts/`. Its completed
+  files are regular `<64-lowercase-hex>.zip` and `.json` entries. Temporary
+  `.<sha>.*.tmp` and `.<sha>.*.json.tmp` entries, malformed/unexpected names,
+  lock/fence artifacts, directories and symlinks refuse. ZIPs and metadata are
+  opaque; the guard does not validate artifact content or require pairing.
 
 The guard does not decode private overlay values or classify all JSON as active
 transactions. It does not clear, unlink, replace or repair product coordinator
@@ -285,3 +299,79 @@ Cleanup: all task-created fabricated profile trees and compiler fixtures were
 removed by their temporary-directory cleanup. The temporary method-assembly
 file was removed; no task-created caches, logs, images or scratch artifacts
 remain. Existing qualification evidence and dirty agent metadata remain intact.
+
+
+## BF-4 bounded correction and producer inventory
+
+Starting candidate: `b63ede01fdde7720a2c30b1802a79a7d73d971fd`, branch `agent/codex`.
+The Supervisor reports BF-1/BF-2/BF-3 independently accepted at that candidate;
+this task changes only BF-4A/BF-4B guard coverage and its regression evidence.
+Journal reconciliation, resolution-manifest validation, process safety,
+exclusive profile renames, identity binding and opaque snapshots are unchanged.
+
+One bounded inventory of the seven requested source files established:
+
+| Producer source | BM-root location | Persistent / completed names | Transient / fence names |
+| --- | --- | --- | --- |
+| `private_overlay.py` | `private_overlays/` | `create.lock`, `<safe-id>.json` | `.create-<uuidhex>`, `.private-overlay.*.tmp` |
+| `build_library.py` | `build-library/` and `build-library/builds/` | `library.lock`, registry/selection/applied data; builds `<sha>.json` | `applied-publication.json`, `.stage-<uuidhex>` at either atomic-write location |
+| `artifacts.py` | `frozen-artifacts/artifacts/` | `<sha>.zip`, `<sha>.json` | `.<sha>.*.tmp`, `.<sha>.*.json.tmp` |
+| `install_workflow.py` | `frozen-artifacts/` | Uses `ArtifactStore` at the profile-local root | No separate artifact writer namespace |
+| `frozen_install.py` | BM root and `install_resolutions/` | Frozen lock; immutable completed `<fingerprint>.json` resolution manifests | Frozen transaction JSON, `.frozen-install.*.tmp`, `.resolution.*.tmp` |
+| `transaction.py` | BM root | Restart lock | Restart transaction JSON, `.restart_transaction.*.tmp`, `.restart_transaction.restore.*.tmp` |
+| `capture_lifecycle.py` | BM root | Create-capture lock | Create transaction JSON, `.frozen-install.<uuid>.tmp` |
+
+The architecture matched the expected layout; no general audit or recursive
+heuristic was added. Checks descend only into the explicit producer directories.
+Producer-shaped private-overlay JSON, saved-build envelopes and artifact files
+receive filename/type classification, then the already accepted opaque whole-tree
+verification. This does not declare their contents semantically valid. Unknown
+entries in those fixed directories remain intact and fail closed; no cleanup or
+migration path is provided. Existing `install_resolutions` checks are unchanged.
+
+Pre-correction P03/P04 reproductions on fabricated profiles both reached
+`preserved` incorrectly: a separate process held the real
+`PrivateOverlayStore.create_commit()` lock at `private_overlays/create.lock`,
+and a real-path `build-library/builds/.stage-<32 hex>` file was present. Running
+the two new P03/P04 regression tests against the exact in-memory starting source
+produced two expected test failures and zero errors. The corrected tests pass.
+
+The shared fixture now includes the actual `private_overlays` directory and an
+opaque producer-shaped file. The legacy hyphenated nested binary fixture remains
+for the previously accepted topology/metadata tests; it is not used to establish
+producer coverage. New tests also exercise legitimate data created by
+`PrivateOverlayStore`, `BuildLibrary.register`, `ArtifactStore.import_zip` and
+`FrozenInstallStore.save_resolution_manifest`, with private/ZIP decoding disabled
+while the helper performs the full preservation/parking/restoration round trip.
+
+Pre-live limitations remain: unrelated actors must stay quiescent, probes do not
+reserve locks across the entire operation, physical power loss is untested,
+access/root-change timestamps retain their documented exclusions, and live
+hashing or profile operations require separate explicit authorization. No live
+Test.app/private-overlay/profile/device action occurred, and no reviewer was
+dispatched. Four dirty `.agent` files remain byte-for-byte preserved; this section
+and the final report carry the task handoff. Usage remains unavailable.
+
+BF-4 validation: all 59 focused tests passed (the original 47 plus 12 new tests).
+The combined completed-state round trip used real producer APIs for overlays,
+saved builds, artifacts and resolutions; original and parked-fresh whole-tree
+integrity evidence matched. Separate-process held/idle lock tests, both overlay
+and both artifact temporary patterns, nested build staging, unsafe directories,
+lock replacement, permission failure, malformed/fence entries and secret-blind
+CLI errors passed. A read-only guard test prohibited all product mutation APIs
+and verified unchanged opaque tree evidence. AST comparison against `b63ede01`
+confirmed only `coordinator_guard` changed among existing function bodies, with
+only two new directory-specific guard methods added. AST/in-memory compilation
+and diff checks passed.
+
+Cleanup: fabricated profiles, producer fixtures, child processes and in-memory
+baseline reproductions were cleaned up by their test lifecycles. No task-created
+caches, logs, screenshots, temporary code copies or scratch evidence remain.
+Existing qualification archives and the four dirty agent files remain intact.
+Smallest next step: Supervisor-directed independent review of the focused BF-4
+commit; this report is implementation evidence, not review acceptance.
+
+All 460 relevant existing Test.app helper tests also passed in one permitted run,
+limited to fabricated processes/profiles and loopback fixtures. No full product
+suite or live qualification is claimed. BF-4 implementation is ready for
+independent re-review; the complete qualification milestone remains open.

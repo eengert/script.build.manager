@@ -1,5 +1,8 @@
 """Synthetic-only macOS filesystem qualification for the isolation helper."""
 import ctypes
+import contextlib
+import io
+import sys
 import json
 import os
 from pathlib import Path
@@ -66,6 +69,9 @@ class IsolationTests(unittest.TestCase):
         data = root / 'userdata/addon_data/script.build.manager'
         (data / 'private-overlays/nested').mkdir(parents=True)
         (data / 'private-overlays/nested/binary').write_bytes(PRIVATE + bytes(range(256)))
+        # Retain the legacy nested binary fixture; cover the actual producer too.
+        (data / 'private_overlays').mkdir()
+        (data / 'private_overlays/fixture-overlay.json').write_bytes(PRIVATE + b'\x00\xff')
         (data / 'build-library').mkdir()
         for name in ('selection.json', 'registry.json', 'applied.json'):
             (data / 'build-library' / name).write_bytes(b'{"fabricated":true}')
@@ -766,6 +772,232 @@ class CorrectionTests(unittest.TestCase):
         raw['records'][0]['state']='selected'
         path.write_bytes(p.encoded(raw))
         with self.assertRaises(p.Refusal):self.run_phase('preserve')
+
+
+class BF4Tests(unittest.TestCase):
+    setUp = IsolationTests.setUp
+    fabricate = IsolationTests.fabricate
+    run_phase = IsolationTests.run_phase
+    fresh = IsolationTests.fresh
+    completed_resolution = CorrectionTests.completed_resolution
+
+    @contextlib.contextmanager
+    def external_private_writer(self):
+        # Actual producer, explicit scratch userdata root, separate OS process.
+        source = """import sys
+from resources.lib.private_overlay import PrivateOverlayStore
+with PrivateOverlayStore(sys.argv[1]).create_commit():
+ print('locked', flush=True)
+ sys.stdin.readline()
+"""
+        child = subprocess.Popen([sys.executable, '-u', '-c', source, str(self.target.userdata_dir)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), 'locked')
+            yield
+        finally:
+            try:
+                child.communicate(input='release\n', timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill();child.communicate()
+            self.assertEqual(child.returncode, 0)
+
+    def test_P03_external_private_writer_refuses_then_released_lock_allows(self):
+        path = self.target.bm_data_dir / 'private_overlays/create.lock'
+        with self.external_private_writer():
+            before = (path.stat().st_ino, path.read_bytes())
+            with self.assertRaises(BlockingIOError):
+                self.run_phase('preserve')
+            self.assertEqual((path.stat().st_ino, path.read_bytes()), before)
+            self.assertFalse((self.parent / self.paths['record']).exists())
+        self.assertEqual((path.stat().st_ino, path.read_bytes()), before)
+        self.assertEqual(self.run_phase('preserve')['phase'], 'preserved')
+        self.fresh();self.run_phase('park');self.run_phase('restore')
+        self.assertEqual((path.stat().st_ino, path.read_bytes()), before)
+
+    def test_P04_nested_build_stage_refuses_without_cleanup(self):
+        builds = self.target.build_library_dir / 'builds'
+        builds.mkdir()
+        path = builds / ('.stage-' + 'a' * 32)
+        path.write_bytes(PRIVATE)
+        before = (path.stat().st_ino, path.read_bytes())
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        self.assertEqual((path.stat().st_ino, path.read_bytes()), before)
+        self.assertFalse((self.parent / self.paths['record']).exists())
+
+    def test_private_overlay_temp_patterns_refuse_and_remain(self):
+        directory = self.target.bm_data_dir / 'private_overlays'
+        for name in ('.create-' + 'a' * 32, '.private-overlay.fabricated.tmp'):
+            path = directory / name;path.write_bytes(PRIVATE)
+            before = (path.stat().st_ino, path.read_bytes())
+            with self.assertRaises(p.Refusal) as caught:self.run_phase('preserve')
+            self.assertNotIn(PRIVATE.decode(), str(caught.exception))
+            self.assertEqual((path.stat().st_ino, path.read_bytes()), before)
+            path.unlink()  # fabricated test fixture only
+
+    def test_artifact_temp_patterns_refuse_and_remain(self):
+        directory = self.target.bm_data_dir / 'frozen-artifacts/artifacts'
+        directory.mkdir(parents=True)
+        for name in ('.' + 'a' * 64 + '.fabricated.tmp', '.' + 'a' * 64 + '.fabricated.json.tmp'):
+            path=directory/name;path.write_bytes(PRIVATE)
+            before=(path.stat().st_ino,path.read_bytes())
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+            self.assertEqual((path.stat().st_ino,path.read_bytes()),before)
+            path.unlink()
+
+    def test_completed_state_round_trip_and_no_private_or_zip_decoding(self):
+        from resources.lib.private_overlay import PrivateOverlayStore, PrivateOverlay
+        from resources.lib.artifacts import ArtifactStore
+        from resources.lib.build_library import BuildLibrary
+        from tests.test_private_overlay import _overlay
+        from tests.test_artifacts import _zip, _xml
+        from tests.test_build_library import LibraryTests
+        import zipfile
+        store=PrivateOverlayStore(self.target.userdata_dir)
+        store.save(_overlay(token=PRIVATE.decode()))
+        opaque=store.directory/'opaque-overlay.json'
+        opaque.write_bytes(PRIVATE+b'\x00\xffnot-json')
+        library_fixture=LibraryTests();library_fixture.setUp()
+        self.addCleanup(library_fixture.doCleanups)
+        (self.target.build_library_dir/'registry.json').write_bytes(p.encoded({'schema_version':1,'entries':{}}))
+        library=BuildLibrary(self.target.build_library_dir)
+        entry=library.register(library_fixture.manifest_path,library_fixture.frozen_path,library_fixture.packages)
+        self.assertEqual(library.get(entry.entry_id).entry_id,entry.entry_id)
+        artifacts=ArtifactStore(self.target.bm_data_dir/'frozen-artifacts')
+        metadata=artifacts.import_zip(_zip({'plugin.example/addon.xml':_xml()}),
+                                      expected_addon_id='plugin.example',expected_version='1.2.3')
+        resolution=self.completed_resolution()
+        with p.directory(self.parent) as fd:
+            before=p.snapshot(fd,self.paths['active'],self.helper.native)
+        with mock.patch.object(PrivateOverlayStore,'load',side_effect=AssertionError('private decode prohibited')), \
+             mock.patch.object(PrivateOverlay,'from_dict',side_effect=AssertionError('private decode prohibited')), \
+             mock.patch.object(zipfile,'ZipFile',side_effect=AssertionError('ZIP decode prohibited')):
+            self.run_phase('preserve');self.fresh()
+            with p.directory(self.parent) as fd:
+                fresh=p.snapshot(fd,self.paths['active'],self.helper.native)
+            self.run_phase('park');self.run_phase('restore')
+            with p.directory(self.parent) as fd:
+                p.verify(fd,self.paths['active'],before,self.helper.native)
+                p.verify(fd,self.paths['parked'],fresh,self.helper.native)
+        self.assertEqual(opaque.read_bytes(),PRIVATE+b'\x00\xffnot-json')
+        self.assertTrue(artifacts.artifact_path(metadata.sha256).is_file())
+        self.assertTrue(resolution.is_file())
+
+    def test_directory_symlinks_and_invalid_nodes_refuse(self):
+        builds=self.target.build_library_dir/'builds';builds.mkdir()
+        artifacts=self.target.bm_data_dir/'frozen-artifacts/artifacts';artifacts.mkdir(parents=True)
+        for i,path in enumerate((self.target.bm_data_dir/'private_overlays',builds,
+                                 artifacts,artifacts.parent)):
+            retained=self.parent/('retained-fixture-'+str(i))
+            path.rename(retained);path.symlink_to(retained)
+            with self.assertRaises((p.Refusal,OSError)):self.run_phase('preserve')
+            path.unlink();path.write_bytes(PRIVATE)
+            with self.assertRaises((p.Refusal,OSError)):self.run_phase('preserve')
+            path.unlink();retained.rename(path)
+        self.assertFalse((self.parent/self.paths['record']).exists())
+
+    def test_private_directory_substitution_refuses_before_traversal(self):
+        directory=self.target.bm_data_dir/'private_overlays'
+        retained=self.parent/'retained-private-fixture'
+        real_open=os.open
+        def swap(name,*args,**kwargs):
+            if name=='private_overlays':
+                directory.rename(retained);directory.mkdir()
+                (directory/'untrusted.json').symlink_to(retained/'fixture-overlay.json')
+            return real_open(name,*args,**kwargs)
+        with mock.patch.object(os,'open',side_effect=swap):
+            with self.assertRaisesRegex(p.Refusal,'coordinator_directory_changed'):
+                self.run_phase('preserve')
+        self.assertEqual((retained/'fixture-overlay.json').read_bytes(),PRIVATE+b'\x00\xff')
+
+    def test_private_lock_symlink_directory_fifo_and_permission_refuse(self):
+        path=self.target.bm_data_dir/'private_overlays/create.lock'
+        path.symlink_to(self.target.bm_data_dir/'private_overlays/fixture-overlay.json')
+        with self.assertRaises(OSError):self.run_phase('preserve')
+        path.unlink();path.mkdir()
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        path.rmdir();os.mkfifo(path)
+        with self.assertRaises(p.Refusal):self.run_phase('preserve')
+        path.unlink();path.write_bytes(PRIVATE);path.chmod(0o600)
+        real_open=os.open
+        def denied(name,*args,**kwargs):
+            if name=='create.lock':raise PermissionError('fabricated permission failure')
+            return real_open(name,*args,**kwargs)
+        with mock.patch.object(os,'open',side_effect=denied):
+            with self.assertRaises(PermissionError):self.run_phase('preserve')
+        self.assertEqual(path.read_bytes(),PRIVATE)
+
+    def test_private_lock_replacement_refuses(self):
+        path=self.target.bm_data_dir/'private_overlays/create.lock'
+        path.write_bytes(PRIVATE);path.chmod(0o600)
+        retained=self.parent/'retained-create-lock'
+        real_open=os.open
+        def swap(name,*args,**kwargs):
+            if name=='create.lock':
+                path.rename(retained);path.write_bytes(PRIVATE);path.chmod(0o600)
+            return real_open(name,*args,**kwargs)
+        with mock.patch.object(os,'open',side_effect=swap):
+            with self.assertRaisesRegex(p.Refusal,'lock_identity_invalid'):self.run_phase('preserve')
+        self.assertEqual(retained.read_bytes(),PRIVATE)
+
+    def test_unexpected_coordinator_entries_refuse_secret_blind(self):
+        builds=self.target.build_library_dir/'builds';builds.mkdir()
+        artifacts=self.target.bm_data_dir/'frozen-artifacts/artifacts';artifacts.mkdir(parents=True)
+        cases=((self.target.bm_data_dir/'private_overlays','unknown.lock'),
+               (self.target.bm_data_dir/'private_overlays','.unknown-fence'),
+               (builds,'unexpected.lock'),(builds,'create_transaction.json'),
+               (builds,'applied-publication.json'),(artifacts,'malformed.zip'),
+               (artifacts,'unknown.lock'),(artifacts.parent,'unknown-fence'))
+        for directory,name in cases:
+            path=directory/name;path.write_bytes(PRIVATE)
+            with self.assertRaises(p.Refusal) as caught:self.run_phase('preserve')
+            self.assertNotIn(PRIVATE.decode(),str(caught.exception))
+            self.assertEqual(path.read_bytes(),PRIVATE)
+            path.unlink()
+        path=self.target.bm_data_dir/'private_overlays'/(PRIVATE.decode()+'.lock')
+        path.write_bytes(PRIVATE)
+        out=io.StringIO()
+        with mock.patch.object(p,'Isolation',return_value=self.helper), \
+             mock.patch.object(bm.Services,'production',return_value=self.services), contextlib.redirect_stdout(out):
+            self.assertEqual(p.main(['preserve','--operation',OP,'--confirm','preserve','--portable']),1)
+        self.assertNotIn(PRIVATE.decode(),out.getvalue())
+        self.assertFalse((self.parent/self.paths['record']).exists())
+
+    def test_guard_cannot_mutate_product_coordinator_files(self):
+        from resources.lib.private_overlay import PrivateOverlayStore
+        with PrivateOverlayStore(self.target.userdata_dir).create_commit():pass
+        builds=self.target.build_library_dir/'builds';builds.mkdir()
+        (builds/('a'*64+'.json')).write_bytes(PRIVATE)
+        artifacts=self.target.bm_data_dir/'frozen-artifacts/artifacts';artifacts.mkdir(parents=True)
+        (artifacts/('a'*64+'.zip')).write_bytes(PRIVATE)
+        (artifacts/('a'*64+'.json')).write_bytes(PRIVATE)
+        self.completed_resolution()
+        with p.directory(self.parent) as fd:
+            before=p.snapshot(fd,self.paths['active'],self.helper.native)
+            real_open=os.open
+            def readonly_open(name,flags,*args,**kwargs):
+                self.assertFalse(flags & (os.O_CREAT|os.O_TRUNC|os.O_WRONLY|os.O_RDWR))
+                return real_open(name,flags,*args,**kwargs)
+            with contextlib.ExitStack() as patches:
+                patches.enter_context(mock.patch.object(os,'open',side_effect=readonly_open))
+                for name in ('write','rename','replace','unlink','remove','rmdir','mkdir','chmod',
+                             'fchmod','link','symlink','utime','truncate','ftruncate'):
+                    patches.enter_context(mock.patch.object(os,name,side_effect=AssertionError('guard mutation prohibited')))
+                patches.enter_context(mock.patch.object(self.helper.native,'rename_between',
+                    side_effect=AssertionError('guard mutation prohibited')))
+                self.helper.clear_transactions(fd,self.paths['active'])
+            p.verify(fd,self.paths['active'],before,self.helper.native)
+
+    def test_completed_looking_symlink_and_directory_nodes_refuse(self):
+        builds=self.target.build_library_dir/'builds';builds.mkdir()
+        artifacts=self.target.bm_data_dir/'frozen-artifacts/artifacts';artifacts.mkdir(parents=True)
+        for directory,name in ((self.target.bm_data_dir/'private_overlays','opaque.json'),
+                               (builds,'b'*64+'.json'),(artifacts,'b'*64+'.zip')):
+            path=directory/name;path.symlink_to(self.target.bm_data_dir/'private_overlays/fixture-overlay.json')
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+            path.unlink();path.mkdir()
+            with self.assertRaises(p.Refusal):self.run_phase('preserve')
+            path.rmdir()
 
 
 if __name__ == '__main__':

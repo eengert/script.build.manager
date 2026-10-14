@@ -307,6 +307,47 @@ class Isolation:
             except Exception:
                 raise Refusal('resolution_artifact_uncertain') from None
 
+    def producer_directory(self, fd, name, policy):
+        observed = exists(fd, name)
+        need(observed is not None and stat.S_ISDIR(observed.st_mode), 'coordinator_directory_invalid')
+        child = os.open(name, DIR, dir_fd=fd)
+        try:
+            need(identity(os.fstat(child)) == identity(observed), 'coordinator_directory_changed')
+            policy(child)
+            attached = exists(fd, name)
+            need(attached is not None and identity(attached) == identity(os.fstat(child)),
+                 'coordinator_directory_changed')
+        finally:
+            os.close(child)
+
+    def producer_guard(self, fd, kind):
+        """Finite producer-specific paths; completed payloads remain opaque."""
+        for name in os.listdir(fd):
+            if kind == 'artifact-root':
+                need(name == 'artifacts', 'artifact_coordinator_uncertain')
+                self.producer_directory(fd, name, lambda child: self.producer_guard(child, 'artifacts'))
+                continue
+            if kind == 'private' and name == 'create.lock':
+                self.probe_lock(fd, name)
+                continue
+            if kind == 'private':
+                # PrivateOverlayStore._safe_id/path_for; no private JSON parsing.
+                allowed = re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,63}\.json', name)
+                code = 'private_overlay_coordinator_uncertain'
+            elif kind == 'builds':
+                # BuildLibrary._atomic publishes SHA-addressed envelopes here.
+                allowed = re.fullmatch(r'[0-9a-f]{64}\.json', name)
+                code = 'saved_build_coordinator_uncertain'
+            else:
+                # ArtifactStore publishes only SHA-addressed ZIP and metadata.
+                allowed = re.fullmatch(r'[0-9a-f]{64}\.(zip|json)', name)
+                code = 'artifact_coordinator_uncertain'
+            # These allowlists refuse .create-*, .private-overlay.*.tmp,
+            # .stage-*, .<sha>.*.tmp/.json.tmp and unclassified writer artifacts.
+            need(allowed is not None, code)
+            need(stat.S_ISREG(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode),
+                 'coordinator_entry_invalid')
+
     def coordinator_guard(self, fd, *, library=False):
         locks = {'library.lock'} if library else {
             'restart_transaction.lock', 'frozen_install_transaction.lock', 'create_capture_transaction.lock'}
@@ -316,6 +357,11 @@ class Isolation:
             elif ('transaction' in name or 'hold' in name or name.endswith('.lock') or
                   name == 'applied-publication.json' or name.startswith(('.stage-', '.frozen-install.'))):
                 raise Refusal('transaction_or_hold_requires_reconciliation')
+            elif library and name == 'builds':
+                self.producer_directory(fd, name, lambda child: self.producer_guard(child, 'builds'))
+            elif not library and name in ('private_overlays', 'frozen-artifacts'):
+                kind = 'private' if name == 'private_overlays' else 'artifact-root'
+                self.producer_directory(fd, name, lambda child: self.producer_guard(child, kind))
             elif not library and name in ('build-library', 'install_resolutions'):
                 nested = os.open(name, DIR, dir_fd=fd)
                 try:
