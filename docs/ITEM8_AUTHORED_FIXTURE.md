@@ -15,6 +15,7 @@ not be presented as observation of an installation or captured user state:
 | Value | Meaning and evidence boundary |
 | --- | --- |
 | `xbmc.python` `3.0.0` | An authored requirement/fallback carried from the PIL package metadata. It is not an observation of the target installation. The independent review observed Test.app's bundled `xbmc.python` metadata at `3.0.1`. |
+| `xbmc.python` `addon_type='system'` | An authored fallback classification in the frozen fixture, not evidence that the target installation reports this type. |
 | `created_at: 2026-10-15T00:00:00Z` | A fixed placeholder timestamp, not the time of capture or creation on a target. |
 | `kodi_version: 21.3` | Authored fixture metadata, not evidence that a live Kodi version was checked. |
 | `AUTHORED QUALIFICATION FIXTURE` | The label is stored in the external `provenance.json` record. The ordinary Build Library entry has no typed authored-origin flag; that entry alone does not preserve this provenance distinction. |
@@ -84,27 +85,43 @@ package, without importing or running its code:
 
 - The first Red Light UI render may fetch `icons.json` from
   `repo.redwizard.xyz` or fallback `zeus-768.com` without authentication.
-- Service startup can repeatedly rewrite package-owned
-  `resources/skins/Default/1080i` XML files and `extras.xml`. A separate
-  runtime qualification, if later authorized, must take installed-tree
-  snapshots before and after startup. Record expected startup drift separately
-  from source identity; drift does not change the pinned source identity.
+- At startup and when skin/font state changes, package code may rewrite XML
+  files under the installed add-on's `resources/skins/Default/1080i` directory
+  and the installed add-on's `extras.xml`. These are the only anticipated
+  startup file rewrites. A separately authorized runtime qualification must
+  take installed-tree snapshots before and after startup and identify every
+  exact added, removed, or modified path and its content change. Match each
+  change to an independently expected rewrite; a change that does not match is
+  a STOP, including a change inside an anticipated location. Any added,
+  removed, or modified file outside those expected file sets is a STOP.
+  Record expected drift separately from source identity; drift does not change
+  the pinned source identity.
 - `router.py` uses `exec()` on a `plugin://` mode parameter. The route through
   GUI, JSON-RPC, or web-control surfaces has not been established.
 - Premiumize token-to-URL handling presents a dangerous path if real
-  credentials exist. The inspected fixture sentinel does not provide a token
-  and does not establish safety in a destination with inherited state.
+  credentials exist (`resources/lib/apis/premiumize_api.py:243–245`). The
+  inspected fixture sentinel does not provide a token and does not establish
+  safety in a destination with inherited state.
 - The Red Light initializer imports package modules in-process. The effects of
-  those imports at module scope have not been independently qualified.
+  those imports at module scope have not been independently qualified. Each
+  such effect must be independently qualified or explicitly accepted and
+  admitted before runtime initialization.
 - Bundled third-party credential blobs are not approved fixture inputs. Do not
   use them, decode them for authentication, expose them, or transmit them.
 
 These are different evidence classes: source review establishes that the
 package contains the behaviors above; it does not establish caller
-reachability, harmlessness, or runtime safety. In particular, before any live
-activation, require proof that untrusted callers cannot reach the `router.py`
-execution path. Do not invoke a `plugin://` route except as part of an
-explicitly approved native workflow.
+reachability, harmlessness, or runtime safety.
+
+### Mandatory router caller-exclusion gate
+
+Before launching any Kodi process in which Red Light is installed or enabled,
+require proof that untrusted callers cannot reach the `router.py` `exec()`
+path. This proof must remain valid throughout the entire run and across every
+shutdown/restart boundary. Re-establish it before each subsequent process
+launch; if it cannot be proved at any boundary, STOP and do not launch or
+continue. Do not invoke a `plugin://` route except as part of an explicitly
+approved native workflow.
 
 Before any separately authorized Red Light startup, prove that the disposable
 destination has no inherited credentials or tokens, account-manager
@@ -117,6 +134,25 @@ assume that an icon or other request is harmless. If egress is unavoidable,
 stop and obtain explicit supervisor/operator approval before runtime
 qualification. This documentation correction authorizes no runtime probe or
 activation.
+
+### Mandatory STOP conditions
+
+STOP the separately authorized operation immediately if any of these occurs:
+
+- Any unapproved outbound network request.
+- Any `plugin://` invocation or router `exec()`-route invocation outside an
+  explicitly approved native workflow.
+- Any unexpected modification of `pm.token`, `pm.account_id`, credentials,
+  account-manager state, or integration settings.
+- Any authentication attempt or authentication prompt.
+- Any log-upload attempt, including an attempt to call
+  `kodi_utils.upload_logfile`.
+- Any module-scope import effect that has not been independently qualified
+  and admitted before runtime initialization.
+
+The sole allowed `pm.account_id` value is the approved `empty_setting`
+sentinel, and only when applying it is part of the separately approved
+operation. No other `pm.account_id` value or credential change is authorized.
 
 The sole authored private value is the exact package's unauthenticated/revoked
 `empty_setting` sentinel for the audited string field `pm.account_id`. There
@@ -154,8 +190,11 @@ permission to patch the add-on or disable product guards.
 
 ## Exact production transfer preconditions
 
-The offline output is not the canonical production Build Library root. The
-canonical locations are:
+The offline output is not a canonical Build Library root. For any separately
+authorized transfer, all canonical Build Library, artifact, and private
+overlay destinations below must resolve **only inside**
+`/Applications/Kodi Build Manager Test.app`, using its verified disposable
+portable `-p` profile:
 
 | Data | Canonical destination |
 | --- | --- |
@@ -167,6 +206,11 @@ Tests using `isolated_library_install_authority` exercise an isolated library;
 they do not establish runtime authentication for the canonical root. Do not
 substitute another root or bypass canonical-root authority.
 
+**NEVER use** the normal Kodi installation or profile, the preserved-original
+Test.app profile, or any real household device. Calling a path a “canonical
+production destination” describes the production path layout; it does not
+grant permission to access normal Kodi.
+
 Any separately authorized transfer must be exact-or-refuse and use existing
 production primitives. Before writing, detect and refuse collisions involving
 the same `build_id`/version or an existing entry or overlay identity. Preserve
@@ -176,9 +220,11 @@ qualification evidence. Never overwrite an existing private overlay with
 
 Before any actual Install Apply, require a fresh load from the canonical root,
 target verification, profile binding, a plan preview, and explicit native
-review. Preserve the external authored-provenance record separately; an
-ordinary Build Library entry has no typed authored-origin flag. This
-documentation correction authorizes no transfer, registration, runtime
+review. **Explicit operator confirmation in the native UI immediately before
+Apply, separate from and after the review.** The plan review itself is not
+Apply authorization. Preserve the external authored-provenance record
+separately; an ordinary Build Library entry has no typed authored-origin flag.
+This documentation correction authorizes no transfer, registration, runtime
 launch, Create, Install, or restart.
 
 ## Tests and later runtime boundary
