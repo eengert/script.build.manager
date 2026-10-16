@@ -3456,6 +3456,222 @@ def read_enabled_map(target: TestAppTarget, guard: ReadGuard) -> Optional[Dict[s
     return {str(addon_id): bool(enabled) for addon_id, enabled in rows if isinstance(addon_id, str)}
 
 
+# Opt-in API only: normal snapshots deliberately do not invoke these witnesses.
+_PUBLIC_WITNESS_SETTINGS = frozenset({"general.addonupdates", "lookandfeel.skin"})
+_WITNESS_SCHEMA = "bm-public-preservation-v1"
+
+
+def _witness_read(target: TestAppTarget, guard: ReadGuard, path: Path, limit: int) -> bytes:
+    """Read through pinned no-follow directory descriptors, never SQLite source writes.
+
+    Reject sidecars rather than silently omitting committed WAL records. Callers
+    must separately establish a stopped, quiescent target for live admission.
+    """
+    guard.require(path)
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parent.parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        if path.suffix == ".db":
+            names = [n for n in os.listdir(fd) if _ADDONS_DB_RE.fullmatch(n)]
+            if not names or max(names, key=lambda n: int(n[6:-3])) != "Addons33.db":
+                raise ValueError("unsupported database generation")
+            for suffix in ("-wal", "-shm", "-journal"):
+                try:
+                    os.stat(path.name + suffix, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                raise ValueError("sidecar present")
+        source = os.open(path.name, _read_flags(), dir_fd=fd)
+        try:
+            before = os.fstat(source)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
+                raise ValueError("unsupported file")
+            chunks = []
+            total = 0
+            while total <= limit:
+                chunk = os.read(source, min(65536, limit + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            after = os.fstat(source)
+            linked = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+            stable = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            if (stable(before) != stable(after) or total != before.st_size
+                    or (linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino)):
+                raise ValueError("unstable file")
+            return b"".join(chunks)
+        finally:
+            os.close(source)
+    finally:
+        os.close(fd)
+
+
+def public_database_witness(target: TestAppTarget, guard: ReadGuard) -> Dict[str, Any]:
+    """Bounded Addons33 installed identity/enabled projection; all other fields UNKNOWN.
+
+    A disposable copy avoids SQLite opening source paths or creating sidecars.
+    No SQL, diagnostics, arbitrary row contents or byte hashes are emitted.
+    """
+    report: Dict[str, Any] = {
+        "source": "Addons33.db", "scope": "installed.addonID,enabled",
+        "status": "UNKNOWN", "integrity": "UNKNOWN", "schema": "UNKNOWN",
+        "other_fields": "UNKNOWN", "entries": [], "count": 0,
+    }
+    try:
+        raw = _witness_read(target, guard, target.userdata_dir / "Database" / "Addons33.db", 32 << 20)
+        # Some supported Python builds omit deserialize(). A private disposable
+        # copy still keeps the source inaccessible to SQLite and opens read-only.
+        with tempfile.TemporaryDirectory(prefix="bm-public-witness-") as scratch:
+            copy_path = Path(scratch) / "database.db"
+            with copy_path.open("xb") as stream:
+                stream.write(raw)
+            return _project_public_database(copy_path, report)
+    except (HelperError, FsProblem, OSError, ValueError, sqlite3.Error):
+        return report
+
+
+def _project_public_database(path: Path, report: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        uri = "file:" + urllib.parse.quote(os.fspath(path)) + "?mode=ro&immutable=1"
+        connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+        try:
+            connection.execute("PRAGMA query_only = 1")
+            connection.execute("PRAGMA trusted_schema = OFF")
+            budget = [0]
+            def bounded() -> int:
+                budget[0] += 1
+                return int(budget[0] > 20000)
+            connection.set_progress_handler(bounded, 1000)
+            if connection.execute("PRAGMA integrity_check(1)").fetchall() != [("ok",)]:
+                return report
+            report["integrity"] = "READABLE_AND_VALID"
+            columns = connection.execute("PRAGMA table_info(installed)").fetchall()
+            expected = [("id", "INTEGER"), ("addonID", "TEXT"), ("enabled", "BOOLEAN"),
+                        ("installDate", "TEXT"), ("lastUpdated", "TEXT"), ("lastUsed", "TEXT"),
+                        ("origin", "TEXT"), ("disabledReason", "INTEGER")]
+            kind = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'installed' LIMIT 2").fetchall()
+            if kind != [("table",)] or [(r[1], r[2].upper()) for r in columns] != expected:
+                return report
+            report["schema"] = "Addons33-installed-v1"
+            rows = connection.execute("SELECT addonID, enabled FROM installed LIMIT 10001").fetchall()
+            entries = {}
+            if len(rows) > 10000:
+                return report
+            for addon_id, enabled in rows:
+                if (not isinstance(addon_id, str) or not _ADDON_ID_RE.fullmatch(addon_id)
+                        or addon_id in entries or type(enabled) is not int or enabled not in (0, 1)):
+                    return report
+                entries[addon_id] = bool(enabled)
+            report.update(status="KNOWN", count=len(entries), entries=[
+                {"id": key, "enabled": entries[key]} for key in sorted(entries)])
+        finally:
+            connection.close()
+    except (HelperError, FsProblem, OSError, ValueError, sqlite3.Error):
+        pass
+    return report
+
+
+def public_settings_witness(target: TestAppTarget, guard: ReadGuard,
+                            sentinels: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Only two approved public settings; sentinel expectations are never emitted.
+
+    Sentinels use those same keys, not an expansion of the XML/path allowlist.
+    Missing, duplicate, nested or invalid values cannot become a known witness.
+    """
+    report: Dict[str, Any] = {"source": "guisettings.xml", "scope": sorted(_PUBLIC_WITNESS_SETTINGS),
+                              "status": "UNKNOWN", "settings": {}, "sentinels": {}}
+    try:
+        expected = dict(sentinels or {})
+        if set(expected) - _PUBLIC_WITNESS_SETTINGS:
+            return report
+        raw = _witness_read(target, guard, target.userdata_dir / "guisettings.xml", MAX_XML_BYTES)
+        # Require UTF-8 before the existing DTD/entity check (also rejects UTF-16 tricks).
+        raw.decode("utf-8")
+        if b"\x00" in raw:
+            return report
+        values = extract_settings(raw, _PUBLIC_WITNESS_SETTINGS)
+        root = ET.fromstring(raw)
+        if root.tag != "settings" or any(e.tag != "setting" or list(e) for e in root):
+            return report
+        for key in _PUBLIC_WITNESS_SETTINGS:
+            if sum(e.get("id") == key for e in root) != 1:
+                return report
+        policy = _POLICY_BY_VALUE.get(values["general.addonupdates"])
+        skin = values["lookandfeel.skin"]
+        if policy is None or skin not in ("skin.estuary", "skin.arctic.fuse.3"):
+            return report
+        report.update(status="KNOWN", settings={"updater_policy": policy, "active_skin": skin},
+                      sentinels={key: values[key] == expected[key] for key in sorted(expected)})
+    except (HelperError, FsProblem, OSError, ValueError, ET.ParseError):
+        pass
+    return report
+
+
+def public_preservation_witness(target: TestAppTarget,
+                                sentinels: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Explicit opt-in, read-only API. Does not establish process quiescence.
+
+    This scope cannot prove preservation of arbitrary settings/records. Textures,
+    skin/keyboard settings, credentials and private overlays remain UNKNOWN.
+    """
+    guard = ReadGuard(target)
+    return {"schema": _WITNESS_SCHEMA,
+            "database": public_database_witness(target, guard),
+            "settings": public_settings_witness(target, guard, sentinels),
+            "uncovered": "UNKNOWN"}
+
+
+def compare_public_preservation(before: Mapping[str, Any], after: Mapping[str, Any]) -> Dict[str, Any]:
+    """Compare witnesses from this API; PRESERVED applies only to named scope.
+
+    Never classifies cache/maintenance changes; that needs independent controls.
+    """
+    def known(section: Any, key: str) -> bool:
+        if not isinstance(section, dict) or section.get("status") != "KNOWN":
+            return False
+        if key == "database":
+            entries = section.get("entries")
+            return (section.get("schema") == "Addons33-installed-v1"
+                    and section.get("integrity") == "READABLE_AND_VALID"
+                    and isinstance(entries, list) and len(entries) <= 10000
+                    and section.get("count") == len(entries)
+                    and all(isinstance(e, dict) and isinstance(e.get("id"), str)
+                            and _ADDON_ID_RE.fullmatch(e["id"]) and type(e.get("enabled")) is bool
+                            for e in entries)
+                    and len({e["id"] for e in entries}) == len(entries))
+        values, sentinels = section.get("settings"), section.get("sentinels")
+        return (isinstance(values, dict) and set(values) == {"updater_policy", "active_skin"}
+                and values["updater_policy"] in _POLICY_BY_VALUE.values()
+                and values["active_skin"] in ("skin.estuary", "skin.arctic.fuse.3")
+                and isinstance(sentinels, dict) and not set(sentinels) - _PUBLIC_WITNESS_SETTINGS
+                and all(type(v) is bool for v in sentinels.values()))
+
+    results = {}
+    for key in ("database", "settings"):
+        left, right = before.get(key, {}), after.get(key, {})
+        if (before.get("schema") != _WITNESS_SCHEMA or after.get("schema") != _WITNESS_SCHEMA
+                or not known(left, key) or not known(right, key)):
+            results[key] = "UNKNOWN"
+        else:
+            if key == "database":
+                equal = ({e["id"]: e["enabled"] for e in left["entries"]}
+                         == {e["id"]: e["enabled"] for e in right["entries"]})
+            else:
+                equal = (left["settings"] == right["settings"]
+                         and left["sentinels"] == right["sentinels"]
+                         and all(right["sentinels"].values()))
+            results[key] = "PRESERVED" if equal else "CHANGED_OR_MISSING"
+    overall = ("CHANGED_OR_MISSING" if "CHANGED_OR_MISSING" in results.values() else
+               "UNKNOWN" if "UNKNOWN" in results.values() else "PRESERVED")
+    return {"schema": _WITNESS_SCHEMA, "scope_result": overall, "comparisons": results,
+            "uncovered": "UNKNOWN", "maintenance_attribution": "UNKNOWN"}
+
+
 def census_addons(target: TestAppTarget, guard: ReadGuard) -> Dict[str, Any]:
     """Installed add-on ids and versions (public metadata from addon.xml only)."""
     entries: List[Dict[str, Any]] = []

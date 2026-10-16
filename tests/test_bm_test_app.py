@@ -7296,3 +7296,143 @@ class TestCurrentHelperStage(StageTestCase):
         self.assertEqual(raised.exception.code, 'rollback_failed')
         self.assertTrue((self.stage_area() / 'old' / bm.DRIVER_ID).exists())
         self.assertTrue((self.run_dir / 'replaced' / bm.DRIVER_ID).exists())
+
+
+class TestSemanticPreservation(SnapshotTestCase):
+    def witness(self, **kwargs):
+        return bm.public_preservation_witness(self.target, **kwargs)
+
+    def sql(self, statement, parameters=()):
+        with sqlite3.connect(self.userdata / "Database" / "Addons33.db") as db:
+            db.execute(statement, parameters)
+
+    def test_stable_semantics_cache_churn_row_order_and_no_writes(self):
+        before_files = fingerprint(self.target.root)
+        before = self.witness()
+        self.assertEqual(fingerprint(self.target.root), before_files)
+        self.assertEqual(before["database"]["status"], "KNOWN")
+        self.assertEqual(before["settings"]["status"], "KNOWN")
+        self.sql("UPDATE installed SET lastUsed = ?", (SENTINEL_PRIVATE,))
+        self.sql("CREATE TABLE cache (value TEXT)")
+        self.sql("INSERT INTO cache VALUES (?)", (SENTINEL_PASSWORD,))
+        after = self.witness()
+        self.assertEqual(bm.compare_public_preservation(before, after)["scope_result"], "PRESERVED")
+        self.assertNotIn(SENTINEL_PRIVATE, json.dumps(after))
+        self.assertNotIn(SENTINEL_PASSWORD, json.dumps(after))
+        self.assertEqual(after["uncovered"], "UNKNOWN")
+        reordered = copy.deepcopy(after)
+        reordered["database"]["entries"].reverse()
+        self.assertEqual(bm.compare_public_preservation(before, reordered)["scope_result"], "PRESERVED")
+        # Changing physical order alone does not change the identity projection.
+        self.sql("UPDATE installed SET id = id + 100")
+        self.assertEqual(self.witness(), after)
+
+    def test_missing_changed_identity_and_enabled_are_mismatches(self):
+        before = self.witness()
+        for statement in ("DELETE FROM installed WHERE addonID = 'script.build.manager'",
+                          "UPDATE installed SET addonID = 'script.changed' WHERE addonID = 'script.build.manager'",
+                          "UPDATE installed SET enabled = 0 WHERE addonID = 'script.build.manager'"):
+            with self.subTest(statement=statement):
+                path = self.userdata / "Database" / "Addons33.db"
+                original = path.read_bytes()
+                self.sql(statement)
+                self.assertEqual(bm.compare_public_preservation(before, self.witness())["scope_result"],
+                                 "CHANGED_OR_MISSING")
+                path.write_bytes(original)
+
+    def test_database_failures_are_unknown(self):
+        path = self.userdata / "Database" / "Addons33.db"
+        original = path.read_bytes()
+        for raw in (b"corrupt", b""):
+            path.write_bytes(raw)
+            self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+        path.write_bytes(original)
+        for statement in ("ALTER TABLE installed ADD COLUMN unsupported TEXT",
+                          "UPDATE installed SET enabled = 9",
+                          "UPDATE installed SET addonID = 'bad/id' WHERE addonID = 'script.build.manager'"):
+            with self.subTest(statement=statement):
+                self.sql(statement)
+                self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+                path.write_bytes(original)
+        # Duplicate identity in an otherwise structurally supported table.
+        with sqlite3.connect(path) as connection:
+            schema = connection.execute("SELECT sql FROM sqlite_master WHERE name = 'installed'").fetchone()[0]
+        self.sql("DROP TABLE installed")
+        self.sql(schema.replace(" UNIQUE", ""))
+        self.sql("INSERT INTO installed (addonID, enabled) VALUES ('script.duplicate', 1)")
+        self.sql("INSERT INTO installed (addonID, enabled) VALUES ('script.duplicate', 1)")
+        self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+        path.write_bytes(original)
+        (path.parent / "Addons34.db").write_bytes(original)
+        self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+
+    def test_sentinels_missing_changed_and_private_values_not_emitted(self):
+        expected = {"general.addonupdates": "2"}
+        before = self.witness(sentinels=expected)
+        self.assertEqual(before["settings"]["sentinels"], {"general.addonupdates": True})
+        path = self.userdata / "guisettings.xml"
+        path.write_text(GUISETTINGS.replace('>2</setting>', '>1</setting>'))
+        changed = self.witness(sentinels=expected)
+        self.assertEqual(changed["settings"]["sentinels"], {"general.addonupdates": False})
+        self.assertEqual(bm.compare_public_preservation(before, changed)["scope_result"], "CHANGED_OR_MISSING")
+        path.write_text('<settings><setting id="lookandfeel.skin">skin.estuary</setting></settings>')
+        self.assertEqual(self.witness()["settings"]["status"], "UNKNOWN")
+        path.write_text(GUISETTINGS)
+        denied = self.witness(sentinels={"services.webserverpassword": SENTINEL_PASSWORD})
+        self.assertEqual(denied["settings"]["status"], "UNKNOWN")
+        self.assertNotIn(SENTINEL_PASSWORD, json.dumps(denied))
+
+    def test_xml_rejects_duplicates_entities_layouts_and_malformed_input(self):
+        path = self.userdata / "guisettings.xml"
+        for raw in (b'<settings><setting',
+                    GUISETTINGS.replace('</settings>', '<setting id="general.addonupdates">2</setting></settings>').encode(),
+                    b'<!DOCTYPE settings [<!ENTITY x "private">]><settings/>',
+                    GUISETTINGS.replace('<settings version="2">', '<wrong>').replace('</settings>', '</wrong>').encode(),
+                    GUISETTINGS.replace('</settings>', '<group><setting id="general.addonupdates">2</setting></group></settings>').encode(),
+                    GUISETTINGS.encode('utf-16')):
+            with self.subTest(raw=raw[:20]):
+                path.write_bytes(raw)
+                self.assertEqual(self.witness()["settings"]["status"], "UNKNOWN")
+
+    def test_sidecars_read_failure_and_symlinks_fail_closed(self):
+        db = self.userdata / "Database" / "Addons33.db"
+        for suffix in ('-wal', '-shm', '-journal'):
+            sidecar = Path(str(db) + suffix)
+            sidecar.write_bytes(b'')
+            self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+            sidecar.unlink()
+        before = self.witness()
+        with mock.patch.object(bm, '_witness_read', side_effect=OSError('private diagnostic')):
+            after = self.witness()
+        self.assertEqual(bm.compare_public_preservation(before, after)["scope_result"], "UNKNOWN")
+        self.assertNotIn('private diagnostic', json.dumps(after))
+        path = self.userdata / 'guisettings.xml'
+        outside = self.tmp / 'outside.xml'
+        outside.write_text(GUISETTINGS)
+        path.unlink()
+        path.symlink_to(outside)
+        self.assertEqual(self.witness()["settings"]["status"], "UNKNOWN")
+        directory = self.userdata / 'Database'
+        moved = self.tmp / 'outside-db'
+        directory.rename(moved)
+        directory.symlink_to(moved, target_is_directory=True)
+        self.assertEqual(self.witness()["database"]["status"], "UNKNOWN")
+
+    def test_guard_boundary_and_snapshot_compatibility(self):
+        before = self.snapshot()
+        self.witness()
+        self.assertEqual(before, self.snapshot())
+        guard = bm.ReadGuard(self.target)
+        for path in (self.userdata / 'Database' / 'Textures13.db',
+                     self.target.addon_data_dir / 'skin.estuary' / 'settings.xml',
+                     self.target.addon_data_dir / 'plugin.video.redlight' / 'settings.xml',
+                     self.target.bm_data_dir / 'private_overlays' / 'overlay.json',
+                     self.userdata / 'peripheral_data' / 'application_Keyboard.xml'):
+            with self.subTest(path=path.name), self.assertRaises(bm.HelperError):
+                bm._witness_read(self.target, guard, path, 1000)
+
+    def test_comparison_schema_and_missing_sections_are_unknown(self):
+        before = self.witness()
+        for other in ({}, {**before, 'schema': 'unsupported'}, {**before, 'settings': {}},
+                      {**before, 'settings': {'status': 'KNOWN'}}, {**before, 'database': None}):
+            self.assertEqual(bm.compare_public_preservation(before, other)["scope_result"], "UNKNOWN")
