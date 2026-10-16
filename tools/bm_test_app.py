@@ -3521,24 +3521,60 @@ def public_database_witness(target: TestAppTarget, guard: ReadGuard) -> Dict[str
         "status": "UNKNOWN", "integrity": "UNKNOWN", "schema": "UNKNOWN",
         "other_fields": "UNKNOWN", "entries": [], "count": 0,
     }
+    projection = report
+    scratch = copy_path = None
+    raw_copy = "NOT_CREATED"
+    temporary_cleanup = "NOT_CREATED"
+    finalization_failed = False
     try:
         raw = _witness_read(target, guard, target.userdata_dir / "Database" / "Addons33.db", 32 << 20)
-        # Some supported Python builds omit deserialize(). A private disposable
-        # copy still keeps the source inaccessible to SQLite and opens read-only.
-        with tempfile.TemporaryDirectory(prefix="bm-public-witness-") as scratch:
-            copy_path = Path(scratch) / "database.db"
-            with copy_path.open("xb") as stream:
-                stream.write(raw)
-            return _project_public_database(copy_path, report)
+        # Keep ownership until explicit cleanup has completed; do not return
+        # an optimistic projection through a context manager's failing exit.
+        scratch = tempfile.TemporaryDirectory(prefix="bm-public-witness-")
+        copy_path = Path(scratch.name) / "database.db"
+        raw_copy = "MAY_REMAIN"
+        with copy_path.open("xb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(raw)
+        projection = _project_public_database(copy_path, report)
     except (HelperError, FsProblem, OSError, ValueError, sqlite3.Error):
-        return report
+        pass
+    finally:
+        if copy_path is not None:
+            # Also remove partial copies after open/write/query/close failures.
+            # At most two attempts, restricted to this task-owned exact file.
+            for _attempt in range(2):
+                try:
+                    copy_path.unlink(missing_ok=True)
+                    raw_copy = "REMOVED"
+                    break
+                except OSError:
+                    finalization_failed = True
+        if scratch is not None:
+            try:
+                scratch.cleanup()
+                temporary_cleanup = "COMPLETE"
+                raw_copy = "REMOVED"
+            except OSError:
+                temporary_cleanup = "FAILED"
+                finalization_failed = True
+    if finalization_failed:
+        return {**report, "temporary_cleanup": temporary_cleanup,
+                "raw_copy": raw_copy, "live_admission": "PROHIBITED"}
+    # KNOWN is publishable only after connection close AND copy cleanup.
+    return projection
 
 
 def _project_public_database(path: Path, report: Dict[str, Any]) -> Dict[str, Any]:
+    candidate = dict(report)
     try:
         uri = "file:" + urllib.parse.quote(os.fspath(path)) + "?mode=ro&immutable=1"
         connection = sqlite3.connect(uri, uri=True, timeout=1.0)
         try:
+            # POSIX/macOS immutable SQLite keeps the opened file descriptor.
+            # Unlink before querying so close/cleanup failures normally leave
+            # no named raw database copy. No SQLite sidecars can be created.
+            path.unlink()
             connection.execute("PRAGMA query_only = 1")
             connection.execute("PRAGMA trusted_schema = OFF")
             budget = [0]
@@ -3547,8 +3583,8 @@ def _project_public_database(path: Path, report: Dict[str, Any]) -> Dict[str, An
                 return int(budget[0] > 20000)
             connection.set_progress_handler(bounded, 1000)
             if connection.execute("PRAGMA integrity_check(1)").fetchall() != [("ok",)]:
-                return report
-            report["integrity"] = "READABLE_AND_VALID"
+                return candidate
+            candidate["integrity"] = "READABLE_AND_VALID"
             columns = connection.execute("PRAGMA table_info(installed)").fetchall()
             expected = [("id", "INTEGER"), ("addonID", "TEXT"), ("enabled", "BOOLEAN"),
                         ("installDate", "TEXT"), ("lastUpdated", "TEXT"), ("lastUsed", "TEXT"),
@@ -3556,24 +3592,24 @@ def _project_public_database(path: Path, report: Dict[str, Any]) -> Dict[str, An
             kind = connection.execute(
                 "SELECT type FROM sqlite_master WHERE name = 'installed' LIMIT 2").fetchall()
             if kind != [("table",)] or [(r[1], r[2].upper()) for r in columns] != expected:
-                return report
-            report["schema"] = "Addons33-installed-v1"
+                return candidate
+            candidate["schema"] = "Addons33-installed-v1"
             rows = connection.execute("SELECT addonID, enabled FROM installed LIMIT 10001").fetchall()
             entries = {}
             if len(rows) > 10000:
-                return report
+                return candidate
             for addon_id, enabled in rows:
                 if (not isinstance(addon_id, str) or not _ADDON_ID_RE.fullmatch(addon_id)
                         or addon_id in entries or type(enabled) is not int or enabled not in (0, 1)):
-                    return report
+                    return candidate
                 entries[addon_id] = bool(enabled)
-            report.update(status="KNOWN", count=len(entries), entries=[
+            candidate.update(status="KNOWN", count=len(entries), entries=[
                 {"id": key, "enabled": entries[key]} for key in sorted(entries)])
         finally:
             connection.close()
     except (HelperError, FsProblem, OSError, ValueError, sqlite3.Error):
-        pass
-    return report
+        return dict(report)
+    return candidate
 
 
 def public_settings_witness(target: TestAppTarget, guard: ReadGuard,

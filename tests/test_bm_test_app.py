@@ -7436,3 +7436,168 @@ class TestSemanticPreservation(SnapshotTestCase):
         for other in ({}, {**before, 'schema': 'unsupported'}, {**before, 'settings': {}},
                       {**before, 'settings': {'status': 'KNOWN'}}, {**before, 'database': None}):
             self.assertEqual(bm.compare_public_preservation(before, other)["scope_result"], "UNKNOWN")
+
+
+class TestSemanticWitnessFinalization(SnapshotTestCase):
+    def witness(self):
+        return bm.public_preservation_witness(self.target)
+
+    def test_temporary_cleanup_failure_never_publishes_known(self):
+        before = self.witness()
+        original = tempfile.TemporaryDirectory
+        retained = []
+
+        class FailedCleanup(original):
+            def cleanup(self):
+                retained.append(self)
+                raise OSError(SENTINEL_PRIVATE)
+
+        try:
+            with mock.patch.object(bm.tempfile, 'TemporaryDirectory', FailedCleanup):
+                after = self.witness()
+            self.assertEqual(after['database']['status'], 'UNKNOWN')
+            self.assertEqual(bm.compare_public_preservation(before, after)['scope_result'], 'UNKNOWN')
+            self.assertEqual(after['database']['temporary_cleanup'], 'FAILED')
+            self.assertEqual(after['database']['raw_copy'], 'REMOVED')
+            self.assertEqual(after['database']['live_admission'], 'PROHIBITED')
+            self.assertTrue(retained)
+            self.assertFalse((Path(retained[0].name) / 'database.db').exists())
+            self.assertNotIn(SENTINEL_PRIVATE, json.dumps(after))
+        finally:
+            for directory in retained:
+                original.cleanup(directory)
+
+    def test_sqlite_close_failure_never_publishes_known(self):
+        before = self.witness()
+        connect = sqlite3.connect
+        closed = []
+
+        class FailedClose:
+            def __init__(self, *args, **kwargs):
+                self.connection = connect(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            def close(self):
+                self.connection.close()
+                closed.append(True)
+                raise sqlite3.OperationalError(SENTINEL_PRIVATE)
+
+        with mock.patch.object(bm.sqlite3, 'connect', FailedClose):
+            after = self.witness()
+        self.assertEqual(closed, [True])
+        self.assertEqual(after['database']['status'], 'UNKNOWN')
+        self.assertEqual(bm.compare_public_preservation(before, after)['scope_result'], 'UNKNOWN')
+        self.assertNotIn(SENTINEL_PRIVATE, json.dumps(after))
+
+    def test_success_closes_connection_and_removes_restricted_copy(self):
+        connect = sqlite3.connect
+        copies = []
+        connections = []
+
+        def inspect_copy(database_uri, **kwargs):
+            path = Path(bm.urllib.parse.unquote(database_uri[5:].split('?')[0]))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            copies.append(path)
+            connection = connect(database_uri, **kwargs)
+            connections.append(connection)
+            return connection
+
+        before_files = fingerprint(self.target.root)
+        with mock.patch.object(bm.sqlite3, 'connect', side_effect=inspect_copy):
+            result = self.witness()
+        self.assertEqual(result['database']['status'], 'KNOWN')
+        self.assertEqual(fingerprint(self.target.root), before_files)
+        self.assertEqual(len(copies), 1)
+        self.assertFalse(copies[0].exists())
+        self.assertFalse(copies[0].parent.exists())
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connections[0].execute('SELECT 1')
+
+    def test_unresolved_raw_copy_cleanup_is_explicit_and_blocks_live_admission(self):
+        original = tempfile.TemporaryDirectory
+        unlink = Path.unlink
+        retained = []
+        attempts = []
+
+        class FailedCleanup(original):
+            def cleanup(self):
+                retained.append(self)
+                raise OSError(SENTINEL_PRIVATE)
+
+        def failed_unlink(path, *args, **kwargs):
+            if path.name == 'database.db':
+                attempts.append(True)
+                raise OSError(SENTINEL_PASSWORD)
+            return unlink(path, *args, **kwargs)
+
+        before = self.witness()
+        try:
+            with mock.patch.object(bm.tempfile, 'TemporaryDirectory', FailedCleanup), \
+                    mock.patch.object(Path, 'unlink', failed_unlink):
+                after = self.witness()
+            self.assertEqual(after['database']['status'], 'UNKNOWN')
+            self.assertEqual(after['database']['temporary_cleanup'], 'FAILED')
+            self.assertEqual(after['database']['raw_copy'], 'MAY_REMAIN')
+            self.assertEqual(after['database']['live_admission'], 'PROHIBITED')
+            self.assertEqual(bm.compare_public_preservation(before, after)['scope_result'], 'UNKNOWN')
+            self.assertTrue((Path(retained[0].name) / 'database.db').is_file())
+            self.assertEqual(len(attempts), 3)  # early unlink plus two bounded cleanup attempts
+            self.assertNotIn(SENTINEL_PRIVATE, json.dumps(after))
+            self.assertNotIn(SENTINEL_PASSWORD, json.dumps(after))
+        finally:
+            for directory in retained:
+                original.cleanup(directory)
+                self.assertFalse(Path(directory.name).exists())
+
+    def test_copy_open_write_and_sqlite_open_failures_are_unknown_and_cleaned(self):
+        open_file = Path.open
+        temporary_directory = tempfile.TemporaryDirectory
+
+        class FailedWrite:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.stream.close()
+
+            def fileno(self):
+                return self.stream.fileno()
+
+            def write(self, raw):
+                self.stream.write(raw[:64])
+                raise OSError(SENTINEL_PRIVATE)
+
+        for mode in ('copy-open', 'copy-write', 'sqlite-open'):
+            copies = []
+
+            def capture_directory(*args, **kwargs):
+                directory = temporary_directory(*args, **kwargs)
+                copies.append(Path(directory.name))
+                return directory
+
+            def fail_copy(path, *args, **kwargs):
+                if path.name == 'database.db':
+                    if mode == 'copy-open':
+                        raise OSError(SENTINEL_PRIVATE)
+                    if mode == 'copy-write':
+                        return FailedWrite(open_file(path, *args, **kwargs))
+                return open_file(path, *args, **kwargs)
+
+            with self.subTest(mode=mode), \
+                    mock.patch.object(bm.tempfile, 'TemporaryDirectory', side_effect=capture_directory), \
+                    mock.patch.object(Path, 'open', fail_copy):
+                if mode == 'sqlite-open':
+                    with mock.patch.object(bm.sqlite3, 'connect', side_effect=OSError(SENTINEL_PRIVATE)):
+                        result = self.witness()
+                else:
+                    result = self.witness()
+                self.assertEqual(result['database']['status'], 'UNKNOWN')
+                self.assertNotIn(SENTINEL_PRIVATE, json.dumps(result))
+                self.assertTrue(copies)
+                self.assertTrue(all(not path.exists() for path in copies))
