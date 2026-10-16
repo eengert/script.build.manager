@@ -3458,6 +3458,10 @@ def read_enabled_map(target: TestAppTarget, guard: ReadGuard) -> Optional[Dict[s
 
 # Opt-in API only: normal snapshots deliberately do not invoke these witnesses.
 _PUBLIC_WITNESS_SETTINGS = frozenset({"general.addonupdates", "lookandfeel.skin"})
+_PUBLIC_WITNESS_CONTAINERS = frozenset({
+    "audio", "defaultaudiosettings", "defaultgamesettings", "defaultvideosettings",
+    "general", "mymusic", "myvideos", "resolutions", "viewstates",
+})
 _WITNESS_SCHEMA = "bm-public-preservation-v1"
 
 
@@ -3632,8 +3636,25 @@ def public_settings_witness(target: TestAppTarget, guard: ReadGuard,
             return report
         values = extract_settings(raw, _PUBLIC_WITNESS_SETTINGS)
         root = ET.fromstring(raw)
-        if root.tag != "settings" or any(e.tag != "setting" or list(e) for e in root):
+        if root.tag != "settings":
             return report
+        containers = set()
+        for child in root:
+            if child.tag == "setting":
+                if list(child):
+                    return report
+            elif child.tag not in _PUBLIC_WITNESS_CONTAINERS or child.tag in containers:
+                return report
+            else:
+                containers.add(child.tag)
+        # Container values remain outside the witness. Traverse structure only;
+        # reject settings below the root and bound depth without recursion.
+        pending = [(child, 1) for child in root]
+        while pending:
+            element, depth = pending.pop()
+            if depth > 4 or (element.tag == "setting" and depth != 1):
+                return report
+            pending.extend((child, depth + 1) for child in element)
         for key in _PUBLIC_WITNESS_SETTINGS:
             if sum(e.get("id") == key for e in root) != 1:
                 return report

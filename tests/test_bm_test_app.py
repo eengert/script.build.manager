@@ -7438,6 +7438,103 @@ class TestSemanticPreservation(SnapshotTestCase):
             self.assertEqual(bm.compare_public_preservation(before, other)["scope_result"], "UNKNOWN")
 
 
+class TestSemanticGuiStructure(SnapshotTestCase):
+    CONTAINERS = (
+        "audio", "defaultaudiosettings", "defaultgamesettings", "defaultvideosettings",
+        "general", "mymusic", "myvideos", "resolutions", "viewstates",
+    )
+
+    def xml(self, extra=""):
+        return GUISETTINGS.replace("</settings>", extra + "</settings>")
+
+    def witness_xml(self, raw, **kwargs):
+        (self.userdata / "guisettings.xml").write_bytes(
+            raw.encode("utf-8") if isinstance(raw, str) else raw)
+        return bm.public_preservation_witness(self.target, **kwargs)
+
+    def realistic_xml(self):
+        return self.xml("".join(
+            '<%s private="container-attribute"><entry id="container-identifier">'
+            '<value>%s</value></entry></%s>' % (name, SENTINEL_PRIVATE, name)
+            for name in self.CONTAINERS))
+
+    def test_realistic_structure_preserves_only_public_projection(self):
+        before = self.witness_xml(GUISETTINGS)
+        after = self.witness_xml(self.realistic_xml(), sentinels={
+            "general.addonupdates": "2", "lookandfeel.skin": "skin.estuary"})
+        self.assertEqual(after["settings"], {
+            "source": "guisettings.xml",
+            "scope": ["general.addonupdates", "lookandfeel.skin"],
+            "status": "KNOWN",
+            "settings": {"updater_policy": "NEVER_CHECK", "active_skin": "skin.arctic.fuse.3"},
+            "sentinels": {"general.addonupdates": True, "lookandfeel.skin": False},
+        })
+        self.assertTrue(all(type(v) is bool for v in after["settings"]["sentinels"].values()))
+        for secret in (SENTINEL_PRIVATE, SENTINEL_PASSWORD, "container-attribute", "container-identifier"):
+            self.assertNotIn(secret, json.dumps(after))
+        plain = self.witness_xml(self.realistic_xml())
+        self.assertEqual(plain["database"], before["database"])
+        self.assertEqual(bm.compare_public_preservation(before, plain),
+                         bm.compare_public_preservation(before, before))
+        self.assertEqual(plain["uncovered"], "UNKNOWN")
+
+    def test_exact_immutable_container_allowlist_and_each_container(self):
+        self.assertIsInstance(bm._PUBLIC_WITNESS_CONTAINERS, frozenset)
+        self.assertEqual(bm._PUBLIC_WITNESS_CONTAINERS, frozenset(self.CONTAINERS))
+        for name in self.CONTAINERS:
+            with self.subTest(container=name):
+                self.assertEqual(self.witness_xml(self.xml('<%s/>' % name))["settings"]["status"], "KNOWN")
+                self.assertEqual(self.witness_xml(self.xml('<%s/><%s/>' % (name, name)))["settings"]["status"], "UNKNOWN")
+
+    def test_unknown_children_nested_settings_and_setting_children_rejected(self):
+        for extra in (
+            '<unexpected-private-tag>hidden</unexpected-private-tag>',
+            '<audio><setting id="general.addonupdates">2</setting></audio>',
+            '<audio><entry><setting id="unrelated">hidden</setting></entry></audio>',
+            '<setting id="unrelated"><entry/></setting>',
+        ):
+            with self.subTest(extra=extra):
+                report = self.witness_xml(self.xml(extra))
+                self.assertEqual(report["settings"]["status"], "UNKNOWN")
+                self.assertNotIn("unexpected-private-tag", json.dumps(report))
+                self.assertNotIn("hidden", json.dumps(report))
+        for key in ("general.addonupdates", "lookandfeel.skin"):
+            value = "2" if key == "general.addonupdates" else "skin.estuary"
+            direct = '<setting id="%s">%s</setting>' % (key, value)
+            self.assertEqual(self.witness_xml(self.xml('<audio>' + direct + '</audio>'))["settings"]["status"], "UNKNOWN")
+            raw = ('<settings>' + direct + '</settings>')
+            raw = raw.replace(direct, '<audio>' + direct + '</audio>')
+            self.assertEqual(self.witness_xml(raw)["settings"]["status"], "UNKNOWN")
+            # Both keys otherwise valid, but one is misplaced inside a container.
+            raw = self.xml('').replace(
+                '<setting id="%s">%s</setting>' % (key, "2" if key == "general.addonupdates" else "skin.arctic.fuse.3"),
+                '<audio>' + direct + '</audio>')
+            self.assertEqual(self.witness_xml(raw)["settings"]["status"], "UNKNOWN")
+
+    def test_depth_boundary_counts_root_as_zero(self):
+        at_limit = '<audio><entry><value><leaf/></value></entry></audio>'
+        self.assertEqual(self.witness_xml(self.xml(at_limit))["settings"]["status"], "KNOWN")
+        too_deep = at_limit.replace('<leaf/>', '<leaf><excess/></leaf>')
+        self.assertEqual(self.witness_xml(self.xml(too_deep))["settings"]["status"], "UNKNOWN")
+
+    def test_unsafe_xml_and_invalid_approved_values_still_unknown(self):
+        valid = self.realistic_xml()
+        for raw in (
+            valid[:-20], '<!DOCTYPE settings>' + valid,
+            '<!DOCTYPE settings [<!ENTITY x "hidden">]>' + valid,
+            valid.encode('utf-16'), valid.encode('utf-32'),
+            valid.replace('>2</setting>', '>9</setting>'),
+            valid.replace('skin.arctic.fuse.3', 'skin.unsupported'),
+            valid.replace('<setting id="general.addonupdates">2</setting>', ''),
+            valid.replace('<setting id="lookandfeel.skin">skin.arctic.fuse.3</setting>', ''),
+            valid.replace('</settings>', '<setting id="general.addonupdates">2</setting></settings>'),
+            valid.replace('</settings>', '<setting id="lookandfeel.skin">skin.estuary</setting></settings>'),
+            valid.replace('>2</setting>', '><child/>2</setting>'),
+        ):
+            with self.subTest(case=str(raw)[:60]):
+                self.assertEqual(self.witness_xml(raw)["settings"]["status"], "UNKNOWN")
+
+
 class TestSemanticWitnessFinalization(SnapshotTestCase):
     def witness(self):
         return bm.public_preservation_witness(self.target)
