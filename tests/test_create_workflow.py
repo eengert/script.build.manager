@@ -1,7 +1,15 @@
 """Offline native Create, real capture/library/private commit acceptance."""
 from dataclasses import replace
+from contextlib import contextmanager, ExitStack
+import builtins
+import errno
+import fcntl
+import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -706,6 +714,138 @@ class WorkflowTests(unittest.TestCase):
         self.config.values[(ROOT,'quality')]='new'
         self.assertEqual(self.execute().string_id,32733)
         self.assertEqual(len(self.entries()),1);self.assertEqual(self.library.current_selection(),prior)
+
+    @contextmanager
+    def _confine_conflict_writes(self, allowed):
+        """Test-local Python I/O guard, not an OS sandbox or native-call monitor.
+
+        Covers builtins/io/Path opens, os opens (including dir_fd), descriptor
+        writes, namespace and metadata mutations. Denied attempts are retained
+        even when production catches the exception. No writable descriptors are
+        supplied to execute(); subprocesses and symbolic links are forbidden.
+        Hard-link source and destination must both be inside authorized storage.
+        """
+        attempts = []
+        def fd_path(fd):
+            if sys.platform == 'darwin':
+                return Path(os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b'\0' * 1024).split(b'\0', 1)[0]))
+            return Path(os.readlink('/proc/self/fd/' + str(fd)))
+        def check(path, dir_fd=None):
+            p = fd_path(path) if isinstance(path, int) else Path(os.fsdecode(path))
+            if not p.is_absolute():
+                p = (fd_path(dir_fd) if dir_fd is not None else Path.cwd()) / p
+            p = p.resolve()
+            if not any(p == root or root in p.parents for root in allowed):
+                attempts.append('forbidden write')
+                raise PermissionError('test write confinement')
+        def opening(original, low_level=False):
+            def guarded(path, mode='r', *args, **kwargs):
+                writing = (mode & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)
+                           if low_level else any(c in mode for c in 'wax+'))
+                if writing:
+                    check(path, kwargs.get('dir_fd'))
+                return original(path, mode, *args, **kwargs)
+            return guarded
+        def mutation(original, rename=False):
+            def guarded(path, *args, **kwargs):
+                # Production creates its directory chain with mkdir/EEXIST.
+                # Emulate EEXIST for already-existing fixture ancestors without
+                # issuing a mutation outside the writable roots.
+                if original is original_mkdir:
+                    p = Path(os.fsdecode(path))
+                    if not p.is_absolute():
+                        p = (fd_path(kwargs['dir_fd']) if kwargs.get('dir_fd') is not None else Path.cwd()) / p
+                    p = p.resolve()
+                    if any(p in root.parents for root in allowed) and p.is_dir():
+                        raise FileExistsError(errno.EEXIST, 'existing fixture ancestor')
+                check(path, kwargs.get('src_dir_fd' if rename else 'dir_fd'))
+                if rename:
+                    check(args[0], kwargs.get('dst_dir_fd'))
+                return original(path, *args, **kwargs)
+            return guarded
+        def denied(*args, **kwargs):
+            attempts.append('forbidden escape')
+            raise PermissionError('test write confinement')
+        original_mkdir = os.mkdir
+        with ExitStack() as stack:
+            for module, name, low in ((builtins, 'open', False), (io, 'open', False),
+                                      (Path, 'open', False), (os, 'open', True)):
+                stack.enter_context(patch.object(module, name, opening(getattr(module, name), low)))
+            for name in ('write', 'pwrite', 'writev', 'ftruncate', 'fchmod', 'fchown',
+                         'truncate', 'chmod', 'chown', 'utime', 'mkdir', 'unlink', 'remove',
+                         'rmdir', 'rename', 'replace', 'link', 'setxattr', 'removexattr', 'chflags'):
+                if hasattr(os, name):
+                    stack.enter_context(patch.object(os, name, mutation(getattr(os, name), name in ('rename', 'replace', 'link'))))
+            for module, name in ((os, 'symlink'), (os, 'system'),
+                                 (subprocess, 'Popen')):
+                stack.enter_context(patch.object(module, name, denied))
+            try:
+                yield attempts
+            finally:
+                # Assert after wrappers are removed; production may swallow refusals.
+                stack.close()
+                self.assertEqual(attempts, [], 'unexpected write attempt')
+
+    def _conflict_footprint(self, inject=False):
+        # Real public capture/registration, with no skin/config/private targets.
+        self.workflow.catalog = TrustedCaptureCatalog()
+        self.session.selected = (ROOT,)
+        self.session.include_private = False
+        self.assertEqual(self.execute().string_id, 32736)
+        self.artifacts.import_zip(_zip(SKIN), expected_addon_id=SKIN, expected_version='1.0.0')
+        entry = self.entries()[0]
+        # Reuse the existing real applied-publication fixture, before confinement.
+        from tests.test_build_library import LibraryTests
+        helper = LibraryTests()
+        helper.root, helper.library = self.base/'library', self.library
+        profile = self.preview().request.device_profile_id
+        applied = helper.record_applied(entry, profile)
+        self.assertIsNotNone(applied)
+        selection = self.library.current_selection()
+        paths = ('userdata/Database/Addons33.db', 'userdata/Database/Textures13.db',
+                 'userdata/guisettings.xml', 'userdata/addon_data/skin.estuary/settings.xml',
+                 'userdata/peripheral_data/application_Keyboard.xml')
+        for name in paths:
+            p = self.base/name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(('synthetic original: ' + name).encode())
+        temporary = self.base/'operation-temp'
+        temporary.mkdir()
+        def tree():
+            return {str(p.relative_to(self.base)): p.read_bytes() if p.is_file() else None
+                    for p in self.base.rglob('*')}
+        before = tree()
+        # Different frozen graph, same real identity/version; do not mock conflict.
+        self.session.selected = (SKIN,)
+        preview = self.preview()
+        self.assertEqual((preview.request.public_capture, preview.request.captures_private),
+                         (PublicCaptureSpecification(), False))
+        original = self.library.register
+        def register(*args):
+            if inject:
+                (self.base/paths[0]).write_bytes(b'forbidden overwrite')
+            return original(*args)
+        try:
+            with patch.object(self.library, 'register', wraps=register) as registration, \
+                    patch.object(tempfile, 'tempdir', str(temporary)), \
+                    self._confine_conflict_writes((self.base/'library', self.base/'artifacts', temporary)):
+                result = self.workflow.execute(preview)
+            self.assertEqual(result.string_id, 32733)
+            registration.assert_called_once()
+        finally:
+            self.assertEqual(tree(), before)
+            self.assertEqual(self.entries(), (entry,))
+            self.assertEqual(self.library.current_selection(), selection)
+            self.assertEqual(self.library.current_applied_association(), applied)
+            self.private_factory.assert_not_called()
+
+    def test_public_conflict_write_footprint(self):
+        self._conflict_footprint()
+
+    def test_public_conflict_write_guard_detects_injected_overwrite(self):
+        # execute() catches the denied write; the outer guard must still fail.
+        with self.assertRaisesRegex(AssertionError, 'unexpected write attempt'):
+            self._conflict_footprint(inject=True)
 
     def test_configuration_gap_persistent_category_and_no_store(self):
         self.config.values.pop((ROOT,'quality'))
