@@ -26,7 +26,7 @@ from resources.lib.build_identity import (
 )
 from resources.lib.config import (
     ConfigBackendError, ConfigFile, ConfigSetting, ConfigSettingType, ConfigTargetKind,
-    ConfigurationBackend, ConfigurationInspector, EffectiveConfiguration,
+    ConfigInspectionResult, ConfigurationBackend, ConfigurationInspector, EffectiveConfiguration,
     ReadOnlyConfigurationBackend,
 )
 from resources.lib.dependencies import DependencyBackend, DependencyResolver
@@ -821,6 +821,101 @@ class CurrentAndDrift(StatusBase):
         h = self.current(with_frozen=False)
         status = h.check()
         self.assertEqual(status.overall, OverallStatus.CURRENT)
+
+
+class EmptyConfigurationScope(StatusBase):
+    def empty(self):
+        h = self.current()
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+                            managed_settings=(), managed_files=()))
+        h.effective = EffectiveConfiguration(packages=('pkg',))
+        return h
+
+    def test_validated_empty_public_scope_is_not_applicable(self):
+        h = self.empty()
+        status = h.check()
+        self.assertEqual(status.configuration, ConfigurationStatus(AreaLevel.NOT_APPLICABLE))
+        self.assertEqual(status.overall, OverallStatus.CURRENT)
+        self.assertEqual(status.gaps, ())
+        self.assertEqual(status.private.level, AreaLevel.CURRENT)
+
+    def test_empty_key_declaration_is_also_zero_targets(self):
+        h = self.empty()
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+                            managed_settings=(ManagedSettingScope(DEMO, ()),)))
+        self.assertEqual(h.check().configuration.level, AreaLevel.NOT_APPLICABLE)
+
+    def test_zero_public_scope_does_not_hide_private_failure(self):
+        h = self.empty()
+        h.overlay_store.path_for('status-overlay').unlink()
+        status = h.check()
+        self.assertEqual(status.configuration.level, AreaLevel.NOT_APPLICABLE)
+        self.assertNotEqual(status.private.level, AreaLevel.CURRENT)
+        self.assertNotEqual(status.overall, OverallStatus.CURRENT)
+
+    def test_empty_build_still_has_nothing_to_compare(self):
+        h = self.empty()
+        h.desired = replace(h.desired, addons=(), skin=None, private_overlay=None,
+                            config=ConfigDeclarations())
+        h.effective = EffectiveConfiguration()
+        status = h.service().check(h.target(software_manifest_path=''))
+        self.assertEqual(status.configuration.level, AreaLevel.NOT_APPLICABLE)
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+        self.assertIn(CheckGap.NOTHING_TO_COMPARE, status.gaps)
+
+    def test_empty_resolved_configuration_cannot_erase_expected_settings_or_files(self):
+        for kind in ('settings', 'files'):
+            with self.subTest(kind=kind):
+                h = self.empty()
+                scope = {'managed_settings': (ManagedSettingScope(DEMO, ('quality',)),)} \
+                    if kind == 'settings' else {'managed_files': ('userdata/keymaps/demo.xml',)}
+                h.desired = replace(h.desired, config=replace(h.desired.config, **scope))
+                status = h.check()
+                self.assertEqual(status.configuration.level, AreaLevel.UNAVAILABLE)
+                self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+                self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, status.gaps)
+
+    def test_empty_inspection_cannot_hide_expected_targets(self):
+        h = self.current()
+        reader = SimpleNamespace(inspect=lambda effective: ConfigInspectionResult(
+                                 effective_identity=effective.identity))
+        status = h.service(configuration_inspector=reader).check(h.target())
+        self.assertEqual(status.configuration.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+
+    def test_zero_scope_requires_successful_resolution_and_inspection(self):
+        class Broken:
+            def resolve(self, config): raise RuntimeError(SECRET)
+            def inspect(self, effective): raise RuntimeError(SECRET)
+        for owner in ('config_loader', 'configuration_inspector'):
+            with self.subTest(owner=owner):
+                h = self.empty()
+                status = h.service(**{owner: Broken()}).check(h.target())
+                self.assertEqual(status.configuration.level, AreaLevel.UNAVAILABLE)
+                self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+                self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, status.gaps)
+                self.assertSecretFree(status, h.logs)
+
+    def test_zero_scope_cannot_hide_stale_validation_identity(self):
+        h = self.empty()
+        reader = SimpleNamespace(inspect=lambda effective: ConfigInspectionResult())
+        status = h.service(configuration_inspector=reader).check(h.target())
+        self.assertEqual(status.configuration.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual(status.overall, OverallStatus.INCOMPLETE)
+
+    def test_absent_checks_are_unavailable_and_failed_checks_stay_failed(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+        h = self.empty()
+        inspection = ConfigInspectionResult(effective_identity=h.effective.identity)
+        for checks, level in (((), AreaLevel.UNAVAILABLE),
+                              ((SimpleNamespace(domain=ValidationDomain.CONFIGURATION,
+                                                status=ValidationStatus.FAIL),),
+                               AreaLevel.CHANGES_NEEDED)):
+            with self.subTest(level=level):
+                gaps = []
+                result = BuildStatusService._configuration_status(
+                    h.desired, SimpleNamespace(checks=checks), inspection, gaps)
+                self.assertEqual(result.level, level)
 
 
 class OperationState(StatusBase):

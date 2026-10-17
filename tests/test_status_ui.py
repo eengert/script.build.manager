@@ -15,6 +15,8 @@ from resources.lib.status_model import (
     PrivateStatus, SkinStatus, SoftwareItem, SoftwareItemState, SoftwareStatus,
 )
 from resources.lib.status import BuildStatusService
+from resources.lib.config import EffectiveConfiguration
+from resources.lib.manifest import ConfigDeclarations
 from resources.lib.ui import status_view
 from resources.lib.ui.controller import ROUTES, Route
 from resources.lib.ui.models import Semantic
@@ -116,6 +118,18 @@ def rows(dialog, index=0):
 
 
 class FirstScreen(unittest.TestCase):
+    def test_service_zero_scope_uses_native_not_part_mapping_and_detail(self):
+        h = Harness(self, with_private=False, with_resource=False)
+        h.desired = replace(h.desired, config=ConfigDeclarations())
+        h.effective = EffectiveConfiguration()
+        actual = h.check()
+        _, dialog, _ = open_status(lambda: actual, 3, 0)
+        self.assertIn('Settings: Not part of this build', rows(dialog))
+        self.assertEqual(dialog.details[0], ('Settings', 'This build does not manage any settings.'))
+        self.assertNotIn('Settings are current', dialog.details[1][1])
+        self.assertNotIn('Settings and files checked: 0', dialog.everything)
+        self.assertEqual(actual.overall, OverallStatus.CURRENT)
+
     def test_current_status_matches_the_suggested_layout(self):
         calls = []
         _, dialog, _ = open_status(lambda: calls.append(1) or status())

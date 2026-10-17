@@ -799,7 +799,7 @@ class BuildStatusService:
         if desired.config is None:
             return ConfigurationStatus(AreaLevel.NOT_APPLICABLE)
         checks = [c for c in report.checks if c.domain is ValidationDomain.CONFIGURATION]
-        if inspection is None or any(c.status is ValidationStatus.NOT_CHECKED for c in checks):
+        if inspection is None or not checks or any(c.status is ValidationStatus.NOT_CHECKED for c in checks):
             gaps.append(CheckGap.CONFIGURATION_UNAVAILABLE)
             return ConfigurationStatus(AreaLevel.UNAVAILABLE)
         counts = dict(total=inspection.total, differing=inspection.differing,
@@ -811,6 +811,12 @@ class BuildStatusService:
             return ConfigurationStatus(AreaLevel.UNAVAILABLE, **counts)
         if any(c.status is ValidationStatus.FAIL for c in checks):
             return ConfigurationStatus(AreaLevel.CHANGES_NEEDED, **counts)
+        # Only a successfully resolved, scope/identity-validated empty public
+        # configuration is inapplicable. Zero observed targets alone cannot
+        # hide missing expected targets, failed packages, or unchecked state.
+        if (not any(scope.keys for scope in desired.config.managed_settings)
+                and not desired.config.managed_files and inspection.total == 0):
+            return ConfigurationStatus(AreaLevel.NOT_APPLICABLE)
         return ConfigurationStatus(AreaLevel.CURRENT, **counts)
 
     # -- private data ---------------------------------------------------------
