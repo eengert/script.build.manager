@@ -254,11 +254,11 @@ msgid "A build is the setup you want. A device profile adjusts it for one device
 msgstr ""
 
 msgctxt "#32306"
-msgid "Build Manager only changes what a build tells it to.\n\nIt does not\n• Uninstall your other add-ons\n• Change Kodi when you Create Build\n\nInstall and Repair can\n• Install add-ons that belong to the build\n• Turn those add-ons on or off\n• Change your skin\n• Restore supported settings\n\nGood to know\n• You see the changes before they happen\n• Some add-ons may stay off until their settings are restored and checked\n• Closing a window does not undo changes already made\n• If something is interrupted, Build Manager helps you finish safely"
+msgid "Build Manager only changes what a build tells it to.\n\nIt does not\n• Uninstall your other add-ons\n• Change Kodi when you Create Build\n\nInstall and Repair can\n• Install add-ons that belong to the build\n• Turn those add-ons on or off\n• Change your skin\n• Restore supported settings\n\nGood to know\n• You see the changes before they happen\n• Some add-ons may stay off until their settings are restored and checked\n• Closing a window does not undo changes already made\n• If interrupted, open Build Status and select Overall. Recovery may need manual help"
 msgstr ""
 
 msgctxt "#32307"
-msgid "Some changes only finish after Kodi starts again.\n\nWhat you'll do\n• Fully close Kodi\n• Open it again\n• Open Build Manager\n\nGood to know\n• Closing just the Build Manager window is not enough\n• Build Manager does not reopen Kodi for you\n• It remembers where it stopped and carries on\n• You may need to restart more than once\n• If it says Needs Attention, open the problem page instead of starting over"
+msgid "Some changes only finish after Kodi starts again.\n\nWhat you'll do\n• Fully close Kodi\n• Open it again\n• Open Build Manager\n\nGood to know\n• Closing just the Build Manager window is not enough\n• Build Manager does not reopen Kodi for you\n• Supported installs and repairs keep their progress for checks after restart\n• You may need to restart more than once\n• If it says Needs Attention, open Build Status and select Overall"
 msgstr ""
 
 msgctxt "#32308"

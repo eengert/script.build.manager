@@ -181,6 +181,17 @@ class HelpCopyTests(unittest.TestCase):
     def test_restart_is_manual(self):
         r=self.s[32307]
         self.assertIn('Fully close Kodi',r); self.assertIn('does not reopen Kodi for you',r)
+    def test_safety_interruption_guidance_requires_inspection_without_promising_recovery(self):
+        safety=self.s[32306]
+        self.assertNotIn('helps you finish safely',safety)
+        self.assertIn('If interrupted, open Build Status and select Overall',safety)
+        self.assertIn('Recovery may need manual help',safety)
+    def test_restart_help_names_existing_needs_attention_route(self):
+        restart=self.s[32307]
+        self.assertNotIn('problem page',restart)
+        self.assertIn('If it says Needs Attention, open Build Status and select Overall',restart)
+        self.assertNotIn('It remembers where it stopped and carries on',restart)
+        self.assertIn('Supported installs and repairs keep their progress for checks after restart',restart)
     def test_needs_attention_help_names_only_the_real_build_status_route(self):
         # Build Status -> Overall is the real route; no View Problem control exists.
         problems=self.s[32308]
