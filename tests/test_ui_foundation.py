@@ -84,12 +84,48 @@ class NativeFoundationTests(unittest.TestCase):
             default.main()
         self.assertEqual(calls,[('32126','32127')])
 
+    def assert_presentation_imports(self, source, filename):
+        # Exact modules, never string prefixes. Optional is the only added
+        # stdlib dependency; the three existing Create helpers only validate
+        # public labels/versions and never construct or execute a workflow.
+        allowed = {'dataclasses', 'enum', 'resources.lib.ui',
+                   'resources.lib.ui.controller', 'resources.lib.ui.help_content',
+                   'resources.lib.ui.models', 'resources.lib.ui.plan_view',
+                   'resources.lib.ui.status_view', 'resources.lib.status_model',
+                   'resources.lib.plan_model', 'resources.lib.create_workflow'}
+        if filename == 'plan_view.py': allowed.add('typing')
+        for n in ast.walk(ast.parse(source)):
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                self.assertIsInstance(n, ast.ImportFrom, filename)
+                self.assertEqual(n.level, 0, filename)
+                self.assertIn(n.module, allowed, filename)
+                self.assertNotIn('*', {a.name for a in n.names}, filename)
+                if n.module == 'resources.lib.create_workflow':
+                    self.assertEqual(filename, 'native_dialogs.py')
+                    self.assertLessEqual({a.name for a in n.names},
+                                         {'CreateValidationError', 'version_tuple', 'identity'})
+
     def test_no_engine_imports(self):
         for p in (ROOT/'resources/lib/ui').glob('*.py'):
-            tree=ast.parse(p.read_text())
-            for n in ast.walk(tree):
-                if isinstance(n,ast.ImportFrom): self.assertTrue((n.module or '').startswith(('dataclasses','enum','resources.lib.ui','resources.lib.status_model','resources.lib.plan_model','resources.lib.create_workflow')),p)
-                if isinstance(n,ast.Import): self.fail('unexpected import '+str(p))
+            self.assert_presentation_imports(p.read_text(), p.name)
+    def test_presentation_import_policy_accepts_reviewed_typing_and_create_helpers(self):
+        self.assert_presentation_imports('from typing import Optional', 'plan_view.py')
+        self.assert_presentation_imports(
+            'from resources.lib.create_workflow import identity, version_tuple, CreateValidationError',
+            'native_dialogs.py')
+    def test_presentation_import_policy_rejects_engine_and_lookalike_imports(self):
+        for filename, source in (
+                ('plan_view.py', 'from resources.lib.build_manager import BuildManager'),
+                ('plan_view.py', 'from resources.lib.config import ConfigurationManager'),
+                ('plan_view.py', 'import resources.lib.addons as innocent'),
+                ('plan_view.py', 'from typing_extensions import Optional'),
+                ('plan_view.py', 'from resources.lib.status_model.engine import apply'),
+                ('plan_view.py', 'from . import backend'),
+                ('plan_view.py', 'from resources.lib.plan_model import *'),
+                ('native_dialogs.py', 'from resources.lib.create_workflow import runtime_create_workflow'),
+                ('status_view.py', 'from resources.lib.create_workflow import identity')):
+            with self.subTest(source=source), self.assertRaises(AssertionError):
+                self.assert_presentation_imports(source, filename)
     def test_status_model_is_standard_library_only(self):
         tree=ast.parse((ROOT/'resources/lib/status_model.py').read_text())
         allowed={'__future__','re','dataclasses','datetime','enum','typing','unicodedata'}

@@ -1147,15 +1147,37 @@ class ImportPolicy(unittest.TestCase):
                      "rename", "replace", "remove", "urlopen"):
             self.assertNotIn(verb, called)
 
+    def assert_plan_view_imports(self, source):
+        allowed = {'__future__', 'dataclasses', 'typing',
+                   'resources.lib.plan_model', 'resources.lib.status_model',
+                   'resources.lib.ui.models', 'resources.lib.ui.status_view'}
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                self.assertIsInstance(node, ast.ImportFrom)
+                self.assertEqual(node.level, 0)
+                self.assertIn(node.module, allowed)
+                self.assertNotIn('*', {a.name for a in node.names})
+
     def test_the_presentation_modules_import_no_engine(self):
         for name in ("ui/plan_view.py",):
             path = ROOT / "resources/lib" / name
             if not path.exists():
                 continue
-            modules = {n.module for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.ImportFrom)}
-            self.assertTrue(all(m in {"__future__", "dataclasses", "resources.lib.plan_model",
-                                      "resources.lib.status_model", "resources.lib.ui.models",
-                                      "resources.lib.ui.status_view"} for m in modules), modules)
+            self.assert_plan_view_imports(path.read_text())
+
+    def test_presentation_import_policy_accepts_standard_typing(self):
+        self.assert_plan_view_imports('from typing import Optional')
+
+    def test_presentation_import_policy_rejects_engine_and_bypass_forms(self):
+        for source in ('from resources.lib.frozen_install import FrozenInstallCoordinator',
+                       'from resources.lib.addon_state import apply',
+                       'import resources.lib.build_manager as model',
+                       'from resources.lib.plan_model.engine import apply',
+                       'from typing_extensions import Optional',
+                       'from . import backend',
+                       'from resources.lib.plan_model import *'):
+            with self.subTest(source=source), self.assertRaises(AssertionError):
+                self.assert_plan_view_imports(source)
 
 
 class ParityWithOwners(PlanBase):
