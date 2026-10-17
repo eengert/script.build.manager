@@ -98,6 +98,9 @@ _BM022_VERSION = "1.0.0"
 # The real Kodi profile — this harness must never overlap with it.
 NORMAL_APPDATA_DIR = Path.home() / "Library" / "Application Support" / "Kodi"
 
+# NORMAL_APPDATA_DIR is a lexical safety reference only. Never probe it for
+# preservation evidence; checking its mtime is itself prohibited access.
+
 # Set by launch(); used in stop() for zombie-aware wait.
 _process: Optional[subprocess.Popen] = None  # type: ignore[type-arg]
 
@@ -618,14 +621,10 @@ def inspect() -> Dict[str, Any]:
 def validate() -> None:
     """Full live validation: reset → install → configure → launch → wait →
     verify JSON-RPC → verify add-on visible → inspect → stop → confirm exit
-    → confirm real profile untouched.
+    → normal profile is not inspected.
     """
     print("=== Build Manager Kodi harness live validation ===")
     verify_isolation()
-
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     print("\n[1/11] reset")
     reset()
@@ -690,15 +689,7 @@ def validate() -> None:
         raise RuntimeError(f"Validation failed: PID file still present after stop ({remaining_pid})")
     print("  PID file cleared ✓")
 
-    print("\n[11/11] confirm real profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[11/11] normal profile is not inspected")
 
     print("\n=== Validation PASSED ===\n")
 
@@ -889,10 +880,6 @@ def validate_repo() -> None:
     print("=== Build Manager BM-010-R live validation: repository detection/install ===")
     verify_isolation()
 
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-
     print("\n[1/13] reset")
     reset()
 
@@ -1013,15 +1000,7 @@ def validate_repo() -> None:
             pass
         server.shutdown()
 
-    print("\n[13/13] confirm real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[13/13] normal profile is not inspected")
 
     print("\n=== BM-010-R validation PASSED ===\n")
 
@@ -1557,10 +1536,6 @@ def validate_addon() -> None:
     print("=== Build Manager BM-011 live validation: general add-on installation ===")
     verify_isolation()
 
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-
     print("\n[1/19] reset")
     reset()
 
@@ -1842,15 +1817,7 @@ def validate_addon() -> None:
             pass
         server.shutdown()
 
-    print("\n[19/19] confirm real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[19/19] normal profile is not inspected")
 
     print("\n=== BM-011-C-final validation PASSED (19/19) ===\n")
 
@@ -2147,10 +2114,6 @@ def validate_dependencies() -> None:
     print("=== Build Manager BM-012 live validation: dependency closure ===")
     verify_isolation()
 
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-
     print("\n[1/18] reset disposable harness + install Build Manager + configure web server")
     reset()
     install(source=PROJECT)
@@ -2366,15 +2329,7 @@ def validate_dependencies() -> None:
             pass
         server.shutdown()
 
-    print("\n[18/18] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[18/18] normal profile is not inspected")
 
     print("\n=== BM-012 validation PASSED (18/18) ===\n")
 
@@ -2623,10 +2578,6 @@ def validate_addon_state() -> None:
 
     print("=== Build Manager BM-013 live validation: enable/disable reconciliation ===")
     verify_isolation()
-
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     print("\n[1/16] reset disposable harness + install Build Manager + configure web server")
     reset()
@@ -2878,15 +2829,7 @@ def validate_addon_state() -> None:
             pass
         server.shutdown()
 
-    print("\n[16/16] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[16/16] normal profile is not inspected")
 
     print("\n=== BM-013 validation PASSED (16/16) ===\n")
 
@@ -3102,10 +3045,6 @@ def validate_post_operations() -> None:
 
     print("=== Build Manager BM-014 live validation: post-operation state validation ===")
     verify_isolation()
-
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     print("\n[1/19] reset disposable harness + install Build Manager + configure web server")
     reset()
@@ -3417,15 +3356,7 @@ def validate_post_operations() -> None:
             pass
         server.shutdown()
 
-    print("\n[19/19] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[19/19] normal profile is not inspected")
 
     print("\n=== BM-014 validation PASSED (19/19) ===\n")
 
@@ -4483,10 +4414,6 @@ def validate_config() -> None:
     print("=== Build Manager BM-015 live validation: configuration deployment ===")
     verify_isolation()
 
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-
     print("\n[1/24] reset disposable harness + install Build Manager + configure web server")
     reset()
     install(source=PROJECT)
@@ -5017,15 +4944,7 @@ def validate_config() -> None:
             pass
         server.shutdown()
 
-    print("\n[24/24] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! "
-                f"Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[24/24] normal profile is not inspected")
 
     print("\n=== BM-015 validation PASSED (24/24) ===\n")
 
@@ -5045,9 +4964,6 @@ _BM018D_UNMANAGED_KEY = "TMDbHelper.Corner.Radius"
 _BM018D_BOOL_VALUE = True
 _BM018D_STRING_VALUE = "Standard"
 _BM018D_UNMANAGED_VALUE = "leave-me-alone"
-_BM018D_AF3_SOURCE_ROOT = (
-    Path.home() / "Library" / "Application Support" / "Kodi" / "addons"
-)
 _BM018E_MANIFEST = PROJECT / "resources" / "builds" / "examples" / "eric-main.example.json"
 _BM018E_PROFILE = "family-room"
 _BM020A_FIXTURE = "bm020a-executor.example.json"
@@ -5074,57 +4990,18 @@ _BM020A_UNMANAGED_KEY = "TMDbHelper.Corner.Radius"
 _BM020A_UNMANAGED_VALUE = "bm020a-unmanaged"
 
 
-def _bm018d_copy_af3_and_dependencies() -> tuple[str, ...]:
-    """Copy AF3 and its complete transitive dependency closure.
+def _bm018d_require_approved_source() -> None:
+    """No legacy AF3 acquisition source is admitted; reject before any I/O.
 
-    The source is the installed AF3 add-on tree, read-only. No profile data is
-    copied. Built-in Kodi dependencies are supplied by Kodi and are skipped;
-    every non-built-in declared dependency must be available in the installed
-    add-on tree or the validation fails closed.
+    In particular, installed household Kodi files are never a source. A future
+    trusted archive path needs its own reviewed admission, not an override here.
     """
-    verify_isolation()
-    source_root = _BM018D_AF3_SOURCE_ROOT
-    if not (source_root / _BM018D_SKIN_ID / "addon.xml").is_file():
-        raise RuntimeError(
-            f"installed AF3 source not found at {source_root / _BM018D_SKIN_ID}"
-        )
+    raise RuntimeError("AF3_SOURCE_ACQUISITION_UNSUPPORTED")
 
-    pending = [_BM018D_SKIN_ID]
-    seen = set()
-    while pending:
-        addon_id = pending.pop(0)
-        if addon_id in seen or addon_id.startswith(("xbmc.", "kodi.")):
-            continue
-        seen.add(addon_id)
-        source = source_root / addon_id
-        if not (source / "addon.xml").is_file():
-            system_source = KODI_SYSTEM_ADDONS_DIR / addon_id
-            if (system_source / "addon.xml").is_file():
-                source = system_source
-        addon_xml = source / "addon.xml"
-        if not addon_xml.is_file():
-            raise RuntimeError(
-                f"AF3 declared dependency {addon_id!r} is not available at {source}"
-            )
-        target = KODI_ADDONS_DIR / addon_id
-        if target.exists():
-            if not _inside(target, KODI_ADDONS_DIR):
-                raise RuntimeError(f"unsafe AF3 target path: {target}")
-            shutil.rmtree(target)
-        shutil.copytree(source, target)
-        try:
-            root = ET.parse(addon_xml).getroot()
-        except (ET.ParseError, OSError) as exc:
-            raise RuntimeError(f"cannot parse AF3 add-on metadata {addon_xml}: {exc}") from exc
-        for import_node in root.findall("./requires/import"):
-            dependency = import_node.get("addon", "")
-            if dependency and dependency not in seen:
-                pending.append(dependency)
-    print(
-        f"  copied {_BM018D_SKIN_ID!r} and {len(seen) - 1} declared "
-        f"non-built-in dependencies into {KODI_ADDONS_DIR} ✓"
-    )
-    return tuple(sorted(seen))
+
+def _bm018d_copy_af3_and_dependencies() -> tuple[str, ...]:
+    """Retained entrypoint: unsupported acquisition fails before probing/copying."""
+    _bm018d_require_approved_source()
 
 
 def _bm018d_verify_dependency_state(addon_ids: tuple[str, ...]) -> None:
@@ -5443,7 +5320,9 @@ def _bm018e_observe(effective) -> Dict[str, Any]:
 
 
 def validate_af3_package() -> None:
-    """Live BM-018E validation using the checked-in production AF3 package.
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Live BM-018E validation using the checked-in production AF3 package.
 
     The manifest and profile are loaded from the installed Build Manager copy,
     the winning skin package is resolved from ``skin.config_packages``, and
@@ -5452,6 +5331,7 @@ def validate_af3_package() -> None:
     from the real add-on tree into the disposable profile. No real profile or
     device is touched.
     """
+    _bm018d_require_approved_source()
     if str(PROJECT) not in sys.path:
         sys.path.insert(0, str(PROJECT))
     from resources.lib.config import ConfigPackageLoader, ConfigSettingType
@@ -5467,9 +5347,6 @@ def validate_af3_package() -> None:
 
     print("=== Build Manager BM-018E live validation: production AF3 package ===")
     verify_isolation()
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     try:
         print("\n[1/14] reset disposable profile and install production add-on")
@@ -5668,25 +5545,21 @@ def validate_af3_package() -> None:
         except RuntimeError:
             pass
 
-    print("\n[14/14] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[14/14] normal profile is not inspected")
     print("\n=== BM-018E production AF3 validation PASSED ===\n")
 
 
 def validate_skin_config() -> None:
-    """Live BM-018D validation of typed AF3 skin-setting deployment.
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Live BM-018D validation of typed AF3 skin-setting deployment.
 
     The test profile is disposable and the real Kodi profile is never read or
     written. AF3 add-on files are copied from the installed source tree only;
     real profile settings, generated state, and private/authentication data are
     not copied.
     """
+    _bm018d_require_approved_source()
     if str(PROJECT) not in sys.path:
         sys.path.insert(0, str(PROJECT))
     from resources.lib.config import (
@@ -5712,9 +5585,6 @@ def validate_skin_config() -> None:
 
     print("=== Build Manager BM-018D live validation: typed AF3 skin configuration ===")
     verify_isolation()
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     print("\n[1/17] reset disposable profile")
     reset()
@@ -5943,14 +5813,7 @@ def validate_skin_config() -> None:
         except RuntimeError:
             pass
 
-    print("\n[17/17] verify real Kodi profile untouched")
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-        current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-        if current_mtime_ns != real_mtime_ns:
-            raise RuntimeError(
-                f"Validation FAILED: real profile mtime changed! Was {real_mtime_ns}, now {current_mtime_ns}"
-            )
-    print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
+    print("\n[17/17] normal profile is not inspected")
     print("\n=== BM-018D validation PASSED (17/17) ===\n")
 
 
@@ -6041,9 +5904,6 @@ def validate_build_manager_transaction() -> None:
     """Prove BM-020B transaction classification across a real Kodi restart."""
     print("=== Build Manager BM-020B live validation: transaction startup ===")
     verify_isolation()
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     try:
         print("\n[1/9] reset, install, configure, and install the harness runner")
@@ -6138,26 +5998,18 @@ def validate_build_manager_transaction() -> None:
             stop()
         except RuntimeError:
             pass
-        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-            if current_mtime_ns != real_mtime_ns:
-                raise RuntimeError(
-                    f"Validation FAILED: real profile mtime changed! "
-                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
-                )
-        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
 
     print("  production BuildManager did not restart Kodi or resume reconciliation ✓")
     print("\n=== BM-020B transaction validation PASSED (9/9) ===\n")
 
 
 def validate_build_manager_manual_restart() -> None:
-    """Prove BM-020C1's manual restart handoff across disposable processes."""
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Prove BM-020C1's manual restart handoff across disposable processes."""
+    _bm018d_require_approved_source()
     print("=== Build Manager BM-020C1 live validation: manual restart handoff ===")
     verify_isolation()
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     try:
         print("\n[1/8] reset disposable profile and prepare the real BM-020A fixture")
@@ -6267,25 +6119,17 @@ def validate_build_manager_manual_restart() -> None:
             stop()
         except RuntimeError:
             pass
-        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-            if current_mtime_ns != real_mtime_ns:
-                raise RuntimeError(
-                    f"Validation FAILED: real profile mtime changed! "
-                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
-                )
-        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
 
     print("\n=== BM-020C1 manual restart validation PASSED (8/8) ===\n")
 
 
 def validate_build_manager_resume() -> None:
-    """Prove automatic BM-020C resume after a harness-only restart."""
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Prove automatic BM-020C resume after a harness-only restart."""
+    _bm018d_require_approved_source()
     print("=== Build Manager BM-020C live validation: post-restart resume ===")
     verify_isolation()
-    real_mtime_ns: Optional[int] = None
-    if NORMAL_APPDATA_DIR.exists():
-        real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
 
     try:
         print("\n[1/8] reset disposable profile and prepare the real BM-020A fixture")
@@ -6393,14 +6237,6 @@ def validate_build_manager_resume() -> None:
             stop()
         except RuntimeError:
             pass
-        if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists():
-            current_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns
-            if current_mtime_ns != real_mtime_ns:
-                raise RuntimeError(
-                    f"Validation FAILED: real profile mtime changed! "
-                    f"Was {real_mtime_ns}, now {current_mtime_ns}"
-                )
-        print(f"  {NORMAL_APPDATA_DIR} unchanged ✓")
 
     print("\n=== BM-020C post-restart resume validation PASSED (8/8) ===\n")
 
@@ -6456,7 +6292,10 @@ def _bm020a_ensure_runner_enabled() -> None:
 
 
 def validate_build_manager() -> None:
-    """Run BM-020A against the explicit AF3 disposable executor fixture."""
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Run BM-020A against the explicit AF3 disposable executor fixture."""
+    _bm018d_require_approved_source()
     print("=== Build Manager BM-020A live validation: production executor ===")
     verify_isolation()
 
@@ -6651,7 +6490,10 @@ def validate_build_manager() -> None:
 
 
 def validate_frozen_capture() -> None:
-    """Exercise BM-021B capture against only the disposable AF3 fixture."""
+    """Disabled: no approved AF3 acquisition source. Historical workflow follows.
+
+    Exercise BM-021B capture against only the disposable AF3 fixture."""
+    _bm018d_require_approved_source()
     if str(PROJECT) not in sys.path:
         sys.path.insert(0, str(PROJECT))
     from resources.lib.artifacts import ArtifactStore
@@ -7437,7 +7279,6 @@ def validate_frozen_install() -> None:
 
     print("=== Build Manager BM-022 live validation: frozen installation ===")
     verify_isolation()
-    real_mtime_ns = NORMAL_APPDATA_DIR.stat().st_mtime_ns if NORMAL_APPDATA_DIR.exists() else None
     try:
         print("\n[1/18] reset, install Build Manager, and prepare complete fixture")
         reset()
@@ -7575,9 +7416,6 @@ def validate_frozen_install() -> None:
             stop()
         except RuntimeError:
             pass
-    if real_mtime_ns is not None and NORMAL_APPDATA_DIR.exists() and NORMAL_APPDATA_DIR.stat().st_mtime_ns != real_mtime_ns:
-        raise RuntimeError("real Kodi profile mtime changed during BM-022 gate")
-    print("  real Kodi profile remained untouched ✓")
     print("\n=== BM-022 frozen installation validation PASSED ===\n")
 
 

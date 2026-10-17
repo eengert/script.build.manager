@@ -4,6 +4,9 @@ BM-009 unit tests for tools/kodi_test.py.
 Tests cover path safety, process state, command dispatch, install paths, and
 readiness — all without launching real Kodi.
 """
+import ast
+import contextlib
+import io
 import json
 import os
 import sys
@@ -18,6 +21,62 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import tools.kodi_test as harness  # noqa: E402
+
+
+class TestLegacyAF3SourceDenial(unittest.TestCase):
+    ENTRYPOINTS = (
+        'validate_af3_package', 'validate_skin_config',
+        'validate_build_manager_manual_restart', 'validate_build_manager_resume',
+        'validate_build_manager', 'validate_frozen_capture',
+    )
+
+    @contextlib.contextmanager
+    def no_io(self):
+        # All paths are synthetic; no protected path is even probed to test denial.
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            fake = Path(tmp) / 'normal-profile'
+            stack.enter_context(patch.object(harness, 'NORMAL_APPDATA_DIR', fake))
+            stack.enter_context(patch.object(harness, '_BM018D_AF3_SOURCE_ROOT', fake / 'addons', create=True))
+            for name in ('stat', 'lstat', 'exists', 'is_file', 'is_dir', 'is_symlink',
+                         'resolve', 'open', 'read_text', 'read_bytes', 'mkdir'):
+                stack.enter_context(patch.object(Path, name, side_effect=AssertionError('filesystem reached')))
+            for name in ('verify_isolation', 'reset', 'install', 'configure_webserver',
+                         'launch', 'stop', 'jsonrpc'):
+                stack.enter_context(patch.object(harness, name, side_effect=AssertionError('runtime reached')))
+            for name in ('copytree', 'copy2', 'rmtree'):
+                stack.enter_context(patch.object(harness.shutil, name, side_effect=AssertionError('copy/cleanup reached')))
+            yield
+
+    def test_direct_entrypoints_deny_before_any_source_probe_or_mutation(self):
+        for name in ('_bm018d_copy_af3_and_dependencies', *self.ENTRYPOINTS):
+            with self.subTest(entrypoint=name), self.no_io():
+                with self.assertRaisesRegex(RuntimeError, '^AF3_SOURCE_ACQUISITION_UNSUPPORTED$'):
+                    getattr(harness, name)()
+
+    def test_cli_entrypoints_deny_without_fallback(self):
+        for name in self.ENTRYPOINTS:
+            with self.subTest(command=name), self.no_io(), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(harness.main([name.replace('_', '-')]), 1)
+                self.assertIn('AF3_SOURCE_ACQUISITION_UNSUPPORTED', err.getvalue())
+                self.assertNotIn('normal-profile', err.getvalue())
+
+    def test_no_legacy_validation_function_probes_normal_profile(self):
+        tree = ast.parse(Path(harness.__file__).read_text())
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.assertFalse(any(isinstance(n, ast.Name) and n.id == 'NORMAL_APPDATA_DIR'
+                                     for n in ast.walk(node)), node.name)
+        self.assertFalse(hasattr(harness, '_BM018D_AF3_SOURCE_ROOT'))
+
+    def test_af3_entrypoint_gate_precedes_all_other_work(self):
+        tree = ast.parse(Path(harness.__file__).read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in self.ENTRYPOINTS:
+                first = node.body[1]  # after docstring
+                self.assertIsInstance(first, ast.Expr, node.name)
+                self.assertIsInstance(first.value, ast.Call, node.name)
+                self.assertEqual(first.value.func.id, '_bm018d_require_approved_source', node.name)
 
 
 # ---------------------------------------------------------------------------
