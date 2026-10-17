@@ -21,6 +21,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from tests import test_bm_test_app as helper_tests
@@ -506,6 +507,24 @@ if __name__ == "__main__":
 
 
 class TestSharedMinimumCredentialPolicy(helper_tests.TripwireTestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Own a fresh synthetic Git fixture; never depend on another module's
+        # execution order or cached plan after its repository was removed.
+        cls.previous_fixture = helper_tests.FIXTURE
+        helper_tests.FIXTURE = SimpleNamespace(
+            base=None, repo=None, good=None, variants={}, plan=None, counter=0)
+        cls.addClassCleanup(cls.release_fixture)
+        helper_tests.setUpModule()
+
+    @classmethod
+    def release_fixture(cls):
+        try:
+            if helper_tests.FIXTURE.base is not None:
+                helper_tests.tearDownModule()
+        finally:
+            helper_tests.FIXTURE = cls.previous_fixture
+
     def test_fake_keychain_short_item_never_retries_or_prompts_interactively(self):
         for secret in ('Z', 'qzv', 'qzxv739'):
             with self.subTest(length=len(secret)):
@@ -543,3 +562,17 @@ class TestSharedMinimumCredentialPolicy(helper_tests.TripwireTestCase):
         self.assertEqual(len(w.transport.requests), 5)
         self.assertNotIn(secret, text)
         self.assertFalse(output.exists())
+
+
+class TestSharedCredentialFixtureIsolation(unittest.TestCase):
+    def test_class_runs_alone_repeatedly_and_restores_prior_fixture(self):
+        previous = helper_tests.FIXTURE
+        prior_values = vars(previous).copy()
+        for _ in range(2):
+            output = io.StringIO()
+            result = unittest.TextTestRunner(stream=output).run(
+                unittest.defaultTestLoader.loadTestsFromTestCase(TestSharedMinimumCredentialPolicy))
+            self.assertTrue(result.wasSuccessful(), output.getvalue())
+            self.assertEqual(result.testsRun, 2)
+            self.assertIs(helper_tests.FIXTURE, previous)
+            self.assertEqual(vars(previous), prior_values)
