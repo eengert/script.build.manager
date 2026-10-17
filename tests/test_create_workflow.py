@@ -719,18 +719,24 @@ class WorkflowTests(unittest.TestCase):
     def _confine_conflict_writes(self, allowed):
         """Test-local Python I/O guard, not an OS sandbox or native-call monitor.
 
-        Covers builtins/io/Path opens, os opens (including dir_fd), descriptor
-        writes, namespace and metadata mutations. Denied attempts are retained
+        Covers the explicitly patched builtins/io/Path opens, os opens (including
+        dir_fd), descriptor writes, and os/Path namespace/metadata methods below.
+        Cached pathlib accessors require patching Path methods themselves.
+        Denied attempts are retained
         even when production catches the exception. No writable descriptors are
         supplied to execute(); subprocesses and symbolic links are forbidden.
         Hard-link source and destination must both be inside authorized storage.
+        Does not intercept native syscalls, mmap, cached aliases, unlisted APIs,
+        or concurrent external writers. Snapshots exclude atime/ctime.
         """
         attempts = []
+        counter = {'operations': 0}
         def fd_path(fd):
             if sys.platform == 'darwin':
                 return Path(os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b'\0' * 1024).split(b'\0', 1)[0]))
             return Path(os.readlink('/proc/self/fd/' + str(fd)))
         def check(path, dir_fd=None):
+            counter['operations'] += 1
             p = fd_path(path) if isinstance(path, int) else Path(os.fsdecode(path))
             if not p.is_absolute():
                 p = (fd_path(dir_fd) if dir_fd is not None else Path.cwd()) / p
@@ -751,7 +757,7 @@ class WorkflowTests(unittest.TestCase):
                 # Production creates its directory chain with mkdir/EEXIST.
                 # Emulate EEXIST for already-existing fixture ancestors without
                 # issuing a mutation outside the writable roots.
-                if original is original_mkdir:
+                if original in (original_mkdir, original_path_mkdir):
                     p = Path(os.fsdecode(path))
                     if not p.is_absolute():
                         p = (fd_path(kwargs['dir_fd']) if kwargs.get('dir_fd') is not None else Path.cwd()) / p
@@ -767,6 +773,7 @@ class WorkflowTests(unittest.TestCase):
             attempts.append('forbidden escape')
             raise PermissionError('test write confinement')
         original_mkdir = os.mkdir
+        original_path_mkdir = Path.mkdir
         with ExitStack() as stack:
             for module, name, low in ((builtins, 'open', False), (io, 'open', False),
                                       (Path, 'open', False), (os, 'open', True)):
@@ -776,15 +783,28 @@ class WorkflowTests(unittest.TestCase):
                          'rmdir', 'rename', 'replace', 'link', 'setxattr', 'removexattr', 'chflags'):
                 if hasattr(os, name):
                     stack.enter_context(patch.object(os, name, mutation(getattr(os, name), name in ('rename', 'replace', 'link'))))
+            for name in ('mkdir', 'unlink', 'rmdir', 'rename', 'replace', 'chmod',
+                         'lchmod', 'touch', 'hardlink_to', 'link_to'):
+                if hasattr(Path, name):
+                    stack.enter_context(patch.object(Path, name, mutation(
+                        getattr(Path, name), name in ('rename', 'replace', 'hardlink_to', 'link_to'))))
+            if hasattr(Path, 'symlink_to'):
+                def symlink(path, target, *args, **kwargs):
+                    check(path)
+                    target = Path(target)
+                    check(target if target.is_absolute() else Path(path).parent / target)
+                    return denied()
+                stack.enter_context(patch.object(Path, 'symlink_to', symlink))
             for module, name in ((os, 'symlink'), (os, 'system'),
                                  (subprocess, 'Popen')):
                 stack.enter_context(patch.object(module, name, denied))
             try:
-                yield attempts
+                yield counter
             finally:
                 # Assert after wrappers are removed; production may swallow refusals.
                 stack.close()
                 self.assertEqual(attempts, [], 'unexpected write attempt')
+                self.assertGreater(counter['operations'], 0, 'guard never exercised')
 
     def _conflict_footprint(self, inject=False):
         # Real public capture/registration, with no skin/config/private targets.
@@ -811,28 +831,47 @@ class WorkflowTests(unittest.TestCase):
             p.write_bytes(('synthetic original: ' + name).encode())
         temporary = self.base/'operation-temp'
         temporary.mkdir()
+        (temporary/'rename-source').write_bytes(b'synthetic rename source')
         def tree():
             return {str(p.relative_to(self.base)): p.read_bytes() if p.is_file() else None
                     for p in self.base.rglob('*')}
         before = tree()
+        protected = {self.base/name for name in paths}
+        for p in tuple(protected):
+            protected.update(parent for parent in p.parents if self.base in parent.parents)
+        def protected_metadata():
+            return {str(p.relative_to(self.base)): (s.st_mode, s.st_mtime_ns, s.st_uid, s.st_gid)
+                    for p in protected for s in (p.stat(),)}
+        metadata = protected_metadata()
         # Different frozen graph, same real identity/version; do not mock conflict.
         self.session.selected = (SKIN,)
         preview = self.preview()
+        self.assertEqual((preview.request.build_id, preview.request.build_version),
+                         (entry.build_id, entry.build_version))
         self.assertEqual((preview.request.public_capture, preview.request.captures_private),
                          (PublicCaptureSpecification(), False))
         original = self.library.register
         def register(*args):
-            if inject:
-                (self.base/paths[0]).write_bytes(b'forbidden overwrite')
+            protected_file = self.base/paths[0]
+            if inject is True:
+                protected_file.write_bytes(b'forbidden overwrite')
+            elif inject == 'chmod':
+                protected_file.chmod(protected_file.stat().st_mode ^ 0o100)
+            elif inject == 'unlink':
+                protected_file.unlink()
+            elif inject == 'replace-target':
+                (temporary/'rename-source').replace(protected_file)
             return original(*args)
         try:
             with patch.object(self.library, 'register', wraps=register) as registration, \
                     patch.object(tempfile, 'tempdir', str(temporary)), \
-                    self._confine_conflict_writes((self.base/'library', self.base/'artifacts', temporary)):
+                    self._confine_conflict_writes((self.base/'library', self.base/'artifacts', temporary)) as guarded:
                 result = self.workflow.execute(preview)
+                self.assertGreater(guarded['operations'], 0)
             self.assertEqual(result.string_id, 32733)
             registration.assert_called_once()
         finally:
+            self.assertEqual(protected_metadata(), metadata)
             self.assertEqual(tree(), before)
             self.assertEqual(self.entries(), (entry,))
             self.assertEqual(self.library.current_selection(), selection)
@@ -846,6 +885,18 @@ class WorkflowTests(unittest.TestCase):
         # execute() catches the denied write; the outer guard must still fail.
         with self.assertRaisesRegex(AssertionError, 'unexpected write attempt'):
             self._conflict_footprint(inject=True)
+
+    def test_public_conflict_write_guard_detects_path_chmod(self):
+        with self.assertRaisesRegex(AssertionError, 'unexpected write attempt'):
+            self._conflict_footprint(inject='chmod')
+
+    def test_public_conflict_write_guard_detects_path_unlink(self):
+        with self.assertRaisesRegex(AssertionError, 'unexpected write attempt'):
+            self._conflict_footprint(inject='unlink')
+
+    def test_public_conflict_write_guard_detects_path_replace_destination(self):
+        with self.assertRaisesRegex(AssertionError, 'unexpected write attempt'):
+            self._conflict_footprint(inject='replace-target')
 
     def test_configuration_gap_persistent_category_and_no_store(self):
         self.config.values.pop((ROOT,'quality'))
