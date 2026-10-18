@@ -8,6 +8,7 @@ setting backend remains reusable for other Kodi skins.
 from __future__ import annotations
 
 from typing import Mapping
+import re
 
 
 AF3_SKIN_ID = "skin.arctic.fuse.3"
@@ -29,6 +30,26 @@ AF3_3312_KEYS = frozenset((
 class AF3PolicyError(ValueError):
     """An AF3-specific configuration relationship is invalid."""
 
+    code = "AF3_CONFIGURATION_INCOMPATIBLE"
+
+
+class AF3TargetVersionError(AF3PolicyError):
+    code = "AF3_TARGET_VERSION_UNVERIFIED"
+
+
+class AF3ActualVersionError(AF3PolicyError):
+    code = "AF3_ACTUAL_VERSION_MISMATCH"
+
+
+class AF3RestartRequiredError(AF3PolicyError):
+    code = "AF3_CONFIGURATION_RESTART_REQUIRED"
+
+
+def has_configuration(configuration):
+    return configuration is not None and (
+        AF3_3312_PACKAGE in configuration.packages or any(
+            setting.addon_id == AF3_SKIN_ID for setting in configuration.settings))
+
 
 def capture_package(version):
     """Select the approved exact-version scope; legacy policy stays unchanged."""
@@ -46,10 +67,14 @@ def validate_configuration_version(configuration, versions):
     if configuration is None:
         return
     version = versions.get(AF3_SKIN_ID)
+    if has_configuration(configuration) and (
+        not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version)
+    ):
+        raise AF3TargetVersionError("AF3 exact target version could not be verified")
     if AF3_3312_PACKAGE in configuration.packages and version != AF3_3312_VERSION:
         raise AF3PolicyError("AF3 3.3.12 catalog requires exact target version 3.3.12")
     if version == AF3_3312_VERSION and any(
-        setting.target_kind.value == "skin" and setting.addon_id == AF3_SKIN_ID
+        setting.addon_id == AF3_SKIN_ID
         and setting.key not in AF3_3312_KEYS for setting in configuration.settings
     ):
         raise AF3PolicyError("AF3 3.3.12 configuration is incompatible with the supported 15-key scope")

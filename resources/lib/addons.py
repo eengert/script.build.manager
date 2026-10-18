@@ -448,6 +448,20 @@ class RepositoryPackage:
     zip_bytes: bytes = field(repr=False)
 
 
+@dataclass(frozen=True, repr=False)
+class PreparedAddonInstall:
+    """Immutable validated ordinary install bytes; preparation grants no mutation."""
+    addon_id: str
+    version: str
+    zip_bytes: bytes = field(repr=False)
+
+    def __post_init__(self):
+        _validate_addon_id(self.addon_id)
+        if not isinstance(self.zip_bytes, bytes) or not self.version:
+            raise AddonInstallError("prepared install identity is unavailable")
+        _validate_addon_zip(self.zip_bytes, self.addon_id, self.version)
+
+
 @dataclass(frozen=True)
 class AddonInstallResult:
     """Immutable result of an AddonManager.install() call.
@@ -589,10 +603,18 @@ class AddonManager:
         _validate_addon_id(addon_id)
         return self._backend.get_addon_details(addon_id) is not None
 
+    def prepare_package(self, addon_id):
+        _validate_addon_id(addon_id)
+        prepared = self._backend.prepare_package(addon_id)
+        if not isinstance(prepared, PreparedAddonInstall) or prepared.addon_id != addon_id:
+            raise AddonInstallError("prepared install identity is unavailable")
+        return prepared
+
     def install(
         self,
         addon_id: str,
         desired_state: str = "enabled",
+        *, prepared_package: Optional[PreparedAddonInstall] = None,
     ) -> AddonInstallResult:
         """Install addon_id from configured Kodi repositories.
 
@@ -633,6 +655,11 @@ class AddonManager:
             )
 
         # Idempotency guard: already in Kodi's database → no mutation
+        if prepared_package is not None and (
+            not isinstance(prepared_package, PreparedAddonInstall)
+            or prepared_package.addon_id != addon_id
+        ):
+            raise AddonInstallError("prepared install identity differs")
         existing = self._backend.get_addon_details(addon_id)
         if existing is not None:
             return AddonInstallResult(
@@ -646,7 +673,10 @@ class AddonManager:
 
         # Install: resolve, download, validate, stage, rename, discover
         try:
-            self._backend.invoke_install(addon_id)
+            if prepared_package is None:
+                self._backend.invoke_install(addon_id)
+            else:
+                self._backend.invoke_prepared_install(prepared_package)
         except AddonInstallError as exc:
             return AddonInstallResult(
                 addon_id=addon_id,
@@ -962,13 +992,21 @@ class KodiRuntimeAddonBackend(AddonBackend):
             raise AddonInstallError(
                 "add-on installation is held or activation-hold state is unavailable"
             ) from exc
-        # 1. Resolve package URL from configured repositories
+        self.invoke_prepared_install(self.prepare_package(addon_id))
+
+    def prepare_package(self, addon_id: str) -> PreparedAddonInstall:
+        """Resolve and validate ordinary install bytes without installing them."""
+        _validate_addon_id(addon_id)
         pkg_url, version = self._resolve_package_url(addon_id)
+        return PreparedAddonInstall(addon_id, version,
+            _fetch_bytes(pkg_url, max_bytes=_MAX_ADDON_ZIP_BYTES))
 
-        # 2. Download ZIP
-        zip_data = _fetch_bytes(pkg_url, max_bytes=_MAX_ADDON_ZIP_BYTES)
-
-        # 3. Validate ZIP
+    def invoke_prepared_install(self, prepared: PreparedAddonInstall) -> None:
+        if not isinstance(prepared, PreparedAddonInstall):
+            raise AddonInstallError("prepared install identity is unavailable")
+        addon_id, version, zip_data = prepared.addon_id, prepared.version, prepared.zip_bytes
+        from resources.lib.activation import reject_held_activation
+        reject_held_activation(addon_id)
         _validate_addon_zip(zip_data, addon_id, expected_version=version)
 
         # 4. Staged install

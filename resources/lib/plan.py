@@ -784,8 +784,7 @@ class BuildPlanService:
                 installed = actual_map.get(node.addon_id)
                 final[node.addon_id] = InstalledAddon(
                     node.addon_id, node.desired_enabled,
-                    installed.version if installed is not None else sw.target_version.get(
-                        node.addon_id, node.version))
+                    sw.target_version.get(node.addon_id, node.version))
         return final
 
     def _stage_two(self, desired, actual, final_map, frozen, sw: _Software, gaps, blockers) -> None:
@@ -833,9 +832,13 @@ class BuildPlanService:
         if desired.config is None:
             return SettingsPlan(SettingsPlanKind.NOT_APPLICABLE)
         try:
-            from resources.lib.af3 import validate_configuration_version
+            from resources.lib.af3 import AF3PolicyError, AF3TargetVersionError, validate_configuration_version
             validate_configuration_version(effective, {a: item.version for a, item in final_map.items()})
             inspection = self._o.status.configuration_inspector.inspect(effective)
+        except AF3PolicyError as exc:
+            gaps.append(CheckGap.AF3_TARGET_VERSION_UNVERIFIED if isinstance(exc, AF3TargetVersionError)
+                        else CheckGap.AF3_CONFIGURATION_INCOMPATIBLE)
+            inspection = None
         except Exception as exc:
             self._log_failure("configuration", exc)
             inspection = None

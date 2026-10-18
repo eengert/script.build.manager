@@ -1137,6 +1137,14 @@ msgctxt "#32567"
 msgid "Some protection state could not be verified."
 msgstr ""
 
+msgctxt "#32568"
+msgid "The AF3 target version could not be verified. No configuration changes can be approved."
+msgstr ""
+
+msgctxt "#32569"
+msgid "This configuration is incompatible with the AF3 target version. The saved build has not been changed."
+msgstr ""
+
 msgctxt "#33000"
 msgid "Create Build progress"
 msgstr ""

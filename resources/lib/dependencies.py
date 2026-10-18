@@ -1264,12 +1264,16 @@ class DependencyAwareInstaller:
         self._resolver = resolver
         self._addon_manager = addon_manager
 
+    def prepare_package(self, addon_id):
+        return self._addon_manager.prepare_package(addon_id)
+
     def install(
         self,
         addon_id: str,
         *,
         desired_state: str = "enabled",
         explicit_desired_states: Optional[Mapping[str, str]] = None,
+        prepared_package=None,
     ) -> DependencyAwareInstallResult:
         dependency_result = self._resolver.reconcile_dependencies(
             [addon_id],
@@ -1282,10 +1286,8 @@ class DependencyAwareInstaller:
                 dependency_result=dependency_result,
                 install_result=None,
             )
-        install_result = self._addon_manager.install(
-            addon_id,
-            desired_state=desired_state,
-        )
+        kwargs = {} if prepared_package is None else {'prepared_package': prepared_package}
+        install_result = self._addon_manager.install(addon_id, desired_state=desired_state, **kwargs)
         return DependencyAwareInstallResult(
             addon_id=addon_id,
             dependency_result=dependency_result,

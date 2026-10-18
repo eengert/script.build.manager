@@ -107,6 +107,8 @@ class CheckGap(str, Enum):
     KODI_STATE_UNAVAILABLE = "kodi_state_unavailable"
     SOFTWARE_UNAVAILABLE = "software_unavailable"
     CONFIGURATION_UNAVAILABLE = "configuration_unavailable"
+    AF3_TARGET_VERSION_UNVERIFIED = "af3_target_version_unverified"
+    AF3_CONFIGURATION_INCOMPATIBLE = "af3_configuration_incompatible"
     PRIVATE_DATA_MISSING = "private_data_missing"
     PRIVATE_DATA_UNUSABLE = "private_data_unusable"
     PRIVATE_UNAVAILABLE = "private_unavailable"

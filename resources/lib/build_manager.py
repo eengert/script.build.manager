@@ -650,6 +650,8 @@ class _PreparedReconciliation:
     private_prepared: Optional[PreparedPrivateOverlay] = None
     skipped_addon_ids: Tuple[str, ...] = ()
     owner_contexts: object = None
+    af3_version: str = ""
+    af3_package: object = None
 
 
 class BuildManager:
@@ -715,9 +717,13 @@ class BuildManager:
                 )
 
             try:
+                if action.kind == CONFIGURE and prepared.af3_version and aggregate_restart_reports(reports).requires_restart:
+                    from resources.lib.af3 import AF3RestartRequiredError
+                    raise AF3RestartRequiredError("AF3 configuration requires the normal restart transition")
                 result = self._dispatch_action(
                     action, execution_desired, effective, protected,
                     prepared.private_prepared, prepared.owner_contexts,
+                    prepared.af3_version, prepared.af3_package,
                 )
             except Exception as exc:
                 diagnostic = _action_failure_diagnostic(exc)
@@ -738,7 +744,9 @@ class BuildManager:
                     action_results=tuple(action_results),
                     restart_report=aggregate_restart_reports(reports),
                     failure=ReconcileFailure(
-                        ReconcilePhase.EXECUTE, "ACTION_FAILED", result.message,
+                        ReconcilePhase.EXECUTE,
+                        (result.owner_result.code if isinstance(result.owner_result, ActionFailureDiagnostic)
+                         and result.owner_result.code.startswith("AF3_") else "ACTION_FAILED"), result.message,
                     ),
                     private_overlay=private_metadata,
                 )
@@ -854,8 +862,6 @@ class BuildManager:
 
         try:
             effective = config_loader.resolve(desired.config)
-            from resources.lib.af3 import validate_configuration_version
-            validate_configuration_version(effective, {a.addon_id: a.version for a in actual.addons})
             from resources.lib.platform_policy import mutation_targets, reject_platform_mutations, reject_backend_platform_targets
             platform_ids = {n.addon_id for n in library_frozen.addons if n.platform_provided} if library_frozen else set()
             reject_platform_mutations(desired, platform_ids, effective)
@@ -1101,6 +1107,12 @@ class BuildManager:
                     f"unsupported planner action kind {action.kind!r}",
                     desired_fingerprint=fingerprint,
                 )
+        try:
+            af3_version, af3_package = self._prepare_af3(effective, actual, plan, request, library_frozen)
+        except Exception as exc:
+            return None, self._failed(request, ReconcilePhase.PREFLIGHT,
+                getattr(exc, "code", "AF3_TARGET_VERSION_UNVERIFIED"), exc,
+                desired_fingerprint=fingerprint)
         return _PreparedReconciliation(
             desired=desired,
             execution_desired=execution_desired,
@@ -1111,7 +1123,42 @@ class BuildManager:
             private_prepared=private_prepared,
             skipped_addon_ids=skipped_addon_ids,
             owner_contexts=owner_contexts,
+            af3_version=af3_version, af3_package=af3_package,
         ), None
+
+    def _prepare_af3(self, effective, actual, plan, request, frozen):
+        from resources.lib.af3 import (AF3_SKIN_ID, AF3TargetVersionError,
+            has_configuration, validate_configuration_version)
+        if not has_configuration(effective):
+            return "", None
+        rows = [a for a in actual.addons if a.addon_id == AF3_SKIN_ID]
+        if len(rows) > 1:
+            raise AF3TargetVersionError("AF3 target version is ambiguous")
+        package = None
+        if any(a.kind == INSTALL_ADDON and a.addon_id == AF3_SKIN_ID for a in plan.actions):
+            from resources.lib.addons import PreparedAddonInstall
+            prepare = getattr(self._owners.dependency_installer, "prepare_package", None)
+            if not callable(prepare):
+                raise AF3TargetVersionError("AF3 install target could not be resolved before mutation")
+            try:
+                package = prepare(AF3_SKIN_ID)
+            except Exception:
+                raise AF3TargetVersionError("AF3 install target could not be verified") from None
+            if not isinstance(package, PreparedAddonInstall) or package.addon_id != AF3_SKIN_ID:
+                raise AF3TargetVersionError("AF3 resolved install identity is invalid")
+            version = package.version
+        else:
+            version = rows[0].version if rows else ""
+        # Frozen records cannot silently contradict the verified final target.
+        records = [r for r in request.install_resolutions if r.addon_id == AF3_SKIN_ID]
+        if len(records) > 1 or (records and records[0].resolved_version != version):
+            raise AF3TargetVersionError("AF3 resolution and planned target differ")
+        if frozen is not None and not records:
+            nodes = [n for n in frozen.addons if n.addon_id == AF3_SKIN_ID]
+            if len(nodes) != 1 or nodes[0].version != version:
+                raise AF3TargetVersionError("AF3 frozen and planned target differ")
+        validate_configuration_version(effective, {AF3_SKIN_ID: version})
+        return version, package
 
     @staticmethod
     def _apply_install_resolutions(
@@ -1186,6 +1233,7 @@ class BuildManager:
         self, action, desired, effective, protected_dependency_ids,
         private_prepared: Optional[PreparedPrivateOverlay] = None,
         owner_contexts=None,
+        af3_version="", af3_package=None,
     ):
         if action.kind == INSTALL_REPOSITORY:
             repository = next(
@@ -1217,10 +1265,13 @@ class BuildManager:
 
         if action.kind == INSTALL_ADDON:
             explicit = {item.addon_id: item.state for item in desired.addons}
+            kwargs = ({"prepared_package": af3_package} if af3_package is not None
+                      and action.addon_id == af3_package.addon_id else {})
             owner_result = self._owners.dependency_installer.install(
                 action.addon_id,
                 desired_state=action.desired_state,
                 explicit_desired_states=explicit,
+                **kwargs,
             )
             return _action_from_owner(action, owner_result)
 
@@ -1244,6 +1295,17 @@ class BuildManager:
 
         if action.kind == CONFIGURE:
             try:
+                from resources.lib.af3 import has_configuration, AF3TargetVersionError
+                if has_configuration(effective):
+                    if not af3_version:
+                        raise AF3TargetVersionError("AF3 configuration has no approved target version")
+                    from resources.lib.af3 import (AF3_SKIN_ID, AF3ActualVersionError,
+                        validate_configuration_version)
+                    actual = self._owners.inspector.inspect()
+                    rows = [a for a in actual.addons if a.addon_id == AF3_SKIN_ID]
+                    if len(rows) != 1 or rows[0].version != af3_version:
+                        raise AF3ActualVersionError("AF3 installed version differs from the approved plan")
+                    validate_configuration_version(effective, {AF3_SKIN_ID: rows[0].version})
                 public_result = self._owners.config_manager.apply(effective)
             except Exception as exc:
                 diagnostic = _action_failure_diagnostic(
