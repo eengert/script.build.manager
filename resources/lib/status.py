@@ -811,6 +811,24 @@ class BuildStatusService:
             return ConfigurationStatus(AreaLevel.UNAVAILABLE, **counts)
         if any(c.status is ValidationStatus.FAIL for c in checks):
             return ConfigurationStatus(AreaLevel.CHANGES_NEEDED, **counts)
+        # Direct callers must not turn a partial/unrelated observation into
+        # CURRENT just because the supplied validation report says PASS.
+        expected_settings = {
+            (scope.target_kind.value, scope.addon_id, key)
+            for scope in desired.config.managed_settings for key in scope.keys
+        }
+        expected_files = set(desired.config.managed_files)
+        observed_settings = [target for target, _ in inspection.setting_checks]
+        observed_files = [target for target, _ in inspection.file_checks]
+        if (not inspection.effective_identity
+                or any(c.status is not ValidationStatus.PASS for c in checks)
+                or set(observed_settings) != expected_settings
+                or set(observed_files) != expected_files
+                or len(observed_settings) != len(expected_settings)
+                or len(observed_files) != len(expected_files)
+                or inspection.matching != inspection.total):
+            gaps.append(CheckGap.CONFIGURATION_UNAVAILABLE)
+            return ConfigurationStatus(AreaLevel.UNAVAILABLE, **counts)
         # Only a successfully resolved, scope/identity-validated empty public
         # configuration is inapplicable. Zero observed targets alone cannot
         # hide missing expected targets, failed packages, or unchecked state.

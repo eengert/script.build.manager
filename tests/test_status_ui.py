@@ -15,7 +15,7 @@ from resources.lib.status_model import (
     PrivateStatus, SkinStatus, SoftwareItem, SoftwareItemState, SoftwareStatus,
 )
 from resources.lib.status import BuildStatusService
-from resources.lib.config import EffectiveConfiguration
+from resources.lib.config import ConfigInspectionResult, EffectiveConfiguration
 from resources.lib.manifest import ConfigDeclarations
 from resources.lib.ui import status_view
 from resources.lib.ui.controller import ROUTES, Route
@@ -129,6 +129,24 @@ class FirstScreen(unittest.TestCase):
         self.assertNotIn('Settings are current', dialog.details[1][1])
         self.assertNotIn('Settings and files checked: 0', dialog.everything)
         self.assertEqual(actual.overall, OverallStatus.CURRENT)
+
+    def test_direct_incomplete_observation_is_not_presented_as_inapplicable(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+        h = Harness(self, with_private=False, with_resource=False)
+        actual = h.check()
+        gaps = []
+        config = BuildStatusService._configuration_status(
+            h.desired, SimpleNamespace(checks=(SimpleNamespace(
+                domain=ValidationDomain.CONFIGURATION, status=ValidationStatus.PASS),)),
+            ConfigInspectionResult(effective_identity=h.effective.identity), gaps)
+        self.assertEqual(config.level, AreaLevel.UNAVAILABLE)
+        actual = replace(actual, configuration=config, overall=OverallStatus.INCOMPLETE,
+                         gaps=tuple(gaps))
+        _, dialog, _ = open_status(lambda: actual, 3)
+        self.assertIn('Settings: Not checked', rows(dialog))
+        self.assertNotIn('Not part of this build', dialog.details[0][1])
+        self.assertNotIn('This build does not manage any settings.', dialog.everything)
+        self.assertIn('Overall: Not Fully Checked', rows(dialog))
 
     def test_current_status_matches_the_suggested_layout(self):
         calls = []

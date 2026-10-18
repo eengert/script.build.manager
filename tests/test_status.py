@@ -26,7 +26,7 @@ from resources.lib.build_identity import (
 )
 from resources.lib.config import (
     ConfigBackendError, ConfigFile, ConfigSetting, ConfigSettingType, ConfigTargetKind,
-    ConfigInspectionResult, ConfigurationBackend, ConfigurationInspector, EffectiveConfiguration,
+    ConfigInspectionResult, ConfigTargetCheck, ConfigurationBackend, ConfigurationInspector, EffectiveConfiguration,
     ReadOnlyConfigurationBackend,
 )
 from resources.lib.dependencies import DependencyBackend, DependencyResolver
@@ -830,6 +830,53 @@ class EmptyConfigurationScope(StatusBase):
                             managed_settings=(), managed_files=()))
         h.effective = EffectiveConfiguration(packages=('pkg',))
         return h
+
+    def test_direct_evaluation_requires_exact_expected_targets(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+        h = self.current()
+        report = SimpleNamespace(checks=(SimpleNamespace(
+            domain=ValidationDomain.CONFIGURATION, status=ValidationStatus.PASS),))
+        complete = h.service()._o.configuration_inspector.inspect(h.effective)
+        cases = {
+            'zero': replace(complete, setting_checks=(), file_checks=()),
+            'partial-settings': replace(complete, setting_checks=complete.setting_checks[:-1]),
+            'partial-files': replace(complete, file_checks=()),
+            'wrong-target': replace(complete, file_checks=(('unrelated.xml', ConfigTargetCheck.MATCHES),)),
+            'duplicate': replace(complete, file_checks=complete.file_checks * 2),
+            'missing-identity': replace(complete, effective_identity=''),
+        }
+        for name, inspection in cases.items():
+            with self.subTest(case=name):
+                gaps = []
+                actual = BuildStatusService._configuration_status(h.desired, report, inspection, gaps)
+                self.assertEqual(actual.level, AreaLevel.UNAVAILABLE)
+                self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, gaps)
+        gaps = []
+        self.assertEqual(BuildStatusService._configuration_status(
+            h.desired, report, complete, gaps).level, AreaLevel.CURRENT)
+        self.assertEqual(gaps, [])
+
+    def test_direct_incomplete_evidence_preserves_drift_unreadable_and_fail_truth(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+        h = self.current()
+        complete = h.service()._o.configuration_inspector.inspect(h.effective)
+        target, _ = complete.setting_checks[0]
+        for outcome, validation, expected in (
+            (ConfigTargetCheck.DIFFERS, ValidationStatus.PASS, AreaLevel.CHANGES_NEEDED),
+            (ConfigTargetCheck.UNREADABLE, ValidationStatus.PASS, AreaLevel.UNAVAILABLE),
+            (ConfigTargetCheck.MATCHES, ValidationStatus.FAIL, AreaLevel.CHANGES_NEEDED),
+            (ConfigTargetCheck.MATCHES, ValidationStatus.NOT_CHECKED, AreaLevel.UNAVAILABLE),
+            (ConfigTargetCheck.MATCHES, ValidationStatus.WARNING, AreaLevel.UNAVAILABLE),
+        ):
+            with self.subTest(outcome=outcome, validation=validation):
+                inspection = replace(complete, setting_checks=((target, outcome),), file_checks=())
+                report = SimpleNamespace(checks=(SimpleNamespace(
+                    domain=ValidationDomain.CONFIGURATION, status=validation),))
+                gaps = []
+                actual = BuildStatusService._configuration_status(h.desired, report, inspection, gaps)
+                self.assertEqual(actual.level, expected)
+                if expected is AreaLevel.UNAVAILABLE:
+                    self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, gaps)
 
     def test_validated_empty_public_scope_is_not_applicable(self):
         h = self.empty()
