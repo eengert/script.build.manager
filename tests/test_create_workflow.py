@@ -192,6 +192,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual({s['key']:s['value'] for s in captured},current)
         self.assertNotEqual(current[package.settings[0].key],package.settings[0].value)
 
+    def test_af3_request_shape_is_not_complete_library_version_admission(self):
+        from resources.lib.create_capture import CreateBuildRequest, _manifest, _setting
+        from resources.lib.build_library import _validate_bundle, _validate_bundle_structure, LibraryCompatibilityError
+        from resources.lib.frozen import FrozenBuildManifest, CaptureStatus
+        catalog=TrustedCaptureCatalog();package=catalog.loader.load_package('af3-common')
+        targets=tuple(PublicSettingTarget(t.addon_id,t.key,t.setting_type,t.target_kind) for t in package.settings)
+        request=CreateBuildRequest('af3-shape','1.0.0','AF3','macos','macos','device','Device',
+            (AF3,),True,PublicCaptureSpecification(targets),'captured-public',expected_active_skin=AF3)
+        frozen=FrozenBuildManifest(1,request.build_id,request.build_name,'preflight','unknown','unknown',
+            CaptureStatus.COMPLETE,(),('captured-public',))
+        descriptor={'schema_version':1,'id':'captured-public','settings':[_setting(t,source.value) for t,source in zip(targets,package.settings)],'files':[]}
+        bundle={'schema_version':1,'manifest':_manifest(request,[{'addon_id':AF3,'state':'enabled'}]),
+            'frozen':frozen.to_dict(),'packages':{'captured-public':{'descriptor':descriptor,'sources':{}}}}
+        _validate_bundle_structure(bundle)
+        with self.assertRaises(LibraryCompatibilityError):_validate_bundle(bundle)
+
     def test_unrecognized_software_only(self):
         spec,private,resources=TrustedCaptureCatalog().compose((ROOT,), '',True,{ROOT:'1.0.0'})
         self.assertEqual(spec,PublicCaptureSpecification()); self.assertFalse(private or resources)

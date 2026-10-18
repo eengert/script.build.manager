@@ -59,6 +59,7 @@ class PackageContract(unittest.TestCase):
         fifo = zipfile.ZipInfo('alternate/pipe'); fifo.external_attr = (stat.S_IFIFO | 0o600) << 16
         cases = [
             [('addon.xml', XML)],
+            [('alternate/addon.xml', XML), ('alternate//', b'')],
             [('alternate/addon.xml', XML), ('other/x', b'x')],
             [('alternate/addon.xml', XML), ('alternate/addon.xml', XML)],
             [('alternate/addon.xml', XML), ('alternate/../escape', b'x')],
@@ -88,6 +89,12 @@ class PackageContract(unittest.TestCase):
                     with self.assertRaises(Exception):
                         writer()
                 self.assertEqual(list(root.iterdir()), [])
+
+    def test_nul_truncated_zip_member_name_is_rejected(self):
+        data = archive([('alternate/addon.xml', XML), ('alternate/nulZsuffix', b'x')])
+        data = data.replace(b'nulZsuffix', b'nul\0suffix')
+        for reader in self.readers(data):
+            with self.assertRaises(Exception): reader()
 
     def test_version_mismatch_and_byte_entry_limits(self):
         with self.assertRaises(AddonZipError):

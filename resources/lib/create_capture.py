@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
-from resources.lib.build_library import _validate_bundle, FILE_LIMIT, BUNDLE_LIMIT
+from resources.lib.build_library import _validate_bundle, _validate_bundle_structure, FILE_LIMIT, BUNDLE_LIMIT
 from resources.lib.config import ConfigSettingType, ConfigTargetKind, ConfigAddonUnavailableError, validate_package_id
 from resources.lib.frozen import capture_frozen_build, FrozenBuildManifest, CaptureStatus
 from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind, validate_manifest
@@ -269,7 +269,7 @@ def _validate_request(request):
                             for i, p in enumerate(sorted(request.public_capture.files))]}
     frozen = FrozenBuildManifest(1, request.build_id, request.build_name, "preflight", "unknown", "unknown",
                                  CaptureStatus.COMPLETE, (), (request.config_package_id,))
-    _validate_bundle({"schema_version": 1, "manifest": doc, "frozen": frozen.to_dict(),
+    _validate_bundle_structure({"schema_version": 1, "manifest": doc, "frozen": frozen.to_dict(),
                       "packages": {request.config_package_id: {"descriptor": descriptor,
                                   "sources": {f["source"]: "" for f in descriptor["files"]}}}})
 

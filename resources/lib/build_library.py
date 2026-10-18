@@ -340,6 +340,25 @@ class LibraryInstallTarget:
 
 
 def _validate_bundle(bundle):
+    """Validate complete public data, including frozen AF3 version evidence."""
+    manifest, frozen, loader = _validate_bundle_structure(bundle)
+    from resources.lib.af3 import AF3PolicyError, validate_configuration_version
+    for profile in sorted(manifest.device_profiles):
+        desired = resolve_manifest(manifest, profile)
+        try:
+            validate_configuration_version(loader.resolve(desired.config),
+                {n.addon_id: n.version for n in frozen.addons})
+        except AF3PolicyError:
+            raise LibraryCompatibilityError() from None
+    return manifest, frozen, loader
+
+
+def _validate_bundle_structure(bundle):
+    """Validate shape/privacy/ownership only; never authorizes registration.
+
+    Create request preflight has no captured inventory yet. Complete capture,
+    library admission and reads must use _validate_bundle above.
+    """
     if not isinstance(bundle, dict) or set(bundle) != {"schema_version", "manifest", "frozen", "packages"}:
         raise _error()
     if type(bundle["schema_version"]) is not int or bundle["schema_version"] != 1:
@@ -390,11 +409,6 @@ def _validate_bundle(bundle):
         if desired.config:
             required.update(desired.config.packages)
         effective = loader.resolve(desired.config)
-        from resources.lib.af3 import AF3PolicyError, validate_configuration_version
-        try:
-            validate_configuration_version(effective, {n.addon_id: n.version for n in frozen.addons})
-        except AF3PolicyError:
-            raise LibraryCompatibilityError() from None
         reject_platform_mutations(desired, platform_ids, effective)
         for setting in effective.settings:
             if (setting.target in private or setting.addon_id == "plugin.video.redlight"

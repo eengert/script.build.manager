@@ -36,7 +36,7 @@ class MemorySettings(ConfigurationBackend):
 
 
 def scenario(package='af3-3.3.12', before=None, after='3.3.12', *, manager_class=BuildManager,
-             install_version='3.3.12', restart=False, resolve=True, plan_upgrade=False):
+             install_version='3.3.12', restart=False, resolve=True, plan_upgrade=False, real_installers=False):
     config = effective(package)
     declared = ConfigDeclarations(packages=(package,), managed_settings=(
         ManagedSettingScope(AF3, tuple(s.key for s in config.settings), SettingTargetKind.SKIN),))
@@ -47,6 +47,18 @@ def scenario(package='af3-3.3.12', before=None, after='3.3.12', *, manager_class
     fixture = _Owners(desired, states, (AF3,), {AF3: _Outcome(changed=True, report=report)})
     fixture.dependency_installer.prepare_package = Mock(return_value=(
         PreparedAddonInstall(AF3, install_version, _zip(AF3, install_version)) if resolve else None))
+    if real_installers:
+        from resources.lib.addons import AddonManager, InstalledAddonInfo
+        from resources.lib.dependencies import DependencyAwareInstaller, DependencyResolver
+        from tests.test_addon_manager import FakeAddonBackend
+        from tests.test_dependencies import FakeDependencyBackend, _xml
+        backend = FakeAddonBackend(poll_result=InstalledAddonInfo(AF3, True, install_version))
+        backend.prepare_package = fixture.dependency_installer.prepare_package
+        backend.invoke_prepared_install = Mock()
+        resolver = DependencyResolver(FakeDependencyBackend(addon_xmls={AF3: _xml(AF3, install_version)}))
+        fixture.dependency_installer = DependencyAwareInstaller(resolver, AddonManager(backend))
+        fixture.owners = replace(fixture.owners, dependency_resolver=resolver,
+                                dependency_installer=fixture.dependency_installer)
     settings = MemorySettings(config)
     fixture.owners = replace(fixture.owners, config_loader=SimpleNamespace(resolve=lambda _: config),
                             config_manager=ConfigurationManager(settings))
@@ -79,6 +91,13 @@ class AF3ReconciliationSafety(unittest.TestCase):
         self.assertEqual(len(f.dependency_installer.calls), 1)
         prepared = f.dependency_installer.calls[0][1]['prepared_package']
         self.assertEqual(prepared.version, '3.3.12')
+        self.assertTrue(settings.writes)
+
+    def test_ordinary_addon_and_dependency_owners_consume_prepared_bytes(self):
+        result, f, settings = scenario(real_installers=True)
+        self.assertTrue(result.success, result.to_dict())
+        backend = f.dependency_installer._addon_manager._backend
+        backend.invoke_prepared_install.assert_called_once_with(backend.prepare_package.return_value)
         self.assertTrue(settings.writes)
 
     def test_actual_version_rechecked_after_install(self):

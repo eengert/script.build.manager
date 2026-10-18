@@ -46,7 +46,8 @@ def validated_root(data, expected_addon_id, expected_version=None):
             roots, entries, spellings, files, parents = set(), set(), {}, set(), set()
             for item in infos:
                 name = item.filename
-                if (not name or name.startswith('/') or '\\' in name or ':' in name
+                if (not name or item.orig_filename != name or name.endswith('//')
+                        or name.startswith('/') or '\\' in name or ':' in name
                         or any(unicodedata.category(c) in ('Cc', 'Cf') for c in name)):
                     raise AddonZipError("unsafe package path")
                 parts = name.rstrip('/').split('/')
