@@ -104,3 +104,21 @@ checks within the later prompt's authorization.
 Private-resource qualification is a separate explicitly admitted scenario under
 `ITEM8_OFFLINE_READINESS.md` and the authored-fixture safety gates. No private
 operation or policy waiver is implied by this public plan.
+
+## Retention limits and separate safety prerequisites
+
+Existing qualification evidence is checksummed but Git-excluded and local to
+this worktree. No durable off-machine preservation has been established. A
+later authorized run must explicitly establish its retention destination and
+recovery policy; a checksum alone does not supply either. The native standalone
+image-retention admission gate above remains unmet and unchanged.
+
+AF3 P means 3.3.12; H means historical 3.2.19. H has no established complete
+dependency closure, and minimum-version satisfaction is not compatibility proof.
+Neither choice resolves the unconfirmed EnableIconText target by itself.
+
+Legacy normal Kodi.app launch behavior and bm023a migration protections are
+separate unresolved safety issues. This plan does not authorize either path.
+D-029 continues to forbid weakening fail-closed `competing_operation()` and
+`verify_restart()`, P5, D2 Option A or existing activation holds; protected Create
+admission remains NO-GO on supported Kodi external-operation exclusion.

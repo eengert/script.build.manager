@@ -1,6 +1,10 @@
 # Item 8 offline safety and candidate readiness — 2026-10-17
 
-Status: **READY FOR INDEPENDENT REVIEW** of the implementation package.
+Status: **CORRECTION C1 — INDEPENDENT RE-REVIEW PENDING**.
+The October 18 review accepted the acquisition refusal, integrated empty-scope
+Status, import policies, synthetic fixture isolation and prior evidence. C1
+corrects remaining harness claims and hardens direct Status evaluation; it does
+not reopen those accepted behaviors.
 Item 8 remains OPEN. No native qualification, staging, archive acquisition,
 installation, activation or private transfer occurred in this task. The accepted
 Help correction at `8c569d6` is unchanged and still needs a separately authorized
@@ -29,9 +33,14 @@ The safety and zero-scope regressions reproduced before correction; both old
 import-policy failures reproduced using starting-HEAD test source. Negative
 import controls and AST/source checks pass. No known full-suite failure remains.
 
-Evidence is in `.qualification-evidence/item8-offline-readiness-20261017/`:
+Historical offline evidence is in `.qualification-evidence/item8-offline-readiness-20261017/`:
 before/after logs, full-suite log, public-source metadata/key audit, tool
 capability metadata, tracking-preservation record and final completion/checksums.
+It is checksummed, Git-excluded and local to this worktree. Checksums establish
+integrity against the retained manifest, not durable off-machine preservation;
+no off-machine copy or recovery guarantee has been established. C1 evidence is
+separately retained in `.qualification-evidence/item8-c1-20261018/` under the
+same local retention limits.
 
 ## Legitimate AF3 options — metadata research, no selection or acquisition
 
@@ -71,7 +80,8 @@ comparison proves archive/source equivalence before inspecting acquired bytes.
 
 ## Dependencies and compatibility prerequisites
 
-Published addon metadata gives the following direct minima:
+Option P is AF3 **3.3.12**; option H is the historical **3.2.19** alternative.
+Neither is selected. Published addon metadata gives the following direct minima:
 
 | Requirement | P: 3.3.12 minimum | H: 3.2.19 minimum |
 | --- | --- | --- |
@@ -85,6 +95,13 @@ Published addon metadata gives the following direct minima:
 
 Sources: [P addon metadata](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/addon.xml),
 [H addon metadata](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/fb96e8794725b88f88891af7a4f19f2fd4fa6502/addon.xml).
+
+An import version specifies a minimum dependency version, not an exact pin.
+A numerically newer candidate may meet that minimum without proving runtime
+compatibility, API behavior or a trustworthy complete dependency closure. The
+transitive research below concerns the listed P-era package versions. H's
+complete dependency closure has **not been established**; P-era dependencies
+must not be described as H-qualified without separate evidence.
 
 The maintainer repository's pinned metadata also exposes these exact public
 packages. These are researched options, not a selected or complete dependency
@@ -226,8 +243,14 @@ exact disposable target, pinned package/owner/resource and authored
 unauthenticated value, allowed network behavior, initialization/file effects,
 activation/hold and shutdown boundary. `docs/ITEM8_AUTHORED_FIXTURE.md` remains
 mandatory where applicable. Synthetic values are not real account state. Do not
-read/transfer household private values or revive a protected Create lifecycle to
-fill this gap. A policy change requires a subsequent explicit decision.
+read/transfer household private values. Under D-029, advanced interrupted-Create
+recovery is post-beta; ordinary supported Create, safe failure with no BM-caused
+loss and honest failure/status presentation remain required. Production protected
+Create admission remains NO-GO on supported Kodi mechanisms for external
+operation exclusion. Do not weaken the fail-closed `competing_operation()` and
+`verify_restart()` contracts, P5, D2 Option A, or existing activation holds.
+Accepted offline reservation/witness research is not runtime authority; do not
+wire it into runtime to fill this gap. A policy change requires a subsequent explicit decision.
 
 ## Next substantial package and remaining gates
 
@@ -243,3 +266,17 @@ AF3 key/version/runtime compatibility and complete trusted closure; structured
 private coverage within unchanged D-029/D-030 policy; broader supported-failure
 preservation; durable native image retention and exact final-candidate evidence.
 No integration, repository publication or device operation is authorized.
+
+## Separate legacy safety issues — outside correction C1
+
+The historical harness still has legacy normal `Kodi.app` launch behavior,
+and bm023a migration protections remain a separate safety issue. Removing
+normal-profile probes and unsupported claims does not clear either path for
+execution. C1 neither modifies nor runs them. Their safety review/correction
+requires a separately scoped task; no historical validator is authorized here.
+
+C1 direct Status hardening requires exact setting/file target coverage, unique
+observations, a nonempty observation identity and PASS evidence before Current
+or empty-scope Not Applicable. Missing/inconsistent evidence is Unavailable;
+actual drift, unreadability and failed validation retain their classifications.
+The existing integrated validator's package/scope/identity gates are unchanged.
