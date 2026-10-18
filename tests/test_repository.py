@@ -452,8 +452,9 @@ class TestValidateRepositoryZip(unittest.TestCase):
     def test_valid_prefixed_zip_passes(self):
         validate_repository_zip(_make_repo_zip("repository.test"), "repository.test")
 
-    def test_valid_flat_zip_passes(self):
-        validate_repository_zip(_make_repo_zip("repository.test", prefixed=False), "repository.test")
+    def test_flat_zip_rejected_by_single_root_contract(self):
+        with self.assertRaises(RepositoryValidationError):
+            validate_repository_zip(_make_repo_zip("repository.test", prefixed=False), "repository.test")
 
     def test_empty_bytes_rejected(self):
         with self.assertRaises(RepositoryValidationError):
@@ -503,7 +504,7 @@ class TestValidateRepositoryZip(unittest.TestCase):
 class TestExtractZipToDirectory(unittest.TestCase):
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
+        self.tmpdir = str(Path(tempfile.mkdtemp()).resolve())
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
@@ -523,8 +524,9 @@ class TestExtractZipToDirectory(unittest.TestCase):
         addon_id = "repository.test"
         zip_bytes = _make_zip({"addon.xml": _make_addon_xml(addon_id), "icon.png": b"img"})
         target = Path(self.tmpdir) / addon_id
-        _extract_zip_to_directory(zip_bytes, addon_id, target)
-        self.assertTrue((target / "addon.xml").exists())
+        with self.assertRaises(RepositoryInstallError):
+            _extract_zip_to_directory(zip_bytes, addon_id, target)
+        self.assertFalse(target.exists())
 
     def test_does_not_extract_other_prefix(self):
         addon_id = "repository.test"
@@ -533,9 +535,9 @@ class TestExtractZipToDirectory(unittest.TestCase):
             "other.addon/addon.xml": b"<addon/>",
         })
         target = Path(self.tmpdir) / addon_id
-        _extract_zip_to_directory(zip_bytes, addon_id, target)
-        self.assertTrue((target / "addon.xml").exists())
-        self.assertFalse((target / "other.addon").exists())
+        with self.assertRaises(RepositoryInstallError):
+            _extract_zip_to_directory(zip_bytes, addon_id, target)
+        self.assertFalse(target.exists())
 
     def test_directory_entries_skipped(self):
         addon_id = "repository.test"
@@ -632,13 +634,13 @@ class TestInstallHappyPath(unittest.TestCase):
         _, backend = self._install()
         self.assertEqual(backend.poll_calls, ["repository.test"])
 
-    def test_flat_zip_also_returns_installed(self):
+    def test_flat_zip_returns_failed_without_mutation(self):
         zip_bytes = _make_repo_zip("repository.test", prefixed=False)
         backend = FakeRepositoryBackend(installed=frozenset(), download_data=zip_bytes, poll_result=True)
         result = RepositoryManager(backend).install(
             Repository(addon_id="repository.test", bootstrap_url="https://example.com/r.zip")
         )
-        self.assertEqual(result.status, RepositoryStatus.INSTALLED)
+        self.assertEqual(result.status, RepositoryStatus.FAILED)
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +651,7 @@ class TestInstallZipStagingBehavior(unittest.TestCase):
     """Tests for KodiRuntimeRepositoryBackend.install_zip_to_addons staging."""
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
+        self.tmpdir = str(Path(tempfile.mkdtemp()).resolve())
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)

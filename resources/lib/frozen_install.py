@@ -1285,8 +1285,8 @@ def _repository_package_required_dependencies(
     never its captured observation, and it fails closed when none was verified.
     """
     try:
-        with zipfile.ZipFile(io.BytesIO(package.zip_bytes), "r") as archive:
-            xml_bytes = archive.read(f"{package.addon_id}/addon.xml")
+        from resources.lib.addon_zip import validated_root
+        xml_bytes = validated_root(package.zip_bytes, package.addon_id, package.version).xml_bytes
         from resources.lib.dependencies import _is_system_dependency, _parse_requirements_strict, _version_satisfies
         requirements = _parse_requirements_strict(xml_bytes)
     except Exception as exc:
@@ -1454,15 +1454,15 @@ def _repository_required_addon_ids(store, records=(), *, packages=()):
     """Mandatory package edges can promote optional source observations to requirements."""
     from resources.lib.dependencies import _parse_requirements_strict
     items = records.values() if isinstance(records, Mapping) else records
-    payloads = [(package.addon_id, package.zip_bytes) for package in packages]
-    payloads.extend((record.addon_id, store.read_bytes(record.artifact_sha256))
+    payloads = [(package.addon_id, package.zip_bytes, package.version) for package in packages]
+    payloads.extend((record.addon_id, store.read_bytes(record.artifact_sha256), record.resolved_version)
                     for record in items
                     if record.resolution is InstallResolution.REPOSITORY_CURRENT
                     and record.artifact_sha256)
     required = set()
-    for addon_id, data in payloads:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            xml = archive.read(f"{addon_id}/addon.xml")
+    from resources.lib.addon_zip import validated_root
+    for addon_id, data, version in payloads:
+        xml = validated_root(data, addon_id, version).xml_bytes
         required.update(edge.addon_id for edge in _parse_requirements_strict(xml) if not edge.optional)
     return required
 
@@ -1910,22 +1910,12 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
             raise FrozenInstallError(
                 f"unregistered add-on directory already exists for {addon_id}; refusing overwrite"
             )
-        staging = Path(tempfile.mkdtemp(prefix=".bm022-", dir=addons_dir))
+        from resources.lib.addon_zip import publish_package
         try:
-            _extract_zip_to_directory(zip_bytes, addon_id, staging)
-            if not any(path.is_file() for path in staging.rglob("*")):
-                raise FrozenInstallError(f"exact artifact extracted no usable files for {addon_id}")
-            os.rename(staging, target)
-            staging = None  # type: ignore[assignment]
+            publish_package(zip_bytes, addon_id, target, version)
             self._xbmc().executebuiltin("UpdateLocalAddons")
-        except FrozenInstallError:
-            raise
         except Exception as exc:
             raise FrozenInstallError(f"exact artifact installation failed for {addon_id}") from exc
-        finally:
-            if staging is not None and staging.exists():
-                import shutil
-                shutil.rmtree(staging, ignore_errors=True)
         return self._wait_for_exact(addon_id, version)
 
     def resolve_repository_current(

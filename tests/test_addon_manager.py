@@ -789,7 +789,7 @@ class TestKodiRuntimeBackend(unittest.TestCase):
         be = self._backend(xbmc)
         zip_data = self._make_test_zip(addon_id, version)
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             with patch.object(be, "_resolve_package_url", return_value=(
                 f"http://127.0.0.1:8922/{addon_id}/{version}/{addon_id}-{version}.zip",
                 version,
@@ -827,7 +827,7 @@ class TestKodiRuntimeBackend(unittest.TestCase):
         addon_id = "plugin.video.test"
         zip_data = self._make_test_zip(addon_id)
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             # Pre-create target to simulate already-installed on disk
             (addons_dir / addon_id).mkdir()
             with patch.object(be, "_resolve_package_url", return_value=(
@@ -1101,46 +1101,46 @@ class TestStagedInstall(unittest.TestCase):
     def test_happy_path_places_addon_in_addons_dir(self):
         data = _make_zip("plugin.video.test")
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             _staged_install(data, "plugin.video.test", addons_dir)
             self.assertTrue((addons_dir / "plugin.video.test").is_dir())
 
     def test_addon_xml_present_after_install(self):
         data = _make_zip("plugin.video.test")
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             _staged_install(data, "plugin.video.test", addons_dir)
             self.assertTrue((addons_dir / "plugin.video.test" / "addon.xml").is_file())
 
     def test_staging_dir_cleaned_up_on_success(self):
         data = _make_zip("plugin.video.test")
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             _staged_install(data, "plugin.video.test", addons_dir)
             staging = addons_dir / "_bm011_staging_plugin.video.test"
             self.assertFalse(staging.exists())
 
-    def test_stale_staging_dir_cleaned_before_install(self):
+    def test_unowned_legacy_staging_dir_preserved(self):
         data = _make_zip("plugin.video.test")
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             staging = addons_dir / "_bm011_staging_plugin.video.test"
             staging.mkdir()
             (staging / "leftover.txt").write_text("stale")
             _staged_install(data, "plugin.video.test", addons_dir)
-            self.assertFalse(staging.exists())
+            self.assertEqual((staging / "leftover.txt").read_text(), "stale")
             self.assertTrue((addons_dir / "plugin.video.test").is_dir())
 
     def test_invalid_zip_raises_and_no_target(self):
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             with self.assertRaises(AddonInstallError):
                 _staged_install(b"garbage", "plugin.video.test", addons_dir)
             self.assertFalse((addons_dir / "plugin.video.test").exists())
 
     def test_staging_cleaned_on_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             try:
                 _staged_install(b"garbage", "plugin.video.test", addons_dir)
             except AddonInstallError:
@@ -1154,7 +1154,7 @@ class TestStagedInstall(unittest.TestCase):
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("wrong.name/addon.xml", '<addon id="wrong.name" version="1.0"/>')
         with tempfile.TemporaryDirectory() as tmp:
-            addons_dir = pathlib.Path(tmp)
+            addons_dir = pathlib.Path(tmp).resolve()
             with self.assertRaises(AddonInstallError):
                 _staged_install(buf.getvalue(), "plugin.video.test", addons_dir)
 

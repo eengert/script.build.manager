@@ -296,77 +296,12 @@ def _validate_addon_zip(
     addon_id: str,
     expected_version: Optional[str] = None,
 ) -> str:
-    """Validate addon ZIP content. Returns the version string found in addon.xml.
-
-    Checks:
-      - Valid ZIP format
-      - No absolute paths (starts with /)
-      - No path traversal (..)
-      - {addon_id}/addon.xml present
-      - addon.xml root id attribute matches addon_id exactly
-      - addon.xml has a non-empty version attribute
-      - If expected_version is provided, addon.xml version matches
-
-    Raises AddonInstallError on any violation.
-    """
+    """Return the version from the shared bounded package contract."""
+    from resources.lib.addon_zip import validated_root
     try:
-        zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as exc:
-        raise AddonInstallError(f"Invalid ZIP: {exc}") from exc
-
-    with zf:
-        names = zf.namelist()
-
-        # Safe path check: no absolute paths, no traversal
-        for name in names:
-            if name.startswith("/"):
-                raise AddonInstallError(
-                    f"Unsafe path in ZIP (absolute): {name!r}"
-                )
-            for part in name.split("/"):
-                if part == "..":
-                    raise AddonInstallError(
-                        f"Path traversal in ZIP: {name!r}"
-                    )
-
-        addon_xml_name = f"{addon_id}/addon.xml"
-        if addon_xml_name not in names:
-            raise AddonInstallError(
-                f"addon.xml not found at {addon_xml_name!r} in ZIP "
-                f"(ZIP contains: {names[:5]!r}{'...' if len(names) > 5 else ''})"
-            )
-
-        try:
-            xml_bytes = zf.read(addon_xml_name)
-            root = ET.fromstring(xml_bytes)
-        except ET.ParseError as exc:
-            raise AddonInstallError(
-                f"Failed to parse {addon_xml_name}: {exc}"
-            ) from exc
-        except Exception as exc:
-            raise AddonInstallError(
-                f"Failed to read {addon_xml_name}: {exc}"
-            ) from exc
-
-        found_id = root.get("id")
-        if found_id != addon_id:
-            raise AddonInstallError(
-                f"addon.xml id {found_id!r} does not match requested {addon_id!r}"
-            )
-
-        found_version = (root.get("version") or "").strip()
-        if not found_version:
-            raise AddonInstallError(
-                f"addon.xml for {addon_id!r} has no version attribute"
-            )
-
-        if expected_version is not None and found_version != expected_version:
-            raise AddonInstallError(
-                f"addon.xml version {found_version!r} does not match "
-                f"expected {expected_version!r}"
-            )
-
-        return found_version
+        return validated_root(data, addon_id, expected_version).version
+    except Exception as exc:
+        raise AddonInstallError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -378,45 +313,12 @@ def _staged_install(
     addon_id: str,
     addons_dir: pathlib.Path,
 ) -> None:
-    """Extract addon ZIP via staging directory; atomic rename to addons_dir/addon_id.
-
-    Staging directory: addons_dir/_bm011_staging_{addon_id}/
-    On success: staging/{addon_id}/ is renamed to addons_dir/{addon_id}/
-    On failure: staging directory is cleaned up; no partial target remains.
-
-    Raises AddonInstallError if:
-      - The target addons_dir/{addon_id} already exists (caller must check)
-      - The ZIP does not produce a {addon_id}/ directory after extraction
-      - Any filesystem operation fails
-    """
-    target = addons_dir / addon_id
-    staging = addons_dir / f"_bm011_staging_{addon_id}"
-
-    if staging.exists():
-        shutil.rmtree(staging)
-
+    """Stage validated original bytes and atomically claim the verified ID."""
+    from resources.lib.addon_zip import publish_package
     try:
-        staging.mkdir()
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            zf.extractall(staging)
-
-        extracted = staging / addon_id
-        if not extracted.is_dir():
-            raise AddonInstallError(
-                f"ZIP extraction did not produce expected directory {addon_id!r}"
-            )
-
-        extracted.rename(target)
-
-    except AddonInstallError:
-        raise
+        publish_package(zip_data, addon_id, addons_dir / addon_id)
     except Exception as exc:
-        raise AddonInstallError(
-            f"Staged install failed for {addon_id!r}: {exc}"
-        ) from exc
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        raise AddonInstallError(f"Staged install failed for {addon_id!r}: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

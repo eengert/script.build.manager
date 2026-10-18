@@ -180,8 +180,8 @@ def _fetch_package(repository_data, repository_id, addon_id, download):
     """Single captured repository authority; unsupported/ambiguous layouts fail closed."""
     try:
         validate_repository_zip(repository_data, expected_addon_id=repository_id)
-        with zipfile.ZipFile(io.BytesIO(repository_data)) as archive:
-            root = _xml(archive.read(repository_id + "/addon.xml"))
+        from resources.lib.addon_zip import validated_root
+        root = _xml(validated_root(repository_data, repository_id).xml_bytes)
         dirs = root.findall("./extension[@point='xbmc.addon.repository']/dir")
         if len(dirs) != 1 or dirs[0].attrib:
             raise ValueError

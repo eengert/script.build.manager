@@ -116,48 +116,11 @@ def validate_addon_zip(
     if not isinstance(expected_version, str) or not expected_version:
         raise ArtifactValidationError("expected add-on version is required")
 
+    from resources.lib.addon_zip import validated_root
     try:
-        archive = zipfile.ZipFile(io.BytesIO(zip_bytes), "r")
-    except (zipfile.BadZipFile, OSError) as exc:
-        raise ArtifactValidationError("artifact is not a readable ZIP") from exc
-
-    with archive:
-        infos = archive.infolist()
-        if not infos:
-            raise ArtifactValidationError("artifact ZIP is empty")
-        roots = set()
-        normalized_names = set()
-        for info in infos:
-            parts = _safe_member_name(info.filename)
-            roots.add(parts[0])
-            normalized = "/".join(parts)
-            if normalized in normalized_names:
-                raise ArtifactValidationError("artifact contains duplicate paths")
-            normalized_names.add(normalized)
-            mode = (info.external_attr >> 16) & 0xFFFF
-            if stat.S_IFMT(mode) == stat.S_IFLNK:
-                raise ArtifactValidationError("artifact contains a symbolic link")
-        if len(roots) != 1:
-            raise ArtifactValidationError(
-                "artifact must contain exactly one top-level add-on directory"
-            )
-        addon_root = next(iter(roots))
-        xml_name = f"{addon_root}/addon.xml"
-        if xml_name not in normalized_names:
-            raise ArtifactValidationError("artifact is missing addon.xml")
-        try:
-            xml_bytes = archive.read(xml_name)
-            root = ET.fromstring(xml_bytes)
-        except (KeyError, ET.ParseError, OSError) as exc:
-            raise ArtifactValidationError("artifact addon.xml is invalid") from exc
-        if root.tag.rsplit("}", 1)[-1] != "addon":
-            raise ArtifactValidationError("artifact addon.xml has the wrong root")
-        actual_id = root.attrib.get("id")
-        actual_version = root.attrib.get("version")
-        if actual_id != expected_addon_id:
-            raise ArtifactValidationError("artifact addon.xml ID does not match")
-        if actual_version != expected_version:
-            raise ArtifactValidationError("artifact addon.xml version does not match")
+        validated_root(zip_bytes, expected_addon_id, expected_version)
+    except Exception as exc:
+        raise ArtifactValidationError(str(exc)) from exc
 
     return ArtifactMetadata(
         sha256=hashlib.sha256(zip_bytes).hexdigest(),

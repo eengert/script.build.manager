@@ -387,47 +387,12 @@ def _find_addon_xml(names: list) -> Optional[str]:
 
 
 def validate_repository_zip(zip_bytes: bytes, expected_addon_id: str) -> None:
-    """Validate a repository bootstrap ZIP artifact.
-
-    Raises RepositoryValidationError if:
-    - Not a valid ZIP file
-    - Contains path traversal or absolute paths
-    - No addon.xml found at depth <= 2
-    - addon.xml declares a different add-on ID
-    - addon.xml does not declare xbmc.addon.repository extension
-    """
-    if not zip_bytes:
-        raise RepositoryValidationError("Artifact is empty")
-
+    """Validate the shared package contract plus repository extension."""
+    from resources.lib.addon_zip import validated_root
     try:
-        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    except zipfile.BadZipFile as exc:
-        raise RepositoryValidationError(f"Not a valid ZIP: {exc}") from exc
-
-    with zf:
-        names = zf.namelist()
-
-    _validate_zip_entries(names)
-
-    addon_xml_path = _find_addon_xml(names)
-    if addon_xml_path is None:
-        raise RepositoryValidationError(
-            f"ZIP does not contain addon.xml at depth <= 2 (entries: {len(names)})"
-        )
-
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        addon_xml_bytes = zf.read(addon_xml_path)
-
-    try:
-        root = ET.fromstring(addon_xml_bytes.decode("utf-8", errors="replace"))
-    except ET.ParseError as exc:
-        raise RepositoryValidationError(f"addon.xml is not valid XML: {exc}") from exc
-
-    declared_id = root.get("id", "")
-    if declared_id != expected_addon_id:
-        raise RepositoryValidationError(
-            f"addon.xml declares id={declared_id!r}, expected {expected_addon_id!r}"
-        )
+        root = ET.fromstring(validated_root(zip_bytes, expected_addon_id).xml_bytes)
+    except Exception as exc:
+        raise RepositoryValidationError(str(exc)) from exc
 
     has_repo_ext = any(
         ext.get("point") == "xbmc.addon.repository"
@@ -445,59 +410,12 @@ def validate_repository_zip(zip_bytes: bytes, expected_addon_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _extract_zip_to_directory(zip_bytes: bytes, addon_id: str, target: Path) -> None:
-    """Extract repository ZIP contents to target, enforcing path safety.
-
-    ZIP entries may be flat (addon.xml, ...) or prefixed (addon_id/addon.xml, ...).
-    Only entries under the add-on prefix (or at root for flat ZIPs) are extracted.
-    Every destination path is checked to be inside target before writing.
-    """
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        names = zf.namelist()
-
-    roots = {
-        name.split("/", 1)[0]
-        for name in names
-        if name and not name.endswith("/")
-    }
-    prefix = f"{addon_id}/"
-    has_prefix = any(n.startswith(prefix) and n != prefix for n in names)
-    alternate_prefix = ""
-    if not has_prefix and len(roots) == 1:
-        candidate = next(iter(roots))
-        if any(n.startswith(f"{candidate}/") for n in names):
-            alternate_prefix = f"{candidate}/"
-
-    target.mkdir(parents=True, exist_ok=True)
-    target_resolved = target.resolve()
-
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in names:
-            if name.endswith("/"):
-                continue  # directory entry; created lazily
-            if has_prefix:
-                if not name.startswith(prefix):
-                    continue
-                rel = name[len(prefix):]
-            elif alternate_prefix:
-                rel = name[len(alternate_prefix):]
-            else:
-                rel = name
-            if not rel:
-                continue
-
-            dest = target / rel
-            dest_resolved = dest.resolve()
-
-            try:
-                dest_resolved.relative_to(target_resolved)
-            except ValueError:
-                raise RepositoryInstallError(
-                    f"ZIP entry {name!r} would escape installation directory"
-                )
-
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(name) as src:
-                dest.write_bytes(src.read())
+    """Extract only the single verified root into an empty, safe directory."""
+    from resources.lib.addon_zip import extract_package
+    try:
+        extract_package(zip_bytes, addon_id, target)
+    except Exception as exc:
+        raise RepositoryInstallError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -724,32 +642,11 @@ class KodiRuntimeRepositoryBackend(RepositoryBackend):
                 f"manual cleanup required)"
             )
 
-        # Stage in a temp dir on the same filesystem for atomic rename.
-        # mkdtemp(dir=addons_dir) guarantees same filesystem as target.
-        tmp_dir: Optional[Path] = None
+        from resources.lib.addon_zip import publish_package
         try:
-            tmp_dir = Path(tempfile.mkdtemp(dir=addons_dir))
-            _extract_zip_to_directory(zip_bytes, addon_id, tmp_dir)
-
-            # Verify extraction produced at least one file
-            has_files = any(p.is_file() for p in tmp_dir.rglob("*"))
-            if not has_files:
-                raise RepositoryInstallError(
-                    f"ZIP extraction produced no files for {addon_id!r}"
-                )
-
-            # Atomic rename: on POSIX this succeeds or fails atomically when
-            # src and dst are on the same filesystem. dst must not exist (checked above).
-            os.rename(str(tmp_dir), str(target))
-            tmp_dir = None  # ownership transferred; don't cleanup
-
-        except RepositoryError:
-            raise
+            publish_package(zip_bytes, addon_id, target)
         except Exception as exc:
             raise RepositoryInstallError(f"Extraction failed: {exc}") from exc
-        finally:
-            if tmp_dir is not None and tmp_dir.exists():
-                shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def trigger_addon_scan(self) -> None:
         """Run UpdateLocalAddons to register newly extracted files in Kodi's database.

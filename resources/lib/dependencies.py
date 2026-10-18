@@ -1433,8 +1433,8 @@ class KodiRuntimeDependencyBackend(DependencyBackend):
             package_url, version = package_backend._resolve_package_url(addon_id)
             zip_data = _fetch_bytes(package_url, max_bytes=100 * 1024 * 1024)
             _validate_addon_zip(zip_data, addon_id, expected_version=version)
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as archive:
-                return archive.read(f"{addon_id}/addon.xml")
+            from resources.lib.addon_zip import validated_root
+            return validated_root(zip_data, addon_id, version).xml_bytes
         except Exception:
             return None
 
