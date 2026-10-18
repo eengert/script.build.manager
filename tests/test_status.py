@@ -831,6 +831,81 @@ class EmptyConfigurationScope(StatusBase):
         h.effective = EffectiveConfiguration(packages=('pkg',))
         return h
 
+    def test_configuration_warning_cannot_make_complete_observation_current(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+
+        h = self.current()
+        inspection = h.service()._o.configuration_inspector.inspect(h.effective)
+        report = SimpleNamespace(checks=(SimpleNamespace(
+            domain=ValidationDomain.CONFIGURATION, status=ValidationStatus.WARNING),))
+
+        self.assertTrue(inspection.effective_identity)
+        self.assertEqual(inspection.matching, inspection.total)
+        self.assertEqual(len(inspection.setting_checks), 2)
+        self.assertEqual(len(inspection.file_checks), 1)
+        gaps = []
+        actual = BuildStatusService._configuration_status(h.desired, report, inspection, gaps)
+
+        self.assertEqual(actual.level, AreaLevel.UNAVAILABLE)
+        self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, gaps)
+
+    def test_same_count_unrelated_setting_observation_is_unavailable(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+
+        h = self.current()
+        complete = h.service()._o.configuration_inspector.inspect(h.effective)
+        observed = list(complete.setting_checks)
+        _, outcome = observed[0]
+        observed[0] = ((ConfigTargetKind.ADDON.value, DEMO, "unrelated"), outcome)
+        inspection = replace(complete, setting_checks=tuple(observed))
+        report = SimpleNamespace(checks=(SimpleNamespace(
+            domain=ValidationDomain.CONFIGURATION, status=ValidationStatus.PASS),))
+
+        self.assertTrue(inspection.effective_identity)
+        self.assertEqual(len(inspection.setting_checks), 2)
+        self.assertEqual(inspection.matching, inspection.total)
+        self.assertEqual(inspection.differing, 0)
+        self.assertEqual(inspection.unreadable, 0)
+        self.assertEqual(len(inspection.file_checks), 1)
+        gaps = []
+        actual = BuildStatusService._configuration_status(h.desired, report, inspection, gaps)
+
+        self.assertEqual(actual.level, AreaLevel.UNAVAILABLE)
+        self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, gaps)
+
+    def test_duplicate_setting_observation_is_unavailable_directly_and_integrated(self):
+        from resources.lib.validator import ValidationDomain, ValidationStatus
+
+        h = self.current()
+        complete = h.service()._o.configuration_inspector.inspect(h.effective)
+        inspection = replace(
+            complete, setting_checks=complete.setting_checks + (complete.setting_checks[0],))
+        report = SimpleNamespace(checks=(SimpleNamespace(
+            domain=ValidationDomain.CONFIGURATION, status=ValidationStatus.PASS),))
+
+        self.assertEqual(len(set(target for target, _ in inspection.setting_checks)), 2)
+        self.assertEqual(inspection.matching, inspection.total)
+        self.assertTrue(inspection.effective_identity)
+        gaps = []
+        direct = BuildStatusService._configuration_status(h.desired, report, inspection, gaps)
+        self.assertEqual(direct.level, AreaLevel.UNAVAILABLE)
+        self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, gaps)
+
+        ordinary_inspector = h.owners().configuration_inspector
+
+        class DuplicateInspector:
+            def inspect(self, effective):
+                complete = ordinary_inspector.inspect(effective)
+                return replace(
+                    complete,
+                    setting_checks=complete.setting_checks + (complete.setting_checks[0],),
+                )
+
+        integrated = h.service(configuration_inspector=DuplicateInspector()).check(h.target())
+        self.assertEqual(integrated.configuration.level, AreaLevel.UNAVAILABLE)
+        self.assertEqual(integrated.overall, OverallStatus.INCOMPLETE)
+        self.assertIn(CheckGap.CONFIGURATION_UNAVAILABLE, integrated.gaps)
+
     def test_direct_evaluation_requires_exact_expected_targets(self):
         from resources.lib.validator import ValidationDomain, ValidationStatus
         h = self.current()

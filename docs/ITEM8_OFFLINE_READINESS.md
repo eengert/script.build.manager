@@ -1,10 +1,11 @@
 # Item 8 offline safety and candidate readiness — 2026-10-17
 
 Status: **CORRECTION C1 — INDEPENDENT RE-REVIEW PENDING**.
-The October 18 review accepted the acquisition refusal, integrated empty-scope
-Status, import policies, synthetic fixture isolation and prior evidence. C1
-corrects remaining harness claims and hardens direct Status evaluation; it does
-not reopen those accepted behaviors.
+The October 18 review found the acquisition refusal, integrated empty-scope
+Status, import policies, synthetic fixture isolation and prior evidence
+technically sound. It nevertheless returned NOT PASS for the overall package.
+C1 corrects remaining harness claims and hardens direct Status evaluation
+without reopening those technical findings.
 Item 8 remains OPEN. No native qualification, staging, archive acquisition,
 installation, activation or private transfer occurred in this task. The accepted
 Help correction at `8c569d6` is unchanged and still needs a separately authorized
