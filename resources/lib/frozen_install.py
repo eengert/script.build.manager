@@ -1287,7 +1287,7 @@ def _repository_package_required_dependencies(
     try:
         from resources.lib.addon_zip import validated_root
         xml_bytes = validated_root(package.zip_bytes, package.addon_id, package.version).xml_bytes
-        from resources.lib.dependencies import _is_system_dependency, _parse_requirements_strict, _version_satisfies
+        from resources.lib.dependencies import _is_system_dependency, _parse_requirements_strict, _dependency_version_satisfies
         requirements = _parse_requirements_strict(xml_bytes)
     except Exception as exc:
         raise FrozenInstallValidationError(
@@ -1332,7 +1332,7 @@ def _repository_package_required_dependencies(
             record.resolved_version if record and record.resolved_version
             else dependency.version
         )
-        if requirement.min_version and not _version_satisfies(version, requirement.min_version):
+        if requirement.min_version and not _dependency_version_satisfies(version, requirement.min_version):
             if requirement.optional:
                 continue
             raise FrozenInstallValidationError(

@@ -390,6 +390,63 @@ def _version_satisfies(installed: str, required_min: str) -> bool:
     return inst_padded >= req_padded
 
 
+def _admission_version(version):
+    """Restricted managed-dependency syntax; not a general Kodi comparator.
+
+    Decimal upstream releases and the exact acquired +matrix.N packaging form
+    are understood. Differing matrix revisions at the same release are NOT
+    ordered: their relationship needs independent evidence.
+    """
+    import re
+    if not isinstance(version, str) or len(version) > 64:
+        return None
+    match = re.fullmatch(r'(0|[1-9][0-9]*)(\.(?:0|[1-9][0-9]*))*(?:\+matrix\.(0|[1-9][0-9]*))?', version)
+    if not match:
+        return None
+    release, _, suffix = version.partition('+')
+    parts = tuple(int(p) for p in release.split('.'))
+    while len(parts) > 1 and parts[-1] == 0:
+        parts = parts[:-1]
+    return parts, suffix
+
+
+def _dependency_version_satisfies(installed, minimum):
+    """Fail-closed admission for managed dependency minimums.
+
+    Numeric upstream release takes precedence over distribution packaging.
+    For equal releases accept identical packaging, or a packaged release for
+    a plain upstream minimum. A plain release cannot prove a packaged minimum;
+    different packaging revisions are deliberately incomparable.
+    """
+    actual = _admission_version(installed)
+    if actual is None:
+        return False
+    if minimum == '':
+        return True
+    required = _admission_version(minimum)
+    if required is None:
+        return False
+    a, b = actual[0], required[0]
+    length = max(len(a), len(b))
+    a, b = a + (0,) * (length-len(a)), b + (0,) * (length-len(b))
+    if a != b:
+        return a > b
+    return not required[1] or actual[1] == required[1]
+
+
+def _admission_max_requirement(a, b):
+    """Conjoin minima without discarding unsupported or incomparable evidence."""
+    if not a:
+        return b
+    if not b:
+        return a
+    if _dependency_version_satisfies(a, b):
+        return a
+    if _dependency_version_satisfies(b, a):
+        return b
+    return '<unsupported-or-incomparable-minima>'
+
+
 def _strict_version_satisfies(installed: str, required_min: str) -> bool:
     """Fail-closed comparison for platform-provided requirements (D-028).
 
@@ -506,7 +563,7 @@ def _extract_requirements(root_el: ET.Element) -> List[DependencyRequirement]:
     Deduplication rules when the same addon_id appears more than once:
     - Required beats optional: if any occurrence is required, the result is required.
     - Strongest min_version wins: effective min = max across all occurrences,
-      using _max_version_requirement() (order-independent).
+      using fail-closed _admission_max_requirement() (order-independent).
     - Order of entries in the output matches first-seen addon_id order.
     """
     requires_el = root_el.find("requires")
@@ -535,7 +592,7 @@ def _extract_requirements(root_el: ET.Element) -> List[DependencyRequirement]:
             # Required beats optional: only optional if every occurrence is optional
             new_optional = existing.optional and optional
             # Strongest minimum version wins (order-independent)
-            new_min = _max_version_requirement(existing.min_version, min_version)
+            new_min = _admission_max_requirement(existing.min_version, min_version)
             entries[dep_id] = DependencyRequirement(
                 addon_id=dep_id,
                 min_version=new_min,
@@ -663,7 +720,7 @@ def _dfs(
 
     # Update effective minimum version for this dependency across all paths
     prev_effective = effective_min.get(dep_id, "")
-    new_effective = _max_version_requirement(prev_effective, req.min_version)
+    new_effective = _admission_max_requirement(prev_effective, req.min_version)
     effective_min[dep_id] = new_effective
 
     # Already fully processed: re-classify if a stronger requirement was discovered
@@ -675,7 +732,7 @@ def _dfs(
                 DependencyStatus.INSTALLED_DISABLED,
             ):
                 inst_version = existing.installed_version or ""
-                if new_effective and not _version_satisfies(inst_version, new_effective):
+                if new_effective and not _dependency_version_satisfies(inst_version, new_effective):
                     result_map[dep_id] = DependencyNode(
                         addon_id=existing.addon_id,
                         required_by=existing.required_by,
@@ -731,7 +788,7 @@ def _dfs(
 
     # Installed — classify based on effective minimum version across all paths
     inst_version = details.version or ""
-    if new_effective and not _version_satisfies(inst_version, new_effective):
+    if new_effective and not _dependency_version_satisfies(inst_version, new_effective):
         status = DependencyStatus.VERSION_INSUFFICIENT
     elif not details.enabled:
         status = DependencyStatus.INSTALLED_DISABLED
