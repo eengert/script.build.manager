@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "engine_min_version": "0.1.0",
+  "build": {
+    "id": "af3-3312-disposable",
+    "version": "0.1.0",
+    "name": "AF3 3.3.12 Disposable Qualification",
+    "description": "Exact AF3 3.3.12 15-key scope; requires a separately admitted frozen dependency closure. No private resources."
+  },
+  "addons": [
+    {
+      "addon_id": "skin.arctic.fuse.3",
+      "state": "enabled"
+    }
+  ],
+  "skin": {
+    "addon_id": "skin.arctic.fuse.3",
+    "config_packages": [
+      "af3-3.3.12"
+    ]
+  },
+  "config": {
+    "managed_settings": [
+      {
+        "target": "skin",
+        "addon_id": "skin.arctic.fuse.3",
+        "keys": [
+          "HomeSwitcher.Vertical",
+          "HomeSwitcher.EnableIcons",
+          "HomeSwitcher.DisableHeader",
+          "HomeSwitcher.DisableDate",
+          "HomeSwitcher.DisableSearch",
+          "HomeSwitcher.DisableFirstWidgetFocus",
+          "HomeSwitcher.LoopBack",
+          "Spotlight.EnableSlide",
+          "Spotlight.UseMenuButton",
+          "View.UseDetailedListLabels",
+          "Widgets.EnableShowMore",
+          "Widgets.DisableNoResultsItem",
+          "Navigation.OnBack",
+          "Seekbar.TimeDisplay",
+          "Skin.FlixArt.Size"
+        ]
+      }
+    ],
+    "managed_files": []
+  },
+  "platform_profiles": {
+    "disposable": {
+      "label": "BM-020A disposable validation platform"
+    }
+  },
+  "device_profiles": {
+    "bm020a-disposable": {
+      "label": "BM-020A disposable executor fixture",
+      "extends": "disposable"
+    }
+  }
+}

@@ -11,6 +11,37 @@ device overlay, remain private, or remain unmanaged. It is a desired-state
 specification, not a backup manifest. Current Eric-specific values are not
 reproduced here.
 
+## AF3 3.3.12 initial-beta scope (2026-10-18)
+
+The exact 3.3.12 distribution (SHA-256
+`baa7f38da51379f4a65f9aee421e27b369ce799103d58fdef9087920b9041492`)
+has no `HomeSwitcher.EnableIconText` implementation. Eric approved the separate
+`af3-3.3.12` catalog: the other 15 policy values from `af3-common`, with no
+files and `HomeSwitcher.EnableIcons=false` for **Text** mode. The distribution
+provides Icons/Text through `EnableIcons`; no independent icon-plus-text
+replacement has been established. This scope does not promise that old mode.
+
+The historical 16-key `af3-common` package and examples below remain legacy
+policy. Their stored data and fingerprints are not migrated or rewritten.
+A 16-key configuration targeting 3.3.12 is incompatible even if the unsupported
+key is false. It is rejected at public-bundle validation and reconciliation
+preflight; Review Changes checks the planned final software version, including
+repository resolutions. A repository preparation cannot bind a resolution
+that makes the configuration incompatible. These checks also apply to captured
+public package IDs, rather than trusting the original package name.
+
+Native Create selects the 15-key catalog only for exact AF3 version `3.3.12`.
+Other capture versions retain the legacy policy; this does not qualify those
+versions. An explicitly selected `af3-3.3.12` package requires exact target
+version evidence; unknown or different versions fail closed. The new public
+`resources/builds/examples/af3-3.3.12.example.json` declares exactly the new
+scope and needs a separately admitted frozen dependency closure. No file,
+private resource, menu/widget payload, alias or automatic migration is added.
+
+These are source and offline checks. Independent review is required before
+staging; neither runtime compatibility nor complete dependency admission is
+implied. The earlier 16-key validation evidence below remains historical.
+
 ## Decision summary
 
 The minimal safe common subset is typed AF3 skin preferences only. It contains

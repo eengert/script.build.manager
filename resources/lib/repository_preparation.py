@@ -156,6 +156,10 @@ def bind_prepared(prepared, source, profile, desired, frozen, loader, store):
                     or len(data) != record.artifact_size):
                 raise ValueError
             validate_addon_zip(data, expected_addon_id=record.addon_id, expected_version=record.resolved_version)
+        from resources.lib.af3 import validate_configuration_version
+        versions = {n.addon_id: n.version for n in frozen.addons}
+        versions.update({r.addon_id: r.resolved_version for r in checked.records})
+        validate_configuration_version(loader.resolve(desired.config), versions)
         return checked.records
     except Exception as exc:
         raise PreparationError(PreparationCode.TARGET_INVALID) from exc

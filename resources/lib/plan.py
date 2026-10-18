@@ -833,6 +833,8 @@ class BuildPlanService:
         if desired.config is None:
             return SettingsPlan(SettingsPlanKind.NOT_APPLICABLE)
         try:
+            from resources.lib.af3 import validate_configuration_version
+            validate_configuration_version(effective, {a: item.version for a, item in final_map.items()})
             inspection = self._o.status.configuration_inspector.inspect(effective)
         except Exception as exc:
             self._log_failure("configuration", exc)

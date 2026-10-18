@@ -104,7 +104,8 @@ class TrustedCaptureCatalog:
     def compose(self, selected, skin, private, versions):
         settings, files = [], []
         if skin == 'skin.arctic.fuse.3' and skin in selected:
-            package = self.loader.load_package('af3-common')
+            from resources.lib.af3 import capture_package
+            package = self.loader.load_package(capture_package(versions.get(skin)))
             for target in package.settings:
                 if target.addon_id != skin or target.target_kind.value != 'skin':
                     raise CreateValidationError()

@@ -42,6 +42,11 @@ class LibraryConflict(LibraryError):
     pass
 
 
+class LibraryCompatibilityError(LibraryError):
+    def __init__(self):
+        super().__init__("AF3 configuration incompatible with target catalog")
+
+
 def _error():
     return LibraryError("build_library_invalid")
 
@@ -385,6 +390,11 @@ def _validate_bundle(bundle):
         if desired.config:
             required.update(desired.config.packages)
         effective = loader.resolve(desired.config)
+        from resources.lib.af3 import AF3PolicyError, validate_configuration_version
+        try:
+            validate_configuration_version(effective, {n.addon_id: n.version for n in frozen.addons})
+        except AF3PolicyError:
+            raise LibraryCompatibilityError() from None
         reject_platform_mutations(desired, platform_ids, effective)
         for setting in effective.settings:
             if (setting.target in private or setting.addon_id == "plugin.video.redlight"
@@ -471,6 +481,8 @@ class BuildLibrary:
         try:
             with _directory(self.root) as fd:
                 return self._load_at(fd, key, self._registry(fd))
+        except LibraryCompatibilityError:
+            raise
         except Exception:
             raise _error() from None
 
@@ -605,7 +617,7 @@ class BuildLibrary:
                     raise _error()
                 _atomic(fd, "registry.json", registry)
             return self.get(key)
-        except LibraryConflict:
+        except (LibraryConflict, LibraryCompatibilityError):
             raise
         except Exception:
             raise _error() from None

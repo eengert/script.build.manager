@@ -854,6 +854,8 @@ class BuildManager:
 
         try:
             effective = config_loader.resolve(desired.config)
+            from resources.lib.af3 import validate_configuration_version
+            validate_configuration_version(effective, {a.addon_id: a.version for a in actual.addons})
             from resources.lib.platform_policy import mutation_targets, reject_platform_mutations, reject_backend_platform_targets
             platform_ids = {n.addon_id for n in library_frozen.addons if n.platform_provided} if library_frozen else set()
             reject_platform_mutations(desired, platform_ids, effective)
