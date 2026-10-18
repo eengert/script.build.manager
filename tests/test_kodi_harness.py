@@ -23,6 +23,23 @@ if str(_PROJECT_ROOT) not in sys.path:
 import tools.kodi_test as harness  # noqa: E402
 
 
+class TestHarnessClaimAccuracy(unittest.TestCase):
+    def test_no_unsupported_profile_verification_claims(self):
+        # Inspect docstrings/output without executing historical live validators.
+        tree = ast.parse(Path(harness.__file__).read_text())
+        forbidden = (
+            "confirm real kodi profile untouched", "verify real kodi profile untouched",
+            "verify real profile untouched", "verify the real kodi profile untouched",
+            "verify the real profile", "real profile untouched",
+            "real kodi profile was not accessed by this gate",
+        )
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for claim in forbidden:
+                    with self.subTest(line=node.lineno, claim=claim):
+                        self.assertNotIn(claim, node.value.lower())
+
+
 class TestLegacyAF3SourceDenial(unittest.TestCase):
     ENTRYPOINTS = (
         'validate_af3_package', 'validate_skin_config',

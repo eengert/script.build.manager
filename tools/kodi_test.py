@@ -868,7 +868,7 @@ def validate_repo() -> None:
     10  Verify repository still installed and enabled after restart
     11  Install again → verify ALREADY_INSTALLED (no mutation)
     12  Stop Kodi + shut down HTTP server
-    13  Confirm real Kodi profile untouched
+    13  Record that the normal profile is not inspected
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     """
@@ -1513,7 +1513,7 @@ def validate_addon() -> None:
     16  Verify addon A still enabled + addon B still disabled after restart
     17  Install both again → verify ALREADY_INSTALLED (idempotency)
     18  Stop Kodi + shut down HTTP server
-    19  Confirm real Kodi profile untouched
+    19  Record that the normal profile is not inspected
 
     NOTE on step 10: Both harness and production use the same constrained
     package-install fallback algorithm (resolve → download → validate →
@@ -2100,7 +2100,7 @@ def validate_dependencies() -> None:
      15  Verify bm012-optional NOT in INSTALLED actions (optional policy)
      16  Verify Kodi API: bm012-a installed + enabled (Addons.GetAddonDetails)
      17  Verify Kodi API: bm012-b installed + enabled (Addons.GetAddonDetails)
-     18  Verify real Kodi profile untouched + stop Kodi + shut down HTTP server
+     18  Stop Kodi + shut down HTTP server; normal profile is not inspected
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     """
@@ -2565,7 +2565,7 @@ def validate_addon_state() -> None:
      13  Verify all_correct=False; both results have expected statuses
      14  Restart Kodi; verify bm013-disabled still disabled after restart (persistence)
      15  reconcile({enabled:"enabled", disabled:"enabled"}) → enabled=ALREADY_CORRECT, disabled=ENABLED
-     16  Verify real Kodi profile untouched + stop Kodi + shut down HTTP server
+     16  Stop Kodi + shut down HTTP server; normal profile is not inspected
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     """
@@ -3025,7 +3025,7 @@ def validate_post_operations() -> None:
      17  Re-inspect KodiState after repair
      18  validate_build_state(desired, repaired_actual, closure) → PASS
          Verify passed=True; validator still made zero mutations total
-     19  Stop Kodi + shut down HTTP server; verify real profile untouched
+     19  Stop Kodi + shut down HTTP server; normal profile is not inspected
 
     ALL mutation occurs only in the disposable .kodi-test environment.
     The BM-014 validator itself never calls SetAddonEnabled or any mutating API.
@@ -4381,7 +4381,7 @@ def validate_config() -> None:
       21  Preflight proof: an ownership-violating job fails with zero mutations
       22  Reapply the correct configuration -> both drifts repaired and verified
       23  Restart Kodi -> verify persistence; a third apply makes zero mutations
-      24  Stop Kodi + shut down HTTP server; verify the real Kodi profile untouched
+      24  Stop Kodi + shut down HTTP server; normal profile is not inspected
 
     ALL mutation occurs only inside .kodi-test. The real Kodi profile is never
     read, written, or modified.
@@ -5993,7 +5993,7 @@ def validate_build_manager_transaction() -> None:
             raise RuntimeError("service did not return to the no-transaction fast path")
         print("  no-transaction startup remained silent and did not create a record ✓")
     finally:
-        print("\n[9/9] stop disposable Kodi and verify the real profile")
+        print("\n[9/9] request disposable Kodi stop; normal profile is not inspected")
         try:
             stop()
         except RuntimeError:
@@ -6114,7 +6114,7 @@ def validate_build_manager_manual_restart() -> None:
             raise RuntimeError(f"manual handoff remained after clear: {inspected}")
         print("  explicit clear removed the pending transaction ✓")
     finally:
-        print("\n[8/8] stop disposable Kodi and verify the real profile")
+        print("\n[8/8] request disposable Kodi stop; normal profile is not inspected")
         try:
             stop()
         except RuntimeError:
@@ -6485,7 +6485,7 @@ def validate_build_manager() -> None:
         except RuntimeError:
             pass
 
-    print("real Kodi profile was not accessed by this gate ✓")
+    print("normal profile is not inspected; no preservation verification performed")
     print("\n=== BM-020A validation PASSED ===\n")
 
 
@@ -6577,7 +6577,7 @@ def validate_frozen_capture() -> None:
             stop()
         except RuntimeError:
             pass
-    print("real Kodi profile was not accessed by this gate ✓")
+    print("normal profile is not inspected; no preservation verification performed")
     print("\n=== BM-021B frozen capture validation FINISHED ===\n")
 
 
@@ -6648,7 +6648,7 @@ def validate_updater_guard() -> None:
             stop()
         except RuntimeError:
             pass
-    print("supported Settings API only; no Kodi database writes; real profile untouched ✓")
+    print("supported Settings API only; no Kodi database writes; normal profile is not inspected")
     print("\n=== BM-021B updater guard validation PASSED ===\n")
 
 
