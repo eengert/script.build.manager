@@ -45,10 +45,24 @@ class AF3RestartRequiredError(AF3PolicyError):
     code = "AF3_CONFIGURATION_RESTART_REQUIRED"
 
 
+def is_af3_identity(addon_id):
+    """Recognize only AF3 and its ASCII case variants for policy admission.
+
+    This is not an execution/storage alias or a global Kodi identity rule.
+    """
+    return isinstance(addon_id, str) and addon_id.isascii() and addon_id.lower() == AF3_SKIN_ID
+
+
+def _validate_identities(settings):
+    for setting in settings:
+        if is_af3_identity(setting.addon_id) and setting.addon_id != AF3_SKIN_ID:
+            raise AF3PolicyError("AF3 configuration requires the canonical add-on ID")
+
+
 def has_configuration(configuration):
     return configuration is not None and (
         AF3_3312_PACKAGE in configuration.packages or any(
-            setting.addon_id == AF3_SKIN_ID for setting in configuration.settings))
+            is_af3_identity(setting.addon_id) for setting in configuration.settings))
 
 
 def capture_package(version):
@@ -66,6 +80,7 @@ def validate_configuration_version(configuration, versions):
     """
     if configuration is None:
         return
+    _validate_identities(configuration.settings)
     version = versions.get(AF3_SKIN_ID)
     if has_configuration(configuration) and (
         not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version)
@@ -82,6 +97,7 @@ def validate_configuration_version(configuration, versions):
 
 def validate_skin_settings(settings_map: Mapping[tuple, object]) -> None:
     """Reject contradictory AF3 HomeSwitcher mode settings."""
+    _validate_identities(settings_map.values())
     icons = settings_map.get(("skin", AF3_SKIN_ID, AF3_ENABLE_ICONS_KEY))
     icon_text = settings_map.get(("skin", AF3_SKIN_ID, AF3_ENABLE_ICON_TEXT_KEY))
     if (

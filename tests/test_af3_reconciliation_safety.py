@@ -36,10 +36,11 @@ class MemorySettings(ConfigurationBackend):
 
 
 def scenario(package='af3-3.3.12', before=None, after='3.3.12', *, manager_class=BuildManager,
-             install_version='3.3.12', restart=False, resolve=True, plan_upgrade=False, real_installers=False):
-    config = effective(package)
+             install_version='3.3.12', restart=False, resolve=True, plan_upgrade=False, real_installers=False, config=None):
+    config = effective(package) if config is None else config
     declared = ConfigDeclarations(packages=(package,), managed_settings=(
-        ManagedSettingScope(AF3, tuple(s.key for s in config.settings), SettingTargetKind.SKIN),))
+        ManagedSettingScope(config.settings[0].addon_id, tuple(s.key for s in config.settings),
+                            SettingTargetKind(config.settings[0].target_kind.value)),))
     desired = replace(_desired((AddonEntry(AF3, 'enabled'),)), config=declared)
     states = [_state(*(() if before is None else (InstalledAddon(AF3, True, before),))),
               _state(*(() if after is None else (InstalledAddon(AF3, True, after),)))]
@@ -52,7 +53,9 @@ def scenario(package='af3-3.3.12', before=None, after='3.3.12', *, manager_class
         from resources.lib.dependencies import DependencyAwareInstaller, DependencyResolver
         from tests.test_addon_manager import FakeAddonBackend
         from tests.test_dependencies import FakeDependencyBackend, _xml
-        backend = FakeAddonBackend(poll_result=InstalledAddonInfo(AF3, True, install_version))
+        backend = FakeAddonBackend(
+            installed={} if before is None else {AF3: InstalledAddonInfo(AF3, True, before)},
+            poll_result=InstalledAddonInfo(AF3, True, install_version))
         backend.prepare_package = fixture.dependency_installer.prepare_package
         backend.invoke_prepared_install = Mock()
         resolver = DependencyResolver(FakeDependencyBackend(addon_xmls={AF3: _xml(AF3, install_version)}))
@@ -109,15 +112,47 @@ class AF3ReconciliationSafety(unittest.TestCase):
                 self.assertFalse(settings.writes)
                 self.assertIn('AF3_ACTUAL_VERSION_MISMATCH', str(result.to_dict()))
 
-    def test_supported_explicit_upgrade_checks_final_not_old_version(self):
+    def test_synthetic_install_plan_checks_final_not_old_version(self):
         result, f, settings = scenario(before='3.2.19', plan_upgrade=True)
         self.assertTrue(result.success, result.to_dict())
         self.assertTrue(settings.writes)
 
-    def test_legacy_explicit_upgrade_denied_before_install(self):
+    def test_synthetic_legacy_install_plan_denied_before_install(self):
         result, f, settings = scenario('af3-common', before='3.2.19', plan_upgrade=True)
         self.assertEqual(result.failure.code, 'AF3_CONFIGURATION_INCOMPATIBLE')
         self.assertFalse(f.dependency_installer.calls or settings.writes)
+
+    def test_installed_3312_resume_configures_full_scope_without_reinstall(self):
+        # Re-enter reconciliation with AF3 already installed. This offline
+        # installed-state input makes no claim that a restart was observed.
+        result, f, settings = scenario(before='3.3.12', real_installers=True)
+        self.assertTrue(result.success, result.to_dict())
+        config = effective('af3-3.3.12')
+        self.assertEqual(len(config.settings), 15)
+        self.assertEqual(settings.values, {(s.addon_id, s.key): s.value for s in config.settings})
+        self.assertTrue(settings.writes)
+        backend = f.dependency_installer._addon_manager._backend
+        backend.prepare_package.assert_not_called()
+        backend.invoke_prepared_install.assert_not_called()
+        self.assertFalse(result.restart_report.requires_restart)
+
+    def test_production_installer_refuses_unsupported_3219_replacement(self):
+        # The ordinary production planner does not authorize replacement.
+        result, f, settings = scenario(before='3.2.19', after='3.2.19', real_installers=True)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure.code, 'AF3_CONFIGURATION_INCOMPATIBLE')
+        self.assertFalse(settings.writes)
+        f.dependency_installer._addon_manager._backend.invoke_prepared_install.assert_not_called()
+        # Force the requested replacement action, but retain production installer
+        # admission and the actually installed old version through CONFIGURE.
+        result, f, settings = scenario(before='3.2.19', after='3.2.19',
+                                      plan_upgrade=True, real_installers=True)
+        self.assertFalse(result.success)
+        self.assertIn('AF3_ACTUAL_VERSION_MISMATCH', str(result.to_dict()))
+        self.assertFalse(settings.writes)
+        backend = f.dependency_installer._addon_manager._backend
+        backend.invoke_prepared_install.assert_not_called()
+        self.assertEqual(backend.get_addon_details(AF3).version, '3.2.19')
 
     def test_unknown_prepared_identity_denied_before_install(self):
         result, f, settings = scenario(resolve=False)
@@ -128,16 +163,17 @@ class AF3ReconciliationSafety(unittest.TestCase):
         result, f, settings = scenario(restart=True)
         self.assertFalse(result.success)
         self.assertTrue(result.restart_report.requires_restart)
+        self.assertEqual(result.failure.code, 'AF3_CONFIGURATION_RESTART_REQUIRED')
         self.assertFalse(settings.writes)
 
-    def test_addon_and_default_kind_cannot_bypass_key_exclusion(self):
+    def test_all_target_kinds_cannot_bypass_key_exclusion(self):
         from resources.lib.manifest import validate_manifest
         from resources.lib.config import _parse_descriptor, EffectiveConfiguration
         from resources.lib.af3 import validate_configuration_version, AF3PolicyError
-        for explicit in (False, True):
+        for target in (None, 'addon', 'skin'):
             row = dict(addon_id=AF3, key=OLD_KEY, type='bool', value=False)
-            if explicit:
-                row['target'] = 'addon'
+            if target is not None:
+                row['target'] = target
             pkg = _parse_descriptor(dict(schema_version=1, id='test', settings=[row]),
                 package_id='test', package_dir='')
             with self.assertRaisesRegex(AF3PolicyError, 'incompatible'):

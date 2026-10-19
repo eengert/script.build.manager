@@ -2,6 +2,7 @@
 import io
 from pathlib import Path
 import stat
+import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -89,6 +90,63 @@ class PackageContract(unittest.TestCase):
                     with self.assertRaises(Exception):
                         writer()
                 self.assertEqual(list(root.iterdir()), [])
+
+    def test_second_complete_root_is_always_rejected(self):
+        # Both roots have valid, identical metadata: whichever set iteration
+        # selects would pass if the single-root guard were removed.
+        data = archive([('first/addon.xml', XML), ('second/addon.xml', XML)])
+        self.assert_rejected_without_writes(data)
+
+    def assert_rejected_without_writes(self, data):
+        for index, reader in enumerate(self.readers(data)):
+            with self.subTest(reader=index), self.assertRaises(Exception):
+                reader()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            writers = (
+                lambda: extract_package(data, ID, root/'extract'),
+                lambda: publish_package(data, ID, root/ID),
+                lambda: _extract_zip_to_directory(data, ID, root/'legacy'),
+                lambda: _staged_install(data, ID, root),
+            )
+            for index, writer in enumerate(writers):
+                with self.subTest(writer=index), self.assertRaises(Exception):
+                    writer()
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_control_and_format_characters_are_rejected(self):
+        for character in ('\u0007', '\u200b', '\u202e'):
+            with self.subTest(character=repr(character)):
+                self.assert_rejected_without_writes(archive([
+                    ('alternate/addon.xml', XML), ('alternate/a'+character+'b', b'x')]))
+
+    def test_nested_only_addon_xml_is_rejected(self):
+        self.assert_rejected_without_writes(archive([('alternate/nested/addon.xml', XML)]))
+
+    def test_encrypted_members_are_rejected(self):
+        # zipfile's writer clears encryption flags; mark both actual headers.
+        data = bytearray(archive())
+        for signature, offset in ((b'PK\x03\x04', 6), (b'PK\x01\x02', 8)):
+            start = 0
+            while (start := data.find(signature, start)) != -1:
+                flags = struct.unpack_from('<H', data, start+offset)[0]
+                struct.pack_into('<H', data, start+offset, flags | 1)
+                start += 4
+        self.assert_rejected_without_writes(bytes(data))
+
+    def test_bzip2_compression_is_rejected(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w', compression=zipfile.ZIP_BZIP2) as z:
+            z.writestr('alternate/addon.xml', XML)
+        self.assert_rejected_without_writes(stream.getvalue())
+
+    def test_incoherent_directory_modes_are_rejected(self):
+        for name, mode in (('alternate/directory', stat.S_IFDIR),
+                           ('alternate/file/', stat.S_IFREG)):
+            info = zipfile.ZipInfo(name)
+            info.create_system = 3
+            info.external_attr = (mode | 0o755) << 16
+            self.assert_rejected_without_writes(archive([('alternate/addon.xml', XML), (info, b'')]))
 
     def test_nul_truncated_zip_member_name_is_rejected(self):
         data = archive([('alternate/addon.xml', XML), ('alternate/nulZsuffix', b'x')])
