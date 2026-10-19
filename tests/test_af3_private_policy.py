@@ -15,7 +15,7 @@ from resources.lib.inspector import InstalledAddon
 from resources.lib.manifest import (AddonEntry, ConfigDeclarations, PrivateOverlayRef,
     PrivateSettingDeclaration, SettingTargetKind)
 from resources.lib.private_overlay import (PrivateOverlay, PrivateOverlayEntry,
-    PrivateOverlayManager, PrivateOverlayStore, PreparedPrivateOverlay)
+    PrivateOverlayManager, PrivateOverlayStore, PreparedPrivateOverlay, PrivateOverlayMetadata)
 from resources.lib.config import ConfigSettingType
 from tests.test_af3_catalog import AF3, OLD_KEY
 from tests.test_af3_identity import configuration
@@ -63,6 +63,63 @@ def private_scenario(owner=AF3, before='3.3.12', planned='3.3.12', overlay=True,
 
 
 class AF3PrivatePolicyTests(unittest.TestCase):
+    def test_desired_addon_identity_refused_at_preflight_before_planned_install(self):
+        from resources.lib.build_manager import ReconcilePhase
+        from resources.lib.planner import INSTALL_ADDON, plan_changes
+        for owner in (AF3+'\n', AF3.upper()):
+            with self.subTest(owner=repr(owner)), ExitStack() as stack:
+                desired = _desired((AddonEntry(owner, 'enabled'),))
+                actual = _state()
+                planned = plan_changes(desired, actual)
+                self.assertTrue(any(a.kind == INSTALL_ADDON and a.addon_id == owner
+                                    for a in planned.actions))
+                f = _Owners(desired, [actual, actual], (owner,),
+                            {owner: _Outcome(changed=True)})
+                public, private = Mock(), Mock()
+                f.owners = replace(f.owners, config_manager=public,
+                                   private_overlay_manager=private)
+                stack.enter_context(patch('resources.lib.capture_lifecycle.require_no_capture'))
+                stack.enter_context(patch('resources.lib.frozen_install.FrozenInstallStore',
+                    return_value=SimpleNamespace(inspect=lambda: None)))
+                stack.enter_context(patch('resources.lib.frozen_install.active_activation_hold_ids',
+                                          return_value=frozenset()))
+                result = BuildManager(f.owners).reconcile(ReconcileRequest('fixture', 'dev'))
+                self.assertFalse(result.success)
+                self.assertEqual(result.failure.phase, ReconcilePhase.PREFLIGHT)
+                self.assertEqual(result.failure.code, 'AF3_CONFIGURATION_INCOMPATIBLE')
+                self.assertEqual(result.action_results, ())
+                self.assertEqual(f.dependency_installer.calls, [])
+                self.assertEqual(f.sets, [])
+                public.apply.assert_not_called()
+                private.apply.assert_not_called()
+
+    def test_plan_private_3312_admission_is_unavailable(self):
+        from resources.lib.plan import BuildPlanService
+        from resources.lib.plan_model import SettingsPlanKind
+        from resources.lib.status_model import CheckGap
+        from tests.test_plan import PlanHarness, SKIN_TYPE
+        h = PlanHarness(self, with_private=False, with_resource=False)
+        h.set_graph(extra=((AF3, '3.3.12', SKIN_TYPE, ()),))
+        declaration = PrivateSettingDeclaration(AF3, OLD_KEY, 'bool', False,
+                                                target_kind=SettingTargetKind.SKIN)
+        h.desired = replace(h.desired, config=replace(h.desired.config,
+                            private_settings=(declaration,)))
+        service = h.plan_service()
+        original = BuildPlanService._settings
+        reached = []
+
+        def record_settings(service, desired, effective, actual_map, final_map, gaps, material):
+            reached.append((final_map[AF3].version, desired.config.private_settings))
+            return original(service, desired, effective, actual_map, final_map, gaps, material)
+
+        with patch.object(BuildPlanService, '_settings', record_settings), h.instrumented():
+            plan = service.preview(h.plan_target())
+        h.assert_untouched()
+        self.assertEqual(reached, [('3.3.12', (declaration,))])
+        self.assertEqual(plan.blockers, ())
+        self.assertEqual(plan.settings.kind, SettingsPlanKind.UNAVAILABLE)
+        self.assertIn(CheckGap.AF3_CONFIGURATION_INCOMPATIBLE, plan.gaps)
+
     def test_rb1_newline_reconcile_zero_mutations(self):
         result, f, settings = scenario(package='fixture', before=None,
                                       config=configuration(AF3+'\n', 'skin'))
@@ -119,11 +176,17 @@ class AF3PrivatePolicyTests(unittest.TestCase):
             for versions in (None, {}, {AF3: ''}, {AF3: '3.3.12'}):
                 backend = FakeBackend()
                 cm = ConfigurationManager(backend)
-                pm = PrivateOverlayManager(cm)
+                delegated = Mock(wraps=cm)
+                pm = PrivateOverlayManager(delegated)
                 for prepared in (PreparedPrivateOverlay(None, None, (declaration,)),
-                    PreparedPrivateOverlay(SimpleNamespace(entries=(setting,)), None)):
+                    PreparedPrivateOverlay(
+                        overlay := PrivateOverlay('synthetic', 'test-build', (
+                            PrivateOverlayEntry(owner, setting.key, setting.setting_type,
+                                                True, setting.target_kind),)),
+                        PrivateOverlayMetadata(overlay.overlay_id, overlay.fingerprint, True, True))):
                     with self.subTest(owner=repr(owner), versions=versions), self.assertRaises(AF3PolicyError):
                         pm.apply(prepared, target_versions=versions)
+                    delegated.apply_settings.assert_not_called()
                 with self.assertRaises(AF3PolicyError):
                     cm.apply_settings((setting,), effective_identity='synthetic', target_versions=versions)
                 self.assertEqual(backend.writes, [])
