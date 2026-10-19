@@ -121,7 +121,10 @@ class PackageContract(unittest.TestCase):
                     ('alternate/addon.xml', XML), ('alternate/a'+character+'b', b'x')]))
 
     def test_nested_only_addon_xml_is_rejected(self):
-        self.assert_rejected_without_writes(archive([('alternate/nested/addon.xml', XML)]))
+        data = archive([('alternate/nested/addon.xml', XML)])
+        with self.assertRaisesRegex(AddonZipError, '^package addon.xml unavailable$'):
+            validated_root(data, ID)
+        self.assert_rejected_without_writes(data)
 
     def test_encrypted_members_are_rejected(self):
         # zipfile's writer clears encryption flags; mark both actual headers.
@@ -132,6 +135,8 @@ class PackageContract(unittest.TestCase):
                 flags = struct.unpack_from('<H', data, start+offset)[0]
                 struct.pack_into('<H', data, start+offset, flags | 1)
                 start += 4
+        with self.assertRaisesRegex(AddonZipError, '^unsafe package compression/size$'):
+            validated_root(bytes(data), ID)
         self.assert_rejected_without_writes(bytes(data))
 
     def test_bzip2_compression_is_rejected(self):

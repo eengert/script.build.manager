@@ -15,7 +15,7 @@ from resources.lib.manifest import ConfigDeclarations, ManagedSettingScope, Sett
 from tests.test_af3_catalog import AF3
 from tests.test_af3_reconciliation_safety import scenario
 
-VARIANTS = ('Skin.Arctic.Fuse.3', AF3.upper(), 'skin.arctic.Fuse.3')
+VARIANTS = ('Skin.Arctic.Fuse.3', AF3.upper(), 'skin.arctic.Fuse.3', AF3+'\n', AF3.upper()+'\n')
 
 
 def configuration(owner, target, both=False):

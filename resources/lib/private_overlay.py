@@ -834,7 +834,12 @@ class PrivateOverlayManager:
         prepared: PreparedPrivateOverlay,
         *,
         owner_contexts=None,
+        target_versions=None,
     ) -> PrivateOverlayApplyResult:
+        """Apply admitted targets; AF3 requires verified legacy target_versions."""
+        from resources.lib.af3 import private_policy_targets, validate_configuration_version
+        targets = private_policy_targets(prepared=prepared)
+        validate_configuration_version(None, target_versions or {}, targets)
         if prepared.overlay is None:
             return PrivateOverlayApplyResult(
                 PrivateOverlayOutcome.ABSENT_OPTIONAL,
@@ -853,6 +858,7 @@ class PrivateOverlayManager:
         )
         applied = self._configuration_manager.apply_settings(
             settings, effective_identity=prepared.overlay.fingerprint,
+            **({"target_versions": target_versions} if target_versions is not None else {}),
         )
         results = tuple(
             PrivateSettingResult(

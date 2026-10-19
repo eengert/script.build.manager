@@ -15,10 +15,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
+
+from resources.lib.af3 import AF3PolicyError
 
 from resources.lib.build_library import LibraryInstallTarget
 from resources.lib.addon_state import AddonStateReconciler
@@ -862,6 +865,11 @@ class BuildManager:
 
         try:
             effective = config_loader.resolve(desired.config)
+            from resources.lib.af3 import validate_identities
+            validate_identities((*desired.addons,
+                *((desired.skin,) if desired.skin is not None else ()),
+                *(desired.config.managed_settings if desired.config else ()),
+                *(desired.config.private_settings if desired.config else ())))
             from resources.lib.platform_policy import mutation_targets, reject_platform_mutations, reject_backend_platform_targets
             platform_ids = {n.addon_id for n in library_frozen.addons if n.platform_provided} if library_frozen else set()
             reject_platform_mutations(desired, platform_ids, effective)
@@ -1090,7 +1098,7 @@ class BuildManager:
                     "frozen skipped add-on is required by the configuration dependency closure"
                 )
         except Exception as exc:
-            return None, self._failed(request, ReconcilePhase.PREFLIGHT, "PREFLIGHT_FAILED", exc)
+            return None, self._failed(request, ReconcilePhase.PREFLIGHT, exc.code if isinstance(exc, AF3PolicyError) else "PREFLIGHT_FAILED", exc)
 
         try:
             plan = plan_changes(execution_desired, actual)
@@ -1108,7 +1116,8 @@ class BuildManager:
                     desired_fingerprint=fingerprint,
                 )
         try:
-            af3_version, af3_package = self._prepare_af3(effective, actual, plan, request, library_frozen)
+            af3_version, af3_package = self._prepare_af3(effective, actual, plan, request, library_frozen,
+                desired.config.private_settings if desired.config else (), private_prepared)
         except Exception as exc:
             return None, self._failed(request, ReconcilePhase.PREFLIGHT,
                 getattr(exc, "code", "AF3_TARGET_VERSION_UNVERIFIED"), exc,
@@ -1126,10 +1135,12 @@ class BuildManager:
             af3_version=af3_version, af3_package=af3_package,
         ), None
 
-    def _prepare_af3(self, effective, actual, plan, request, frozen):
+    def _prepare_af3(self, effective, actual, plan, request, frozen, declarations=(), private_prepared=None):
         from resources.lib.af3 import (AF3_SKIN_ID, AF3TargetVersionError,
             has_configuration, validate_configuration_version)
-        if not has_configuration(effective):
+        from resources.lib.af3 import private_policy_targets
+        private_targets = private_policy_targets(declarations, private_prepared)
+        if not has_configuration(effective, private_targets):
             return "", None
         rows = [a for a in actual.addons if a.addon_id == AF3_SKIN_ID]
         if len(rows) > 1:
@@ -1157,7 +1168,7 @@ class BuildManager:
             nodes = [n for n in frozen.addons if n.addon_id == AF3_SKIN_ID]
             if len(nodes) != 1 or nodes[0].version != version:
                 raise AF3TargetVersionError("AF3 frozen and planned target differ")
-        validate_configuration_version(effective, {AF3_SKIN_ID: version})
+        validate_configuration_version(effective, {AF3_SKIN_ID: version}, private_targets)
         return version, package
 
     @staticmethod
@@ -1296,7 +1307,11 @@ class BuildManager:
         if action.kind == CONFIGURE:
             try:
                 from resources.lib.af3 import has_configuration, AF3TargetVersionError
-                if has_configuration(effective):
+                from resources.lib.af3 import private_policy_targets, is_af3_identity
+                private_targets = private_policy_targets(
+                    desired.config.private_settings if desired.config else (), private_prepared)
+                private_kwargs = {}
+                if has_configuration(effective, private_targets):
                     if not af3_version:
                         raise AF3TargetVersionError("AF3 configuration has no approved target version")
                     from resources.lib.af3 import (AF3_SKIN_ID, AF3ActualVersionError,
@@ -1305,7 +1320,10 @@ class BuildManager:
                     rows = [a for a in actual.addons if a.addon_id == AF3_SKIN_ID]
                     if len(rows) != 1 or rows[0].version != af3_version:
                         raise AF3ActualVersionError("AF3 installed version differs from the approved plan")
-                    validate_configuration_version(effective, {AF3_SKIN_ID: rows[0].version})
+                    validate_configuration_version(effective, {AF3_SKIN_ID: rows[0].version}, private_targets)
+                    if any(is_af3_identity(t.addon_id)
+                           for t in private_targets):
+                        private_kwargs = {"target_versions": {AF3_SKIN_ID: rows[0].version}}
                 public_result = self._owners.config_manager.apply(effective)
             except Exception as exc:
                 diagnostic = _action_failure_diagnostic(
@@ -1340,7 +1358,7 @@ class BuildManager:
                     if owner_contexts:
                         try:
                             private_result = manager.apply(
-                                private_prepared, owner_contexts=owner_contexts
+                                private_prepared, owner_contexts=owner_contexts, **private_kwargs
                             )
                         except Exception as exc:
                             diagnostic = _action_failure_diagnostic(
@@ -1352,7 +1370,7 @@ class BuildManager:
                             )
                     else:
                         try:
-                            private_result = manager.apply(private_prepared)
+                            private_result = manager.apply(private_prepared, **private_kwargs)
                         except Exception as exc:
                             diagnostic = _action_failure_diagnostic(
                                 exc, configuration_scope="private"

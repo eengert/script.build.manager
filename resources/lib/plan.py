@@ -833,7 +833,8 @@ class BuildPlanService:
             return SettingsPlan(SettingsPlanKind.NOT_APPLICABLE)
         try:
             from resources.lib.af3 import AF3PolicyError, AF3TargetVersionError, validate_configuration_version
-            validate_configuration_version(effective, {a: item.version for a, item in final_map.items()})
+            validate_configuration_version(effective, {a: item.version for a, item in final_map.items()},
+                desired.config.private_settings)
             inspection = self._o.status.configuration_inspector.inspect(effective)
         except AF3PolicyError as exc:
             gaps.append(CheckGap.AF3_TARGET_VERSION_UNVERIFIED if isinstance(exc, AF3TargetVersionError)

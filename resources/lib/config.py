@@ -1372,6 +1372,7 @@ class ConfigurationManager:
         An empty EffectiveConfiguration produces a clean no-op result with no
         backend calls at all.
         """
+        validate_skin_settings({s.target: s for s in effective.settings})
         results: List[ConfigOperationResult] = []
         for setting in effective.settings:
             results.append(self._apply_setting(setting))
@@ -1387,6 +1388,7 @@ class ConfigurationManager:
         settings: Tuple[ConfigSetting, ...],
         *,
         effective_identity: str,
+        target_versions=None,
     ) -> ConfigApplyResult:
         """Apply an already-authorized typed setting sequence.
 
@@ -1394,8 +1396,11 @@ class ConfigurationManager:
         completed.  It reuses the same backend, typed accessors, read-back,
         idempotency, and restart aggregation; it does not parse packages or
         create a second settings engine.  Private callers must validate
-        ownership before invoking this method.
+        ownership before invoking this method. AF3 private targets additionally
+        require exact target_versions evidence; 3.3.12 is public-only.
         """
+        from resources.lib.af3 import validate_configuration_version
+        validate_configuration_version(None, target_versions or {}, settings)
         results = tuple(self._apply_setting(setting) for setting in settings)
         return ConfigApplyResult(
             results=results,
