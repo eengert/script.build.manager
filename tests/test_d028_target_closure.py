@@ -22,6 +22,8 @@ Q = 'script.module.closure-q'
 D = 'script.module.closure-d'
 S = 'script.module.closure-s'
 
+from tests.builtin_evidence import SyntheticBuiltinBackend
+
 
 def platform(aid):
     return AddonCaptureNode(aid, '1.0.0', 'xbmc.python.module', True,
@@ -198,7 +200,7 @@ class TargetClosurePlan(unittest.TestCase):
             replace(n, optional=True, dependency_edges=(DependencyEdge(Q, '1.0.0'),)) if n.addon_id == pt.MODULE else
             replace(n, optional=True) if n.addon_id == Q else n for n in h.frozen.addons))
         h.save_overlay()
-        backend = InMemoryFrozenArtifactBackend()
+        backend = SyntheticBuiltinBackend()
         observe(backend, fi.PLATFORM_ID, version='5.1.0',
                 imports=((pt.MODULE, '2.0.0', False),) if promote else ())
         observe(backend, Q)

@@ -1,6 +1,7 @@
 """Focused BM-022 frozen-install transaction and exact-artifact tests."""
 
 import io
+from tests.builtin_evidence import SyntheticBuiltinBackend, close_python
 import json
 import tempfile
 import unittest
@@ -135,7 +136,7 @@ class FrozenInstallTest(unittest.TestCase):
         self.artifacts = ArtifactStore(self.root / "artifacts")
         self.store = FrozenInstallStore(self.root / "transaction")
         self.policy = FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY)
-        self.backend = InMemoryFrozenArtifactBackend()
+        self.backend = SyntheticBuiltinBackend()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -206,7 +207,7 @@ class FrozenInstallTest(unittest.TestCase):
                 ) if node.addon_id == app_id else node
                 for node in nodes
             )
-        return FrozenBuildManifest(
+        return close_python(FrozenBuildManifest(
             schema_version=1,
             build_id="bm022-fixture",
             name="BM-022 fixture",
@@ -215,7 +216,7 @@ class FrozenInstallTest(unittest.TestCase):
             platform="macos",
             capture_status=CaptureStatus.COMPLETE,
             addons=nodes,
-        )
+        ))
 
     def _coordinator(self, **kwargs):
         kwargs.setdefault("registry_backend", InMemoryRegistryBackend(self.backend))
@@ -2309,7 +2310,7 @@ class PlatformProvidedInstallTests(unittest.TestCase):
         self.artifacts = ArtifactStore(self.root / "artifacts")
         self.store = FrozenInstallStore(self.root / "transaction")
         self.policy = FakePolicy(AddonUpdatePolicy.NOTIFY_ONLY)
-        self.backend = InMemoryFrozenArtifactBackend()
+        self.backend = SyntheticBuiltinBackend()
         _write_addon(self.home, PLATFORM_ROOT, version="2.6.8",
                      imports=((PLATFORM_ID, "1.1.7", False),))
         _write_addon(self.application, PLATFORM_ID, version="5.1.0", point="xbmc.python.module",
@@ -2329,11 +2330,11 @@ class PlatformProvidedInstallTests(unittest.TestCase):
             _kodi_rpc(self.entries if entries is None else entries),
             addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
         )
-        return capture_frozen_build(
+        return close_python(capture_frozen_build(
             backend=backend, store=self.artifacts, root_addon_ids=[PLATFORM_ROOT],
             build_id="platform-install", name="Platform install", created_at="2026-10-09T00:00:00Z",
             platform="macos",
-        ).manifest
+        ).manifest)
 
     def _install_target(self, *, pil_version="5.1.0", enabled=True, broken=False, absent=False,
                         origin="application", metadata_version=None, builtin=True,
@@ -2341,6 +2342,7 @@ class PlatformProvidedInstallTests(unittest.TestCase):
                         declared_point="xbmc.python.module"):
         from resources.lib.frozen import InstalledMetadata, InstalledOrigin
         self.backend.installed = {}
+        self.backend.builtin_state.pop("xbmc.python", None)
         if not absent:
             self.backend.installed[PLATFORM_ID] = FrozenInstalledAddon(
                 PLATFORM_ID, pil_version, enabled, broken)
@@ -2387,7 +2389,8 @@ class PlatformProvidedInstallTests(unittest.TestCase):
         return FrozenBuildManifest(
             schema_version=2, build_id="platform-graph", name="Platform graph",
             created_at="2026-10-09T00:00:00Z", kodi_version="21.3", platform="macos",
-            capture_status=CaptureStatus.COMPLETE, addons=(root, platform, builtin),
+            capture_status=CaptureStatus.COMPLETE, addons=(root, platform, builtin,
+                next(n for n in self.manifest.addons if n.addon_id == "xbmc.core")),
         )
 
     def test_compatible_platform_target_completes_and_never_mutates_the_platform_node(self):

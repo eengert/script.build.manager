@@ -126,7 +126,7 @@ class Item8FixtureTests(unittest.TestCase):
         bad=bundle.to_dict();bad['frozen']['source']['metadata']={'private':'not-a-real-secret'}
         with self.assertRaises(Exception):PreparedPublicBundle(json.dumps(bad))
 
-    def test_production_plan_uses_registered_material(self):
+    def test_production_plan_blocks_unverified_builtin_in_registered_legacy_fixture(self):
         from tests.test_plan import PlanHarness
         from resources.lib.frozen import InstalledMetadata, InstalledOrigin
         from resources.lib.frozen_install import InMemoryFrozenArtifactBackend, FrozenInstalledAddon
@@ -148,8 +148,10 @@ class Item8FixtureTests(unittest.TestCase):
         service=BuildPlanService(PlanOwners(owners,ReadOnlyArtifactStore(self.output/'artifacts-store'),
                                            h.details,backend))
         plan=service.preview(library.plan_target(record['entry_id'],q.PROFILE))
-        self.assertEqual(plan.blockers,())
-        self.assertIsNotNone(plan.review,plan.to_safe_dict())
+        # Registration and exact artifacts do not establish native builtin
+        # authority or the missing core closure of this historical fixture.
+        self.assertTrue(plan.blockers)
+        self.assertIsNone(plan.review,plan.to_safe_dict())
 
     def test_unsafe_and_profile_paths_rejected_before_any_read(self):
         for output in [Path('relative'), Path('/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data'),

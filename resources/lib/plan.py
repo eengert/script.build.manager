@@ -753,7 +753,8 @@ class BuildPlanService:
                 if record.resolution is InstallResolution.REPOSITORY_CURRENT
             }
             # Platform target version and dependency authority are part of approval freshness.
-            sw.platform_identity = [sorted(platform_versions.items()), sorted(platform_versions.dependencies.items())]
+            sw.platform_identity = [sorted(platform_versions.items()), sorted(platform_versions.dependencies.items()),
+                                    platform_versions.builtin_identity]
             extra_dependencies.update(platform_versions.dependencies)
             if extra_dependencies:
                 plan = validate_frozen_install_plan(

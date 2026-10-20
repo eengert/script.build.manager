@@ -74,6 +74,9 @@ PLAN_MUTATORS = (
 )
 
 
+from tests.builtin_evidence import SyntheticBuiltinBackend
+
+
 class PlanHarness(Harness):
     """The G2 harness plus a saved-package store and a complete saved software graph."""
 
@@ -117,7 +120,10 @@ class PlanHarness(Harness):
                 ProvenanceStatus.VERIFIED_REPOSITORY, artifact=artifact,
                 dependency_edges=tuple(DependencyEdge(r) for r in requires)))
         nodes.append(AddonCaptureNode("xbmc.python", "3.0.1", "", True,
-                                      ProvenanceStatus.VERIFIED_REPOSITORY, system=True))
+                                      ProvenanceStatus.VERIFIED_REPOSITORY, system=True,
+                                      dependency_edges=(DependencyEdge("xbmc.core", "0.1.0"),)))
+        from tests.builtin_evidence import core_node
+        nodes.append(core_node())
         nodes.append(AddonCaptureNode("script.module.optional", "", "", False,
                                       ProvenanceStatus.UNKNOWN, optional=True,
                                       status=CaptureStatus.MISSING))
@@ -154,7 +160,7 @@ class PlanHarness(Harness):
 
     def plan_owners(self, **overrides):
         values = dict(status=self.owners(), artifact_store=ReadOnlyArtifactStore(self.store_root),
-                      addon_details=self.details)
+                      addon_details=self.details, platform_backend=SyntheticBuiltinBackend())
         values.update(overrides)
         return PlanOwners(**values)
 
@@ -636,7 +642,7 @@ class InputsAndOperations(PlanBase):
         h = Harness(self, with_private=False, with_resource=False)
         h.desired = replace(h.desired, addons=(), skin=None, config=None, private_overlay=None,
                             frozen_install_policies=())
-        h.frozen = replace(h.frozen, addons=tuple(n for n in h.frozen.addons if n.system))
+        h.frozen = replace(h.frozen, addons=())
         owners = PlanOwners(h.owners(), ReadOnlyArtifactStore(h.profile / "none"), lambda i: None)
         plan = BuildPlanService(owners).preview(PlanTarget("/b", "d", "/f"))
         self.assertEqual((plan.state, plan.gaps), (PlanState.INCOMPLETE, (CheckGap.NOTHING_TO_COMPARE,)))
@@ -1475,7 +1481,7 @@ class G3CorrectionRegressions(PlanBase):
             resolution_fingerprint=resolution_fingerprint(tuple(records.values())),
             resolved_software_fingerprint=resolved_software_fingerprint(h.frozen, tuple(records.values())))
         coordinator = frozen_install.FrozenInstallCoordinator(
-            store=None, artifact_store=ReadOnlyArtifactStore(h.store_root), policy_backend=None, installer=None)
+            store=None, artifact_store=ReadOnlyArtifactStore(h.store_root), policy_backend=None, installer=SyntheticBuiltinBackend())
         return coordinator._restore_resolution(h.frozen, transaction)[0]
 
     def test_actual_installer_restoration_order_matches_g3(self):
@@ -1597,7 +1603,7 @@ class PlatformProvidedPlan(PlanBase):
         h.save_overlay()
         from resources.lib.frozen import InstalledMetadata, InstalledOrigin
         from tests.test_frozen import _xml
-        backend = frozen_install.InMemoryFrozenArtifactBackend()
+        backend = SyntheticBuiltinBackend()
         backend.installed[self.PLATFORM] = FrozenInstalledAddon(self.PLATFORM, "5.1.0", True)
         backend.installed["xbmc.python"] = FrozenInstalledAddon("xbmc.python", "3.0.1", True)
         backend.platform_metadata[self.PLATFORM] = InstalledMetadata(

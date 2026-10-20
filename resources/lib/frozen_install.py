@@ -1095,6 +1095,26 @@ def _validate_frozen_manifest_core(
                 f"artifact unavailable for {node.addon_id} {node.version}"
             ) from exc
 
+    visiting, done = set(), set()
+    def visit(addon_id):
+        if addon_id in visiting:
+            raise FrozenInstallValidationError("frozen dependency graph contains a cycle")
+        if addon_id in done:
+            return
+        visiting.add(addon_id)
+        for edge in nodes[addon_id].dependency_edges:
+            child = nodes.get(edge.addon_id)
+            if child is None or child.is_absent_optional_dependency or edge.addon_id in skipped:
+                if edge.optional:
+                    continue
+                raise FrozenInstallValidationError("required dependency is absent from frozen manifest")
+            visit(edge.addon_id)
+        visiting.remove(addon_id)
+        done.add(addon_id)
+    for addon_id, node in nodes.items():
+        if not node.is_absent_optional_dependency and addon_id not in skipped:
+            visit(addon_id)
+
     install_nodes = {
         addon_id: node
         for addon_id, node in nodes.items()
@@ -1287,8 +1307,8 @@ def _repository_package_required_dependencies(
     try:
         from resources.lib.addon_zip import validated_root
         xml_bytes = validated_root(package.zip_bytes, package.addon_id, package.version).xml_bytes
-        from resources.lib.dependencies import _is_system_dependency, _parse_requirements_strict, _dependency_version_satisfies
-        requirements = _parse_requirements_strict(xml_bytes)
+        from resources.lib.dependencies import _is_system_dependency, _dependency_version_satisfies
+        requirements = _admission_dependency_edges(xml_bytes, package.addon_id)
     except Exception as exc:
         raise FrozenInstallValidationError(
             "repository package dependency metadata is invalid"
@@ -1296,6 +1316,14 @@ def _repository_package_required_dependencies(
     dependencies = []
     for requirement in requirements:
         if _is_system_dependency(requirement.addon_id):
+            if requirement.optional:
+                continue
+            versions = getattr(platform_versions, "builtin_versions", {})
+            abis = getattr(platform_versions, "builtin_abis", {})
+            version, abi = versions.get(requirement.addon_id), abis.get(requirement.addon_id)
+            if (not version or not abi or not _strict_version_satisfies(version, requirement.min_version)
+                    or (requirement.min_version and not _strict_version_satisfies(requirement.min_version, abi))):
+                raise FrozenInstallValidationError("repository package requires an unverified builtin minimum")
             continue
         dependency = manifest_plan.nodes.get(requirement.addon_id)
         if dependency is None or dependency.is_absent_optional_dependency:
@@ -1425,15 +1453,32 @@ def _builtin_satisfies(installer, edge) -> bool:
         verifier = getattr(installer, "verify_builtin_requirement", None)
         if callable(verifier):
             return verifier(edge) is True
-        builtin = installer.get_addon_details(edge.addon_id)
     except Exception:
         return False
-    return (
-        builtin is not None
-        and not builtin.broken
-        and builtin.enabled is True
-        and _strict_version_satisfies(builtin.version, edge.min_version)
-    )
+    return False
+
+
+def _admission_dependency_edges(xml_bytes, addon_id):
+    """Keep every import, including ABI-conflicting lower incoming minima.
+
+    The general resolver's strongest-minimum consolidation is insufficient for
+    interfaces with a backwards-compatible lower ABI bound.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_bytes)
+        requires = root.findall("requires")
+        if len(requires) > 1:
+            raise ValueError("ambiguous requires declarations")
+        for group in requires:
+            for child in group:
+                if (child.tag != "import" or
+                        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", child.get("addon", "")) or
+                        child.get("optional", "false").lower() not in ("true", "false")):
+                    raise ValueError("malformed dependency declaration")
+        return _parse_dependency_edges(xml_bytes, addon_id)
+    except (ET.ParseError, ValueError) as exc:
+        raise CaptureError("unverifiable dependency declarations") from exc
 
 
 def _planned_versions(plan, records) -> Dict[str, str]:
@@ -1452,19 +1497,27 @@ def _planned_versions(plan, records) -> Dict[str, str]:
 
 def _repository_required_addon_ids(store, records=(), *, packages=()):
     """Mandatory package edges can promote optional source observations to requirements."""
-    from resources.lib.dependencies import _parse_requirements_strict
     items = records.values() if isinstance(records, Mapping) else records
     payloads = [(package.addon_id, package.zip_bytes, package.version) for package in packages]
     payloads.extend((record.addon_id, store.read_bytes(record.artifact_sha256), record.resolved_version)
                     for record in items
                     if record.resolution is InstallResolution.REPOSITORY_CURRENT
                     and record.artifact_sha256)
-    required = set()
+    required = RepositoryRequirements()
     from resources.lib.addon_zip import validated_root
     for addon_id, data, version in payloads:
         xml = validated_root(data, addon_id, version).xml_bytes
-        required.update(edge.addon_id for edge in _parse_requirements_strict(xml) if not edge.optional)
+        edges = tuple(edge for edge in _admission_dependency_edges(xml, addon_id) if not edge.optional)
+        required.update(edge.addon_id for edge in edges)
+        required.dependencies[addon_id] = edges
     return required
+
+
+class RepositoryRequirements(set):
+    """Required IDs plus the actual package edges; never discard replacement minima."""
+    def __init__(self):
+        super().__init__()
+        self.dependencies = {}
 
 
 class VerifiedPlatformVersions(dict):
@@ -1472,6 +1525,104 @@ class VerifiedPlatformVersions(dict):
     def __init__(self):
         super().__init__()
         self.dependencies = {}
+        self.builtin_versions = {}
+        self.builtin_abis = {}
+        self.builtin_identity = []
+
+
+def _verify_builtin_closure(plan, installer, required, verified, target_edges, skipped):
+    """Prove every incoming interface interval and target-declared builtin child.
+
+    A Boolean verifier alone cannot bind identity/ABI/closure/freshness. The
+    backend must additionally return metadata from its same trusted native
+    validation path. No installed-details fallback grants authority.
+    """
+    import xml.etree.ElementTree as ET
+    pending = []
+    graph = {}
+    for aid in required:
+        node = plan.nodes.get(aid)
+        if node is None or node.is_absent_optional_dependency or aid in skipped:
+            raise _platform_unsatisfied("required dependency is missing from the build")
+        if node.system:
+            if not _is_system_dependency(aid):
+                raise _platform_unsatisfied("unrecognized system classification")
+        edges = tuple(node.dependency_edges) + tuple(target_edges.get(aid, ()))
+        graph[aid] = {e.addon_id for e in edges if not e.optional}
+        pending.extend(e for e in edges if not e.optional and _is_system_dependency(e.addon_id))
+    # A disconnected system requirement still needs proof, but do not invent an
+    # extra unspecified import for providers that already have real minima.
+    referenced = {edge.addon_id for edge in pending}
+    pending.extend(DependencyEdge(aid) for aid in required
+                   if plan.nodes[aid].system and aid not in referenced)
+    observations = {}
+    checked = set()
+    while pending:
+        edge = pending.pop()
+        aid = edge.addon_id
+        key = (aid, edge.min_version)
+        if key in checked:
+            continue
+        node = plan.nodes.get(aid)
+        if node is None or not node.system or aid in skipped:
+            raise _platform_unsatisfied("required builtin is missing or misclassified: " + aid)
+        try:
+            reader = getattr(installer, "read_verified_builtin_metadata", None)
+            if not callable(reader) or not _builtin_satisfies(installer, edge):
+                raise ValueError("unverified native provider")
+            metadata = reader(edge)
+            if not isinstance(metadata, InstalledMetadata) or metadata.origin is not InstalledOrigin.APPLICATION:
+                raise ValueError("untrusted builtin origin")
+            root = ET.fromstring(metadata.xml_bytes)
+            version = root.get("version", "")
+            _check_addon_xml_identity(metadata.xml_bytes, aid, version)
+            floors = root.findall("backwards-compatibility")
+            if len(floors) != 1:
+                raise ValueError("missing or ambiguous ABI floor")
+            abi = floors[0].get("abi", "")
+            if (not abi or not _strict_version_satisfies(version, abi)
+                    or not _strict_version_satisfies(version, edge.min_version)
+                    or (edge.min_version and not _strict_version_satisfies(edge.min_version, abi))):
+                raise ValueError("incompatible interface interval")
+            children = _admission_dependency_edges(metadata.xml_bytes, aid)
+            if aid in ("xbmc.python", "xbmc.gui", "kodi.resource") and not any(
+                    child.addon_id == "xbmc.core" and not child.optional for child in children):
+                raise ValueError("missing mandatory core interface requirement")
+            identity = (version, abi, hashlib.sha256(metadata.xml_bytes).hexdigest())
+            if aid in observations and observations[aid] != identity:
+                raise ValueError("builtin observation changed during verification")
+            observations[aid] = identity
+        except Exception as exc:
+            raise _platform_unsatisfied("builtin remains UNVERIFIED or incompatible: " + aid) from exc
+        checked.add(key)
+        verified.builtin_versions[aid] = version
+        verified.builtin_abis[aid] = abi
+        graph.setdefault(aid, set()).update(e.addon_id for e in children if not e.optional)
+        # The source graph retains incoming requirements but is not target proof.
+        for child in tuple(children) + tuple(node.dependency_edges):
+            if child.optional:
+                continue
+            if not _is_system_dependency(child.addon_id):
+                raise _platform_unsatisfied("unsupported builtin dependency classification")
+            pending.append(child)
+    visiting, done = set(), set()
+    def visit(aid):
+        if aid in visiting:
+            raise _platform_unsatisfied("builtin dependency graph contains a cycle")
+        if aid in done:
+            return
+        if aid not in plan.nodes or plan.nodes[aid].is_absent_optional_dependency or aid in skipped:
+            raise _platform_unsatisfied("required dependency is missing from the build")
+        visiting.add(aid)
+        for child in graph.get(aid, ()):
+            visit(child)
+        visiting.remove(aid)
+        done.add(aid)
+    for aid in graph:
+        visit(aid)
+    verified.builtin_identity = [
+        [aid, *observations[aid], sorted(minimum for name, minimum in checked if name == aid)]
+        for aid in sorted(observations)]
 
 
 def verify_platform_requirements(
@@ -1494,16 +1645,15 @@ def verify_platform_requirements(
     version. Any uncertainty raises FrozenPlatformRequirementError.
     """
     platform_nodes = [node for node in plan.manifest.addons if node.platform_provided]
-    if not platform_nodes:
-        return VerifiedPlatformVersions()
     for node in platform_nodes:
         if node.addon_id in resolutions:
             raise FrozenInstallValidationError(
                 "a platform-provided add-on cannot have a resolution record"
             )
     required = {n.addon_id for n in plan.nodes.values()
-                if not n.optional and not n.system and n.addon_id not in skipped}
+                if not n.optional and n.addon_id not in skipped}
     required.update(aid for aid in required_addon_ids if aid in plan.nodes)
+    required.update(aid for aid in getattr(required_addon_ids, "dependencies", {}) if aid in plan.nodes)
     pending = list(required)
     while pending:
         parent = plan.nodes[pending.pop()]
@@ -1533,6 +1683,7 @@ def verify_platform_requirements(
             pending.extend(edge.addon_id for edge in child.dependency_edges if not edge.optional)
 
     metadata_by_id: Dict[str, InstalledMetadata] = {}
+    target_requirements = dict(getattr(required_addon_ids, "dependencies", {}))
     for node in platform_nodes:
         addon_id = node.addon_id
         try:
@@ -1563,14 +1714,17 @@ def verify_platform_requirements(
         verified[addon_id] = details.version
         metadata_by_id[addon_id] = metadata
         try:
-            target_edges = _parse_dependency_edges(metadata.xml_bytes, addon_id)
+            target_edges = _admission_dependency_edges(metadata.xml_bytes, addon_id)
         except CaptureError as exc:
             raise _platform_unsatisfied(f"{addon_id} on the target has unreadable dependency metadata") from exc
+        target_requirements[addon_id] = tuple(target_requirements.get(addon_id, ())) + tuple(target_edges)
         verified.dependencies[addon_id] = tuple(
             edge.addon_id for edge in target_edges
             if not edge.optional and not _is_system_dependency(edge.addon_id))
         promote(edge.addon_id for edge in target_edges
                 if not edge.optional and not _is_system_dependency(edge.addon_id))
+
+    _verify_builtin_closure(plan, installer, required, verified, target_requirements, skipped)
 
     # All promotions are now known. A newly required managed parent can impose
     # a stricter captured minimum on a platform node already inspected above.
@@ -1586,18 +1740,15 @@ def verify_platform_requirements(
     for node in platform_nodes:
         addon_id = node.addon_id
         try:
-            target_edges = _parse_dependency_edges(metadata_by_id[addon_id].xml_bytes, addon_id)
+            target_edges = _admission_dependency_edges(metadata_by_id[addon_id].xml_bytes, addon_id)
         except CaptureError as exc:
             raise _platform_unsatisfied(f"{addon_id} on the target has unreadable dependency metadata") from exc
         for edge in target_edges:
             if edge.optional:
                 continue
             if _is_system_dependency(edge.addon_id):
-                if not _builtin_satisfies(installer, edge):
-                    raise _platform_unsatisfied(
-                        f"{addon_id} requires builtin {edge.addon_id} that the target does not verify"
-                    )
-                continue
+                continue  # All captured, target and replacement minima were checked above.
+
             planned = plan.nodes.get(edge.addon_id)
             if planned is None or planned.is_absent_optional_dependency or edge.addon_id in skipped:
                 raise _platform_unsatisfied(
@@ -1651,6 +1802,19 @@ class FrozenArtifactBackend:
 
     def read_installed_metadata(self, addon_id: str) -> Optional[InstalledMetadata]:
         """Read-only trusted metadata for platform verification. No evidence means no proof."""
+        return None
+
+    def verify_builtin_requirement(self, edge: DependencyEdge) -> bool:
+        """Provider-specific native registration/usability proof; unavailable by default."""
+        return False
+
+    def read_verified_builtin_metadata(self, edge: DependencyEdge) -> Optional[InstalledMetadata]:
+        """Return fresh metadata only after the same native identity/usability proof.
+
+        Origin must come from pinned application authority and a no-shadow read.
+        XML/version/ABI presence alone is insufficient. Unsupported providers
+        return None. The caller validates every interval and recursive import.
+        """
         return None
 
     def install_exact(self, addon_id: str, version: str, zip_bytes: bytes) -> FrozenInstalledAddon:
@@ -1791,6 +1955,9 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         return self._inventory().read_installed_metadata(addon_id)
 
     def verify_builtin_requirement(self, edge: DependencyEdge) -> bool:
+        return self.read_verified_builtin_metadata(edge) is not None
+
+    def read_verified_builtin_metadata(self, edge: DependencyEdge) -> Optional[InstalledMetadata]:
         """Prove the Python builtin using Kodi's enabled API and pinned application XML.
 
         Kodi 21's GetAddonDetails excludes extension-point builtins (type UNKNOWN).
@@ -1801,7 +1968,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         never target evidence. Other builtin interfaces remain unverified.
         """
         if edge.addon_id != "xbmc.python":
-            return False
+            return None
         try:
             inventory = self._inventory()
             import sys
@@ -1809,7 +1976,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
             import xbmcaddon
 
             if sys.version_info.major != 3:
-                return False
+                return None
             xbmc = self._xbmc()
 
             def usable():
@@ -1817,7 +1984,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                         and xbmc.getCondVisibility("System.AddonIsEnabled(xbmc.python)") is True)
 
             if not usable():
-                return False
+                return None
             addon = xbmcaddon.Addon("xbmc.python")
             fields = ("id", "version", "path", "type")
             info = tuple(addon.getAddonInfo(key) for key in fields)
@@ -1825,31 +1992,31 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
             if (addon_id != edge.addon_id or addon_type != "unknown"
                     or not isinstance(version, str) or not version.startswith("3.")
                     or not _strict_version_satisfies(version, edge.min_version)):
-                return False
+                return None
             def validate(metadata):
                 if metadata is None or metadata.origin is not InstalledOrigin.APPLICATION:
-                    return False
+                    return None
                 _check_addon_xml_identity(metadata.xml_bytes, addon_id, version)
                 root = ET.fromstring(metadata.xml_bytes)
                 backwards = root.findall("backwards-compatibility")
                 scripts = [point for point in root.findall("extension-point") if point.get("id") == "script"]
                 if (root.tag != "addon" or len(backwards) != 1 or len(scripts) != 1
                         or scripts[0].get("schema") != "script.xsd" or root.findall("extension")):
-                    return False
+                    return None
                 abi = backwards[0].get("abi")
                 if (not isinstance(abi, str) or not abi.startswith("3.")
                         or not _strict_version_satisfies(version, abi)
                         or not _strict_version_satisfies(edge.min_version, abi)):
-                    return False
+                    return None
                 fresh = xbmcaddon.Addon("xbmc.python")
                 return usable() and tuple(fresh.getAddonInfo(key) for key in fields) == info
 
             return inventory.read_application_builtin_metadata(
                 addon_id, path, validate=validate,
-            ) is not None
+            )
 
         except Exception:
-            return False
+            return None
 
     def assert_mutable_target(self, addon_id):
         from resources.lib.platform_policy import PlatformMutationError
@@ -3464,6 +3631,16 @@ class FrozenInstallCoordinator:
                 raise FrozenInstallValidationError(
                     "held retry manifest identity changed"
                 )
+
+            verification_plan = FrozenManifestPlan(
+                manifest, {node.addon_id: node for node in manifest.addons}, ())
+            verify_platform_requirements(
+                verification_plan, self.installer,
+                planned_versions=_planned_versions(verification_plan, current.resolution_records),
+                skipped=frozenset(r.addon_id for r in current.resolution_records
+                                  if r.resolution is InstallResolution.SKIPPED),
+                resolutions={r.addon_id: r for r in current.resolution_records},
+                required_addon_ids=_repository_required_addon_ids(self.artifact_store, current.resolution_records))
 
             source_store = artifact_source_store or self.artifact_store
             for node in manifest.addons:

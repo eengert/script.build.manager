@@ -126,7 +126,8 @@ class RuntimeAuthorityCorrections(PlatformProvidedInstallTests):
 
 from tests.test_plan import PlanHarness, PlatformProvidedPlan
 from resources.lib.plan_model import PlanState
-from resources.lib.frozen_install import InMemoryFrozenArtifactBackend, FrozenInstalledAddon
+from resources.lib.frozen_install import FrozenInstalledAddon
+from tests.builtin_evidence import SyntheticBuiltinBackend as InMemoryFrozenArtifactBackend, close_python
 from resources.lib.frozen import InstalledMetadata, InstalledOrigin
 from tests.test_frozen import _xml
 
@@ -277,12 +278,17 @@ class RepositoryPlatformCorrections(unittest.TestCase):
             dependency_edges=(DependencyEdge('xbmc.python', '3.0.0'),)))
         self.f.nodes.append(AddonCaptureNode('xbmc.python', '3.0.1', 'system', True,
                                              ProvenanceStatus.UNKNOWN, system=True, status=CaptureStatus.SYSTEM))
+        self.f.nodes = list(close_python(replace(self.f.f.fixture.frozen, schema_version=2, addons=tuple(self.f.nodes))).addons)
         self.f.fixture = self.f.f.fixture
         self.f.fixture.frozen = replace(self.f.fixture.frozen, schema_version=2, addons=tuple(self.f.nodes))
         from tests.test_frozen_install import _zip
         from tests.test_status import DEMO
         self.f.package = _zip(DEMO, '2.0.0', requires=((PLATFORM_ID, '5.0.0'),))
-        self.backend = self.f.f.backend
+        previous = self.f.f.backend
+        self.backend = InMemoryFrozenArtifactBackend(
+            installed=previous.installed, repository_packages=previous.repository_packages,
+            platform_metadata=previous.platform_metadata)
+        self.f.f.backend = self.backend
         self.backend.installed[PLATFORM_ID] = FrozenInstalledAddon(PLATFORM_ID, '6.0.0', True)
         self.backend.installed['xbmc.python'] = FrozenInstalledAddon('xbmc.python', '3.0.1', True)
         self.backend.platform_metadata[PLATFORM_ID] = InstalledMetadata(

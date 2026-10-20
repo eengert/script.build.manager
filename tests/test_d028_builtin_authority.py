@@ -77,8 +77,10 @@ class BuiltinAuthorityTests(unittest.TestCase):
         manifest=FrozenBuildManifest(2,'probe','probe','2026-10-09T00:00:00Z','21.3','macos',
             CaptureStatus.COMPLETE,(node,))
         plan=SimpleNamespace(manifest=manifest,nodes={node.addon_id:node})
-        self.assertEqual({'script.module.pil':'5.1.0'},
-            verify_platform_requirements(plan,self.backend,planned_versions={}))
+        # Python's native proof does not prove its mandatory core provider.
+        # This formerly passed without a captured builtin closure.
+        with self.assertRaises(FrozenPlatformRequirementError):
+            verify_platform_requirements(plan,self.backend,planned_versions={})
         self.conditions['System.AddonIsEnabled(xbmc.python)']=False
         with self.assertRaises(FrozenPlatformRequirementError):
             verify_platform_requirements(plan,self.backend,planned_versions={})
