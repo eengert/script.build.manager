@@ -6,7 +6,7 @@ Only content addressed ArtifactStore objects are persisted during preparation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import io
 import re
@@ -120,10 +120,79 @@ class PreparationResult:
         return {"code": self.code.value, "prepared": self.prepared is not None}
 
 
+@dataclass(frozen=True)
+class StandalonePreparationSource:
+    """Explicit path authority for standalone PREPARE -> REVIEW -> APPLY.
+
+    None means no configuration, never discovery from installed Kodi state.
+    The admitted frozen fingerprint must be supplied by the caller.
+    """
+    software_manifest_path: str
+    admitted_fingerprint: str
+    device_profile_id: str
+    policies: tuple
+    configuration_manifest_path: str | None
+    configuration_packages_root: str
+
+    def __post_init__(self):
+        from pathlib import Path
+        from resources.lib.manifest import FrozenInstallPolicy
+        if (not Path(self.software_manifest_path).is_absolute()
+                or not _DIGEST.fullmatch(self.admitted_fingerprint)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", self.device_profile_id)
+                or not isinstance(self.policies, tuple)
+                or any(not isinstance(p, FrozenInstallPolicy) for p in self.policies)
+                or len({p.addon_id for p in self.policies}) != len(self.policies)
+                or (self.configuration_manifest_path is not None
+                    and not Path(self.configuration_manifest_path).is_absolute())
+                or not Path(self.configuration_packages_root).is_absolute()):
+            raise PreparationError(PreparationCode.TARGET_INVALID)
+
+    def identity(self):
+        return {"software": self.software_manifest_path,
+                "admitted": self.admitted_fingerprint,
+                "configuration": self.configuration_manifest_path,
+                "packages": self.configuration_packages_root}
+
+    def load(self):
+        from resources.lib.frozen_install import _default_manifest_loader
+        from resources.lib.manifest import load_manifest_file, BuildInfo
+        from resources.lib.resolver import ResolvedBuild
+        from resources.lib.config import ConfigPackageLoader
+        frozen = _default_manifest_loader(self.software_manifest_path)
+        if frozen.fingerprint() != self.admitted_fingerprint:
+            raise PreparationError(PreparationCode.TARGET_INVALID)
+        if self.configuration_manifest_path is None:
+            # A software-only projection, with explicit absence of configuration.
+            desired = ResolvedBuild(BuildInfo(frozen.build_id, "0.0.0"), "", "",
+                self.device_profile_id, (), (), None, None, (), None, None, self.policies)
+        else:
+            desired = resolve_manifest(load_manifest_file(self.configuration_manifest_path),
+                                       self.device_profile_id)
+            desired = replace(desired, frozen_install_policies=self.policies)
+        check_frozen_identity(desired.build.id, frozen)
+        return desired, frozen, ConfigPackageLoader(self.configuration_packages_root)
+
+
+def _load_target(target):
+    source = getattr(target, "standalone_source", None)
+    if source is not None:
+        if (target.library_source is not None or target.device_profile_id != source.device_profile_id
+                or target.software_manifest_path != source.software_manifest_path
+                or target.configuration_manifest_path != (source.configuration_manifest_path or "")):
+            raise PreparationError(PreparationCode.TARGET_INVALID)
+        desired, frozen, loader = source.load()
+        return source, desired, frozen, loader
+    install_target = LibraryInstallTarget.from_plan_target(target)
+    public, frozen, loader = install_target.load()
+    return target.library_source, resolve_manifest(public, target.device_profile_id), frozen, loader
+
+
 def _binding(source, profile, desired, frozen, loader):
     check_frozen_identity(desired.build.id, frozen)
     effective = loader.resolve(desired.config) if desired.config is not None else None
-    return dict(source_identity=_canonical_digest({"root": source.root, "entry_id": source.entry_id}),
+    return dict(source_identity=_canonical_digest((source.identity() if isinstance(source, StandalonePreparationSource)
+                    else {"root": source.root, "entry_id": source.entry_id})),
                 device_profile_id=profile, build_id=desired.build.id,
                 source_software_fingerprint=frozen.fingerprint(),
                 install_plan_fingerprint=install_plan_fingerprint(frozen, desired.frozen_install_policies),
@@ -259,10 +328,8 @@ class RepositoryPreparationService:
         )
         from resources.lib.addons import RepositoryPackage
         try:
-            install_target = LibraryInstallTarget.from_plan_target(target)
-            public, frozen, loader = install_target.load()
-            desired = resolve_manifest(public, target.device_profile_id)
-            binding = _binding(target.library_source, target.device_profile_id, desired, frozen, loader)
+            source, desired, frozen, loader = _load_target(target)
+            binding = _binding(source, target.device_profile_id, desired, frozen, loader)
             if target.install_resolution is not None or target.prepared_resolution is not None:
                 raise ValueError
             choices = dict(target.choices)
@@ -297,7 +364,7 @@ class RepositoryPreparationService:
                 from resources.lib.frozen_install import verify_platform_requirements, _planned_versions, _repository_required_addon_ids
                 versions = verify_platform_requirements(
                     plan.strict_plan, self.platform_backend,
-                    planned_versions=_planned_versions(plan.strict_plan, records), skipped=skipped,
+                    planned_versions=_planned_versions(plan.strict_plan, records), skipped=skipped, resolutions=records,
                     required_addon_ids=_repository_required_addon_ids(None, packages=packages.values()))
                 extra = {a: _repository_package_required_dependencies(p, plan, records, skipped,
                                                                        platform_versions=versions)
@@ -325,9 +392,8 @@ class RepositoryPreparationService:
                 raise PreparationError(PreparationCode.IMPORT_FAILED) from exc
             prepared = PreparedRepositoryResolution(**binding, records=tuple(records[a] for a in requested))
             # Source and policy must still match after network I/O/import.
-            public, frozen, loader = install_target.load()
-            desired = resolve_manifest(public, target.device_profile_id)
-            bind_prepared(prepared, target.library_source, target.device_profile_id,
+            source, desired, frozen, loader = _load_target(target)
+            bind_prepared(prepared, source, target.device_profile_id,
                           desired, frozen, loader, self.store)
             return PreparationResult(PreparationCode.READY, prepared)
         except PreparationError as exc:

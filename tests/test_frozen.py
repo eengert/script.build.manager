@@ -40,10 +40,10 @@ def _xml(addon_id, version="1.0.0", imports=(), point=None):
     return f'<addon id="{addon_id}" version="{version}" name="{addon_id}">{requires}{extension}</addon>'.encode()
 
 
-def _zip(addon_id, version="1.0.0"):
+def _zip(addon_id, version="1.0.0", *, xml_bytes=None):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr(f"{addon_id}/addon.xml", _xml(addon_id, version))
+        archive.writestr(f"{addon_id}/addon.xml", _xml(addon_id, version) if xml_bytes is None else xml_bytes)
     return output.getvalue()
 
 
@@ -61,7 +61,7 @@ class TestFrozenCapture(unittest.TestCase):
             "script.optional": _xml("script.optional"),
         }
         packages = {
-            (item, "1.0.0"): [(f"{item}-1.0.0.zip", _zip(item))]
+            (item, "1.0.0"): [(f"{item}-1.0.0.zip", _zip(item, xml_bytes=xml[item]))]
             for item in ("plugin.root", "script.required", "script.optional")
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -80,7 +80,7 @@ class TestFrozenCapture(unittest.TestCase):
     def test_system_dependency_is_recorded_without_artifact(self):
         addons = [_addon("plugin.root", addon_type="xbmc.python.plugin.video")]
         xml = {"plugin.root": _xml("plugin.root", imports=(("xbmc.python", "3.0.0", False),))}
-        package = {("plugin.root", "1.0.0"): [("plugin.root.zip", _zip("plugin.root"))]}
+        package = {("plugin.root", "1.0.0"): [("plugin.root.zip", _zip("plugin.root", xml_bytes=xml["plugin.root"]))]}
         with tempfile.TemporaryDirectory() as directory:
             store = ArtifactStore(Path(directory))
             result = capture_frozen_build(
@@ -111,7 +111,7 @@ class TestFrozenCapture(unittest.TestCase):
             ),
         }
         packages = {
-            (addon_id, "1.0.0"): [(f"{addon_id}.zip", _zip(addon_id))]
+            (addon_id, "1.0.0"): [(f"{addon_id}.zip", _zip(addon_id, xml_bytes=xml[addon_id]))]
             for addon_id in ("plugin.root", "script.optional.installed")
         }
         with tempfile.TemporaryDirectory() as directory:

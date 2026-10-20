@@ -62,6 +62,11 @@ class BuiltinAdmissionTests(unittest.TestCase):
         root = m.addons[0]
         m = replace(m, addons=(replace(root, dependency_edges=(
             DependencyEdge("xbmc.gui", "5.17.0"), DependencyEdge("xbmc.gui", "999.0.0"))),) + m.addons[1:])
+        # Match the exact ZIP too: this test isolates admission of both minima.
+        artifact = self.artifacts.import_zip(old._zip(root.addon_id, root.version,
+            requires=(("xbmc.gui", "5.17.0"), ("xbmc.gui", "999.0.0"))),
+            expected_addon_id=root.addon_id, expected_version=root.version)
+        m = replace(m, addons=(replace(m.addons[0], artifact=artifact),) + m.addons[1:])
         self.assert_blocked(m)
 
     def test_system_only_graph_is_verified(self):
@@ -165,7 +170,8 @@ class BuiltinAdmissionTests(unittest.TestCase):
         package = RepositoryPackage(aid, "repository.test", "2.0.0",
             old._zip(aid, "2.0.0", requires=(("xbmc.gui", "999.0.0"),)))
         requirements = fi._repository_required_addon_ids(None, packages=(package,))
-        self.assertEqual("999.0.0", requirements.dependencies[aid][0].min_version)
+        self.assertEqual((DependencyEdge("xbmc.gui", "999.0.0", False, (aid,)),),
+                         requirements.dependencies.get(aid))
         self.assert_blocked(m, required_addon_ids=requirements)
         p = fi.validate_frozen_manifest(m, self.artifacts)
         with self.assertRaises(fi.FrozenInstallValidationError):

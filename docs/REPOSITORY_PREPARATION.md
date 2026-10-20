@@ -1,8 +1,11 @@
 # Repository Current preparation before Apply
 
 This backend removes the missing-package review gap for library Install. It is
-an explicit preparation step; Plan preview remains read-only. No frontend is
-wired by this change.
+an explicit preparation step; Plan preview remains read-only. Existing native
+Install and Update / Repair frontends already invoke preparation, display its
+retrieval step, and request a fresh review. These callers retain their library
+source and prior accepted-record behavior. This correction adds the standalone
+adapter to the same backend service; it adds no second transaction owner.
 
 The caller keeps the exact `PlanTarget` returned from the selected library,
 records `DecisionChoice.INSTALL_CURRENT`, and calls:
@@ -29,12 +32,63 @@ Only a `CHANGES_READY` preview has a review identity. Preparation success itself
 is neither approval nor permission to Apply. Preserve the exact target and
 choices across review/validation/execution; never follow a later library
 selection. Library Repository Current without preparation fails before mutation.
-Standalone/path-based resolution retains its existing behavior.
+Standalone/path-based unresolved resolution now returns outcome
+`preparation_required`, code `PREPARATION_REQUIRED`, before transaction/updater or
+Kodi mutation. Its message names the explicit prepare/review continuation.
+
+Standalone callers use the same service and Plan:
+
+```python
+source = StandalonePreparationSource(
+    software_manifest_path=absolute_frozen_path,
+    admitted_fingerprint=admitted_frozen.fingerprint(),
+    device_profile_id=profile_id,
+    policies=tuple(explicit_policies),
+    configuration_manifest_path=absolute_public_path_or_None,
+    configuration_packages_root=absolute_packages_root,
+)
+target = PlanTarget(
+    source.configuration_manifest_path or "", profile_id,
+    source.software_manifest_path, standalone_source=source,
+    choices=((addon_id, DecisionChoice.INSTALL_CURRENT),),
+)
+result = preparation_service.prepare(target)
+if result.code is PreparationCode.READY:
+    target = dataclasses.replace(target, prepared_resolution=result.prepared)
+    plan = plan_service.preview(target)
+    # Present the actual prepared versions/actions; obtain fresh operator approval.
+    # Only an approved CHANGES_READY plan with its exact review can continue.
+    coordinator.install_prepared(target, plan.review)
+```
+
+The standalone source explicitly admits the frozen fingerprint, source paths,
+profile, and policies. `None` explicitly declares no configuration; it projects
+software-only desired state with no configuration runner. A supplied public
+manifest resolves the chosen profile and its configuration packages. A configured
+standalone continuation must supply the existing configuration/restart runner
+wired to that same configuration source and packages root (including its resume
+owner); absence returns `CONFIGURATION_RUNNER_REQUIRED` before mutation. The
+adapter never silently skips requested configuration or chooses a different loader.
+No new durable configuration-root format is introduced. This adapter
+does not manufacture a library entry or inspect installed repositories. Its
+source identity, selected effective configuration and policy identities are
+rechecked after preparation and at the final execution boundary. Offline callers
+may inject a `BuildPlanService` into `install_prepared` using synthetic read-only
+owners; production uses the standard Plan owners with the coordinator's artifact
+store and platform backend.
+
+Unresolved previews may truthfully show `DECISION_REQUIRED` or
+`RESOLUTION_REQUIRED` (preparation required), with no review identity or Apply
+permission. Exact structural validation still runs. Unknown package requirements
+are never represented as skipped or as `NO_CHANGES`; final D-028 admission is
+reserved for a fully prepared/verifiable plan. Prepared approval binds source,
+profile/configuration, policies/choices, exact and replacement artifacts, actual
+requirements, actions/versions, and verified platform evidence.
 
 `PreparedRepositoryResolution` is separate from the terminal
 `FrozenInstallResolutionManifest`. It is serializable for callers that need to
 save preparation, but this stage persists only immutable ArtifactStore objects.
-Its identity includes a digest of the exact library root/entry, profile, build,
+Its identity includes a digest of the exact library root/entry or explicit standalone source, profile, build,
 frozen source fingerprint, policy/plan fingerprint, effective build/configuration
 fingerprint, and typed RESOLVED records. Each record binds add-on, captured and
 resolved versions, permitted repository ID, desired enabled state, SHA-256 and
@@ -68,7 +122,7 @@ text; failure creates no frozen/restart transaction or updater guard and makes
 no Kodi mutation. An interrupted multi-package preparation may leave already
 imported immutable objects; they are not approval or install state.
 
-Apply rereads the library, profile, source/plan identity, artifact metadata/bytes
+Apply rereads the library or standalone source, profile, source/plan identity, artifact metadata/bytes
 and dependency compatibility before transaction creation. Its initial resolution
 records contain the prepared RESOLVED identities; resolved packages never invoke
 `resolve_repository_current()` again. The existing frozen transaction persists

@@ -34,7 +34,9 @@ from resources.lib.manifest import validate_manifest
 from resources.lib.dependencies import _strict_version_satisfies, _version_satisfies
 
 ARCHIVE = Path('/Users/eengert/Documents/Kodi/archives/build-manager-frozen-artifacts-2026-10-04')
-PIL_XML = Path('/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/addons/script.module.pil/addon.xml')
+PIL_XML = Path(__file__).resolve().parents[1] / '.qualification-evidence/item8-help-af3-20261018/platform-source.json'
+PIL_SOURCE_SHA256 = '112e8527a1c08bb9f76e13279604ee436ab27ee6cf95039e3864422937ea8d79'
+PIL_XML_SHA256 = '5ee3b731157f9aaff28cca5f9b093cad1584c1e579a2e5a991ffffc5160ebeb7'
 PACKAGES = {
     'plugin.video.redlight': ('2.6.8', '64036b818ed44f4fc56cbf6fd32a48a0713517624ae711a108b737f907f05927'),
     'script.module.requests': ('2.31.0', 'fa5eb6969159964dc1917f47da48fab2dd582fa3e608ecfa83d3b488c21147fa'),
@@ -86,6 +88,16 @@ def validate_dependency_requirements(frozen):
                 _require(compare(dependency.version, edge.min_version))
 
 
+def retained_pil_xml(pil_xml=PIL_XML):
+    """Authenticate retained evidence before returning historical XML bytes."""
+    _require(Path(pil_xml) == PIL_XML)
+    source = _read(Path(pil_xml), 4 * 1024 * 1024)
+    _require(hashlib.sha256(source).hexdigest() == PIL_SOURCE_SHA256)
+    xml_bytes = json.loads(source)['addons/script.module.pil/addon.xml']['text'].encode('utf-8')
+    _require(hashlib.sha256(xml_bytes).hexdigest() == PIL_XML_SHA256)
+    return xml_bytes
+
+
 def validate_inputs(archive, pil_xml):
     """No imports, extraction, package execution, capture, or writes."""
     _require(Path(archive) == ARCHIVE and Path(pil_xml) == PIL_XML)
@@ -111,7 +123,7 @@ def validate_inputs(archive, pil_xml):
         nodes.append(AddonCaptureNode(aid, version, point, True,
             ProvenanceStatus.MANUAL_OR_UNKNOWN, artifact=metadata, dependency_edges=_edges(xml)))
         blobs[aid] = data
-    pil = ET.fromstring(_read(PIL_XML, 1024 * 1024))
+    pil = ET.fromstring(retained_pil_xml(pil_xml))
     _require(pil.get('id') == 'script.module.pil' and pil.get('version') == '5.1.0')
     _require(any(n.get('point') == 'xbmc.python.module' for n in pil.findall('extension')))
     _require([(e.addon_id, e.min_version, e.optional) for e in _edges(pil)] == [('xbmc.python', '3.0.0', False)])

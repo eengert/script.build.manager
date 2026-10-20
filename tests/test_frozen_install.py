@@ -72,8 +72,9 @@ SESSION_B = "22222222-2222-4222-8222-222222222222"
 def _zip(addon_id, version, *, requires=(), repository=False):
     buf = io.BytesIO()
     requires_xml = "".join(
-        f'<import addon="{addon}" version="{minimum}"/>'
-        for addon, minimum in requires
+        '<import addon="%s" version="%s" optional="%s"/>' %
+        (edge[0], edge[1], str(edge[2] if len(edge) > 2 else False).lower())
+        for edge in requires
     )
     extensions = (
         '<extension point="xbmc.addon.repository">'
@@ -148,7 +149,8 @@ class FrozenInstallTest(unittest.TestCase):
         dep_zip = _zip(dep_id, "1.0.0")
         if cycle:
             dep_zip = _zip(dep_id, "1.0.0", requires=((app_id, "1.0.0"),))
-        app_zip = _zip(app_id, "1.0.0", requires=((dep_id, "1.0.0"),))
+        app_zip = _zip(app_id, "1.0.0", requires=(
+            (("script.module.bm022.optional", "", True),) if optional_missing else ((dep_id, "1.0.0"),)))
         repo_zip = _zip(repo_id, "1.0.0", repository=True)
         dep_meta = self.artifacts.import_zip(
             dep_zip, expected_addon_id=dep_id, expected_version="1.0.0", source="test"
@@ -2431,6 +2433,9 @@ class PlatformProvidedInstallTests(unittest.TestCase):
         from dataclasses import replace
         root = next(node for node in self.manifest.addons if node.addon_id == PLATFORM_ROOT)
         edge = DependencyEdge(PLATFORM_ID, "1.1.x", False, (PLATFORM_ROOT,))
+        artifact = self.artifacts.import_zip(_zip(root.addon_id, root.version,
+            requires=((PLATFORM_ID, "1.1.x"),)), expected_addon_id=root.addon_id, expected_version=root.version)
+        root = replace(root, artifact=artifact)
         self.manifest = FrozenBuildManifest(
             schema_version=self.manifest.schema_version, build_id=self.manifest.build_id,
             name=self.manifest.name, created_at=self.manifest.created_at,
@@ -2529,6 +2534,9 @@ class PlatformProvidedInstallTests(unittest.TestCase):
             (self.cache / f"{addon_id}-{version}.zip").write_bytes(_zip(addon_id, version, requires=requires))
             entries.append(_kodi_entry(addon_id, f"special://home/addons/{addon_id}/", version))
         self.entries = entries
+        # The E fixture changes same-version XML; do not let the earlier exact
+        # ArtifactStore object outrank this fixture's newly authored cache ZIP.
+        self.artifacts = ArtifactStore(self.root / "artifacts-e")
         self.manifest = self._capture(entries)
 
     def test_fixture_e_completes_for_a_compatible_target_and_never_installs_pil(self):

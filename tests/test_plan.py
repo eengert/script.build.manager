@@ -48,14 +48,16 @@ REPO_TYPE = "xbmc.addon.repository"
 PLUGIN_TYPE = "xbmc.python.pluginsource"
 
 
-def make_zip(addon_id, version, *, repository=False):
+def make_zip(addon_id, version, *, repository=False, requires=()):
     extension = (
         '<extension point="xbmc.addon.repository">'
         '<dir><info>http://127.0.0.1/addons.xml</info>'
         '<datadir zip="true">http://127.0.0.1/</datadir></dir></extension>'
         if repository else '<extension point="xbmc.python.pluginsource" library="default.py"/>')
-    xml = ('<addon id="%s" name="%s" version="%s"><requires/>%s</addon>'
-           % (addon_id, addon_id, version, extension))
+    imports = ''.join('<import addon="%s" version="%s" optional="%s"/>' %
+        (e.addon_id, e.min_version, str(e.optional).lower()) for e in requires)
+    xml = ('<addon id="%s" name="%s" version="%s"><requires>%s</requires>%s</addon>'
+           % (addon_id, addon_id, version, imports, extension))
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("%s/addon.xml" % addon_id, xml)
@@ -111,7 +113,8 @@ class PlanHarness(Harness):
         for addon_id, (version, kind, requires) in sorted(specs.items()):
             artifact = None
             if writer is not None:
-                data = make_zip(addon_id, version, repository=kind == REPO_TYPE)
+                data = make_zip(addon_id, version, repository=kind == REPO_TYPE,
+                                requires=tuple(DependencyEdge(r) for r in requires))
                 artifact = writer.import_zip(data, expected_addon_id=addon_id,
                                              expected_version=version)
                 self.zips[addon_id] = artifact
@@ -1260,7 +1263,7 @@ class G3CorrectionRegressions(PlanBase):
             for name in source.namelist():
                 payload = source.read(name)
                 if name.endswith('/addon.xml'):
-                    payload = payload.replace(b'<requires/>', ('<requires>' + ''.join(
+                    payload = payload.replace(b'<requires></requires>', ('<requires>' + ''.join(
                         '<import addon="%s" version="%s"/>' % pair for pair in requires
                     ) + '</requires>').encode())
                 dest.writestr(name, payload)

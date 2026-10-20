@@ -49,6 +49,8 @@ class RuntimeAuthorityCorrections(PlatformProvidedInstallTests):
         manifest = replace(self.manifest, addons=tuple(
             replace(n, dependency_edges=(DependencyEdge(PLATFORM_ID, '99.0.0', True),))
             if n == root else n for n in self.manifest.addons))
+        from tests.test_d028_target_closure import bind_synthetic_edges
+        manifest = bind_synthetic_edges(manifest, self.artifacts, {PLATFORM_ROOT})
         self.assertEqual('complete', self._install(manifest=manifest).outcome)
 
     def test_platform_record_rejected_by_shared_fingerprint(self):
@@ -90,7 +92,8 @@ class RuntimeAuthorityCorrections(PlatformProvidedInstallTests):
     def _target_child(self, child='script.module.zzz-child', edges=()):
         from tests.test_frozen_install import _zip
         from resources.lib.frozen import AddonCaptureNode, ProvenanceStatus
-        artifact = self.artifacts.import_zip(_zip(child, '1.0.0'), expected_addon_id=child,
+        artifact = self.artifacts.import_zip(_zip(child, '1.0.0', requires=tuple(
+            (e.addon_id, e.min_version, e.optional) for e in edges)), expected_addon_id=child,
                                              expected_version='1.0.0')
         node = AddonCaptureNode(child, '1.0.0', 'xbmc.python.module', True,
                                 ProvenanceStatus.VERIFIED_REPOSITORY,
@@ -120,6 +123,8 @@ class RuntimeAuthorityCorrections(PlatformProvidedInstallTests):
             replace(n, optional=True) if n.platform_provided else
             replace(n, dependency_edges=(DependencyEdge(PLATFORM_ID, '99.0.0', True),))
             if n.addon_id == PLATFORM_ROOT else n for n in self.manifest.addons))
+        from tests.test_d028_target_closure import bind_synthetic_edges
+        self.manifest = bind_synthetic_edges(self.manifest, self.artifacts, {PLATFORM_ROOT})
         self._install_target(absent=True)
         self.assertEqual('complete', self._install().outcome)
 

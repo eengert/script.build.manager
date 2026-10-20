@@ -9,7 +9,8 @@ from dataclasses import replace
 
 from resources.lib.frozen import (AddonCaptureNode, CaptureStatus, DependencyEdge,
     FrozenBuildManifest, ProvenanceStatus)
-from resources.lib.frozen_install import (KodiRuntimeFrozenArtifactBackend,
+from resources.lib.artifacts import ArtifactStore
+from resources.lib.frozen_install import (validate_frozen_manifest, KodiRuntimeFrozenArtifactBackend,
     FrozenPlatformRequirementError, _builtin_satisfies, verify_platform_requirements)
 
 BUILTIN = '''<addon id="xbmc.python" version="3.0.1"><backwards-compatibility abi="3.0.0"/>
@@ -71,18 +72,15 @@ class BuiltinAuthorityTests(unittest.TestCase):
         self.assertFalse(any(p.get('addonid')=='xbmc.python' for _,p in self.calls))
 
     def test_production_platform_verifier_uses_builtin_authority_and_rechecks_enabled(self):
-        node=AddonCaptureNode('script.module.pil','5.1.0','xbmc.python.module',True,
-            ProvenanceStatus.UNKNOWN, dependency_edges=(self.edge,),
-            status=CaptureStatus.PLATFORM_PROVIDED,platform_provided=True)
-        manifest=FrozenBuildManifest(2,'probe','probe','2026-10-09T00:00:00Z','21.3','macos',
-            CaptureStatus.COMPLETE,(node,))
-        plan=SimpleNamespace(manifest=manifest,nodes={node.addon_id:node})
+        plan = self._platform_plan()
         # Python's native proof does not prove its mandatory core provider.
         # This formerly passed without a captured builtin closure.
-        with self.assertRaises(FrozenPlatformRequirementError):
+        with self.assertRaisesRegex(FrozenPlatformRequirementError,
+                "required builtin is missing or misclassified: xbmc.core"):
             verify_platform_requirements(plan,self.backend,planned_versions={})
         self.conditions['System.AddonIsEnabled(xbmc.python)']=False
-        with self.assertRaises(FrozenPlatformRequirementError):
+        with self.assertRaisesRegex(FrozenPlatformRequirementError,
+                "builtin remains UNVERIFIED or incompatible: xbmc.python"):
             verify_platform_requirements(plan,self.backend,planned_versions={})
 
     def test_api_identity_version_type_and_origin_must_match(self):
@@ -249,14 +247,20 @@ class BuiltinAuthorityTests(unittest.TestCase):
         with patch('sys.version_info',SimpleNamespace(major=2)):
             self.assertFalse(self.satisfies())
 
-    def _platform_probe(self):
+    def _platform_plan(self):
         node = AddonCaptureNode('script.module.pil', '5.1.0', 'xbmc.python.module', True,
             ProvenanceStatus.UNKNOWN, dependency_edges=(self.edge,),
             status=CaptureStatus.PLATFORM_PROVIDED, platform_provided=True)
+        python = AddonCaptureNode('xbmc.python', '3.0.1', 'system', True,
+            ProvenanceStatus.UNKNOWN, system=True, status=CaptureStatus.SYSTEM)
+        # The captured Python observation omits core, intentionally. Final
+        # admission must read Python's native declarations and demand core proof.
         manifest = FrozenBuildManifest(2, 'probe', 'probe', '2026-10-09T00:00:00Z',
-            '21.3', 'macos', CaptureStatus.COMPLETE, (node,))
-        return verify_platform_requirements(SimpleNamespace(manifest=manifest,
-            nodes={node.addon_id: node}), self.backend, planned_versions={})
+            '21.3', 'macos', CaptureStatus.COMPLETE, (node, python))
+        return validate_frozen_manifest(manifest, ArtifactStore(self.root/'artifacts'))
+
+    def _platform_probe(self):
+        return verify_platform_requirements(self._platform_plan(), self.backend, planned_versions={})
 
     def _during_read(self, change):
         from resources.lib.frozen import read_regular_file
@@ -316,8 +320,11 @@ class BuiltinAuthorityTests(unittest.TestCase):
     def test_production_caller_rejects_snapshot_registry_substitution(self):
         self._snapshot_registry()
         with self._during_read(lambda: self.info.update(version='3.0.2')):
-            with self.assertRaises(FrozenPlatformRequirementError):
+            with self.assertRaisesRegex(FrozenPlatformRequirementError,
+                    "builtin remains UNVERIFIED or incompatible: xbmc.python"):
                 self._platform_probe()
+
+        self.assertEqual('3.0.2', self.info['version'])  # the native-read race actually ran
 
     def test_fresh_registry_fields_and_enabled_state_are_required(self):
         self._snapshot_registry()

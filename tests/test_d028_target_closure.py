@@ -38,6 +38,19 @@ def observe(backend, aid, *, imports=(), version='1.0.0'):
         InstalledOrigin.APPLICATION)
 
 
+def bind_synthetic_edges(manifest, store, addon_ids):
+    """Author faithful synthetic ZIPs for explicitly changed fixture graphs."""
+    nodes = []
+    for node in manifest.addons:
+        if node.addon_id in addon_ids:
+            data = fi._zip(node.addon_id, node.version, requires=tuple(
+                (e.addon_id, e.min_version, e.optional) for e in node.dependency_edges))
+            artifact = store.import_zip(data, expected_addon_id=node.addon_id, expected_version=node.version)
+            node = replace(node, artifact=artifact)
+        nodes.append(node)
+    return replace(manifest, addons=tuple(nodes))
+
+
 class TargetClosureInstall(unittest.TestCase):
     setUp = fi.PlatformProvidedInstallTests.setUp
     _capture = fi.PlatformProvidedInstallTests._capture
@@ -58,6 +71,7 @@ class TargetClosureInstall(unittest.TestCase):
         self.manifest = replace(self.manifest, addons=tuple(
             replace(n, dependency_edges=n.dependency_edges + (DependencyEdge(C, '1.0.0', True),))
             if n.addon_id == fi.PLATFORM_ROOT else n for n in self.manifest.addons) + tuple(children))
+        self.manifest = bind_synthetic_edges(self.manifest, self.artifacts, {fi.PLATFORM_ROOT})
         self._install_target(extra_imports=((C, '1.0.0', False),) if promote else ())
         observe(self.backend, Q, imports=((D, '1.0.0', False),) if levels == 2 else ())
         if levels == 2:
@@ -99,6 +113,7 @@ class TargetClosureInstall(unittest.TestCase):
         self.manifest = replace(self.manifest, addons=tuple(
             replace(n, dependency_edges=n.dependency_edges + (DependencyEdge(S, '99.0.0', True),))
             if n.addon_id == C else n for n in self.manifest.addons) + (platform(S),))
+        self.manifest = bind_synthetic_edges(self.manifest, self.artifacts, {C})
         self.assertNotIn(S, self.verified())
         self.assertEqual('complete', self._install().outcome)
 
@@ -150,6 +165,7 @@ class TargetClosureInstall(unittest.TestCase):
         self.manifest = replace(self.manifest, addons=tuple(
             replace(n, dependency_edges=n.dependency_edges + (DependencyEdge(Q, '0.1.0'),))
             if n.addon_id == fi.PLATFORM_ROOT else n for n in self.manifest.addons))
+        self.manifest = bind_synthetic_edges(self.manifest, self.artifacts, {fi.PLATFORM_ROOT})
         observe(self.backend, Q, version='0.5.0')
         self._assert_blocked_before_mutation()
 
@@ -199,6 +215,8 @@ class TargetClosurePlan(unittest.TestCase):
                                         DependencyEdge(pt.MODULE, '2.0.0', True))) if n.addon_id == pt.DEMO else
             replace(n, optional=True, dependency_edges=(DependencyEdge(Q, '1.0.0'),)) if n.addon_id == pt.MODULE else
             replace(n, optional=True) if n.addon_id == Q else n for n in h.frozen.addons))
+        from resources.lib.artifacts import ArtifactStore
+        h.frozen = bind_synthetic_edges(h.frozen, ArtifactStore(h.store_root), {pt.DEMO, pt.MODULE})
         h.save_overlay()
         backend = SyntheticBuiltinBackend()
         observe(backend, fi.PLATFORM_ID, version='5.1.0',

@@ -50,19 +50,42 @@ skip permission.
 
 Build Manager offers repository fallback only for the concrete repository ID
 declared by policy and represented by an exact captured, enabled repository
-add-on. It validates that repository ZIP and uses only that installed
-repository's endpoint metadata. It does not infer a repository from vague
+add-on. It validates that repository ZIP and uses only its captured endpoint metadata,
+without requiring the repository to be installed on the target. It does not infer a repository from vague
 provenance text, another installed repository, an add-on name, or a placeholder
 origin.
 
-After the user chooses **Install Current Version**, Build Manager installs the
-captured repository package and required exact prerequisites first. It queries
-that repository's current index through the reviewed BM-011 package-fetch path,
-downloads the requested ZIP from that repository only, validates its ID,
-version, size, and ZIP contents, and imports the ZIP into the ArtifactStore.
-The resolved version and immutable artifact digest are recorded separately
-from the source capture. The captured manifest is never rewritten to claim that
-the current repository version existed on the source device.
+After the user chooses **Install Current Version**, the explicit execution model
+is **PREPARE -> REVIEW -> APPLY**. `RepositoryPreparationService` reads the
+captured repository ZIP, uses the shared bounded downloader to obtain its index
+and replacement ZIP, validates identity/version/size/hash and actual dependency
+closure, verifies D-028, and imports admitted immutable ArtifactStore objects.
+It rereads source authority after preparation. This happens before transaction
+creation, updater quarantine, prerequisite installation or other Kodi mutation.
+Unsupported repository metadata fails closed; no installed repository supplies
+source authority. See [Repository preparation](REPOSITORY_PREPARATION.md).
+
+A fresh Plan shows the actual prepared version for approval. Apply revalidates
+the exact source, policies, choices, stored bytes, actual dependency requirements,
+target evidence and review freshness before mutation. Later remote changes have
+no effect on the pinned installation. Missing/corrupt bytes block execution;
+changed prepared identity requires fresh approval. Exact packages remain
+exact-first and require no network preparation. Skip and Cancel remain explicit.
+
+Standalone unresolved fallback returns `preparation_required` with code
+`PREPARATION_REQUIRED` and instructions to prepare/review. It creates no
+transaction or updater quarantine. Standalone callers continue through
+`StandalonePreparationSource`, the shared preparation service, Plan, and
+`FrozenInstallCoordinator.install_prepared(target, review)`. This preserves
+repository fallback through an explicit interface. Captured versions and source
+manifests are never rewritten to claim replacement versions existed on source.
+
+Resumption uses exact saved replacement bytes and durable resolved identities,
+never a new download. Legacy incomplete repository `SELECTED` records require
+Needs Attention with transaction/quarantine evidence preserved. Held retries
+validate source archive requirements and D-028 before importing artifacts. Linked
+frozen restart hooks run common package/D-028 admission before returning for
+operations without activation holds; registry refresh remains held-only.
 
 For a known repository the dialog offers **Install Current Version**, **Skip**
 when policy and dependency rules permit it, and **Cancel Build**. The dialog

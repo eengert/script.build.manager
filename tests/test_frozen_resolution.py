@@ -66,8 +66,9 @@ PYSOCKS = "script.module.pysocks"
 def _zip(addon_id, version, *, repository=False, requires=()):
     output = io.BytesIO()
     imports = "".join(
-        f'<import addon="{addon}" version="{minimum}"/>'
-        for addon, minimum in requires
+        '<import addon="%s" version="%s" optional="%s"/>' %
+        (edge[0], edge[1], str(edge[2] if len(edge) > 2 else False).lower())
+        for edge in requires
     )
     extension = (
         '<extension point="xbmc.addon.repository">'
@@ -124,6 +125,10 @@ class FrozenResolutionTest(unittest.TestCase):
         youtube_edge = DependencyEdge(
             YOUTUBE, "", optional=not required_youtube, required_by=(UMBRELLA,)
         )
+        self.umbrella_zip = _zip(UMBRELLA, "5.0.0", requires=(
+            (YOUTUBE, "", not required_youtube), (PYSOCKS, "", True)))
+        self.umbrella_meta = self.artifacts.import_zip(self.umbrella_zip,
+            expected_addon_id=UMBRELLA, expected_version="5.0.0", source="faithful fixture")
         nodes = (
             AddonCaptureNode(
                 REPOSITORY, "1.0.0", "xbmc.addon.repository", True,
@@ -173,6 +178,52 @@ class FrozenResolutionTest(unittest.TestCase):
             configuration_runner=configure,
             manifest_loader=loader or (lambda _path: self._manifest(repository_id=REPOSITORY)),
         )
+
+    def _approved_install(self, manifest, *, decider=None, configure=None):
+        """Exercise the changed contract: unresolved install -> prepare -> review -> apply.
+
+        A faithful standalone source is used, without a manufactured library entry.
+        """
+        import json
+        from resources.lib.repository_preparation import (
+            StandalonePreparationSource, RepositoryPreparationService, PreparationCode)
+        from resources.lib.plan import PlanTarget
+        from resources.lib.plan_model import DecisionChoice, PlanState
+        from tests.test_plan import PlanHarness
+        coordinator = self._coordinator(decider=decider or (lambda _: ResolutionChoice.INSTALL_CURRENT),
+                                        configure=configure or (lambda request: SimpleNamespace(outcome='complete', success=True)))
+        pending = coordinator.install(manifest, manifest_path=str(self.root / 'frozen.json'),
+            device_profile_id='family-room', install_policies=(self._policy(REPOSITORY),))
+        self.assertEqual('PREPARATION_REQUIRED', pending.code)
+        self.assertIsNone(self.install_store.inspect())
+        self.assertEqual([], self.policy.calls)
+        self.assertEqual([], self.backend.install_calls)
+        path = self.root / 'frozen.json'
+        path.write_text(manifest.to_json())
+        config = self.root / 'public.json'
+        config.write_text(json.dumps({'schema_version': 1,
+            'build': {'id': manifest.build_id, 'version': '1.0.0'},
+            'platform_profiles': {'macos': {}},
+            'device_profiles': {'family-room': {'extends': 'macos'}}}))
+        source = StandalonePreparationSource(str(path), manifest.fingerprint(), 'family-room',
+            (self._policy(REPOSITORY),), str(config), str(self.root))
+        target = PlanTarget(str(config), 'family-room', str(path), standalone_source=source,
+                           choices=((YOUTUBE, DecisionChoice.INSTALL_CURRENT),))
+        def download(url, **kwargs):
+            version, data = self.backend.repository_packages[(REPOSITORY, YOUTUBE)]
+            if url.endswith('addons.xml'):
+                return ('<addons><addon id="%s" version="%s"/></addons>' % (YOUTUBE, version)).encode()
+            self.assertTrue(url.endswith('/%s/%s/%s-%s.zip' % (YOUTUBE, version, YOUTUBE, version)))
+            return data
+        prepared = RepositoryPreparationService(self.artifacts, download=download,
+                                                platform_backend=self.backend).prepare(target)
+        self.assertEqual(PreparationCode.READY, prepared.code)
+        target = replace(target, prepared_resolution=prepared.prepared)
+        harness = PlanHarness(self, with_private=False, with_resource=False)
+        service = harness.plan_service(artifact_store=self.artifacts)
+        plan = service.preview(target)
+        self.assertEqual(PlanState.CHANGES_READY, plan.state, plan.to_safe_dict())
+        return coordinator.install_prepared(target, plan.review, plan_service=service)
 
     def test_exact_artifact_available_is_classified_and_planned_exact_first(self):
         youtube_zip = _zip(YOUTUBE, "7.4.4+unofficial.2")
@@ -428,13 +479,7 @@ class FrozenResolutionTest(unittest.TestCase):
             configuration_requests.append(request)
             return SimpleNamespace(outcome="complete", success=True)
 
-        result = self._coordinator(
-            decider=lambda _prompt: ResolutionChoice.INSTALL_CURRENT,
-            configure=configure,
-        ).install(
-            manifest, manifest_path="/fixture.json", device_profile_id="family-room",
-            install_policies=(self._policy(REPOSITORY),),
-        )
+        result = self._approved_install(manifest, configure=configure)
         self.assertEqual("complete", result.outcome)
         record = next(item for item in result.resolution_manifest.records if item.addon_id == YOUTUBE)
         self.assertEqual(InstallResolution.REPOSITORY_CURRENT, record.resolution)
@@ -469,7 +514,10 @@ class FrozenResolutionTest(unittest.TestCase):
             install_policies=(self._policy(REPOSITORY),),
         )
         self.assertNotEqual("complete", result.outcome)
-        self.assertEqual([(YOUTUBE, REPOSITORY)], self.backend.repository_calls)
+        self.assertEqual("PREPARATION_REQUIRED", result.code)
+        self.assertEqual([], self.backend.repository_calls)
+        self.assertIsNone(self.install_store.inspect())
+        self.assertEqual([], self.policy.calls)
         self.assertNotIn(YOUTUBE, self.backend.installed)
 
     def test_resolution_and_resulting_state_fingerprints_are_separate_and_deterministic(self):
@@ -538,10 +586,7 @@ class FrozenResolutionTest(unittest.TestCase):
     def test_resolution_choice_and_record_round_trip_are_safe(self):
         manifest = self._manifest(repository_id=REPOSITORY)
         self.backend.repository_packages[(REPOSITORY, YOUTUBE)] = ("8.2.1", _zip(YOUTUBE, "8.2.1"))
-        result = self._coordinator(decider=lambda _prompt: ResolutionChoice.INSTALL_CURRENT).install(
-            manifest, manifest_path="/fixture.json", device_profile_id="family-room",
-            install_policies=(self._policy(REPOSITORY),),
-        )
+        result = self._approved_install(manifest)
         loaded = self.install_store.load_resolution_manifest(
             result.resolution_manifest.resolution_fingerprint
         )
@@ -558,13 +603,9 @@ class FrozenResolutionTest(unittest.TestCase):
             outcome="manual_restart_required",
             transaction=SimpleNamespace(transaction_id="33333333-3333-4333-8333-333333333333"),
         )
-        initial = self._coordinator(
+        initial = self._approved_install(manifest,
             decider=lambda prompt: prompts.append(prompt) or ResolutionChoice.INSTALL_CURRENT,
-            configure=lambda _request: restart,
-        ).install(
-            manifest, manifest_path="/fixture.json", device_profile_id="family-room",
-            install_policies=(self._policy(REPOSITORY),),
-        )
+            configure=lambda _request: restart)
         self.assertEqual("awaiting_restart", initial.outcome)
         self.assertEqual(1, len(prompts))
         stored = self.install_store.inspect()
@@ -577,13 +618,46 @@ class FrozenResolutionTest(unittest.TestCase):
             artifact_store=self.artifacts,
             policy_backend=self.policy,
             installer=self.backend,
-            manifest_loader=lambda _path: manifest,
+            manifest_loader=lambda path: FrozenBuildManifest.from_json(Path(path).read_text()),
             session_id_provider=lambda: SESSION_B,
             resolution_decider=lambda _prompt: self.fail("restart must not prompt again"),
         ).resume_after_restart()
-        self.assertEqual("complete", resumed.outcome)
+        self.assertEqual("complete", resumed.outcome, (resumed.code, resumed.message))
         self.assertEqual(1, len(prompts))
         self.assertEqual("8.2.1", self.backend.installed[YOUTUBE].version)
+
+    def test_legacy_selected_resolution_preserves_evidence_and_needs_attention(self):
+        manifest = self._manifest(repository_id=REPOSITORY)
+        self.backend.repository_packages[(REPOSITORY, YOUTUBE)] = ('8.2.1', _zip(YOUTUBE, '8.2.1'))
+        restart = SimpleNamespace(outcome='manual_restart_required',
+            transaction=SimpleNamespace(transaction_id='33333333-3333-4333-8333-333333333333'))
+        initial = self._approved_install(manifest, configure=lambda request: restart)
+        self.assertEqual('awaiting_restart', initial.outcome)
+        current = self.install_store.inspect()
+        records = tuple(replace(r, state=ResolutionState.SELECTED, resolved_version='',
+            artifact_sha256='', artifact_size=None) if r.addon_id == YOUTUBE else r
+            for r in current.resolution_records)
+        legacy = self.install_store.transition_expected(transaction_id=current.transaction_id,
+            expected_phase=FrozenInstallPhase.AWAITING_RESTART, new_phase=FrozenInstallPhase.AWAITING_RESTART,
+            resolution_records=records, resolution_fingerprint_value=resolution_fingerprint(records))
+        before = (list(self.backend.install_calls), list(self.backend.repository_calls), list(self.policy.calls))
+        coordinator = self._coordinator(loader=lambda path: FrozenBuildManifest.from_json(Path(path).read_text()))
+        from resources.lib.frozen_install import run_frozen_install_startup
+        active_result = coordinator.install(manifest, manifest_path=legacy.manifest_path,
+            device_profile_id=legacy.device_profile_id, install_policies=legacy.policies)
+        self.assertEqual('needs_attention', active_result.outcome)
+        startup = run_frozen_install_startup(bm020_status=SimpleNamespace(), store=self.install_store,
+            artifact_store=self.artifacts, policy_backend=self.policy, installer=self.backend)
+        self.assertEqual('needs_attention', startup.outcome)
+        self.assertEqual(legacy, self.install_store.inspect())
+        result = coordinator.resume_after_restart(current_session_id=SESSION_B)
+        self.assertEqual('needs_attention', result.outcome)
+        retained = self.install_store.inspect()
+        self.assertEqual(legacy.transaction_id, retained.transaction_id)
+        self.assertEqual(records, retained.resolution_records)
+        self.assertTrue(retained.updater_guard_required)
+        self.assertEqual(AddonUpdatePolicy.NEVER_CHECK, self.policy.policy)
+        self.assertEqual(before, (self.backend.install_calls, self.backend.repository_calls, self.policy.calls))
 
     def test_private_overlay_compatibility_uses_declared_owners_and_all_resources(self):
         declarations = (SimpleNamespace(addon_id="plugin.video.redlight"),)

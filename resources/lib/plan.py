@@ -51,7 +51,7 @@ from resources.lib.build_identity import (
 )
 from resources.lib.build_manager import fingerprint_resolved_build
 from resources.lib.build_library import LibrarySource
-from resources.lib.repository_preparation import PreparedRepositoryResolution, bind_prepared
+from resources.lib.repository_preparation import PreparedRepositoryResolution, StandalonePreparationSource, bind_prepared
 from resources.lib.config import ConfigTargetCheck
 from resources.lib.frozen import FrozenBuildManifest
 from resources.lib.frozen_install import (
@@ -161,7 +161,11 @@ class PlanTarget:
     library_source: Optional[LibrarySource] = None
     prepared_resolution: Optional[PreparedRepositoryResolution] = None
 
+    standalone_source: Optional[StandalonePreparationSource] = None
+
     def __post_init__(self) -> None:
+        if self.standalone_source is not None and (not isinstance(self.standalone_source, StandalonePreparationSource) or self.library_source is not None):
+            raise ValueError("invalid standalone source")
         if self.prepared_resolution is not None and not isinstance(
             self.prepared_resolution, PreparedRepositoryResolution
         ):
@@ -169,7 +173,7 @@ class PlanTarget:
         if self.library_source is not None and not isinstance(self.library_source, LibrarySource):
             raise ValueError("library_source must be a LibrarySource")
         for name in ("configuration_manifest_path", "device_profile_id", "software_manifest_path"):
-            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+            if not isinstance(getattr(self, name), str) or (not getattr(self, name) and not (name == "configuration_manifest_path" and self.standalone_source is not None)):
                 raise ValueError("%s must be a non-empty string" % name)
         if self.install_resolution is not None and not isinstance(
             self.install_resolution, FrozenInstallResolutionManifest
@@ -366,12 +370,16 @@ class BuildPlanService:
 
         try:
             config_loader = status.config_loader
-            if target.library_source is not None:
+            if target.standalone_source is not None:
+                from resources.lib.repository_preparation import _load_target
+                _, desired, frozen, config_loader = _load_target(target)
+            elif target.library_source is not None:
                 manifest, frozen, config_loader = target.library_source.load()
             else:
                 manifest = status.manifest_loader(target.configuration_manifest_path)
                 frozen = status.frozen_manifest_loader(target.software_manifest_path)
-            desired = status.resolver(manifest, target.device_profile_id)
+            if target.standalone_source is None:
+                desired = status.resolver(manifest, target.device_profile_id)
         except Exception as exc:
             self._log_failure("build", exc)
             gaps.append(CheckGap.BUILD_UNREADABLE)
@@ -385,7 +393,7 @@ class BuildPlanService:
             if target.prepared_resolution is not None:
                 try:
                     prepared_records = bind_prepared(
-                        target.prepared_resolution, target.library_source, target.device_profile_id,
+                        target.prepared_resolution, target.standalone_source or target.library_source, target.device_profile_id,
                         desired, frozen, config_loader, self._o.artifact_store)
                     if (set(r.addon_id for r in records) & set(r.addon_id for r in prepared_records)
                             or any(dict(target.choices).get(r.addon_id) is not DecisionChoice.INSTALL_CURRENT
@@ -414,6 +422,9 @@ class BuildPlanService:
                 self._log_failure("configuration", exc)
         try:
             material[IdentityComponent.BUILD] = fingerprint_resolved_build(desired, effective)
+            if target.standalone_source is not None:
+                material[IdentityComponent.BUILD] = {"resolved": material[IdentityComponent.BUILD],
+                    "standalone": target.standalone_source.identity()}
             if target.library_source is not None:
                 # Entry/root are part of approval even when two sources resolve
                 # identically for this profile. Only their digest is public.
@@ -738,6 +749,16 @@ class BuildPlanService:
             from resources.lib.frozen_install import verify_platform_requirements, _planned_versions, _repository_required_addon_ids
             from resources.lib.platform_policy import reject_platform_mutations
             reject_platform_mutations(desired, {n.addon_id for n in frozen.addons if n.platform_provided})
+            # This is an honest unresolved preview, never execution admission.
+            # Structural/exact validation above still runs; unavailable package
+            # requirements cannot be asserted until preparation and a new review.
+            if sw.pending or sw.repository:
+                sw.install_order = tuple(n.addon_id for n in plan.executable_install_order)
+                sw.hold_ids = _hold_ids(plan.install_order, desired)
+                if sw.hold_ids:
+                    for aid in sorted(sw.repository):
+                        blockers.append(PlanBlocker(BlockerCode.CHOICE_CONFLICTS_WITH_BUILD, aid, self._name(aid)))
+                return
             platform_versions = verify_platform_requirements(
                 plan.strict_plan, self._o.platform_backend,
                 planned_versions={**_planned_versions(plan.strict_plan, records), **sw.target_version},

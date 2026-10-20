@@ -21,7 +21,6 @@ from resources.lib.private_overlay import PrivateOverlayStore
 from resources.lib.private_resource import StructuredPrivateValue
 
 
-@unittest.skipUnless(q.ARCHIVE.is_dir() and q.PIL_XML.is_file(), 'pinned local archive/bundled PIL required')
 class Item8FixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -80,13 +79,20 @@ class Item8FixtureTests(unittest.TestCase):
                 with self.assertRaises(Exception): self.prepare()
             self.assertFalse(self.output.exists())
 
+    def test_retained_pil_missing_or_changed_fails_closed(self):
+        with patch.object(q, '_read', side_effect=FileNotFoundError):
+            with self.assertRaises(FileNotFoundError):
+                q.retained_pil_xml()
+        with patch.object(q, '_read', return_value=b'{}'):
+            with self.assertRaises(q.AdmissionError):
+                q.retained_pil_xml()
+
     def test_wrong_platform_identity_version_type_or_dependency_refused(self):
         original = q._read
-        xml = original(q.PIL_XML, 1024*1024)
+        xml = q.retained_pil_xml()
         for bad in [xml.replace(b'5.1.0', b'1.0.0'), xml.replace(b'script.module.pil', b'script.module.other'),
                     xml.replace(b'xbmc.python.module', b'xbmc.python.script'), xml.replace(b'3.0.0', b'9.0.0')]:
-            def read(path, limit): return bad if path == q.PIL_XML else original(path, limit)
-            with patch.object(q, '_read', side_effect=read):
+            with patch.object(q, 'retained_pil_xml', return_value=bad):
                 with self.assertRaises(Exception): self.prepare()
             self.assertFalse(self.output.exists())
 
@@ -140,7 +146,7 @@ class Item8FixtureTests(unittest.TestCase):
             backend.installed[aid]=FrozenInstalledAddon(aid,version,True)
             h.kodi.addons[aid]=(version,True)
             h.deps.installed[aid]=(version,True)
-        backend.platform_metadata['script.module.pil']=InstalledMetadata(q.PIL_XML.read_bytes(),InstalledOrigin.APPLICATION)
+        backend.platform_metadata['script.module.pil']=InstalledMetadata(q.retained_pil_xml(),InstalledOrigin.APPLICATION)
         library=BuildLibrary(str(self.output/'library'))
         overlay_store=PrivateOverlayStore(self.output/'profile')
         owners=h.owners(overlay_loader=overlay_store.read_snapshot)
