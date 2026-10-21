@@ -2824,8 +2824,10 @@ print(json.dumps(status))
         source = (
             Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
         ).read_text(encoding="utf-8")
-        start = source.index('        elif mode == "status":\n            frozen_install_module')
-        end = source.index('        if mode in ("status", "platform_check"):\n            pass')
+        # The outer import boundary adds one indentation level, without changing
+        # the status branch's forbidden-call assertions below.
+        start = source.index('            elif mode == "status":\n                frozen_install_module')
+        end = source.index('            if mode in ("status", "platform_check"):\n                pass')
         branch = source[start:end]
         for forbidden in (
             "FrozenInstallStore", "FrozenInstallCoordinator", "TransactionStore.inspect",
@@ -2835,7 +2837,7 @@ print(json.dumps(status))
         ):
             self.assertNotIn(forbidden, branch, forbidden)
         self.assertIn("repair_frozen_install_source", source)
-        self.assertIn('if mode not in ("status", "platform_check"):\n            FROZEN_INSTALL_SOURCE_RECORD', source)
+        self.assertIn('if mode not in ("status", "platform_check"):\n                FROZEN_INSTALL_SOURCE_RECORD', source)
 
     def test_publication_fence_status_label_is_read_only(self):
         self.write_state(_frozen_transaction(phase=FrozenInstallPhase.PUBLICATION_PENDING))

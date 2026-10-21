@@ -185,14 +185,16 @@ class PlatformCheckTests(unittest.TestCase):
                 before=snapshot(f.native.root)
                 mode=['platform_check','install'] if malformed else 'platform_check'
                 with patch.object(Path,'mkdir',side_effect=AssertionError('diagnostic attempted mkdir')):
-                    if existing_parent:
+                    if malformed:
+                        with self.assertRaises(SystemExit):f.entrypoint(mode)
+                    elif existing_parent:
                         result=f.entrypoint(mode)
                         self.assertFalse(result['ok'])
                         self.assertEqual('platform_check',result['adapter_mode'])
                     else:
                         with self.assertRaises(FileNotFoundError):f.entrypoint(mode)
                 after=snapshot(f.native.root)
-                expected={str((f.data/'bm023a_live_result.json').relative_to(f.native.root))} if existing_parent else set()
+                expected={str((f.data/'bm023a_live_result.json').relative_to(f.native.root))} if existing_parent and not malformed else set()
                 self.assertEqual(expected,{key for key in set(before)|set(after) if before.get(key)!=after.get(key)})
                 self.assertEqual(0,f.factory_calls)
 
