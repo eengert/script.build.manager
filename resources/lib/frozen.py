@@ -717,8 +717,10 @@ class KodiInventoryBackend(InventoryBackend):
     ) -> Optional[InstalledMetadata]:
         """Read a builtin absent from JSON-RPC inventory, with pinned origin and no home shadow.
 
-        The caller must independently prove the builtin's runtime identity and usability.
-        Its reported path only selects the already-pinned application root; it grants no
+        The caller must independently supply the required native authority: Python
+        execution proof or the approved pinned passive registration contract. These
+        filesystem checks alone prove no API functional usability. The reported path
+        only selects the already-pinned application root; it grants no
         filesystem authority. Any home entry, including a dangling link, blocks proof.
         """
         if (not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id)
@@ -987,6 +989,9 @@ def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[Dependency
         if child.tag != "import":
             raise CaptureError(f"{addon_id}: malformed or namespace-qualified import declaration")
         target = child.attrib.get("addon", "")
+        if target.startswith(("xbmc.", "kodi.")) and any(
+                key.rsplit("}", 1)[-1] == "minversion" for key in child.attrib):
+            raise CaptureError(f"{addon_id}: builtin minversion declarations are unsupported")
         optional_value = child.get("optional", "false")
         if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", target) or
                 optional_value not in ("true", "True", "TRUE", "false", "False", "FALSE")):
@@ -996,6 +1001,24 @@ def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[Dependency
             DependencyEdge(target, child.attrib.get("version", ""), optional, (addon_id,))
         )
     return tuple(sorted(edges, key=lambda edge: (edge.addon_id, edge.optional, edge.min_version)))
+
+
+def _builtin_version_satisfies(version: str, minimum: str) -> bool:
+    """Kodi ordering on a deliberately narrow dotted-decimal subset (no padding).
+
+    CAddonVersion compares numeric runs, but an extra dotted component sorts
+    after the exhausted string: 5.17 < 5.17.0. Reject other Kodi grammars here.
+    """
+    def parse(value):
+        if (not isinstance(value, str) or len(value) > 100 or
+                not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", value)):
+            return None
+        parts = tuple(int(part) for part in value.split("."))
+        # Stay below native signed numeric limits rather than approximate overflow.
+        return parts if all(part <= 2147483647 for part in parts) else None
+    actual = parse(version)
+    required = () if minimum == "" else parse(minimum)
+    return actual is not None and required is not None and actual >= required
 
 
 def _declared_extension_points(xml_bytes: bytes, addon_id: str) -> Tuple[str, ...]:

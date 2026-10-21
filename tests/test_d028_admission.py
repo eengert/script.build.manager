@@ -94,10 +94,10 @@ class BuiltinAdmissionTests(unittest.TestCase):
                 self.assert_blocked()
 
     def test_abi_floor_and_strict_dotted_versions(self):
-        for minimum in ("5.16.9", "5.17.0+matrix.1", "bad"):
+        for minimum in ("5.16.9", "5.17", "5.17.0+matrix.1", "bad"):
             with self.subTest(minimum=minimum):
                 self.assert_blocked(self.manifest(minimum))
-        self.verify(self.manifest("5.17"))
+        self.verify(self.manifest("5.17.0"))
         self.backend.builtin_abis["xbmc.gui"] = "6.0.0"
         self.assert_blocked()
 
@@ -147,10 +147,10 @@ class BuiltinAdmissionTests(unittest.TestCase):
     def test_changed_observation_during_one_pass_is_rejected(self):
         m = self.manifest()
         root = m.addons[0]
-        data = old._zip(root.addon_id, "1.0.0", requires=(("xbmc.gui", "5.17"), ("xbmc.gui", "5.17.0")))
+        data = old._zip(root.addon_id, "1.0.0", requires=(("xbmc.gui", "05.17.0"), ("xbmc.gui", "5.17.0")))
         artifact = self.artifacts.import_zip(data, expected_addon_id=root.addon_id, expected_version="1.0.0")
         m = replace(m, addons=(replace(root, artifact=artifact, dependency_edges=(
-            DependencyEdge("xbmc.gui", "5.17"), DependencyEdge("xbmc.gui", "5.17.0"))),) + m.addons[1:])
+            DependencyEdge("xbmc.gui", "05.17.0"), DependencyEdge("xbmc.gui", "5.17.0"))),) + m.addons[1:])
         original = self.backend.read_verified_builtin_metadata
         calls = []
         def reader(edge):

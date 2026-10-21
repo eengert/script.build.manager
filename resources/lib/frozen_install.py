@@ -28,6 +28,10 @@ import tempfile
 import time
 import uuid
 import zipfile
+import stat
+import sys
+import plistlib
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from enum import Enum
@@ -53,6 +57,8 @@ from resources.lib.frozen import (
     _check_addon_xml_identity,
     _declared_extension_points,
     _parse_dependency_edges,
+    _builtin_version_satisfies,
+    _open_canonical_directory,
 )
 from resources.lib.dependencies import _is_system_dependency, _strict_version_satisfies
 from resources.lib.frozen_resolution import (
@@ -1334,8 +1340,9 @@ def _repository_package_required_dependencies(
             versions = getattr(platform_versions, "builtin_versions", {})
             abis = getattr(platform_versions, "builtin_abis", {})
             version, abi = versions.get(requirement.addon_id), abis.get(requirement.addon_id)
-            if (not version or not abi or not _strict_version_satisfies(version, requirement.min_version)
-                    or (requirement.min_version and not _strict_version_satisfies(requirement.min_version, abi))):
+            if (not version or not abi or not _builtin_version_satisfies(version, abi)
+                    or not _builtin_version_satisfies(version, requirement.min_version)
+                    or (requirement.min_version and not _builtin_version_satisfies(requirement.min_version, abi))):
                 raise FrozenInstallValidationError("repository package requires an unverified builtin minimum")
             continue
         dependency = manifest_plan.nodes.get(requirement.addon_id)
@@ -1490,6 +1497,51 @@ def _admission_dependency_edges(xml_bytes, addon_id):
     return _parse_dependency_edges(xml_bytes, addon_id)
 
 
+# Passive registration evidence is deliberately limited to this reviewed macOS
+# build. It is not independent functional usability proof and never covers Python.
+_PASSIVE_BUILD = "20251031-a3a448d26b"
+_PASSIVE_PLIST_SHA256 = "9f37ef7b63021ef2ab01b98a44f2f62c8eb68c3f61c014510cc3b7166450bcac"
+_PASSIVE_BUILTINS = MappingProxyType({
+    "xbmc.core": ("0.1.0", "0.1", "e38ace50afe6e15b918fa51038504fc11888038671bdacac2521af931b538a6f"),
+    "xbmc.gui": ("5.17.0", "5.17.0", "7d8602ff6510bbb5ae8098d60c563c4e82c5f0b682220aad297982c9e116e6bb"),
+    "kodi.resource": ("1.0.0", "1.0", "dd54ff32f0920d4fe68bff14c1a51311ac8f31e639fbbe7123a16905901b06f3"),
+})
+
+
+@dataclass(frozen=True)
+class _PinnedPassiveMetadata(InstalledMetadata):
+    """Nonserialized native grant, issued only after the complete pinned read."""
+    addon_id: str
+    build: str
+
+
+def _builtin_metadata_edges(metadata, addon_id):
+    # Only the native-bound exact core descriptor receives this interpretation.
+    # Managed/repository/capture XML always uses the unchanged general parser.
+    if (addon_id == "xbmc.core" and isinstance(metadata, _PinnedPassiveMetadata)
+            and metadata.addon_id == addon_id and metadata.build == _PASSIVE_BUILD
+            and metadata.origin is InstalledOrigin.APPLICATION
+            and hashlib.sha256(metadata.xml_bytes).hexdigest() == _PASSIVE_BUILTINS[addon_id][2]):
+        return ()
+    return _admission_dependency_edges(metadata.xml_bytes, addon_id)
+
+
+def _native_process_executable():
+    """Kernel path of this process, never argv[0], sys.executable or a Kodi label."""
+    if sys.platform != "darwin":
+        raise ValueError("unsupported passive builtin platform")
+    import ctypes
+    lib = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    query = lib.proc_pidpath
+    query.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    query.restype = ctypes.c_int
+    buffer = ctypes.create_string_buffer(4096)
+    count = query(os.getpid(), buffer, len(buffer))
+    if count <= 0 or count >= len(buffer) or len(buffer.value) != count:
+        raise ValueError("unverifiable native executable")
+    return buffer.value.decode('utf-8', 'strict')
+
+
 def _planned_versions(plan, records) -> Dict[str, str]:
     """Managed versions the build will leave installed, resolved where a record already knows them."""
     by_id = records if isinstance(records, Mapping) else {record.addon_id: record for record in records}
@@ -1589,11 +1641,11 @@ def _verify_builtin_closure(plan, installer, required, verified, target_edges, s
             if len(floors) != 1:
                 raise ValueError("missing or ambiguous ABI floor")
             abi = floors[0].get("abi", "")
-            if (not abi or not _strict_version_satisfies(version, abi)
-                    or not _strict_version_satisfies(version, edge.min_version)
-                    or (edge.min_version and not _strict_version_satisfies(edge.min_version, abi))):
+            if (not abi or not _builtin_version_satisfies(version, abi)
+                    or not _builtin_version_satisfies(version, edge.min_version)
+                    or (edge.min_version and not _builtin_version_satisfies(edge.min_version, abi))):
                 raise ValueError("incompatible interface interval")
-            children = _admission_dependency_edges(metadata.xml_bytes, aid)
+            children = _builtin_metadata_edges(metadata, aid)
             if aid in ("xbmc.python", "xbmc.gui", "kodi.resource") and not any(
                     child.addon_id == "xbmc.core" and not child.optional for child in children):
                 raise ValueError("missing mandatory core interface requirement")
@@ -1981,6 +2033,131 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
     def verify_builtin_requirement(self, edge: DependencyEdge) -> bool:
         return self.read_verified_builtin_metadata(edge) is not None
 
+    @contextmanager
+    def _passive_build_binding(self, inventory):
+        """Bind current kernel executable, compiled build and pinned bundle bytes.
+
+        Hold the original bundle/plist/executable objects through native reads;
+        reject substitution of any pathname or ancestor before issuing evidence.
+        """
+        if sys.platform != "darwin":
+            raise ValueError("unsupported passive builtin platform")
+        executable = _native_process_executable()
+        path = Path(executable)
+        if (not path.is_absolute() or os.path.normpath(executable) != executable or
+                path.parts[-3:] != ('Contents', 'MacOS', 'Kodi') or
+                path.parents[2].suffix != '.app'):
+            raise ValueError("native executable is not a Kodi bundle")
+        bundle = path.parents[2]
+        if inventory.application_addons_dir != bundle/'Contents/Resources/Kodi/addons':
+            raise ValueError("runtime application root is not the executing bundle")
+        fds = []
+        def directory(parent, name):
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            fds.append(fd)
+            return fd
+        def regular(parent, name, limit=None):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            fds.append(fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or (limit is not None and info.st_size > limit):
+                raise ValueError("unsafe build identity file")
+            return fd
+        def identity(fd):
+            s = os.fstat(fd)
+            return (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        def compiled():
+            value = self._rpc('Application.GetProperties', {'properties': ['version']})
+            if value.get('error') is not None:
+                raise ValueError("unavailable compiled Kodi identity")
+            value = value.get('result', {}).get('version', {})
+            if (type(value.get('major')) is not int or value['major'] != 21 or
+                    type(value.get('minor')) is not int or value['minor'] != 3 or
+                    value.get('revision') != _PASSIVE_BUILD or value.get('tag') != 'stable'):
+                raise ValueError("unsupported compiled Kodi build")
+            return (value['major'], value['minor'], value['revision'], value['tag'])
+        try:
+            root = _open_canonical_directory(bundle)
+            fds.append(root)
+            contents = directory(root, 'Contents')
+            macos = directory(contents, 'MacOS')
+            binary = regular(macos, 'Kodi')
+            if not os.fstat(binary).st_mode & 0o111:
+                raise ValueError("nonexecutable Kodi image")
+            plist = regular(contents, 'Info.plist', 1024 * 1024)
+            raw = os.read(plist, 1024 * 1024 + 1)
+            if hashlib.sha256(raw).hexdigest() != _PASSIVE_PLIST_SHA256:
+                raise ValueError("unsupported bundle descriptor")
+            info = plistlib.loads(raw)
+            if any(info.get(k) != v for k, v in {
+                    'CFBundleIdentifier': 'org.xbmc.kodi', 'CFBundleShortVersionString': '21.3.',
+                    'CFBundleVersion': _PASSIVE_BUILD, 'CFBundleExecutable': 'Kodi',
+                    'CFBundlePackageType': 'APPL'}.items()):
+                raise ValueError("wrong Kodi bundle identity")
+            observations = tuple(identity(fd) for fd in (root, contents, macos, binary, plist))
+            native = compiled()
+            # The caller runs this inside the metadata reader's held-object
+            # validation callback, before its final descriptor freshness check.
+            def native_fresh():
+                return compiled() == native and _native_process_executable() == executable
+            yield native_fresh
+            fresh_root = _open_canonical_directory(bundle)
+            fds.append(fresh_root)
+            fresh_contents = directory(fresh_root, 'Contents')
+            fresh_macos = directory(fresh_contents, 'MacOS')
+            fresh_binary = regular(fresh_macos, 'Kodi')
+            fresh_plist = regular(fresh_contents, 'Info.plist', 1024 * 1024)
+            if (tuple(identity(fd) for fd in (fresh_root, fresh_contents, fresh_macos,
+                                             fresh_binary, fresh_plist)) != observations or
+                    tuple(identity(fd) for fd in (root, contents, macos, binary, plist)) != observations or
+                    os.read(fresh_plist, 1024 * 1024 + 1) != raw):
+                raise ValueError("Kodi runtime/bundle identity changed")
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
+
+    def _read_passive_builtin(self, edge):
+        """Pinned registration compatibility only; no independent API usability claim."""
+        try:
+            inventory = self._inventory()  # establish root authority before native callbacks
+            import xbmcaddon
+            import xml.etree.ElementTree as ET
+            xbmc = self._xbmc()
+            def enabled():
+                return (xbmc.getCondVisibility('System.HasAddon(' + edge.addon_id + ')') is True
+                        and xbmc.getCondVisibility('System.AddonIsEnabled(' + edge.addon_id + ')') is True)
+            if not enabled():
+                return None
+            with self._passive_build_binding(inventory) as native_fresh:
+                fields = ('id', 'version', 'path', 'type')
+                addon = xbmcaddon.Addon(edge.addon_id)
+                info = tuple(addon.getAddonInfo(k) for k in fields)
+                expected_version, expected_abi, digest = _PASSIVE_BUILTINS[edge.addon_id]
+                if (info[0] != edge.addon_id or info[1] != expected_version or info[3] != 'unknown'
+                        or not _builtin_version_satisfies(info[1], edge.min_version)):
+                    return None
+                def validate(metadata):
+                    if (metadata.origin is not InstalledOrigin.APPLICATION or
+                            hashlib.sha256(metadata.xml_bytes).hexdigest() != digest):
+                        return False
+                    root = ET.fromstring(metadata.xml_bytes)
+                    floors = root.findall('backwards-compatibility')
+                    if (root.tag != 'addon' or root.get('id') != edge.addon_id or
+                            root.get('version') != expected_version or len(floors) != 1 or
+                            floors[0].get('abi') != expected_abi or
+                            not _builtin_version_satisfies(expected_version, expected_abi) or
+                            (edge.min_version and not _builtin_version_satisfies(edge.min_version, expected_abi))):
+                        return False
+                    fresh = xbmcaddon.Addon(edge.addon_id)
+                    return (enabled() and tuple(fresh.getAddonInfo(k) for k in fields) == info
+                            and native_fresh())
+                metadata = inventory.read_application_builtin_metadata(edge.addon_id, info[2], validate=validate)
+                if metadata is None:
+                    return None
+            return _PinnedPassiveMetadata(metadata.xml_bytes, metadata.origin, edge.addon_id, _PASSIVE_BUILD)
+        except Exception:
+            return None
+
     def read_verified_builtin_metadata(self, edge: DependencyEdge) -> Optional[InstalledMetadata]:
         """Prove the Python builtin using Kodi's enabled API and pinned application XML.
 
@@ -1989,8 +2166,12 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         its actual identity/version/path. Executing here proves the Python runtime
         is usable. The XML's ABI floor additionally excludes incompatible Python
         API requirements; a Kodi release number or a dependent's declaration is
-        never target evidence. Other builtin interfaces remain unverified.
+        never target evidence. The three allowlisted passive interfaces instead
+        use pinned registration compatibility; that proves no independent API
+        functional usability. Every other interface remains unverified.
         """
+        if edge.addon_id in _PASSIVE_BUILTINS:
+            return self._read_passive_builtin(edge)
         if edge.addon_id != "xbmc.python":
             return None
         try:
@@ -2015,7 +2196,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
             addon_id, version, path, addon_type = info
             if (addon_id != edge.addon_id or addon_type != "unknown"
                     or not isinstance(version, str) or not version.startswith("3.")
-                    or not _strict_version_satisfies(version, edge.min_version)):
+                    or not _builtin_version_satisfies(version, edge.min_version)):
                 return None
             def validate(metadata):
                 if metadata is None or metadata.origin is not InstalledOrigin.APPLICATION:
@@ -2029,8 +2210,8 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
                     return None
                 abi = backwards[0].get("abi")
                 if (not isinstance(abi, str) or not abi.startswith("3.")
-                        or not _strict_version_satisfies(version, abi)
-                        or not _strict_version_satisfies(edge.min_version, abi)):
+                        or not _builtin_version_satisfies(version, abi)
+                        or not _builtin_version_satisfies(edge.min_version, abi)):
                     return None
                 fresh = xbmcaddon.Addon("xbmc.python")
                 return usable() and tuple(fresh.getAddonInfo(key) for key in fields) == info
