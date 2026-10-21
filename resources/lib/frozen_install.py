@@ -1487,21 +1487,7 @@ def _admission_dependency_edges(xml_bytes, addon_id):
     The general resolver's strongest-minimum consolidation is insufficient for
     interfaces with a backwards-compatible lower ABI bound.
     """
-    import xml.etree.ElementTree as ET
-    try:
-        root = ET.fromstring(xml_bytes)
-        requires = root.findall("requires")
-        if len(requires) > 1:
-            raise ValueError("ambiguous requires declarations")
-        for group in requires:
-            for child in group:
-                if (child.tag != "import" or
-                        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", child.get("addon", "")) or
-                        child.get("optional", "false").lower() not in ("true", "false")):
-                    raise ValueError("malformed dependency declaration")
-        return _parse_dependency_edges(xml_bytes, addon_id)
-    except (ET.ParseError, ValueError) as exc:
-        raise CaptureError("unverifiable dependency declarations") from exc
+    return _parse_dependency_edges(xml_bytes, addon_id)
 
 
 def _planned_versions(plan, records) -> Dict[str, str]:

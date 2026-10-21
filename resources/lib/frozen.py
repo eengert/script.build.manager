@@ -959,21 +959,37 @@ def _check_addon_xml_identity(xml_bytes: bytes, addon_id: str, installed_version
         raise CaptureError(f"{addon_id}: addon.xml version does not match the installed add-on")
 
 
+def _dependency_requires(root, addon_id):
+    """Select exactly one ordinary direct requires block, or no dependencies.
+
+    Namespace-stripped matching detects ambiguous siblings in either order;
+    qualified blocks cannot supply trusted Kodi dependency declarations.
+    """
+    groups = [child for child in root if child.tag.rsplit("}", 1)[-1] == "requires"]
+    if len(groups) > 1:
+        raise CaptureError(f"{addon_id}: ambiguous requires declarations")
+    if groups and groups[0].tag != "requires":
+        raise CaptureError(f"{addon_id}: namespace-qualified requires declaration")
+    return groups[0] if groups else None
+
+
 def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[DependencyEdge, ...]:
+    """One interpretation for capture and admission; retain every incoming minimum."""
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError as exc:
         raise CaptureError(f"{addon_id}: malformed addon.xml") from exc
-    requires = next((child for child in root if child.tag.rsplit("}", 1)[-1] == "requires"), None)
+    requires = _dependency_requires(root, addon_id)
     if requires is None:
         return ()
     edges = []
     for child in requires:
-        if child.tag.rsplit("}", 1)[-1] != "import":
-            continue
+        if child.tag != "import":
+            raise CaptureError(f"{addon_id}: malformed or namespace-qualified import declaration")
         target = child.attrib.get("addon", "")
-        if not target:
-            raise CaptureError(f"{addon_id}: dependency is missing addon ID")
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", target) or
+                child.get("optional", "false").lower() not in ("true", "false")):
+            raise CaptureError(f"{addon_id}: malformed dependency declaration")
         optional = child.attrib.get("optional", "false").lower() == "true"
         edges.append(
             DependencyEdge(target, child.attrib.get("version", ""), optional, (addon_id,))
