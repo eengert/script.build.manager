@@ -997,6 +997,8 @@ def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[Dependency
                 optional_value not in ("true", "True", "TRUE", "false", "False", "FALSE")):
             raise CaptureError(f"{addon_id}: malformed dependency declaration")
         optional = optional_value in ("true", "True", "TRUE")
+        if not optional and target.startswith(("xbmc.", "kodi.")) and not child.get("version", "").strip():
+            raise CaptureError(f"{addon_id}: mandatory builtin dependency requires a version")
         edges.append(
             DependencyEdge(target, child.attrib.get("version", ""), optional, (addon_id,))
         )

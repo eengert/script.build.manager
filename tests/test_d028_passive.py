@@ -503,3 +503,123 @@ class PassiveMutationTests(unittest.TestCase):
             [('isinstance(metadata, _PinnedPassiveMetadata)', 'True'),
              ('metadata.addon_id == addon_id and metadata.build == _PASSIVE_BUILD', 'True')],
             PassiveNativeTests, 'test_core_exception_requires_native_grant_and_exact_hash')
+
+
+class VersionlessBuiltinTests(unittest.TestCase):
+    def payload(self, aid='xbmc.gui', version=None, optional=None):
+        attributes = '' if version is None else ' version="' + version + '"'
+        if optional is not None: attributes += ' optional="' + optional + '"'
+        return b1.xml('plugin.test', '1.0.0',
+            '<requires><import addon="' + aid + '"' + attributes + '/></requires>')
+
+    def test_missing_mandatory_gui_version_refuses_both_parsers(self):
+        for parser in (fr._parse_dependency_edges, fi._admission_dependency_edges):
+            with self.subTest(parser=parser.__name__):
+                with self.assertRaises(fr.CaptureError): parser(self.payload(), 'plugin.test')
+
+    def test_all_mandatory_builtin_spellings_require_nonblank_version(self):
+        for aid in ('xbmc.gui', 'xbmc.core', 'kodi.resource', 'xbmc.python'):
+            for version in (None, '', ' ', '  \t\n '):
+                for optional in (None, 'false', 'False', 'FALSE'):
+                    for parser in (fr._parse_dependency_edges, fi._admission_dependency_edges):
+                        with self.subTest(aid=aid, version=version, optional=optional, parser=parser.__name__):
+                            with self.assertRaises(fr.CaptureError):
+                                parser(self.payload(aid, version, optional), 'plugin.test')
+
+    def test_capture_and_exact_artifact_admission_refuse_missing_empty_and_blank(self):
+        for aid in ('xbmc.gui', 'xbmc.core', 'kodi.resource', 'xbmc.python'):
+            for version in (None, '', ' \t '):
+                with self.subTest(aid=aid, version=version), tempfile.TemporaryDirectory() as tmp:
+                    payload = self.payload(aid, version)
+                    store = ArtifactStore(Path(tmp))
+                    archive = capture._zip('plugin.test', xml_bytes=payload)
+                    backend = fr.InMemoryInventoryBackend([capture._addon('plugin.test')],
+                        {'plugin.test': payload}, package_cache={('plugin.test', '1.0.0'): [('test.zip', archive)]})
+                    result = fr.capture_frozen_build(backend=backend, store=store,
+                        root_addon_ids=['plugin.test'], build_id='versionless', name='Versionless', created_at='now')
+                    self.assertFalse(result.complete)
+                    self.assertTrue(result.errors)
+                    artifact = store.import_zip(archive, expected_addon_id='plugin.test', expected_version='1.0.0')
+                    node = fr.AddonCaptureNode('plugin.test', '1.0.0', 'xbmc.python.pluginsource', True,
+                        fr.ProvenanceStatus.UNKNOWN, artifact=artifact,
+                        dependency_edges=(fr.DependencyEdge(aid, '' if version is None else version),))
+                    builtin = fr.AddonCaptureNode(aid, '1.0.0', 'system', True,
+                        fr.ProvenanceStatus.UNKNOWN, system=True, status=fr.CaptureStatus.SYSTEM)
+                    manifest = fr.FrozenBuildManifest(1, 'versionless', 'Versionless', 'now',
+                        '21.3', 'macos', fr.CaptureStatus.COMPLETE, (node, builtin))
+                    with self.assertRaisesRegex(fi.FrozenInstallValidationError, 'artifact unavailable') as refusal:
+                        fi.validate_frozen_manifest(manifest, store)
+                    self.assertIsInstance(refusal.exception.__cause__, fr.CaptureError)
+                    self.assertIn('mandatory builtin dependency requires a version',
+                        str(refusal.exception.__cause__))
+
+    def test_repository_current_admission_refuses_all_versionless_builtins(self):
+        a = admission.BuiltinAdmissionTests()
+        a.setUp()
+        self.addCleanup(a.doCleanups)
+        manifest = a.manifest()
+        plan = fi.validate_frozen_manifest(manifest, a.artifacts)
+        verified = a.verify(manifest)
+        for aid in ('xbmc.gui', 'xbmc.core', 'kodi.resource', 'xbmc.python'):
+            for version in (None, '', '  '):
+                payload = self.payload(aid, version)
+                package = RepositoryPackage('plugin.test', 'repository.test', '1.0.0',
+                    capture._zip('plugin.test', xml_bytes=payload))
+                with self.subTest(aid=aid, version=version):
+                    with self.assertRaises(fr.CaptureError):
+                        fi._repository_required_addon_ids(None, packages=(package,))
+                    with self.assertRaisesRegex(fi.FrozenInstallValidationError, 'dependency metadata'):
+                        fi._repository_package_required_dependencies(package, plan, {}, frozenset(),
+                            platform_versions=verified)
+
+    def product(self, body):
+        helper = PassiveProductPathTests()
+        self.addCleanup(helper.doCleanups)
+        return helper, helper.exercise(body)
+
+    def test_versionless_mandatory_refuses_before_mutation(self):
+        helper, (_, backend, observed) = self.product('<requires><import addon="xbmc.gui"/></requires>')
+        helper.assert_no_mutation(observed, backend)
+        self.assertNotEqual('ready', observed['preparation'], observed)
+        self.assertNotEqual('changes_ready', observed['preview'], observed)
+
+    def test_valid_version_and_versionless_optional_complete_configured_apply(self):
+        for attributes in ('version="5.17.0"', 'optional="true"', 'optional="True"', 'optional="TRUE"'):
+            with self.subTest(attributes=attributes):
+                _, (_, _, observed) = self.product('<requires><import addon="xbmc.gui" ' + attributes + '/></requires>')
+                self.assertEqual('ready', observed['preparation'], observed)
+                self.assertEqual('changes_ready', observed['preview'], observed)
+                self.assertEqual('complete', observed['apply_outcome'], observed)
+                self.assertGreater(observed['configuration_mutations'], 0)
+
+    def test_optional_and_managed_versionless_edges_and_valid_boolean_forms_preserved(self):
+        for aid in ('xbmc.gui', 'xbmc.core', 'kodi.resource', 'xbmc.python'):
+            for optional in ('true', 'True', 'TRUE'):
+                for parser in (fr._parse_dependency_edges, fi._admission_dependency_edges):
+                    edge, = parser(self.payload(aid, optional=optional), 'plugin.test')
+                    self.assertTrue(edge.optional)
+                    self.assertEqual('', edge.min_version)
+            for optional in (None, 'false', 'False', 'FALSE'):
+                for parser in (fr._parse_dependency_edges, fi._admission_dependency_edges):
+                    edge, = parser(self.payload(aid, '1.0.0', optional), 'plugin.test')
+                    self.assertFalse(edge.optional)
+                    self.assertEqual('1.0.0', edge.min_version)
+        for parser in (fr._parse_dependency_edges, fi._admission_dependency_edges):
+            edge, = parser(self.payload('script.managed'), 'plugin.test')
+            self.assertFalse(edge.optional)
+            self.assertEqual('', edge.min_version)
+
+    def test_new_guard_removal_is_detected_by_configured_apply_assertions(self):
+        source = inspect.getsource(fr._parse_dependency_edges)
+        before = 'if not optional and target.startswith(("xbmc.", "kodi.")) and not child.get("version", "").strip():'
+        self.assertIn(before, source)
+        namespace = dict(fr.__dict__)
+        exec(compile(source.replace(before, 'if False:'), '<isolated mandatory builtin version mutation>', 'exec'), namespace)
+        with patch.object(fr, '_parse_dependency_edges', namespace['_parse_dependency_edges']), \
+                patch.object(fi, '_parse_dependency_edges', namespace['_parse_dependency_edges']):
+            result = unittest.TestResult()
+            VersionlessBuiltinTests('test_versionless_mandatory_refuses_before_mutation').run(result)
+        self.assertEqual([], result.errors, str(result.errors))
+        self.assertEqual([], result.skipped)
+        self.assertGreater(len(result.failures), 0, 'mandatory version guard removal escaped assertions')
+        print('VERSIONLESS_MUTATION_ASSERTION_PASS mandatory_builtin_version:configured_apply', flush=True)
