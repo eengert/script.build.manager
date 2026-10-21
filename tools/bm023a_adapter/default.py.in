@@ -1,4 +1,11 @@
 """Temporary in-process trigger for the authorized BM-023A macOS validation."""
+import sys
+_PREVIOUS_BYTECODE_FLAG = sys.dont_write_bytecode
+_PREVIOUS_SYS_PATH = list(sys.path)
+_PLATFORM_REQUESTED = sys.argv[1:2] in (["platform_check"], ["?mode=platform_check"])
+if _PLATFORM_REQUESTED:
+    sys.dont_write_bytecode = True
+
 import importlib
 import json
 import os
@@ -29,6 +36,9 @@ from adapter_support import (
     retry_held_frozen_install,
     safe_failure_payload,
     read_adapter_status,
+    read_platform_check,
+    _platform_directory,
+    write_platform_result,
     reject_cached_production_modules,
     repair_frozen_install_source,
     require_retained_inputs,
@@ -104,16 +114,22 @@ def main():
     global STAGE, FAILING_CALLABLE, RESULT_PATH, FROZEN_INSTALL_SOURCE_RECORD
     global RETAINED_INPUTS_RECORD
     payload = {"ok": False, "error_type": "not_started"}
-    mode = "unselected"
+    # Early location failures must also use the directory-preserving writer.
+    mode = "platform_check" if _PLATFORM_REQUESTED else "unselected"
     try:
         STAGE = "LOCATE_BUILD_MANAGER"
         FAILING_CALLABLE = "xbmcvfs.translatePath"
-        profile_root = Path(xbmcvfs.translatePath("special://profile/")).resolve(strict=True)
+        def locate(path):
+            translated = Path(xbmcvfs.translatePath(path))
+            if _PLATFORM_REQUESTED:
+                fd = _platform_directory(translated)
+                os.close(fd)
+                return translated
+            return translated.resolve(strict=True)
+        profile_root = locate("special://profile/")
         RESULT_PATH = profile_root / "addon_data" / "script.build.manager" / "bm023a_live_result.json"
-        addons_root = Path(xbmcvfs.translatePath("special://home/addons")).resolve(strict=True)
-        addon_root = Path(
-            xbmcvfs.translatePath("special://home/addons/script.build.manager")
-        ).resolve(strict=True)
+        addons_root = locate("special://home/addons")
+        addon_root = locate("special://home/addons/script.build.manager")
         if (
             profile_root.name != "userdata"
             or profile_root.parent.name != "portable_data"
@@ -131,7 +147,9 @@ def main():
         mode = parse_adapter_mode(sys.argv[1:])
 
         sys.path.insert(0, str(addon_root))
-        if mode == "status":
+        if mode == "platform_check":
+            production_module_names = ["resources.lib.frozen_install", "resources.lib.frozen", "resources.lib.artifacts"]
+        elif mode == "status":
             production_module_names = [
                 "resources.lib.frozen_install",
                 "resources.lib.transaction",
@@ -165,7 +183,7 @@ def main():
         STAGE = "VERIFY_BUILD_MANAGER_SOURCE"
         FAILING_CALLABLE = "pathlib.Path"
         verify_build_manager_source(addons_root, addon_root, resources_lib)
-        if mode != "status":
+        if mode not in ("status", "platform_check"):
             FROZEN_INSTALL_SOURCE_RECORD = repair_frozen_install_source(
                 addon_root,
                 EXPECTED_FROZEN_INSTALL_SHA256,
@@ -177,7 +195,13 @@ def main():
 
         STAGE = "IMPORT_PRODUCTION_MODULES"
         FAILING_CALLABLE = "importlib.import_module"
-        if mode == "status":
+        if mode == "platform_check":
+            STAGE = "PLATFORM_CHECK"
+            FAILING_CALLABLE = "read_platform_check"
+            import adapter_config
+            payload = read_platform_check(addon_root, Path(__file__).parent,
+                getattr(adapter_config, "PLATFORM_SOURCE_BINDING", None), MANIFEST_PATH, ARTIFACT_ROOT)
+        elif mode == "status":
             frozen_install_module = importlib.import_module("resources.lib.frozen_install")
             transaction_module = importlib.import_module("resources.lib.transaction")
             verify_production_module_sources(addon_root, {
@@ -210,7 +234,7 @@ def main():
                 "resources.lib.update_guard": update_guard_module,
             })
 
-        if mode == "status":
+        if mode in ("status", "platform_check"):
             pass
         elif mode == "recover":
             frozen_module = importlib.import_module("resources.lib.frozen")
@@ -448,7 +472,15 @@ def main():
         payload["frozen_install_source"] = dict(FROZEN_INSTALL_SOURCE_RECORD)
     if RETAINED_INPUTS_RECORD is not None:
         payload["retained_inputs"] = dict(RETAINED_INPUTS_RECORD)
-    _write_result(payload)
+    try:
+        if mode == "platform_check":
+            write_platform_result(RESULT_PATH, payload)
+        else:
+            _write_result(payload)
+    finally:
+        sys.dont_write_bytecode = _PREVIOUS_BYTECODE_FLAG
+        if mode == "platform_check":
+            sys.path[:] = _PREVIOUS_SYS_PATH
 
 
 main()

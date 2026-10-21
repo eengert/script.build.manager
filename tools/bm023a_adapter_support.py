@@ -13,7 +13,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.15"
+ADAPTER_VERSION = "0.0.16"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -36,6 +36,7 @@ ADAPTER_STAGES = frozenset({
     "CHECK_RETRY_PRECONDITIONS",
     "INVOKE_RETRY",
     "READ_STATUS",
+    "PLATFORM_CHECK",
     "SERIALIZE_RESULT",
 })
 ADAPTER_CALLABLES = frozenset({
@@ -60,6 +61,7 @@ ADAPTER_CALLABLES = frozenset({
     "UpdatePolicyBackend.get_policy",
     "KodiRuntimeFrozenArtifactBackend.get_addon_details",
     "read_adapter_status",
+    "read_platform_check",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -247,7 +249,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover", "retry", "status"):
+        if token in ("install", "recover", "retry", "status", "platform_check"):
             return token
         if token == "?mode=install":
             return "install"
@@ -257,6 +259,8 @@ def parse_adapter_mode(arguments: list[str]) -> str:
             return "retry"
         if token == "?mode=status":
             return "status"
+        if token == "?mode=platform_check":
+            return "platform_check"
     raise _bootstrap_error(
         "LOCATE_BUILD_MANAGER", "result_serializer", "mode_invalid"
     )
@@ -265,7 +269,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
     safe_mode = (
-        mode if mode in ("install", "recover", "retry", "status") else "unselected"
+        mode if mode in ("install", "recover", "retry", "status", "platform_check") else "unselected"
     )
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
@@ -1226,3 +1230,365 @@ def safe_failure_payload(
             payload["expected_sha256"] = expected_sha256
             payload["observed_sha256"] = observed_sha256
     return payload
+
+
+# This diagnostic transports the reviewed verifier; it grants no Apply authority.
+PLATFORM_IDS = ('xbmc.core', 'xbmc.gui', 'kodi.resource', 'xbmc.python')
+PLATFORM_BUILD = '20251031-a3a448d26b'
+PLATFORM_FAILURES = frozenset({
+    'source_binding_invalid', 'source_changed', 'runtime_or_build_unverified',
+    'manifest_binding_missing', 'manifest_unavailable', 'manifest_changed',
+    'manifest_invalid', 'artifact_evidence_unavailable', 'platform_requirements_refused',
+    'incoming_requirement_unavailable', 'provider_unverified', 'metadata_invalid',
+    'provider_changed', 'fixed_provider_closure_missing', 'diagnostic_unavailable',
+})
+_PLATFORM_ADAPTER_FILES = frozenset({'default.py', 'adapter_support.py',
+    'addon.xml', BUNDLED_FROZEN_INSTALL_NAME})
+_PLATFORM_PRODUCT_REQUIRED = frozenset({'addon.xml', 'default.py', 'service.py',
+    'resources/lib/frozen.py', 'resources/lib/frozen_install.py', 'resources/lib/artifacts.py'})
+
+
+def _platform_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+
+
+def _platform_directory(path):
+    """Read-only canonical descriptor chain; no resolve/follow fallback."""
+    path = Path(path)
+    text = str(path)
+    aliases = text.removeprefix('/System/Volumes/Data') if text.startswith('/System/Volumes/Data/') else text
+    if (not path.is_absolute() or os.path.normpath(text) != text or
+            any(aliases == prefix or aliases.startswith(prefix + '/') for prefix in (
+                '/Applications/Kodi.app', '/Users/eengert/Library/Application Support/Kodi'))):
+        raise ValueError('unsafe diagnostic path')
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in path.parts[1:]:
+            following = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = following
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _platform_read(path, limit):
+    path = Path(path)
+    parent = _platform_directory(path.parent)
+    fd = None
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        original = os.fstat(fd)
+        if not stat.S_ISREG(original.st_mode) or original.st_size > limit:
+            raise ValueError('unsafe diagnostic input')
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = os.read(fd, min(65536, limit + 1 - len(data)))
+            if not chunk: break
+            data.extend(chunk)
+        if (len(data) > limit or identity(os.fstat(fd)) != identity(original) or
+                identity(os.stat(path.name, dir_fd=parent, follow_symlinks=False)) != identity(original)):
+            raise ValueError('diagnostic input changed')
+        return bytes(data)
+    finally:
+        if fd is not None: os.close(fd)
+        os.close(parent)
+
+
+def platform_source_binding(product, adapter, candidate_commit, manifest_sha256=''):
+    """Canonical generated binding; the host independently checks these maps."""
+    return json.dumps({'schema': 1, 'candidate_commit': candidate_commit,
+        'product': product, 'adapter': adapter, 'manifest_sha256': manifest_sha256},
+        sort_keys=True, separators=(',', ':'))
+
+
+def _platform_sources(raw, addon_root, driver_root):
+    if not isinstance(raw, str) or len(raw) > 300000:
+        raise ValueError('source binding invalid')
+    binding = json.loads(raw)
+    if (not isinstance(binding, dict) or set(binding) != {
+            'schema', 'candidate_commit', 'product', 'adapter', 'manifest_sha256'} or
+            type(binding['schema']) is not int or binding['schema'] != 1):
+        raise ValueError('source binding invalid')
+    commit = binding['candidate_commit']
+    if (not isinstance(commit, str) or len(commit) not in (40, 64) or
+            any(c not in '0123456789abcdef' for c in commit) or
+            (binding['manifest_sha256'] != '' and not _is_sha256_digest(binding['manifest_sha256']))):
+        raise ValueError('source identity unavailable')
+    total = 0
+    for group, root in (('product', Path(addon_root)), ('adapter', Path(driver_root))):
+        entries = binding[group]
+        if not isinstance(entries, dict) or not 1 <= len(entries) <= 2000:
+            raise ValueError('source binding invalid')
+        if group == 'adapter' and set(entries) != _PLATFORM_ADAPTER_FILES:
+            raise ValueError('adapter binding invalid')
+        if group == 'product' and not _PLATFORM_PRODUCT_REQUIRED <= set(entries):
+            raise ValueError('product binding incomplete')
+        for name, expected in entries.items():
+            relative = Path(name)
+            if (not isinstance(name, str) or relative.is_absolute() or
+                    any(p in ('..', '.') for p in relative.parts) or str(relative) != name or
+                    (group == 'product' and name not in ('addon.xml', 'default.py', 'service.py')
+                     and not name.startswith('resources/')) or not _is_sha256_digest(expected)):
+                raise ValueError('source path invalid')
+            data = _platform_read(root / relative, 64 * 1024 * 1024)
+            total += len(data)
+            if total > 64 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError('source changed')
+    return binding, {'candidate_commit': commit, 'product_sha256': _platform_digest(binding['product']),
+        'adapter_sha256': _platform_digest(binding['adapter']),
+        'binding_sha256': hashlib.sha256(raw.encode('ascii')).hexdigest()}
+
+
+class _PlatformArtifacts:
+    """Read-only duck type for strict manifest validation; no mkdir/import/find API."""
+    def __init__(self, root, metadata_type):
+        self.root = Path(root) / 'artifacts'
+        self.metadata_type = metadata_type
+        fd = _platform_directory(self.root)
+        os.close(fd)
+
+    def _read(self, digest, suffix, limit):
+        if not _is_sha256_digest(digest): raise ValueError('invalid digest')
+        return _platform_read(self.root / (digest + suffix), limit)
+
+    def get_metadata(self, digest):
+        return self.metadata_type.from_dict(json.loads(self._read(digest, '.json', 128 * 1024)))
+
+    def read_bytes(self, digest):
+        data = self._read(digest, '.zip', 64 * 1024 * 1024)
+        if hashlib.sha256(data).hexdigest() != digest: raise ValueError('artifact changed')
+        return data
+
+
+class _PlatformBackend:
+    """Only inspection capabilities cross into complete platform verification."""
+    def __init__(self, backend): self.backend = backend
+    def read_verified_builtin_metadata(self, edge):
+        if edge.addon_id not in PLATFORM_IDS: return None
+        return self.backend.read_verified_builtin_metadata(edge)
+    def verify_builtin_requirement(self, edge):
+        return self.read_verified_builtin_metadata(edge) is not None
+    def get_addon_details(self, aid): return self.backend.get_addon_details(aid)
+    def read_installed_metadata(self, aid): return self.backend.read_installed_metadata(aid)
+
+
+def read_platform_check(addon_root, driver_root, raw_binding, manifest_path, artifact_root):
+    """Fixed provider reads and optional strict public-plan proof. Never Apply."""
+    import importlib
+    import xml.etree.ElementTree as ET
+    diagnostic = {'schema': 1, 'source': None,
+        'build': {'status': 'unverified', 'major': None, 'minor': None, 'revision': None},
+        'manifest_sha256': None, 'manifest_fingerprint': None,
+        'graph': {'status': 'unavailable', 'failure_category': 'diagnostic_unavailable'},
+        'providers': {aid: {'status': 'unavailable', 'version': None, 'abi': None,
+            'descriptor_sha256': None, 'trusted_origin': False, 'closure_status': 'unverified',
+            'failure_category': 'incoming_requirement_unavailable'} for aid in PLATFORM_IDS},
+        'overall': 'unverified', 'qualification': 'not_qualified'}
+    backend = None
+    try:
+        try:
+            binding, diagnostic['source'] = _platform_sources(raw_binding, addon_root, driver_root)
+        except Exception:
+            diagnostic['graph']['failure_category'] = 'source_binding_invalid'
+            return {'ok': False, 'platform_check': diagnostic}
+        fi = importlib.import_module('resources.lib.frozen_install')
+        fr = importlib.import_module('resources.lib.frozen')
+        artifacts = importlib.import_module('resources.lib.artifacts')
+        verify_production_module_sources(addon_root, {
+            'resources.lib.frozen_install': fi, 'resources.lib.frozen': fr,
+            'resources.lib.artifacts': artifacts})
+        backend = fi.KodiRuntimeFrozenArtifactBackend()
+        try:
+            # Reuse the reviewed current-process / pinned-bundle authority,
+            # independently of whether any provider can be constructed.
+            with backend._passive_build_binding(backend._inventory()) as fresh:
+                if fresh() is not True: raise ValueError('runtime changed')
+            diagnostic['build'] = {'status': 'verified', 'major': 21, 'minor': 3, 'revision': PLATFORM_BUILD}
+        except Exception:
+            diagnostic['graph']['failure_category'] = 'runtime_or_build_unverified'
+            return {'ok': False, 'platform_check': diagnostic}
+        plan = None
+        manifest_bytes = None
+        if not binding['manifest_sha256']:
+            diagnostic['graph']['failure_category'] = 'manifest_binding_missing'
+        else:
+            diagnostic['manifest_sha256'] = binding['manifest_sha256']
+            try:
+                manifest_bytes = _platform_read(manifest_path, 1024 * 1024)
+            except Exception:
+                diagnostic['graph']['failure_category'] = 'manifest_unavailable'
+            else:
+                if hashlib.sha256(manifest_bytes).hexdigest() != binding['manifest_sha256']:
+                    diagnostic['graph']['failure_category'] = 'manifest_changed'
+                else:
+                    try:
+                        manifest = fr.FrozenBuildManifest.from_json(manifest_bytes.decode('utf-8'))
+                        if (len(manifest.addons) > 500 or
+                                sum(len(n.dependency_edges) for n in manifest.addons) > 2000):
+                            raise ValueError('diagnostic graph too large')
+                        store = _PlatformArtifacts(artifact_root, artifacts.ArtifactMetadata)
+                    except Exception:
+                        diagnostic['graph']['failure_category'] = 'manifest_invalid'
+                    else:
+                        try:
+                            plan = fi.validate_frozen_manifest(manifest, store)
+                            if len(plan.nodes) > 500 or sum(len(n.dependency_edges) for n in plan.nodes.values()) > 2000:
+                                raise ValueError('diagnostic graph too large')
+                            diagnostic['manifest_fingerprint'] = manifest.fingerprint()
+                        except Exception:
+                            plan = None
+                            diagnostic['graph']['failure_category'] = 'artifact_evidence_unavailable'
+        observations = {}
+        for aid in PLATFORM_IDS:
+            incoming = [] if plan is None else [edge for node in plan.nodes.values()
+                for edge in node.dependency_edges if edge.addon_id == aid and not edge.optional]
+            # Empty means a metadata observation only, never a fabricated minimum.
+            requirements = incoming or [fr.DependencyEdge(aid)]
+            row = diagnostic['providers'][aid]
+            try:
+                for edge in requirements:
+                    metadata = backend.read_verified_builtin_metadata(edge)
+                    if metadata is None:
+                        row['status'] = 'refused' if incoming else 'unavailable'
+                        row['failure_category'] = 'provider_unverified' if incoming else 'incoming_requirement_unavailable'
+                        break
+                    if not isinstance(metadata, fr.InstalledMetadata) or metadata.origin is not fr.InstalledOrigin.APPLICATION:
+                        raise ValueError('metadata authority missing')
+                    root = ET.fromstring(metadata.xml_bytes)
+                    floors = root.findall('backwards-compatibility')
+                    version = root.get('version', '')
+                    abi = floors[0].get('abi', '') if len(floors) == 1 else ''
+                    if (root.tag != 'addon' or root.get('id') != aid or
+                            not fr._builtin_version_satisfies(version, abi) or not abi):
+                        raise ValueError('metadata interval invalid')
+                    fi._builtin_metadata_edges(metadata, aid)
+                    identity = (version, abi, hashlib.sha256(metadata.xml_bytes).hexdigest())
+                    if aid in observations and observations[aid] != identity:
+                        raise ValueError('provider changed')
+                    observations[aid] = identity
+                else:
+                    version, abi, digest = observations[aid]
+                    row.update(status='verified', version=version, abi=abi, descriptor_sha256=digest,
+                        trusted_origin=True, failure_category=None)
+            except Exception:
+                row.update(status='refused', failure_category='metadata_invalid')
+        if plan is not None:
+            try:
+                verified = fi.verify_platform_requirements(plan, _PlatformBackend(backend),
+                    planned_versions=fi._planned_versions(plan, ()))
+                identities = {entry[0]: tuple(entry[1:4]) for entry in verified.builtin_identity}
+                if (not all(row["status"] == "verified" for row in diagnostic["providers"].values()) or
+                        not set(PLATFORM_IDS) <= set(identities) or
+                        any(identities[aid] != observations.get(aid) for aid in PLATFORM_IDS)):
+                    raise ValueError('complete provider closure absent or changed')
+                diagnostic['graph'] = {'status': 'verified', 'failure_category': None}
+                for row in diagnostic['providers'].values(): row['closure_status'] = 'verified'
+            except Exception:
+                diagnostic['graph'] = {'status': 'refused', 'failure_category': 'platform_requirements_refused'}
+        try:
+            _platform_sources(raw_binding, addon_root, driver_root)
+            if manifest_bytes is not None and _platform_read(manifest_path, 1024 * 1024) != manifest_bytes:
+                raise ValueError('manifest changed')
+        except Exception:
+            diagnostic['graph'] = {'status': 'refused', 'failure_category': 'source_changed'}
+            for row in diagnostic['providers'].values(): row['closure_status'] = 'unverified'
+        complete = (diagnostic['graph']['status'] == 'verified' and
+            all(row['status'] == 'verified' for row in diagnostic['providers'].values()))
+        diagnostic['overall'] = 'requirements_verified' if complete else 'unverified'
+        return {'ok': complete, 'platform_check': diagnostic}
+    except Exception:
+        diagnostic['graph'] = {'status': 'unavailable', 'failure_category': 'diagnostic_unavailable'}
+        return {'ok': False, 'platform_check': diagnostic}
+    finally:
+        if backend is not None: backend.close()
+
+
+def write_platform_result(path, payload):
+    """Only persistent diagnostic output: replace the fixed result, no mkdir."""
+    import secrets
+    path = Path(path)
+    if path.name != 'bm023a_live_result.json': raise ValueError('invalid result destination')
+    data = json.dumps(payload, sort_keys=True).encode('ascii')
+    if len(data) > 65536: raise ValueError('diagnostic result too large')
+    parent = _platform_directory(path.parent)
+    temporary = '.platform-result-' + secrets.token_hex(16)
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data); handle.flush(); os.fsync(handle.fileno())
+        fresh = _platform_directory(path.parent)
+        try:
+            if (os.fstat(parent).st_dev, os.fstat(parent).st_ino) != (os.fstat(fresh).st_dev, os.fstat(fresh).st_ino):
+                raise ValueError('result directory changed')
+            os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        finally: os.close(fresh)
+    finally:
+        try: os.unlink(temporary, dir_fd=parent)
+        except FileNotFoundError: pass
+        os.close(parent)
+
+
+def project_platform_check(value):
+    """Strict bounded public record; malformed or contradictory success refuses."""
+    import re
+    def keys(record, expected):
+        if not isinstance(record, dict) or set(record) != set(expected): raise ValueError('diagnostic keys')
+    def digest(value, nullable=False):
+        if nullable and value is None: return
+        if not _is_sha256_digest(value): raise ValueError('diagnostic digest')
+    def version(value):
+        if (not isinstance(value, str) or len(value) > 100 or
+                not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', value) or
+                any(int(p) > 2147483647 for p in value.split('.'))): raise ValueError('diagnostic version')
+    keys(value, ('schema','source','build','manifest_sha256','manifest_fingerprint','graph','providers','overall','qualification'))
+    if type(value['schema']) is not int or value['schema'] != 1 or value['qualification'] != 'not_qualified':
+        raise ValueError('diagnostic schema')
+    if value['source'] is not None:
+        keys(value['source'], ('candidate_commit','product_sha256','adapter_sha256','binding_sha256'))
+        commit = value['source']['candidate_commit']
+        if not isinstance(commit, str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', commit):
+            raise ValueError('diagnostic commit')
+        for key in ('product_sha256','adapter_sha256','binding_sha256'): digest(value['source'][key])
+    build = value['build']
+    keys(build, ('status','major','minor','revision'))
+    if build['status'] == 'verified':
+        if type(build['major']) is not int or type(build['minor']) is not int or (
+                build['major'],build['minor'],build['revision']) != (21,3,PLATFORM_BUILD): raise ValueError('diagnostic build')
+    elif build != {'status':'unverified','major':None,'minor':None,'revision':None}:
+        raise ValueError('diagnostic build')
+    digest(value['manifest_sha256'], True); digest(value['manifest_fingerprint'], True)
+    graph = value['graph'];keys(graph, ('status','failure_category'))
+    if graph['status'] not in ('verified','refused','unavailable'): raise ValueError('diagnostic graph')
+    def failure(category):
+        if category is not None and (not isinstance(category, str) or category not in PLATFORM_FAILURES): raise ValueError('diagnostic category')
+    failure(graph['failure_category'])
+    if (graph['status'] == 'verified') != (graph['failure_category'] is None): raise ValueError('diagnostic graph')
+    keys(value['providers'], PLATFORM_IDS)
+    for aid in PLATFORM_IDS:
+        row=value['providers'][aid]
+        keys(row, ('status','version','abi','descriptor_sha256','trusted_origin','closure_status','failure_category'))
+        if type(row['trusted_origin']) is not bool: raise ValueError('diagnostic origin')
+        if row['status'] == 'verified':
+            version(row['version']); version(row['abi']); digest(row['descriptor_sha256'])
+            if row['trusted_origin'] is not True or row['failure_category'] is not None: raise ValueError('diagnostic authority')
+        elif row['status'] in ('refused','unavailable'):
+            if any(row[k] is not None for k in ('version','abi','descriptor_sha256')) or row['trusted_origin'] is not False:
+                raise ValueError('diagnostic refusal')
+            if row['failure_category'] is None: raise ValueError('diagnostic refusal')
+        else: raise ValueError('diagnostic status')
+        failure(row['failure_category'])
+        if row['closure_status'] not in ('verified','unverified'): raise ValueError('diagnostic closure')
+        if row['closure_status'] == 'verified' and (row['status'] != 'verified' or graph['status'] != 'verified'):
+            raise ValueError('diagnostic closure')
+    complete = (graph['status'] == 'verified' and value['source'] is not None and build['status'] == 'verified'
+        and value['manifest_sha256'] is not None and value['manifest_fingerprint'] is not None
+        and all(row['status'] == row['closure_status'] == 'verified' for row in value['providers'].values()))
+    if value['overall'] != ('requirements_verified' if complete else 'unverified'): raise ValueError('diagnostic overall')
+    if graph['status'] == 'verified' and not complete: raise ValueError('diagnostic partial graph')
+    # Round-trip closes off custom objects and returns no unvalidated fields.
+    return json.loads(json.dumps(value, sort_keys=True))

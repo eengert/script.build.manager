@@ -258,7 +258,7 @@ class FakeTransport:
         self.username = "kodi"
         self.execute_hook = None
         self.details = {
-            bm.DRIVER_ID: {"enabled": True, "version": "0.0.15"},
+            bm.DRIVER_ID: {"enabled": True, "version": "0.0.16"},
             bm.BUILD_MANAGER_ID: {"enabled": True, "version": "0.1.0"},
         }
         self.execute_result = "OK"
@@ -1802,7 +1802,7 @@ class TestGitSource(TripwireTestCase):
 
     def test_adapter_version_must_be_a_literal(self):
         support = (PROJECT / "tools/bm023a_adapter_support.py").read_bytes()
-        dynamic = support.replace(b'ADAPTER_VERSION = "0.0.15"', b'ADAPTER_VERSION = "0.0." + str(15)')
+        dynamic = support.replace(b'ADAPTER_VERSION = "0.0.16"', b'ADAPTER_VERSION = "0.0." + str(16)')
         commit = variant("dynamic-version", [("100644", "tools/bm023a_adapter_support.py", dynamic)])
         with self.assertRaises(bm.HelperError) as raised:
             bm.load_candidate(candidate_source(), commit)
@@ -2139,7 +2139,7 @@ class TestDriverBuild(TripwireTestCase):
         with self.assertRaises(bm.HelperError) as raised:
             build_plan(self, commit)
         self.assertEqual(raised.exception.code, "driver_config_mismatch")
-        xml = (PROJECT / "tools/bm023a_adapter/addon.xml.in").read_bytes().replace(b'version="0.0.15"', b'version="0.0.99"')
+        xml = (PROJECT / "tools/bm023a_adapter/addon.xml.in").read_bytes().replace(b'version="0.0.16"', b'version="0.0.99"')
         commit = variant("driver-version", [("100644", "tools/bm023a_adapter/addon.xml.in", xml)])
         with self.assertRaises(bm.HelperError) as raised:
             build_plan(self, commit)
@@ -2339,7 +2339,7 @@ class TestManifest(TripwireTestCase):
         paths = [entry["path"] for entry in manifest["build_manager"]["files"]]
         self.assertEqual(paths, sorted(item.path for item in candidate.product))
         self.assertEqual(manifest["build_manager"]["addon_version"], "0.1.0")
-        self.assertEqual(manifest["driver"]["adapter_version"], "0.0.15")
+        self.assertEqual(manifest["driver"]["adapter_version"], "0.0.16")
         self.assertEqual(manifest["driver"]["default_py_sha256"], hashlib.sha256(driver.data("default.py")).hexdigest())
         self.assertEqual(manifest["driver"]["frozen_install_sha256"], driver.frozen_install_sha256)
         self.assertEqual(manifest["build_manager"]["file_count"], len(paths))
@@ -3664,7 +3664,7 @@ class TestStageHelpers(TripwireTestCase):
 
 STATUS_VALUES = {key: None for key in adapter_support.STATUS_KEYS}
 STATUS_VALUES.update({
-    "adapter_version": "0.0.15", "frozen_transaction_state": "present", "restart_transaction_state": "absent",
+    "adapter_version": "0.0.16", "frozen_transaction_state": "present", "restart_transaction_state": "absent",
     "frozen_phase": "needs_attention", "frozen_lifecycle_stage": "quiescence_awaiting_restart",
     "frozen_lifecycle_restart_count": 1, "frozen_status_code": "FROZEN_MANIFEST_INVALID",
     "activation_hold_count": 1, "redlight_hold_present": True, "activation_hold_released": False,
@@ -3786,7 +3786,9 @@ class TestRun(TripwireTestCase):
         return RunWorld(self, name, **kwargs)
 
     def test_each_mode_invokes_the_driver_once_and_reports_the_fresh_result(self):
-        for mode in bm.ADAPTER_MODES:
+        # platform_check requires explicit reviewed graph/source evidence and is
+        # exercised by test_d028_platform_check; retain the four legacy controls.
+        for mode in ("install", "retry", "recover", "status"):
             with self.subTest(mode=mode):
                 world = self.world("w-" + mode)
                 world.produce_on_sleep(adapter_payload(mode))
@@ -3804,7 +3806,7 @@ class TestRun(TripwireTestCase):
                 )
                 self.assertEqual(world.executed, [{"addonid": bm.DRIVER_ID, "params": mode, "wait": False}])
                 self.assertEqual(payload["kodi_addon_view"], {
-                    bm.DRIVER_ID: {"enabled": True, "version": "0.0.15"},
+                    bm.DRIVER_ID: {"enabled": True, "version": "0.0.16"},
                     bm.BUILD_MANAGER_ID: {"enabled": True, "version": "0.1.0"},
                 })
                 self.assertTrue(payload["stage_verification"]["installed_equals_manifest"])
@@ -4274,11 +4276,11 @@ class TestRun(TripwireTestCase):
 
     def test_kodi_addon_view_must_match_the_staged_versions(self):
         cases = {
-            "driver disabled": ({bm.DRIVER_ID: {"enabled": False, "version": "0.0.15"}}, "addon_view_mismatch"),
+            "driver disabled": ({bm.DRIVER_ID: {"enabled": False, "version": "0.0.16"}}, "addon_view_mismatch"),
             "driver version": ({bm.DRIVER_ID: {"enabled": True, "version": "0.0.14"}}, "addon_view_mismatch"),
             "bm disabled": ({bm.BUILD_MANAGER_ID: {"enabled": False, "version": "0.1.0"}}, "addon_view_mismatch"),
             "bm version": ({bm.BUILD_MANAGER_ID: {"enabled": True, "version": "9.9.9"}}, "addon_view_mismatch"),
-            "enabled type": ({bm.DRIVER_ID: {"enabled": "yes", "version": "0.0.15"}}, "addon_view_mismatch"),
+            "enabled type": ({bm.DRIVER_ID: {"enabled": "yes", "version": "0.0.16"}}, "addon_view_mismatch"),
             "version type": ({bm.DRIVER_ID: {"enabled": True, "version": "bad version!"}}, "addon_view_mismatch"),
         }
         for label, (details, code) in cases.items():
@@ -4310,7 +4312,9 @@ class TestResultProjection(unittest.TestCase):
         return bm.project_adapter_result(mode, payload)
 
     def test_valid_payloads_pass_through_unchanged(self):
-        for mode in bm.ADAPTER_MODES:
+        # platform_check requires explicit reviewed graph/source evidence and is
+        # exercised by test_d028_platform_check; retain the four legacy controls.
+        for mode in ("install", "retry", "recover", "status"):
             with self.subTest(mode=mode):
                 projected, withheld = self.project(mode, adapter_payload(mode))
                 self.assertEqual(projected, adapter_payload(mode))
@@ -4450,7 +4454,7 @@ class KodiHttpFake:
                 if method == "JSONRPC.Ping":
                     result = "pong"
                 elif method == "Addons.GetAddonDetails":
-                    version = {bm.DRIVER_ID: "0.0.15", bm.BUILD_MANAGER_ID: "0.1.0"}[params["addonid"]]
+                    version = {bm.DRIVER_ID: "0.0.16", bm.BUILD_MANAGER_ID: "0.1.0"}[params["addonid"]]
                     result = {"addon": {"addonid": params["addonid"], "enabled": True, "version": version}}
                 elif method == "Addons.ExecuteAddon":
                     result = "OK"
@@ -5031,7 +5035,7 @@ class TestSnapshot(SnapshotTestCase):
         self.assertIs(addons["skin.arctic.fuse.3"]["enabled"], True)
         self.assertEqual(addons["plugin.video.redlight"]["version"], "2.6.8")
         self.assertEqual(payload["build_manager"], {"installed": True, "version": "0.1.0"})
-        self.assertEqual(payload["driver"], {"installed": True, "version": "0.0.15"})
+        self.assertEqual(payload["driver"], {"installed": True, "version": "0.0.16"})
         self.assertEqual(payload["settings"], {
             "active_skin": "skin.arctic.fuse.3", "present": True, "readable": True,
             "source": "guisettings.xml", "updater_policy": "NEVER_CHECK",
@@ -5301,7 +5305,7 @@ class TestSnapshot(SnapshotTestCase):
         self.assertEqual(identity["candidate_commit"], FIXTURE.good)
         self.assertEqual(identity["manifest_sha256"], "e" * 64)
         self.assertEqual(identity["build_manager_version"], "0.1.0")
-        self.assertEqual(identity["driver_adapter_version"], "0.0.15")
+        self.assertEqual(identity["driver_adapter_version"], "0.0.16")
         self.assertEqual(identity["configuration_fingerprint"], bm.config_fingerprint(ADAPTER_VALUES))
         self.assertTrue(payload["stage_verification"]["installed_equals_manifest"])
         (self.target.addon_dir(bm.BUILD_MANAGER_ID) / "service.py").write_text("# drift\n")

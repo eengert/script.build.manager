@@ -469,7 +469,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.15")
+            self.assertEqual(ADAPTER_VERSION, "0.0.16")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -514,7 +514,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.15"', addon_xml)
+            self.assertIn('version="0.0.16"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
@@ -2824,8 +2824,8 @@ print(json.dumps(status))
         source = (
             Path(__file__).parents[1] / "tools/bm023a_adapter/default.py.in"
         ).read_text(encoding="utf-8")
-        start = source.index('        if mode == "status":\n            frozen_install_module')
-        end = source.index('        if mode == "status":\n            pass')
+        start = source.index('        elif mode == "status":\n            frozen_install_module')
+        end = source.index('        if mode in ("status", "platform_check"):\n            pass')
         branch = source[start:end]
         for forbidden in (
             "FrozenInstallStore", "FrozenInstallCoordinator", "TransactionStore.inspect",
@@ -2835,7 +2835,7 @@ print(json.dumps(status))
         ):
             self.assertNotIn(forbidden, branch, forbidden)
         self.assertIn("repair_frozen_install_source", source)
-        self.assertIn('if mode != "status":\n            FROZEN_INSTALL_SOURCE_RECORD', source)
+        self.assertIn('if mode not in ("status", "platform_check"):\n            FROZEN_INSTALL_SOURCE_RECORD', source)
 
     def test_publication_fence_status_label_is_read_only(self):
         self.write_state(_frozen_transaction(phase=FrozenInstallPhase.PUBLICATION_PENDING))

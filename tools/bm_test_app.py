@@ -89,7 +89,7 @@ _DATA_VOLUME_ALIAS = "/System/Volumes/Data"
 
 BUILD_MANAGER_ID = _adapter.ADDON_ID
 DRIVER_ID = _adapter.DRIVER_ADDON_ID
-ADAPTER_MODES = ("install", "retry", "recover", "status")
+ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
@@ -1615,7 +1615,8 @@ def load_config(path: Path, services: "Services") -> Dict[str, Any]:
 
 
 def _validate_adapter_values(section: Any, services: Optional["Services"] = None) -> Dict[str, str]:
-    if not isinstance(section, dict) or set(section) != set(ADAPTER_CONFIG_KEYS):
+    if (not isinstance(section, dict) or not set(ADAPTER_CONFIG_KEYS) <= set(section) or
+            not set(section) <= set(ADAPTER_CONFIG_KEYS) | {"PLATFORM_MANIFEST_SHA256"}):
         raise HelperError("config_invalid", reason="adapter_keys")
     values: Dict[str, str] = {}
     for key in ADAPTER_CONFIG_KEYS:
@@ -1636,6 +1637,11 @@ def _validate_adapter_values(section: Any, services: Optional["Services"] = None
         elif not _CONFIG_ID_RE.fullmatch(value):
             raise HelperError("config_invalid", reason="adapter_id", key=key)
         values[key] = value
+    if "PLATFORM_MANIFEST_SHA256" in section:
+        pin = section["PLATFORM_MANIFEST_SHA256"]
+        if not isinstance(pin, str) or not _HEX64.fullmatch(pin):
+            raise HelperError("config_invalid", reason="platform_manifest_sha256")
+        values["PLATFORM_MANIFEST_SHA256"] = pin
     return values
 
 
@@ -1656,7 +1662,8 @@ def _validate_rpc_section(section: Any) -> Dict[str, Any]:
 
 def config_fingerprint(values: Mapping[str, str]) -> str:
     """Fingerprint of the six adapter values; the values themselves never leave."""
-    canonical = json.dumps({key: values[key] for key in ADAPTER_CONFIG_KEYS}, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps({key: values[key] for key in (*ADAPTER_CONFIG_KEYS, "PLATFORM_MANIFEST_SHA256")
+        if key in values}, sort_keys=True, separators=(",", ":"))
     return "sha256:" + sha256_hex(b"bm-test-app-config-fingerprint/1\n" + canonical.encode("utf-8"))
 
 
@@ -1734,6 +1741,10 @@ def build_driver(
         "--output-dir", os.fspath(output_dir),
         "--reuse-config-from", os.fspath(config_file),
     ]
+    if candidate.adapter_version == "0.0.16":
+        command += ["--candidate-commit", candidate.identity.commit]
+        if "PLATFORM_MANIFEST_SHA256" in adapter_values:
+            command += ["--platform-manifest-sha256", adapter_values["PLATFORM_MANIFEST_SHA256"]]
     try:
         proc = runner(
             command,
@@ -1768,10 +1779,20 @@ def build_driver(
     except (SyntaxError, ValueError):
         raise HelperError("driver_config_mismatch") from None
     expected_keys = set(ADAPTER_CONFIG_KEYS) | {"EXPECTED_FROZEN_INSTALL_SHA256"}
+    if candidate.adapter_version == "0.0.16":
+        expected_keys.add("PLATFORM_SOURCE_BINDING")
     if set(generated) != expected_keys or any(
         generated[key] != adapter_values[key] for key in ADAPTER_CONFIG_KEYS
     ) or generated["EXPECTED_FROZEN_INSTALL_SHA256"] != frozen_digest:
         raise HelperError("driver_config_mismatch")
+    if candidate.adapter_version == "0.0.16":
+        expected_binding = _adapter.platform_source_binding(
+            {item.path: item.sha256 for item in candidate.product},
+            {name: sha256_hex(data) for name, data in files.items()
+                if name in _adapter._PLATFORM_ADAPTER_FILES},
+            candidate.identity.commit, adapter_values.get("PLATFORM_MANIFEST_SHA256", ""))
+        if generated.get("PLATFORM_SOURCE_BINDING") != expected_binding:
+            raise HelperError("driver_config_mismatch")
     try:
         driver_id, driver_version = parse_addon_xml(files["addon.xml"])
     except (ET.ParseError, ValueError):
@@ -2867,6 +2888,7 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
         "transaction": _RETRY_TRANSACTION,
     },
     "status": {"status": _STATUS_RECORD},
+    "platform_check": {"platform_check": _adapter.project_platform_check},
 }
 
 
@@ -2900,6 +2922,13 @@ def project_adapter_result(mode: str, raw: Any) -> Tuple[Dict[str, Any], Dict[st
         "unknown_key_count": len(unknown),
         "unknown_key_names": [key for key in unknown if re.fullmatch(r"[a-z][a-z0-9_]{0,39}", str(key))][:20],
     }
+    if mode == "platform_check":
+        withheld["unknown_key_names"] = []
+        diagnostic = projected.get("platform_check")
+        if ("platform_check" in invalid or
+                (diagnostic is None and ok) or
+                (diagnostic is not None and ok != (diagnostic["overall"] == "requirements_verified"))):
+            raise HelperError("result_malformed", reason="platform_check")
     return projected, withheld
 
 
@@ -3092,7 +3121,7 @@ class RpcClient:
         return document["result"]
 
 
-DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120}
+DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
 # A graceful Kodi shutdown (settings save, add-on teardown) is short; an
@@ -3148,6 +3177,10 @@ def run_adapter(
     timeout: float,
 ) -> Dict[str, Any]:
     """Invoke one BM-023A adapter mode and report its fresh, allowlisted result."""
+    if mode not in ADAPTER_MODES:
+        raise HelperError("argument_invalid")
+    if mode == "platform_check" and git_repo is None:
+        raise HelperError("argument_invalid")
     target = services.target
     identity = identify(services, require="running")
     verification = verify_installed(services, manifest, git_repo=git_repo)
@@ -3162,6 +3195,25 @@ def run_adapter(
     username = rpc.get("username", DEFAULT_RPC_USERNAME)
     if identity.pid is None:
         raise HelperError("test_app_not_running")
+    platform_binding = None
+    if mode == "platform_check":
+        config_path = target.addon_dir(DRIVER_ID) / "adapter_config.py"
+        target.require_chain(config_path.parent)
+        try:
+            platform_binding = _parse_adapter_config(read_regular_file(config_path, MAX_BLOB_BYTES).data)["PLATFORM_SOURCE_BINDING"]
+            document = json.loads(platform_binding)
+            if not isinstance(document, dict): raise ValueError("binding record")
+            pin = document.get("manifest_sha256")
+            if pin != "" and (not isinstance(pin, str) or not _HEX64.fullmatch(pin)):
+                raise ValueError("binding manifest")
+            expected_binding = _adapter.platform_source_binding(
+                {e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]},
+                {e["path"]: e["sha256"] for e in manifest["driver"]["files"]
+                    if e["path"] in _adapter._PLATFORM_ADAPTER_FILES},
+                manifest["candidate"]["commit"], pin)
+            if platform_binding != expected_binding: raise ValueError("binding identity")
+        except (KeyError, ValueError, SyntaxError, FsProblem):
+            raise HelperError("driver_config_mismatch") from None
     observe_result(target)  # an unsafe result path fails closed before any RPC
     client = RpcClient(services, identity.pid, host, port, username)
     if client.call("JSONRPC.Ping", {}) != "pong":
@@ -3201,6 +3253,17 @@ def run_adapter(
     except (ValueError, UnicodeDecodeError):
         raise HelperError("result_malformed", reason="json") from None
     projected, withheld = project_adapter_result(mode, raw)
+    if mode == "platform_check" and projected.get("platform_check", {}).get("source") is not None:
+        diagnostic_source = projected["platform_check"]["source"]
+        expected_source = {"candidate_commit": manifest["candidate"]["commit"],
+            "product_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]}),
+            "adapter_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["driver"]["files"]
+                if e["path"] in _adapter._PLATFORM_ADAPTER_FILES}),
+            "binding_sha256": sha256_hex(platform_binding.encode("ascii"))}
+        if projected["platform_check"]["manifest_sha256"] != (document["manifest_sha256"] or None):
+            raise HelperError("result_malformed", reason="platform_manifest_identity")
+        if diagnostic_source != expected_source:
+            raise HelperError("result_malformed", reason="platform_source_identity")
     after_identity = identify(services, require="running")
     if after_identity.pid != identity.pid:
         raise HelperError("listener_pid_mismatch", port=port)

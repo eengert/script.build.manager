@@ -20,6 +20,7 @@ from tools.bm023a_adapter_support import (
     ADAPTER_VERSION,
     BUNDLED_FROZEN_INSTALL_NAME,
     DRIVER_ADDON_ID,
+    platform_source_binding,
 )
 
 
@@ -61,7 +62,8 @@ def render_config(values: Dict[str, str]) -> str:
     ) + "\n"
 
 
-def build_adapter(output_dir: Path, values: Dict[str, str]) -> Path:
+def build_adapter(output_dir: Path, values: Dict[str, str], *,
+                  candidate_commit: str = "", platform_manifest_sha256: str = "") -> Path:
     """Write versioned source files and a Kodi-installable ZIP under output_dir."""
     output_dir = Path(output_dir)
     package_root = output_dir / DRIVER_ADDON_ID
@@ -77,9 +79,21 @@ def build_adapter(output_dir: Path, values: Dict[str, str]) -> Path:
     frozen_install_bytes = frozen_install_source.read_bytes()
     expected_frozen_install_sha256 = hashlib.sha256(frozen_install_bytes).hexdigest()
     (package_root / BUNDLED_FROZEN_INSTALL_NAME).write_bytes(frozen_install_bytes)
+    # Hash only the candidate export. No configured input/profile is read here.
+    product_paths = [PROJECT / name for name in ("addon.xml", "default.py", "service.py")]
+    product_paths += [p for p in (PROJECT / "resources").rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts]
+    product_hashes = {}
+    for path in sorted(product_paths):
+        if path.is_symlink(): raise ValueError("candidate source symlink")
+        product_hashes[str(path.relative_to(PROJECT))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    adapter_hashes = {name: hashlib.sha256((package_root / name).read_bytes()).hexdigest()
+        for name in ("default.py", "adapter_support.py", "addon.xml", BUNDLED_FROZEN_INSTALL_NAME)}
+    binding = platform_source_binding(product_hashes, adapter_hashes, candidate_commit, platform_manifest_sha256)
     generated_config = (
         render_config(values)
         + f"EXPECTED_FROZEN_INSTALL_SHA256 = {expected_frozen_install_sha256!r}\n"
+        + f"PLATFORM_SOURCE_BINDING = {binding!r}\n"
     )
     (package_root / "adapter_config.py").write_text(generated_config, encoding="utf-8")
 
@@ -106,6 +120,8 @@ def main() -> int:
     )
     for key in CONFIG_KEYS:
         parser.add_argument("--" + key.lower().replace("_", "-"))
+    parser.add_argument("--candidate-commit", default="")
+    parser.add_argument("--platform-manifest-sha256", default="")
     args = parser.parse_args()
 
     if args.reuse_config_from:
@@ -117,7 +133,8 @@ def main() -> int:
         if any(not value for value in values.values()):
             parser.error("all six adapter configuration options are required")
 
-    archive = build_adapter(args.output_dir, values)
+    archive = build_adapter(args.output_dir, values, candidate_commit=args.candidate_commit,
+        platform_manifest_sha256=args.platform_manifest_sha256)
     print(f"Generated {DRIVER_ADDON_ID} version {ADAPTER_VERSION}: {archive.name}")
     return 0
 
