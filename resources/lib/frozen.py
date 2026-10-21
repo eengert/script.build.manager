@@ -987,10 +987,11 @@ def _parse_dependency_edges(xml_bytes: bytes, addon_id: str) -> Tuple[Dependency
         if child.tag != "import":
             raise CaptureError(f"{addon_id}: malformed or namespace-qualified import declaration")
         target = child.attrib.get("addon", "")
+        optional_value = child.get("optional", "false")
         if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", target) or
-                child.get("optional", "false").lower() not in ("true", "false")):
+                optional_value not in ("true", "True", "TRUE", "false", "False", "FALSE")):
             raise CaptureError(f"{addon_id}: malformed dependency declaration")
-        optional = child.attrib.get("optional", "false").lower() == "true"
+        optional = optional_value in ("true", "True", "TRUE")
         edges.append(
             DependencyEdge(target, child.attrib.get("version", ""), optional, (addon_id,))
         )

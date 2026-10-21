@@ -35,6 +35,43 @@ def xml(aid, version, body):
 
 
 class B1DependencyTests(unittest.TestCase):
+    def test_optional_spellings_match_capture_and_admission(self):
+        for value, optional in ((None, False), ('true', True), ('True', True), ('TRUE', True),
+                                ('false', False), ('False', False), ('FALSE', False)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                attribute = '' if value is None else f' optional="{value}"'
+                payload = xml('plugin.test', '1.0.0',
+                    '<requires><import addon="xbmc.core" version="0.1.0"' + attribute + '/></requires>')
+                expected = (frozen.DependencyEdge('xbmc.core', '0.1.0', optional, ('plugin.test',)),)
+                for parser in (frozen._parse_dependency_edges, fi._admission_dependency_edges):
+                    self.assertEqual(expected, parser(payload, 'plugin.test'))
+                backend = frozen.InMemoryInventoryBackend([capture._addon('plugin.test')],
+                    {'plugin.test': payload}, package_cache={('plugin.test', '1.0.0'):
+                        [('test.zip', capture._zip('plugin.test', xml_bytes=payload))]})
+                store = ArtifactStore(Path(tmp))
+                result = frozen.capture_frozen_build(backend=backend, store=store,
+                    root_addon_ids=['plugin.test'], build_id='boolean', name='Boolean', created_at='now')
+                self.assertTrue(result.complete, result.errors)
+                owner = next(n for n in result.manifest.addons if n.addon_id == 'plugin.test')
+                self.assertEqual(expected, owner.dependency_edges)
+                fi.validate_frozen_manifest(result.manifest, store)
+
+    def test_ambiguous_and_malformed_optional_spellings_fail_closed(self):
+        for value in ('tRuE', 'TrUE', 'truE', 'fAlSe', 'FaLSE', '', '1', '0', 'yes', ' true', 'true '):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                payload = xml('plugin.test', '1.0.0',
+                    '<requires><import addon="xbmc.core" version="0.1.0" optional="' + value + '"/></requires>')
+                for parser in (frozen._parse_dependency_edges, fi._admission_dependency_edges):
+                    with self.assertRaises(frozen.CaptureError):
+                        parser(payload, 'plugin.test')
+                backend = frozen.InMemoryInventoryBackend([capture._addon('plugin.test')],
+                    {'plugin.test': payload}, package_cache={('plugin.test', '1.0.0'):
+                        [('test.zip', capture._zip('plugin.test', xml_bytes=payload))]})
+                result = frozen.capture_frozen_build(backend=backend, store=ArtifactStore(Path(tmp)),
+                    root_addon_ids=['plugin.test'], build_id='boolean', name='Boolean', created_at='now')
+                self.assertFalse(result.complete)
+                self.assertTrue(result.errors)
+
     def test_ambiguous_and_namespaced_xml_is_refused_by_both_callers(self):
         for label, body in BAD.items():
             for parser in (frozen._parse_dependency_edges, fi._admission_dependency_edges):
@@ -117,6 +154,23 @@ class B1DependencyTests(unittest.TestCase):
 
 
 class B1PreparedApplyTests(unittest.TestCase):
+    def test_mixed_case_optional_cannot_hide_mandatory_gui_at_apply(self):
+        for value in ('tRuE', 'TrUE'):
+            with self.subTest(value=value):
+                self.assert_refused('<requires><import addon="xbmc.gui" version="999.0.0" optional="' + value + '"/></requires>')
+
+    def test_supported_true_spellings_are_optional_and_false_spellings_are_mandatory(self):
+        for value in ('true', 'True', 'TRUE'):
+            with self.subTest(value=value):
+                _, _, observed = self.exercise(
+                    '<requires><import addon="xbmc.gui" version="999.0.0" optional="' + value + '"/></requires>')
+                self.assertEqual('ready', observed['preparation'], observed)
+                self.assertEqual('complete', observed['apply_outcome'], observed)
+        for value in (None, 'false', 'False', 'FALSE'):
+            with self.subTest(value=value):
+                attribute = '' if value is None else f' optional="{value}"'
+                self.assert_refused('<requires><import addon="xbmc.gui" version="999.0.0"' + attribute + '/></requires>')
+
     def exercise(self, body):
         f = standalone.StandalonePreparationTests()
         f.setUp()
@@ -265,6 +319,20 @@ class B1ResumeTests(unittest.TestCase):
 
 
 class B1MutationTests(unittest.TestCase):
+    def test_boolean_normalization_reopens_configured_apply_and_is_detected(self):
+        import inspect
+        source = inspect.getsource(frozen._parse_dependency_edges)
+        before = 'optional_value = child.get("optional", "false")'
+        self.assertIn(before, source)
+        namespace = dict(frozen.__dict__)
+        exec(compile(source.replace(before, before + '.lower()'),
+            '<isolated optional boolean mutation>', 'exec'), namespace)
+        mutant = namespace['_parse_dependency_edges']
+        with patch.object(frozen, '_parse_dependency_edges', mutant), \
+                patch.object(fi, '_parse_dependency_edges', mutant):
+            self.assert_detected(B1PreparedApplyTests('test_mixed_case_optional_cannot_hide_mandatory_gui_at_apply'))
+        print('OPTIONAL_BOOLEAN_MUTATION_ASSERTION_PASS lower_normalization:configured_prepare_review_apply', flush=True)
+
     def assert_detected(self, case):
         result = unittest.TestResult()
         case.run(result)
