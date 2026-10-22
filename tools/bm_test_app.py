@@ -3230,6 +3230,50 @@ def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, 
             if len(data) != before[3] or sha256_hex(data) != expected[name]:
                 raise ValueError("source bytes")
             files.append((source_fd, name, before))
+        # The product is a fixed sibling under the already pinned addons parent.
+        # Observe only its public top-level inventory, never private/profile data
+        # or an unrestricted recursive tree. Existing Git/tree checks bind bytes.
+        addons_fd = directories[-1][1]
+        product = target.addon_dir(BUILD_MANAGER_ID)
+        if product.parent != driver.parent:
+            raise ValueError("product path")
+        product_fd = os.open(BUILD_MANAGER_ID, flags, dir_fd=addons_fd)
+        descriptors.append(product_fd)
+        product_identity = identity(os.fstat(product_fd), True)
+        directories.append((product_fd, addons_fd, BUILD_MANAGER_ID, True, product_identity))
+        product_files = manifest["build_manager"]["files"]
+        if not 0 < len(product_files) <= MAX_CANDIDATE_FILES:
+            raise ValueError("product size")
+        top = {}
+        for entry in product_files:
+            name, separator, _ = entry["path"].partition("/")
+            top[name] = (bool(separator), None if separator else entry["size"])
+
+        def product_inventory():
+            names = []
+            with os.scandir(product_fd) as listing:
+                for entry in listing:
+                    names.append(entry.name)
+                    if len(names) > MAX_CANDIDATE_FILES + 1:
+                        raise ValueError("product entry count")
+            if set(names) - set(top) - {"__pycache__"} or set(top) - set(names):
+                raise ValueError("product entry set")
+            inventory = []
+            total_size = 0
+            for name in sorted(names):
+                directory, expected_size = top.get(name, (True, None))
+                observed = identity(os.stat(name, dir_fd=product_fd, follow_symlinks=False), directory)
+                total_size += observed[3]
+                if observed[3] > MAX_FILE_BYTES or total_size > MAX_CANDIDATE_BYTES or (
+                    expected_size is not None and observed[3] != expected_size
+                ):
+                    raise ValueError("product entry size")
+                inventory.append((name, observed))
+            return tuple(inventory)
+
+        product_entries = product_inventory()
+        if product_inventory() != product_entries:
+            raise ValueError("product inventory moved")
         # Recheck open objects and their links through pinned parent descriptors:
         # a replacement while collecting the witness must also fail closed.
         for source_fd, name, before in files:
@@ -3241,7 +3285,8 @@ def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, 
             if identity(os.fstat(directory_fd), True, full) != before or (parent is not None and
                 identity(os.stat(name, dir_fd=parent, follow_symlinks=False), True, full) != before):
                 raise ValueError("directory moved")
-        return (tuple(entry[4] for entry in directories), tuple((name, before) for _, name, before in files))
+        return (tuple(entry[4] for entry in directories), tuple((name, before) for _, name, before in files),
+                product_entries)
     except (OSError, FsProblem, AttributeError, TypeError, ValueError, KeyError):
         raise HelperError("platform_source_unverifiable") from None
     finally:

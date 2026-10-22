@@ -33,9 +33,21 @@ try:
         _platform_driver = _platform_os.path.dirname(_platform_os.path.abspath(__file__))
         _platform_driver_stat = _platform_os.stat(_platform_driver)
         _platform_driver_identity = (_platform_driver_stat.st_dev, _platform_driver_stat.st_ino)
+        _platform_isolated_roots = {_platform_driver_identity}
+        # The staged product is the driver's fixed sibling. Exclude it before
+        # even stdlib imports; recheck the VFS-located product below as well.
+        try:
+            _platform_product_stat = _platform_os.stat(_platform_os.path.join(
+                _platform_os.path.dirname(_platform_driver), "script.build.manager"), follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if _platform_product_stat.st_mode & 0o170000 != 0o040000:
+                raise ImportError("platform_check product isolation unavailable")
+            _platform_isolated_roots.add((_platform_product_stat.st_dev, _platform_product_stat.st_ino))
 
         def _platform_import_path_allowed(raw):
-            """Remove driver aliases/descendants before any unscoped import.
+            """Remove staged source aliases/descendants before unscoped imports.
 
             Resolve one component at a time so a forbidden symlink destination
             is rejected before probing it. Unverifiable search entries are
@@ -75,7 +87,7 @@ try:
                             resolved = []
                         pending = destination.split("/") + pending
                         continue
-                    if (info.st_dev, info.st_ino) == _platform_driver_identity:
+                    if (info.st_dev, info.st_ino) in _platform_isolated_roots:
                         return False
                     resolved.append(part)
                 return True
@@ -282,9 +294,13 @@ try:
             # The mode must be taken from argv[1], not argv[2].
             mode = parse_adapter_mode(sys.argv[1:])
 
-            sys.path.insert(0, str(addon_root))
+            if mode != "platform_check":
+                sys.path.insert(0, str(addon_root))
             if mode == "platform_check":
                 _PLATFORM_FINDER.product_root = str(addon_root)
+                _platform_product_stat = os.stat(addon_root, follow_symlinks=False)
+                _platform_isolated_roots.add((_platform_product_stat.st_dev, _platform_product_stat.st_ino))
+                sys.path[:] = list(filter(_platform_import_path_allowed, sys.path))
                 production_module_names = ["resources.lib.frozen_install", "resources.lib.frozen", "resources.lib.artifacts"]
             elif mode == "status":
                 production_module_names = [
