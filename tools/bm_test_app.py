@@ -12,6 +12,12 @@ Subcommands (every one prints deterministic, sanitized JSON on stdout):
   quit       ask the running Test.app to quit gracefully (Application.Quit over
              loopback JSON-RPC) and prove it stopped; never sends a signal
   snapshot   read-only, secret-blind qualification census
+  platform-preflight     Git-bound read-only local TCP runtime preflight
+  platform-adapter-state Git-bound checked enable/disable of diagnostic driver
+
+HTTP remains the default. Explicit --rpc-transport tcp is restricted to
+127.0.0.1:9090, the diagnostic control commands, and run platform_check.
+TCP uses local process/listener identity and never HTTP Basic credentials.
 
 The only runtime target is ``/Applications/Kodi Build Manager Test.app`` and its
 portable ``-p`` data. The path is a constant: there is no command-line or
@@ -43,6 +49,7 @@ import os
 import plistlib
 import re
 import shutil
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -218,6 +225,8 @@ ERROR_CODES = frozenset({
     "rpc_auth_failed", "rpc_http_error", "rpc_response_invalid",
     "rpc_response_too_large", "rpc_error", "rpc_execute_rejected",
     "platform_source_unverifiable", "platform_source_changed",
+    "tcp_endpoint_refused", "tcp_method_refused", "tcp_response_timeout",
+    "tcp_response_incomplete", "adapter_state_mismatch",
     "addon_not_visible_to_kodi", "addon_view_mismatch",
     "result_path_unsafe", "result_not_produced", "result_stale",
     "result_malformed", "result_from_future", "adapter_mode_mismatch",
@@ -3122,6 +3131,200 @@ class RpcClient:
         return document["result"]
 
 
+class TcpRpcClient(RpcClient):
+    """One bounded raw TCP exchange per call, bound to the portable Kodi PID.
+
+    This is local process identity, not HTTP authentication. Connections never
+    resolve names, retry sends or outlive a single method. Notifications are
+    consumed separately; a short bounded drain detects duplicate responses.
+    """
+
+    CONNECT_TIMEOUT = 3.0
+    RESPONSE_TIMEOUT = 5.0
+    DRAIN_TIMEOUT = 0.05
+    MAX_NOTIFICATIONS = 32
+    MAX_NOTIFICATION_BYTES = 16 * 1024
+
+    def __init__(self, services, pid, host="127.0.0.1", port=9090, *,
+                 platform_check=False, socket_factory=None):
+        if type(host) is not str or host != "127.0.0.1" or type(port) is not int or port != 9090:
+            raise HelperError("tcp_endpoint_refused")
+        super().__init__(services, pid, host, port, "")
+        self._platform_check = platform_check
+        self._socket_factory = socket_factory or socket.socket
+        self._next_id = 0
+
+    def call(self, method, params):
+        allowed = method == "JSONRPC.Ping" and params == {}
+        allowed |= method == "Application.GetProperties" and params == {"properties": ["version"]}
+        allowed |= (method == "Addons.GetAddonDetails" and isinstance(params, dict)
+                    and set(params) == {"addonid", "properties"}
+                    and params["addonid"] in (BUILD_MANAGER_ID, DRIVER_ID)
+                    and params["properties"] == ["enabled", "version"])
+        allowed |= (self._platform_check and method == "Addons.ExecuteAddon"
+                    and params == {"addonid": DRIVER_ID, "params": "platform_check", "wait": False})
+        if not allowed:
+            raise HelperError("tcp_method_refused")
+        return self._request(method, params)
+
+    def set_adapter_enabled(self, *, expected_enabled, enabled, expected_version):
+        if (type(expected_enabled) is not bool or type(enabled) is not bool
+                or expected_enabled == enabled or expected_version != "0.0.16"):
+            raise HelperError("adapter_state_mismatch")
+        params = {"addonid": DRIVER_ID, "properties": ["enabled", "version"]}
+        before = self.call("Addons.GetAddonDetails", params)
+        self._require_adapter(before, expected_enabled, expected_version)
+        # Only this checked transition can issue the single mutating request.
+        accepted = self._request("Addons.SetAddonEnabled", {"addonid": DRIVER_ID, "enabled": enabled})
+        if accepted != "OK":
+            raise HelperError("adapter_state_mismatch")
+        after = self.call("Addons.GetAddonDetails", params)
+        self._require_adapter(after, enabled, expected_version)
+        return {"before": expected_enabled, "enabled": enabled, "version": expected_version}
+
+    @staticmethod
+    def _invalid_constant(value):
+        raise ValueError("non-finite JSON value")
+
+    @staticmethod
+    def _require_adapter(value, enabled, version):
+        addon = value.get("addon") if isinstance(value, dict) else None
+        if (not isinstance(addon, dict) or addon.get("addonid") != DRIVER_ID
+                or type(addon.get("enabled")) is not bool or addon["enabled"] != enabled
+                or addon.get("version") != version):
+            raise HelperError("adapter_state_mismatch")
+
+    def _request(self, method, params):
+        self._guard_listener()  # before socket creation/connect
+        self._next_id += 1
+        request_id = self._next_id
+        body = json.dumps({"jsonrpc": "2.0", "id": request_id,
+                           "method": method, "params": params}).encode("utf-8")
+        connection = None
+        received = False
+        try:
+            connection = self._socket_factory(socket.AF_INET, socket.SOCK_STREAM)
+            connection.settimeout(self.CONNECT_TIMEOUT)
+            connection.connect((self._host, self._port))  # numeric IPv4; no resolver
+            self._guard_listener()  # recheck after connect, immediately before send
+            deadline = self._services.clock.monotonic() + self.RESPONSE_TIMEOUT
+            self.requests_sent += 1  # even a failed sendall may have sent bytes
+            connection.settimeout(self.RESPONSE_TIMEOUT)
+            connection.sendall(body)
+            buffer = b""
+            total = notifications = 0
+            response = None
+            decoder = json.JSONDecoder()
+            while True:
+                remaining = deadline - self._services.clock.monotonic()
+                if remaining <= 0:
+                    raise HelperError("tcp_response_timeout")
+                connection.settimeout(min(remaining, self.DRAIN_TIMEOUT)
+                                      if response is not None and not buffer.strip() else remaining)
+                try:
+                    chunk = connection.recv(min(65536, MAX_RPC_BYTES + 1 - total))
+                except (TimeoutError, socket.timeout):
+                    if response is not None and not buffer.strip():
+                        break
+                    raise HelperError("tcp_response_timeout") from None
+                if not chunk:
+                    if response is not None and not buffer.strip():
+                        break
+                    raise HelperError("tcp_response_incomplete")
+                received = True
+                total += len(chunk)
+                if total > MAX_RPC_BYTES:
+                    raise HelperError("rpc_response_too_large")
+                buffer += chunk
+                while buffer.strip():
+                    try:
+                        text = buffer.decode("utf-8").lstrip()
+                    except UnicodeDecodeError as exc:
+                        if exc.reason == "unexpected end of data" and exc.end == len(buffer):
+                            break
+                        raise HelperError("rpc_response_invalid") from None
+                    try:
+                        _, end = decoder.raw_decode(text)
+                    except json.JSONDecodeError:
+                        break  # incomplete or malformed; never accepted on EOF/deadline
+                    encoded = text[:end].encode("utf-8")
+                    try:
+                        document = json.loads(encoded.decode("utf-8"), object_pairs_hook=_no_duplicate_keys,
+                                              parse_constant=self._invalid_constant)
+                    except (ValueError, UnicodeError):
+                        raise HelperError("rpc_response_invalid") from None
+                    buffer = text[end:].encode("utf-8")
+                    if not isinstance(document, dict) or document.get("jsonrpc") != "2.0":
+                        raise HelperError("rpc_response_invalid")
+                    if "id" not in document:
+                        if (not {"jsonrpc", "method"} <= set(document) <= {"jsonrpc", "method", "params"}
+                                or not isinstance(document["method"], str)
+                                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", document["method"])
+                                or ("params" in document and not isinstance(document["params"], (dict, list)))
+                                or len(encoded) > self.MAX_NOTIFICATION_BYTES):
+                            raise HelperError("rpc_response_invalid")
+                        notifications += 1
+                        if notifications > self.MAX_NOTIFICATIONS:
+                            raise HelperError("rpc_response_too_large")
+                        continue
+                    if (type(document["id"]) is not int or document["id"] != request_id
+                            or response is not None
+                            or set(document) not in ({"jsonrpc", "id", "result"}, {"jsonrpc", "id", "error"})):
+                        raise HelperError("rpc_response_invalid")
+                    response = document
+            if "error" in response:
+                error = response["error"]
+                if not isinstance(error, dict) or type(error.get("code")) is not int or not isinstance(error.get("message"), str):
+                    raise HelperError("rpc_response_invalid")
+                raise HelperError("rpc_error", rpc_code=error["code"])
+            return response["result"]
+        except HelperError:
+            raise
+        except (OSError, ValueError, UnicodeError, RecursionError):
+            raise HelperError("rpc_transport_failed") from None
+        finally:
+            if connection is not None:
+                connection.close()
+            if received:
+                self._guard_listener()  # before accepting any received result
+
+
+def run_platform_control(services, *, manifest, git_repo, host, port, enabled=None, expected_enabled=None):
+    """Git-bound read-only preflight or one explicitly checked driver transition."""
+    if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.16":
+        raise HelperError("argument_invalid")
+    identity = identify(services, require="running")
+    verification = verify_installed(services, manifest, git_repo=git_repo)
+    if not verification["installed_equals_candidate"] or not verification["installed_equals_manifest"]:
+        raise HelperError("installed_tree_mismatch")
+    client = TcpRpcClient(services, identity.pid, host, port)
+    if client.call("JSONRPC.Ping", {}) != "pong":
+        raise HelperError("rpc_response_invalid")
+    properties = client.call("Application.GetProperties", {"properties": ["version"]})
+    version = properties.get("version") if isinstance(properties, dict) else None
+    if (not isinstance(version, dict) or any(type(version.get(k)) is not int for k in ("major", "minor"))
+            or any(not isinstance(version.get(k), str) or not re.fullmatch(r"[A-Za-z0-9._+-]{0,128}", version[k])
+                   for k in ("revision", "tag"))):
+        raise HelperError("rpc_response_invalid")
+    view = {}
+    for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.16")):
+        value = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["enabled", "version"]})
+        addon = value.get("addon") if isinstance(value, dict) else None
+        if (not isinstance(addon, dict) or addon.get("addonid") != aid or addon.get("version") != wanted
+                or type(addon.get("enabled")) is not bool or (aid == BUILD_MANAGER_ID and not addon["enabled"])):
+            raise HelperError("addon_view_mismatch", addon_id=aid)
+        view[aid] = {"enabled": addon["enabled"], "version": addon["version"]}
+    transition = None
+    if enabled is not None:
+        transition = client.set_adapter_enabled(expected_enabled=expected_enabled, enabled=enabled, expected_version="0.0.16")
+    return {"ok": True, "command": "platform-preflight" if enabled is None else "platform-adapter-state",
+            "candidate_commit": manifest["candidate"]["commit"], "git_binding": verification["git_binding"],
+            "transport": "tcp", "authentication": "local_pid_bound_no_http_basic", "authenticated": False,
+            "pid": identity.pid, "host": host, "port": port,
+            "version": {k: version[k] for k in ("major", "minor", "revision", "tag")},
+            "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
+
+
 DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
@@ -3303,11 +3506,14 @@ def run_adapter(
     rpc: Mapping[str, Any],
     git_repo: Optional[Path],
     timeout: float,
+    rpc_transport: str = "http",
 ) -> Dict[str, Any]:
     """Invoke one BM-023A adapter mode and report its fresh, allowlisted result."""
     if mode not in ADAPTER_MODES:
         raise HelperError("argument_invalid")
     if mode == "platform_check" and git_repo is None:
+        raise HelperError("argument_invalid")
+    if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
         raise HelperError("argument_invalid")
     target = services.target
     identity = identify(services, require="running")
@@ -3316,7 +3522,11 @@ def run_adapter(
         git_repo is not None and not verification["installed_equals_candidate"]
     ):
         raise HelperError("installed_tree_mismatch")
-    host = validate_loopback_host(rpc.get("host", DEFAULT_RPC_HOST))
+    host = rpc.get("host", DEFAULT_RPC_HOST) if rpc_transport == "tcp" else validate_loopback_host(rpc.get("host", DEFAULT_RPC_HOST))
+    if rpc_transport == "tcp":
+        if host != "127.0.0.1" or type(rpc.get("port", 9090)) is not int or rpc.get("port", 9090) != 9090:
+            raise HelperError("tcp_endpoint_refused")
+        rpc = {**rpc, "port": 9090}
     if "port" not in rpc:
         raise HelperError("rpc_port_invalid")
     port = validate_port(rpc["port"])
@@ -3343,7 +3553,8 @@ def run_adapter(
         except (KeyError, ValueError, SyntaxError, FsProblem):
             raise HelperError("driver_config_mismatch") from None
     observe_result(target)  # an unsafe result path fails closed before any RPC
-    client = RpcClient(services, identity.pid, host, port, username)
+    client = (TcpRpcClient(services, identity.pid, host, port, platform_check=True)
+              if rpc_transport == "tcp" else RpcClient(services, identity.pid, host, port, username))
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
     addon_view = _kodi_addon_view(client, manifest)
@@ -3421,6 +3632,8 @@ def run_adapter(
         "identity": identity.report(),
         "invocation": {
             "authenticated": client.authenticated,
+            **({"rpc_transport": "tcp", "authentication": "local_pid_bound_no_http_basic"}
+               if rpc_transport == "tcp" else {}),
             "invoked_utc": invoked_utc,
             "listener_pid_verified": True,
             "mode": mode,
@@ -4320,10 +4533,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("mode", choices=ADAPTER_MODES)
     run_parser.add_argument("--manifest", required=True)
     _add_rpc_arguments(run_parser)
+    run_parser.add_argument("--rpc-transport", choices=("http", "tcp"), default="http",
+                            help="TCP is fixed to 127.0.0.1:9090 and platform_check only")
     run_parser.add_argument("--timeout", type=float, help="seconds to wait for the fresh result")
     run_parser.add_argument("--repo")
     run_parser.add_argument("--no-git-binding", action="store_true", help="weaker: skip the Git check")
     _add_output(run_parser)
+
+    for command in ("platform-preflight", "platform-adapter-state"):
+        control = commands.add_parser(command, help="Git-bound local PID-bound TCP diagnostic control")
+        control.add_argument("--manifest", required=True)
+        control.add_argument("--repo")
+        control.add_argument("--rpc-transport", choices=("tcp",), required=True)
+        control.add_argument("--rpc-host", default="127.0.0.1")
+        control.add_argument("--rpc-port", type=int, default=9090)
+        if command == "platform-adapter-state":
+            control.add_argument("--expected-enabled", choices=("true", "false"), required=True)
+            control.add_argument("--enabled", choices=("true", "false"), required=True)
+        _add_output(control)
 
     quit_parser = commands.add_parser("quit", help="gracefully quit the Test.app over loopback RPC")
     _add_rpc_arguments(quit_parser)
@@ -4453,10 +4680,17 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
             rpc=rpc,
             git_repo=_git_repo(args, services),
             timeout=timeout,
+            rpc_transport=args.rpc_transport,
         )
         if not payload["adapter_ok"]:
             return payload, EXIT_ADAPTER_FAILED
         return payload, EXIT_OK if payload["ok"] else EXIT_FAILED
+    if command in ("platform-preflight", "platform-adapter-state"):
+        manifest, _ = load_manifest(args.manifest, services)
+        return run_platform_control(services, manifest=manifest, git_repo=_git_repo(args, services),
+            host=args.rpc_host, port=args.rpc_port,
+            enabled=(args.enabled == "true") if command == "platform-adapter-state" else None,
+            expected_enabled=(args.expected_enabled == "true") if command == "platform-adapter-state" else None), EXIT_OK
     if command == "quit":
         config_rpc = {}
         if args.config:

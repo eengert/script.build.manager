@@ -5702,10 +5702,12 @@ class TestStaticSafety(unittest.TestCase):
             "__future__", "argparse", "ast", "base64", "ctypes", "errno", "getpass", "hashlib", "http", "io", "ipaddress", "json",
             "os", "plistlib", "re", "secrets", "shutil", "sqlite3", "stat", "subprocess", "sys", "tempfile",
             "time", "unicodedata", "urllib", "warnings", "xml", "dataclasses", "datetime", "pathlib", "types",
-            "typing", "tools",
+            "typing", "tools", "socket",
         }
         self.assertEqual(imported - allowed, set())
-        for network in ("socket", "requests", "ssl", "ftplib", "smtplib", "telnetlib", "xmlrpc", "webbrowser"):
+        # The explicit PID-bound IPv4 TCP option now needs socket; other
+        # network stacks remain forbidden. Its endpoint is tested separately.
+        for network in ("requests", "ssl", "ftplib", "smtplib", "telnetlib", "xmlrpc", "webbrowser"):
             self.assertNotIn(network, imported)
         for node in ast.walk(HELPER_TREE):
             if isinstance(node, ast.ImportFrom) and node.module == "urllib":
@@ -6822,6 +6824,256 @@ class TestQuit(TripwireTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TcpSocketFake:
+    """Deterministic byte stream; never creates a socket or contacts a host."""
+    def __init__(self, chunks=None, handler=None):
+        self.chunks = list(chunks or [])
+        self.handler = handler
+        self.sent = []
+        self.connected = []
+        self.timeouts = []
+        self.closed = False
+        self.on_connect = self.on_send = self.on_receive = lambda: None
+
+    def settimeout(self, value):
+        self.timeouts.append(value)
+
+    def connect(self, address):
+        self.connected.append(address)
+        self.on_connect()
+
+    def sendall(self, data):
+        self.sent.append(json.loads(data))
+        self.on_send()
+        if self.handler:
+            request = self.sent[-1]
+            self.chunks.append(json.dumps({'jsonrpc': '2.0', 'id': request['id'],
+                                           'result': self.handler(request)}).encode())
+
+    def recv(self, size):
+        self.on_receive()
+        if not self.chunks:
+            raise socket.timeout()
+        chunk = self.chunks.pop(0)
+        if isinstance(chunk, Exception):
+            raise chunk
+        return chunk
+
+    def close(self):
+        self.closed = True
+
+
+class TestGuardedTcpTransport(TripwireTestCase):
+    def client(self, chunks=None, *, world=None, handler=None, platform=False):
+        w = world or RunWorld(self)
+        wire = TcpSocketFake(chunks, handler)
+        factory = mock.Mock(return_value=wire)
+        client = bm.TcpRpcClient(w.services, w.pid, platform_check=platform, socket_factory=factory)
+        return w, client, wire, factory
+
+    def response(self, value='pong', ident=1):
+        return json.dumps({'jsonrpc': '2.0', 'id': ident, 'result': value}).encode()
+
+    def test_partial_reads_and_multibyte_utf8(self):
+        raw = self.response('caf\u00e9').replace(b'caf\\u00e9', 'caf\u00e9'.encode())
+        w, client, wire, factory = self.client([bytes([b]) for b in raw])
+        self.assertEqual(client.call('JSONRPC.Ping', {}), 'caf\u00e9')
+        factory.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
+        self.assertEqual(wire.connected, [('127.0.0.1', 9090)])
+        self.assertEqual(client.requests_sent, 1)
+        self.assertFalse(client.authenticated)
+        self.assertTrue(wire.closed)
+        self.assertEqual(w.prompts, [])
+        self.assertEqual(len([e for e in w.events if e[0] == 'listener']), 3)
+        self.assertTrue(all(0 < t <= 5 for t in wire.timeouts))
+
+    def test_concatenated_notifications_before_and_after_response(self):
+        notification = b'{"jsonrpc":"2.0","method":"System.OnWake","params":{}}'
+        _, client, _, _ = self.client([notification + self.response() + notification])
+        self.assertEqual(client.call('JSONRPC.Ping', {}), 'pong')
+
+    def test_complete_response_then_fragmented_notification(self):
+        _, client, _, _ = self.client([self.response() + b'{"jsonrpc":', b'"2.0","method":"System.OnWake"}'])
+        self.assertEqual(client.call('JSONRPC.Ping', {}), 'pong')
+
+    def test_bounded_notifications_and_aggregate_size(self):
+        notification = b'{"jsonrpc":"2.0","method":"System.OnWake","params":{}}'
+        cases = [notification * 33 + self.response(),
+                 json.dumps({'jsonrpc':'2.0','method':'X','params':{'x':'x'*16384}}).encode(),
+                 b' ' * (bm.MAX_RPC_BYTES + 1)]
+        for index, raw in enumerate(cases):
+            with self.subTest(index=index):
+                w = RunWorld(self, 'bound-'+str(index))
+                _, client, wire, _ = self.client([raw], world=w)
+                with self.assertRaises(bm.HelperError): client.call('JSONRPC.Ping', {})
+                self.assertEqual(len(wire.sent), 1)
+
+    def test_wrong_duplicate_and_noninteger_response_ids(self):
+        for index, chunks in enumerate(([self.response(ident=2)], [self.response(ident=True)],
+                                       [self.response()+self.response()], [self.response(),self.response()])):
+            with self.subTest(index=index):
+                _, client, _, _ = self.client(chunks, world=RunWorld(self, 'ids-'+str(index)))
+                with self.assertRaisesRegex(bm.HelperError, 'rpc_response_invalid'):
+                    client.call('JSONRPC.Ping', {})
+
+    def test_malformed_utf8_json_and_notification_shapes(self):
+        cases = [b'\xff', b'{bad}', b'{"jsonrpc":"2.0","id":1,"result":NaN}',
+                 b'{"jsonrpc":"2.0","id":1,"id":1,"result":"pong"}',
+                 b'[]', b'{"jsonrpc":"2.0","method":"X","result":"pong"}',
+                 self.response()+b'{', b'{"jsonrpc":"2.0","id":1,"result":']
+        for index, raw in enumerate(cases):
+            with self.subTest(index=index):
+                _, client, _, _ = self.client([raw,b''], world=RunWorld(self, 'bad-'+str(index)))
+                with self.assertRaises(bm.HelperError): client.call('JSONRPC.Ping', {})
+
+    def test_eof_timeout_and_deadline_never_retry(self):
+        for index, chunks in enumerate(([b''], [socket.timeout()], [b'{',socket.timeout()])):
+            _, client, wire, factory = self.client(chunks, world=RunWorld(self, 'end-'+str(index)))
+            with self.assertRaises(bm.HelperError): client.call('JSONRPC.Ping', {})
+            factory.assert_called_once()
+            self.assertEqual(len(wire.sent), 1)
+        w, client, wire, _ = self.client([b'{'], world=RunWorld(self,'deadline'))
+        wire.on_receive = lambda: w.clock.sleep(6)
+        with self.assertRaisesRegex(bm.HelperError,'tcp_response_timeout'):client.call('JSONRPC.Ping',{})
+
+    def test_partial_send_failure_is_not_retried(self):
+        _, client, wire, factory = self.client()
+        wire.on_send = lambda: (_ for _ in ()).throw(OSError('partial send'))
+        with self.assertRaisesRegex(bm.HelperError,'rpc_transport_failed'):client.call('JSONRPC.Ping',{})
+        self.assertEqual(client.requests_sent,1)
+        factory.assert_called_once()
+        self.assertTrue(wire.closed)
+
+    def test_fixed_endpoint_refused_before_socket_creation(self):
+        w=RunWorld(self)
+        for host,port in [('localhost',9090),('::1',9090),('127.0.0.2',9090),('10.0.0.1',9090),('127.0.0.1',8080),('127.0.0.1',True)]:
+            with self.subTest(host=host,port=port), self.assertRaisesRegex(bm.HelperError,'tcp_endpoint_refused'):
+                bm.TcpRpcClient(w.services,w.pid,host,port,socket_factory=mock.Mock(side_effect=AssertionError('socket')))
+
+    def test_listener_guard_before_connect_send_and_after_receive(self):
+        for stage in ('before','connect','receive'):
+            w,client,wire,factory=self.client([self.response()],world=RunWorld(self,stage))
+            drift=lambda:setattr(w,'listener_pids',{999})
+            if stage=='before':drift()
+            elif stage=='connect':wire.on_connect=drift
+            else:wire.on_receive=drift
+            with self.assertRaisesRegex(bm.HelperError,'listener_pid_mismatch'):client.call('JSONRPC.Ping',{})
+            self.assertEqual(len(wire.sent),1 if stage=='receive' else 0)
+            if stage=='before':factory.assert_not_called()
+
+    def test_process_identity_drift_after_connect_and_receive(self):
+        for stage in ('connect','receive'):
+            w,client,wire,_=self.client([self.response()],world=RunWorld(self,stage))
+            def drift():
+                exe=w.lister.processes[0].exe
+                w.lister.commands[w.pid]=(exe,)
+            if stage=='connect':wire.on_connect=drift
+            else:wire.on_receive=drift
+            with self.assertRaisesRegex(bm.HelperError,'test_app_not_portable'):client.call('JSONRPC.Ping',{})
+
+    def test_error_responses_report_only_numeric_code(self):
+        raw=b'{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"withheld"}}'
+        _,client,_,_=self.client([raw])
+        with self.assertRaises(bm.HelperError) as raised:client.call('JSONRPC.Ping',{})
+        self.assertEqual(raised.exception.detail,{'rpc_code':-1})
+
+    def test_method_and_addon_surface_is_closed(self):
+        _,client,wire,factory=self.client()
+        for method,params in [('Application.Quit',{}),('Addons.SetAddonEnabled',{'addonid':bm.BUILD_MANAGER_ID,'enabled':False}),
+                              ('Addons.SetAddonEnabled',{'addonid':bm.DRIVER_ID,'enabled':True}),
+                              ('Addons.GetAddonDetails',{'addonid':'other','properties':['enabled','version']}),
+                              ('Addons.ExecuteAddon',{'addonid':bm.DRIVER_ID,'params':'platform_check','wait':False})]:
+            with self.assertRaisesRegex(bm.HelperError,'tcp_method_refused'):client.call(method,params)
+        factory.assert_not_called()
+
+    def test_checked_enable_and_disable_and_sequential_ids(self):
+        for enabled in (True,False):
+            state={'enabled':not enabled}
+            def handler(req):
+                if req['method']=='Addons.SetAddonEnabled':state['enabled']=req['params']['enabled'];return 'OK'
+                return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':state['enabled']}}
+            w=RunWorld(self,str(enabled));wires=[]
+            def factory(*_):
+                wire=TcpSocketFake(handler=handler);wires.append(wire);return wire
+            client=bm.TcpRpcClient(w.services,w.pid,socket_factory=factory)
+            result=client.set_adapter_enabled(expected_enabled=not enabled,enabled=enabled,expected_version='0.0.16')
+            self.assertEqual(result['enabled'],enabled)
+            self.assertEqual([s.sent[0]['id'] for s in wires],[1,2,3])
+            self.assertEqual(wires[1].sent[0]['params'],{'addonid':bm.DRIVER_ID,'enabled':enabled})
+
+    def test_enable_refuses_wrong_prior_version_or_addon_before_mutation(self):
+        for index,addon in enumerate(({'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':True},
+                                     {'addonid':bm.DRIVER_ID,'version':'0.0.15','enabled':False},
+                                     {'addonid':bm.BUILD_MANAGER_ID,'version':'0.0.16','enabled':False})):
+            _,client,wire,_=self.client(handler=lambda r:{'addon':addon},world=RunWorld(self,'prior'+str(index)))
+            with self.assertRaisesRegex(bm.HelperError,'adapter_state_mismatch'):
+                client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.16')
+            self.assertEqual([r['method'] for r in wire.sent],['Addons.GetAddonDetails'])
+
+    def test_enable_readback_failure_is_not_retried_or_rolled_back(self):
+        calls=[]
+        def handler(req):
+            calls.append(req['method'])
+            if req['method']=='Addons.SetAddonEnabled':return 'OK'
+            return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':False}}
+        w=RunWorld(self)
+        client=bm.TcpRpcClient(w.services,w.pid,socket_factory=lambda *_:TcpSocketFake(handler=handler))
+        with self.assertRaisesRegex(bm.HelperError,'adapter_state_mismatch'):
+            client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.16')
+        self.assertEqual(calls.count('Addons.SetAddonEnabled'),1)
+
+    def test_tcp_run_is_platform_only_and_never_unbound(self):
+        w=RunWorld(self)
+        for mode in ('install','retry','recover','status'):
+            with self.assertRaisesRegex(bm.HelperError,'argument_invalid'):
+                bm.run_adapter(w.services,mode=mode,manifest=w.manifest,manifest_sha256='f'*64,
+                               rpc={},git_repo=None,timeout=1,rpc_transport='tcp')
+        with self.assertRaisesRegex(bm.HelperError,'argument_invalid'):
+            bm.run_adapter(w.services,mode='platform_check',manifest=w.manifest,manifest_sha256='f'*64,
+                           rpc={},git_repo=None,timeout=1,rpc_transport='tcp')
+
+    def test_platform_run_reaches_only_bound_diagnostic_execute(self):
+        w=RunWorld(self);methods=[]
+        def handler(req):
+            methods.append(req['method'])
+            if req['method']=='JSONRPC.Ping':return 'pong'
+            if req['method']=='Addons.GetAddonDetails':return {'addon':{'enabled':True,'version':w.manifest['driver' if req['params']['addonid']==bm.DRIVER_ID else 'build_manager']['addon_version']}}
+            self.assertEqual(req['params'],{'addonid':bm.DRIVER_ID,'params':'platform_check','wait':False})
+            raise bm.HelperError('fixture_after_bound_execute')
+        with mock.patch.object(bm.socket,'socket',side_effect=lambda *_:TcpSocketFake(handler=handler)):
+            with self.assertRaisesRegex(bm.HelperError,'fixture_after_bound_execute'):
+                bm.run_adapter(w.services,mode='platform_check',manifest=w.manifest,manifest_sha256='f'*64,
+                               rpc={},git_repo=FIXTURE.repo,timeout=1,rpc_transport='tcp')
+        self.assertEqual(methods,['JSONRPC.Ping','Addons.GetAddonDetails','Addons.GetAddonDetails','Addons.ExecuteAddon'])
+
+    def test_cli_transport_selection_defaults_and_no_tcp_quit(self):
+        parser=bm.build_parser()
+        self.assertEqual(parser.parse_args(['run','platform_check','--manifest','m']).rpc_transport,'http')
+        self.assertEqual(parser.parse_args(['run','platform_check','--manifest','m','--rpc-transport','tcp']).rpc_transport,'tcp')
+        for args in (['quit','--rpc-transport','tcp'],['platform-preflight','--manifest','m'],
+                     ['platform-preflight','--manifest','m','--rpc-transport','tcp','--no-git-binding']):
+            with self.assertRaises(bm.HelperError):parser.parse_args(args)
+
+    def test_control_preflight_and_state_are_git_bound_with_old_tool_identity(self):
+        w=RunWorld(self);w.manifest['tool']['sha256']='a'*64
+        state={'enabled':False};methods=[]
+        def handler(req):
+            methods.append(req['method'])
+            if req['method']=='JSONRPC.Ping':return 'pong'
+            if req['method']=='Application.GetProperties':return {'version':{'major':21,'minor':3,'revision':'20251031-a3a448d26b','tag':'stable'}}
+            if req['method']=='Addons.SetAddonEnabled':state['enabled']=req['params']['enabled'];return 'OK'
+            aid=req['params']['addonid']
+            return {'addon':{'addonid':aid,'version':w.manifest['driver' if aid==bm.DRIVER_ID else 'build_manager']['addon_version'],'enabled':state['enabled'] if aid==bm.DRIVER_ID else True}}
+        path=self.tmp/'control-manifest.json';path.write_bytes(bm.manifest_bytes(w.manifest))
+        with mock.patch.object(bm.socket,'socket',side_effect=lambda *_:TcpSocketFake(handler=handler)):
+            code,payload,_=run_cli(w.services,'platform-preflight','--manifest',str(path),'--repo',str(FIXTURE.repo),'--rpc-transport','tcp')
+            self.assertEqual(code,bm.EXIT_OK);self.assertFalse(payload['authenticated']);self.assertTrue(payload['git_binding']['checked'])
+            self.assertFalse(payload['addons_before'][bm.DRIVER_ID]['enabled'])
+            code,payload,_=run_cli(w.services,'platform-adapter-state','--manifest',str(path),'--repo',str(FIXTURE.repo),'--rpc-transport','tcp','--expected-enabled','false','--enabled','true')
+            self.assertEqual(code,bm.EXIT_OK);self.assertTrue(payload['transition']['enabled'])
+        self.assertEqual(methods.count('Addons.SetAddonEnabled'),1)
 
 
 class TestCurrentHelperCredentials(TripwireTestCase):
