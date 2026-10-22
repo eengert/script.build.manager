@@ -24,6 +24,65 @@ try:
         if _PREVIOUS_PLATFORM_MODULES:
             raise ImportError("platform_check preloaded module refused")
         sys.dont_write_bytecode = True
+        # Use only the interpreter's already-loaded os before isolating imports.
+        # Importing os (or another helper) through the driver path here would
+        # merely move the unscoped-import vulnerability earlier in startup.
+        _platform_os = sys.modules.get("os")
+        if _platform_os is None:
+            raise ImportError("platform_check import isolation unavailable")
+        _platform_driver = _platform_os.path.dirname(_platform_os.path.abspath(__file__))
+        _platform_driver_stat = _platform_os.stat(_platform_driver)
+        _platform_driver_identity = (_platform_driver_stat.st_dev, _platform_driver_stat.st_ino)
+
+        def _platform_import_path_allowed(raw):
+            """Remove driver aliases/descendants before any unscoped import.
+
+            Resolve one component at a time so a forbidden symlink destination
+            is rejected before probing it. Unverifiable search entries are
+            omitted for this diagnostic only; the outer finally restores them.
+            """
+            try:
+                raw = raw or "."
+                if not raw.startswith("/"):
+                    raw = _platform_os.getcwd() + "/" + raw
+                # Do not collapse '..' before resolving preceding symlinks.
+                pending = raw.split("/")
+                resolved = []
+                links = 0
+                while pending:
+                    part = pending.pop(0)
+                    if part in ("", "."):
+                        continue
+                    if part == "..":
+                        resolved = resolved[:-1]
+                        continue
+                    candidate = "/" + "/".join(resolved + [part])
+                    lexical = candidate.lower()
+                    if lexical.startswith("/system/volumes/data/"):
+                        lexical = lexical[len("/system/volumes/data"):]
+                    if (lexical == "/applications/kodi.app" or
+                        lexical.startswith("/applications/kodi.app/") or
+                        lexical.startswith("/users/eengert/library/application support/kodi") or
+                        part.lower() in (".vol", ".nofollow", ".resolve")):
+                        return False
+                    info = _platform_os.lstat(candidate)
+                    if info.st_mode & 0o170000 == 0o120000:
+                        links += 1
+                        if links > 40:
+                            return False
+                        destination = _platform_os.readlink(candidate)
+                        if destination.startswith("/"):
+                            resolved = []
+                        pending = destination.split("/") + pending
+                        continue
+                    if (info.st_dev, info.st_ino) == _platform_driver_identity:
+                        return False
+                    resolved.append(part)
+                return True
+            except (OSError, TypeError, ValueError, AttributeError):
+                return False
+
+        sys.path[:] = [entry for entry in sys.path if _platform_import_path_allowed(entry)]
         import hashlib as _platform_hashlib
         import importlib.machinery as _platform_machinery
         import importlib.util as _platform_util

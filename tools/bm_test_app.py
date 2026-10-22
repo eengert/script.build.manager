@@ -217,6 +217,7 @@ ERROR_CODES = frozenset({
     "credential_prompt_unavailable", "credential_missing", "credential_unsupported", "rpc_transport_failed",
     "rpc_auth_failed", "rpc_http_error", "rpc_response_invalid",
     "rpc_response_too_large", "rpc_error", "rpc_execute_rejected",
+    "platform_source_unverifiable", "platform_source_changed",
     "addon_not_visible_to_kodi", "addon_view_mismatch",
     "result_path_unsafe", "result_not_produced", "result_stale",
     "result_malformed", "result_from_future", "adapter_mode_mismatch",
@@ -3166,6 +3167,88 @@ def _kodi_addon_view(client: RpcClient, manifest: Mapping[str, Any]) -> Dict[str
     return view
 
 
+def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, Any]) -> tuple:
+    """Independent host witness for one diagnostic execution window.
+
+    Content restoration cannot restore ctime. Directory change metadata also
+    witnesses transient extra modules and rename/restore activity. This detects
+    modified invocations; it does not prevent code from executing before refusal.
+    Unrelated ancestors outside the target contribute path identity only.
+    """
+    descriptors = []
+    directories = []
+    files = []
+
+    def identity(info, directory=False, full=True):
+        fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_ctime_ns", "st_mtime_ns")
+        values = tuple(getattr(info, field) for field in fields)
+        if any(type(value) is not int for value in values) or values[0] < 0 or any(
+            values[index] <= 0 for index in (1, 2, 4, 5)
+        ) or values[3] < 0:
+            raise ValueError("identity unavailable")
+        if not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)):
+            raise ValueError("source type")
+        # Whole-second ctime is insufficient evidence for this bounded watch.
+        if full and info.st_ctime_ns % 1_000_000_000 == 0:
+            raise ValueError("ctime resolution unavailable")
+        return values if full else values[:3]
+
+    try:
+        driver = target.addon_dir(DRIVER_ID)
+        if not target.contains(driver) or not hasattr(os, "O_DIRECTORY"):
+            raise ValueError("source path")
+        expected = {entry["path"]: entry["sha256"] for entry in manifest["driver"]["files"]}
+        if len(manifest["driver"]["files"]) != len(DRIVER_FILES) or set(expected) != set(DRIVER_FILES):
+            raise ValueError("source set")
+        flags = _read_flags() | os.O_DIRECTORY
+        fd = os.open("/", flags)
+        descriptors.append(fd)
+        directories.append((fd, None, None, False, identity(os.fstat(fd), True, False)))
+        current = Path("/")
+        for component in driver.parts[1:]:
+            parent = fd
+            fd = os.open(component, flags, dir_fd=parent)
+            descriptors.append(fd)
+            current = current / component
+            full = target.contains(current)
+            directories.append((fd, parent, component, full, identity(os.fstat(fd), True, full)))
+        for name in sorted(DRIVER_FILES):
+            source_fd = os.open(name, _read_flags(), dir_fd=fd)
+            descriptors.append(source_fd)
+            before = identity(os.fstat(source_fd))
+            if before[3] > MAX_BLOB_BYTES:
+                raise ValueError("source size")
+            chunks = []
+            remaining = before[3] + 1
+            while remaining:
+                chunk = os.read(source_fd, min(remaining, 65536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) != before[3] or sha256_hex(data) != expected[name]:
+                raise ValueError("source bytes")
+            files.append((source_fd, name, before))
+        # Recheck open objects and their links through pinned parent descriptors:
+        # a replacement while collecting the witness must also fail closed.
+        for source_fd, name, before in files:
+            if identity(os.fstat(source_fd)) != before or identity(
+                os.stat(name, dir_fd=fd, follow_symlinks=False)
+            ) != before:
+                raise ValueError("source moved")
+        for directory_fd, parent, name, full, before in directories:
+            if identity(os.fstat(directory_fd), True, full) != before or (parent is not None and
+                identity(os.stat(name, dir_fd=parent, follow_symlinks=False), True, full) != before):
+                raise ValueError("directory moved")
+        return (tuple(entry[4] for entry in directories), tuple((name, before) for _, name, before in files))
+    except (OSError, FsProblem, AttributeError, TypeError, ValueError, KeyError):
+        raise HelperError("platform_source_unverifiable") from None
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def run_adapter(
     services: "Services",
     *,
@@ -3222,6 +3305,7 @@ def run_adapter(
     before = observe_result(target)
     invoked_ns = services.clock.time_ns()
     invoked_utc = iso_utc_from_ns(invoked_ns)
+    platform_witness = _platform_invocation_snapshot(target, manifest) if mode == "platform_check" else None
     accepted = client.call("Addons.ExecuteAddon", {"addonid": DRIVER_ID, "params": mode, "wait": False})
     if accepted != "OK":
         raise HelperError("rpc_execute_rejected")
@@ -3270,6 +3354,8 @@ def run_adapter(
     after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
+    if mode == "platform_check" and _platform_invocation_snapshot(target, manifest) != platform_witness:
+        raise HelperError("platform_source_changed")
     post_run = {
         "installed_equals_manifest": final["installed_equals_manifest"],
         "problems": {
