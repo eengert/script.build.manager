@@ -7076,6 +7076,111 @@ class TestGuardedTcpTransport(TripwireTestCase):
         self.assertEqual(methods.count('Addons.SetAddonEnabled'),1)
 
 
+    def b1_control(self, properties, *, command='platform-preflight', name='b1', initial=False):
+        world = RunWorld(self, name)
+        methods = []
+        state = {'enabled': initial}
+
+        def handler(request):
+            method = request['method']
+            methods.append(method)
+            if method == 'JSONRPC.Ping':
+                return 'pong'
+            if method == 'Application.GetProperties':
+                return properties
+            if method == 'Addons.SetAddonEnabled':
+                self.assertEqual(request['params']['addonid'], bm.DRIVER_ID)
+                state['enabled'] = request['params']['enabled']
+                return 'OK'
+            if method == 'Addons.GetAddonDetails':
+                aid = request['params']['addonid']
+                return {'addon': {'addonid': aid,
+                    'version': world.manifest['driver' if aid == bm.DRIVER_ID else 'build_manager']['addon_version'],
+                    'enabled': state['enabled'] if aid == bm.DRIVER_ID else True}}
+            self.fail('unexpected RPC method: ' + method)
+
+        path = self.tmp / (name + '-manifest.json')
+        path.write_bytes(bm.manifest_bytes(world.manifest))
+        arguments = [command, '--manifest', str(path), '--repo', str(FIXTURE.repo), '--rpc-transport', 'tcp']
+        if command == 'platform-adapter-state':
+            arguments += ['--expected-enabled', str(initial).lower(), '--enabled', str(not initial).lower()]
+        with mock.patch.object(bm.socket, 'socket', side_effect=lambda *_: TcpSocketFake(handler=handler)):
+            code, payload, text = run_cli(world.services, *arguments)
+        return code, payload, methods, state
+
+    def test_b1_exact_pinned_preflight_is_verified_and_read_only(self):
+        self.assertEqual(adapter_support.PLATFORM_BUILD, '20251031-a3a448d26b')
+        code, payload, methods, state = self.b1_control({'version': {
+            'major': 21, 'minor': 3, 'revision': '20251031-a3a448d26b', 'tag': 'stable'}})
+        self.assertEqual(code, bm.EXIT_OK)
+        self.assertTrue(payload['ok'])
+        self.assertIs(payload['build_verified'], True)
+        self.assertEqual(methods, ['JSONRPC.Ping', 'Application.GetProperties',
+                                   'Addons.GetAddonDetails', 'Addons.GetAddonDetails'])
+        self.assertFalse(state['enabled'])
+
+    def test_b1_wrong_build_refused_by_both_controls_without_mutation(self):
+        versions = [(22, 3, '20251031-a3a448d26b'), (21, 4, '20251031-a3a448d26b'),
+                    (21, 3, 'different-revision'), (21, 3, '')]
+        for index, (major, minor, revision) in enumerate(versions):
+            for command in ('platform-preflight', 'platform-adapter-state'):
+                with self.subTest(index=index, command=command):
+                    code, payload, methods, state = self.b1_control({'version': {
+                        'major': major, 'minor': minor, 'revision': revision, 'tag': 'stable'}},
+                        command=command, name='b1-wrong-%s-%s' % (index, command))
+                    self.assertEqual(code, bm.EXIT_FAILED)
+                    self.assertFalse(payload['ok'])
+                    self.assertEqual(payload['error']['code'], 'platform_build_mismatch')
+                    self.assertIsNot(payload.get('build_verified'), True)
+                    self.assertEqual(methods, ['JSONRPC.Ping', 'Application.GetProperties'])
+                    self.assertFalse(state['enabled'])
+
+    def test_b1_absent_or_malformed_build_never_enables(self):
+        valid = {'major': 21, 'minor': 3, 'revision': '20251031-a3a448d26b', 'tag': 'stable'}
+        invalid = [None, [], {}, {'version': None}, {'version': []}]
+        for key in ('major', 'minor', 'revision', 'tag'):
+            missing = dict(valid)
+            del missing[key]
+            invalid.append({'version': missing})
+        for key, value in (('major', True), ('minor', 3.0), ('revision', None),
+                           ('revision', []), ('tag', None), ('tag', []), ('tag', 'bad tag')):
+            invalid.append({'version': dict(valid, **{key: value})})
+        for index, properties in enumerate(invalid):
+            for command in ('platform-preflight', 'platform-adapter-state'):
+                with self.subTest(index=index, command=command):
+                    code, payload, methods, state = self.b1_control(properties, command=command,
+                        name='b1-invalid-%s-%s' % (index, command))
+                    self.assertEqual(code, bm.EXIT_FAILED)
+                    self.assertEqual(payload['error']['code'], 'rpc_response_invalid')
+                    self.assertFalse(payload['ok'])
+                    self.assertIsNot(payload.get('build_verified'), True)
+                    self.assertEqual(methods, ['JSONRPC.Ping', 'Application.GetProperties'])
+                    self.assertFalse(state['enabled'])
+
+    def test_b1_tag_is_structural_not_a_stable_pin(self):
+        for index, tag in enumerate(('beta', 'releasecandidate', '')):
+            code, payload, methods, _ = self.b1_control({'version': {
+                'major': 21, 'minor': 3, 'revision': '20251031-a3a448d26b', 'tag': tag}},
+                name='b1-tag-' + str(index))
+            self.assertEqual(code, bm.EXIT_OK)
+            self.assertTrue(payload['build_verified'])
+            self.assertEqual(payload['version']['tag'], tag)
+            self.assertNotIn('Addons.SetAddonEnabled', methods)
+            self.assertNotIn('Addons.ExecuteAddon', methods)
+
+    def test_b1_exact_build_allows_checked_enable_and_disable(self):
+        for initial in (False, True):
+            code, payload, methods, state = self.b1_control({'version': {
+                'major': 21, 'minor': 3, 'revision': '20251031-a3a448d26b', 'tag': 'beta'}},
+                command='platform-adapter-state', name='b1-state-' + str(initial), initial=initial)
+            self.assertEqual(code, bm.EXIT_OK)
+            self.assertTrue(payload['build_verified'])
+            self.assertEqual(payload['transition'], {'before': initial, 'enabled': not initial, 'version': '0.0.16'})
+            self.assertEqual(state['enabled'], not initial)
+            self.assertEqual(methods.count('Addons.SetAddonEnabled'), 1)
+            self.assertNotIn('Addons.ExecuteAddon', methods)
+
+
 class TestCurrentHelperCredentials(TripwireTestCase):
     def cli(self, world, name, mode="status"):
         manifest = self.tmp / (name + '-manifest.json')

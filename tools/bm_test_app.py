@@ -226,7 +226,7 @@ ERROR_CODES = frozenset({
     "rpc_response_too_large", "rpc_error", "rpc_execute_rejected",
     "platform_source_unverifiable", "platform_source_changed",
     "tcp_endpoint_refused", "tcp_method_refused", "tcp_response_timeout",
-    "tcp_response_incomplete", "adapter_state_mismatch",
+    "tcp_response_incomplete", "adapter_state_mismatch", "platform_build_mismatch",
     "addon_not_visible_to_kodi", "addon_view_mismatch",
     "result_path_unsafe", "result_not_produced", "result_stale",
     "result_malformed", "result_from_future", "adapter_mode_mismatch",
@@ -3306,6 +3306,10 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
             or any(not isinstance(version.get(k), str) or not re.fullmatch(r"[A-Za-z0-9._+-]{0,128}", version[k])
                    for k in ("revision", "tag"))):
         raise HelperError("rpc_response_invalid")
+    # Same fixed Kodi authority as the staged diagnostic; never trust the
+    # response itself (or a configuration value) to choose the expected build.
+    if (version["major"], version["minor"], version["revision"]) != (21, 3, _adapter.PLATFORM_BUILD):
+        raise HelperError("platform_build_mismatch")
     view = {}
     for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.16")):
         value = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["enabled", "version"]})
@@ -3320,6 +3324,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
     return {"ok": True, "command": "platform-preflight" if enabled is None else "platform-adapter-state",
             "candidate_commit": manifest["candidate"]["commit"], "git_binding": verification["git_binding"],
             "transport": "tcp", "authentication": "local_pid_bound_no_http_basic", "authenticated": False,
+            "build_verified": True,
             "pid": identity.pid, "host": host, "port": port,
             "version": {k: version[k] for k in ("major", "minor", "revision", "tag")},
             "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
