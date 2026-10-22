@@ -3289,6 +3289,20 @@ class TcpRpcClient(RpcClient):
                 self._guard_listener()  # before accepting any received result
 
 
+def _require_platform_build(properties):
+    """One fixed build authority for TCP controls and diagnostic execution."""
+    version = properties.get("version") if isinstance(properties, dict) else None
+    if (not isinstance(version, dict) or any(type(version.get(k)) is not int for k in ("major", "minor"))
+            or any(not isinstance(version.get(k), str) or not re.fullmatch(r"[A-Za-z0-9._+-]{0,128}", version[k])
+                   for k in ("revision", "tag"))):
+        raise HelperError("rpc_response_invalid")
+    # Same fixed Kodi authority as the staged diagnostic; never trust the
+    # response itself (or a configuration value) to choose the expected build.
+    if (version["major"], version["minor"], version["revision"]) != (21, 3, _adapter.PLATFORM_BUILD):
+        raise HelperError("platform_build_mismatch")
+    return version
+
+
 def run_platform_control(services, *, manifest, git_repo, host, port, enabled=None, expected_enabled=None):
     """Git-bound read-only preflight or one explicitly checked driver transition."""
     if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.16":
@@ -3300,16 +3314,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
     client = TcpRpcClient(services, identity.pid, host, port)
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
-    properties = client.call("Application.GetProperties", {"properties": ["version"]})
-    version = properties.get("version") if isinstance(properties, dict) else None
-    if (not isinstance(version, dict) or any(type(version.get(k)) is not int for k in ("major", "minor"))
-            or any(not isinstance(version.get(k), str) or not re.fullmatch(r"[A-Za-z0-9._+-]{0,128}", version[k])
-                   for k in ("revision", "tag"))):
-        raise HelperError("rpc_response_invalid")
-    # Same fixed Kodi authority as the staged diagnostic; never trust the
-    # response itself (or a configuration value) to choose the expected build.
-    if (version["major"], version["minor"], version["revision"]) != (21, 3, _adapter.PLATFORM_BUILD):
-        raise HelperError("platform_build_mismatch")
+    version = _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
     view = {}
     for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.16")):
         value = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["enabled", "version"]})
@@ -3562,6 +3567,8 @@ def run_adapter(
               if rpc_transport == "tcp" else RpcClient(services, identity.pid, host, port, username))
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
+    if rpc_transport == "tcp" and mode == "platform_check":
+        _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
     addon_view = _kodi_addon_view(client, manifest)
     before = observe_result(target)
     invoked_ns = services.clock.time_ns()

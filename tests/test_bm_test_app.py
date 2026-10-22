@@ -7039,6 +7039,7 @@ class TestGuardedTcpTransport(TripwireTestCase):
         def handler(req):
             methods.append(req['method'])
             if req['method']=='JSONRPC.Ping':return 'pong'
+            if req['method']=='Application.GetProperties':return {'version':{'major':21,'minor':3,'revision':'20251031-a3a448d26b','tag':'stable'}}
             if req['method']=='Addons.GetAddonDetails':return {'addon':{'enabled':True,'version':w.manifest['driver' if req['params']['addonid']==bm.DRIVER_ID else 'build_manager']['addon_version']}}
             self.assertEqual(req['params'],{'addonid':bm.DRIVER_ID,'params':'platform_check','wait':False})
             raise bm.HelperError('fixture_after_bound_execute')
@@ -7046,7 +7047,7 @@ class TestGuardedTcpTransport(TripwireTestCase):
             with self.assertRaisesRegex(bm.HelperError,'fixture_after_bound_execute'):
                 bm.run_adapter(w.services,mode='platform_check',manifest=w.manifest,manifest_sha256='f'*64,
                                rpc={},git_repo=FIXTURE.repo,timeout=1,rpc_transport='tcp')
-        self.assertEqual(methods,['JSONRPC.Ping','Addons.GetAddonDetails','Addons.GetAddonDetails','Addons.ExecuteAddon'])
+        self.assertEqual(methods,['JSONRPC.Ping','Application.GetProperties','Addons.GetAddonDetails','Addons.GetAddonDetails','Addons.ExecuteAddon'])
 
     def test_cli_transport_selection_defaults_and_no_tcp_quit(self):
         parser=bm.build_parser()
@@ -7179,6 +7180,125 @@ class TestGuardedTcpTransport(TripwireTestCase):
             self.assertEqual(state['enabled'], not initial)
             self.assertEqual(methods.count('Addons.SetAddonEnabled'), 1)
             self.assertNotIn('Addons.ExecuteAddon', methods)
+
+
+    def run_path_fixture(self, name):
+        # Reuse the existing fully synthetic provider/result fixture. All
+        # generated trees live in the test's disposable fake application.
+        from tests.test_d028_platform_check import Fixture
+        world = RunWorld(self, name)
+        fixture = Fixture(self)
+        candidate = good_plan()[0]
+        values = dict(ADAPTER_VALUES, PLATFORM_MANIFEST_SHA256=fixture.pin)
+        driver = bm.build_driver(candidate, values, new_workspace(self), sys.executable)
+        folder = world.target.addon_dir(bm.DRIVER_ID)
+        shutil.rmtree(folder)
+        bm.write_tree(folder, [(name, data, 0o644) for name, data in driver.files])
+        world.manifest = bm.build_manifest(candidate, driver, bm.config_fingerprint(values), '2026-10-21T00:00:00Z')
+        fixture.binding = bm._parse_adapter_config(driver.data('adapter_config.py'))['PLATFORM_SOURCE_BINDING']
+        result = fixture.run()
+        self.assertTrue(result['ok'], result)
+        result['adapter_mode'] = 'platform_check'
+        world.produce_on_sleep(result)
+        return world, result
+
+    def run_path_attempt(self, properties, name):
+        world = RunWorld(self, name)
+        methods = []
+
+        def handler(request):
+            methods.append(request['method'])
+            if request['method'] == 'JSONRPC.Ping':
+                return 'pong'
+            if request['method'] == 'Application.GetProperties':
+                return properties
+            self.fail('invalid build reached a downstream RPC')
+
+        with mock.patch.object(bm.socket, 'socket', side_effect=lambda *_: TcpSocketFake(handler=handler)):
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_adapter(world.services, mode='platform_check', manifest=world.manifest,
+                    manifest_sha256='f'*64, rpc={}, git_repo=FIXTURE.repo, timeout=2, rpc_transport='tcp')
+        self.assertEqual(methods, ['JSONRPC.Ping', 'Application.GetProperties'])
+        self.assertNotIn('Addons.ExecuteAddon', methods)
+        self.assertNotIn('Addons.SetAddonEnabled', methods)
+        return raised.exception.code
+
+    def test_run_path_exact_build_completes_tcp_source_and_fresh_result_checks(self):
+        world, result = self.run_path_fixture('run-path-exact')
+        methods = []
+
+        def handler(request):
+            method = request['method']
+            methods.append(method)
+            if method == 'JSONRPC.Ping':
+                return 'pong'
+            if method == 'Application.GetProperties':
+                return {'version': {'major':21, 'minor':3, 'revision':'20251031-a3a448d26b', 'tag':'beta'}}
+            if method == 'Addons.GetAddonDetails':
+                aid = request['params']['addonid']
+                return {'addon': {'addonid':aid, 'enabled':True,
+                    'version':world.manifest['driver' if aid == bm.DRIVER_ID else 'build_manager']['addon_version']}}
+            self.assertEqual(method, 'Addons.ExecuteAddon')
+            self.assertEqual(request['params'], {'addonid':bm.DRIVER_ID, 'params':'platform_check', 'wait':False})
+            return 'OK'
+
+        with mock.patch.object(bm.socket, 'socket', side_effect=lambda *_: TcpSocketFake(handler=handler)):
+            report = bm.run_adapter(world.services, mode='platform_check', manifest=world.manifest,
+                manifest_sha256='f'*64, rpc={}, git_repo=FIXTURE.repo, timeout=2, rpc_transport='tcp')
+        self.assertTrue(report['ok'] and report['adapter_ok'])
+        self.assertEqual(methods, ['JSONRPC.Ping', 'Application.GetProperties',
+                                   'Addons.GetAddonDetails', 'Addons.GetAddonDetails', 'Addons.ExecuteAddon'])
+        self.assertEqual(report['freshness']['verdict'], 'fresh')
+        self.assertEqual(report['result'], result)
+        self.assertEqual(report['result']['platform_check']['qualification'], 'not_qualified')
+        self.assertTrue(report['stage_verification']['installed_equals_candidate'])
+        self.assertTrue(report['post_run_verification']['installed_equals_manifest'])
+        self.assertEqual(report['invocation']['rpc_transport'], 'tcp')
+        self.assertFalse(report['invocation']['authenticated'])
+
+    def test_run_path_wrong_build_refuses_before_execute(self):
+        for index, (major, minor, revision) in enumerate(((22,3,'20251031-a3a448d26b'),
+                (21,4,'20251031-a3a448d26b'), (21,3,'wrong-revision'), (21,3,''))):
+            with self.subTest(index=index):
+                code = self.run_path_attempt({'version': {'major':major, 'minor':minor,
+                    'revision':revision, 'tag':'stable'}}, 'run-path-wrong-'+str(index))
+                self.assertEqual(code, 'platform_build_mismatch')
+
+    def test_run_path_malformed_build_refuses_before_execute(self):
+        valid = {'major':21, 'minor':3, 'revision':'20251031-a3a448d26b', 'tag':'stable'}
+        invalid = [None, [], {}, {'version':None}, {'version':[]}]
+        for key in ('major', 'minor', 'revision', 'tag'):
+            version = dict(valid)
+            del version[key]
+            invalid.append({'version':version})
+        for key, value in (('major',True), ('minor','3'), ('revision',[]), ('tag',None), ('tag','bad tag')):
+            invalid.append({'version':dict(valid, **{key:value})})
+        for index, properties in enumerate(invalid):
+            with self.subTest(index=index):
+                self.assertEqual(self.run_path_attempt(properties, 'run-path-invalid-'+str(index)), 'rpc_response_invalid')
+
+    def test_run_path_git_and_source_failures_precede_tcp_requests(self):
+        for kind in ('git', 'source'):
+            world = RunWorld(self, 'run-path-'+kind)
+            if kind == 'source':
+                (world.target.addon_dir(bm.DRIVER_ID)/'adapter_config.py').write_text('PLATFORM_SOURCE_BINDING = "{}"\n')
+            repo = self.tmp/'not-a-repository' if kind == 'git' else FIXTURE.repo
+            with mock.patch.object(bm.socket, 'socket') as factory:
+                with self.assertRaises(bm.HelperError):
+                    bm.run_adapter(world.services, mode='platform_check', manifest=world.manifest,
+                        manifest_sha256='f'*64, rpc={}, git_repo=repo, timeout=2, rpc_transport='tcp')
+            factory.assert_not_called()
+
+    def test_http_platform_and_legacy_modes_never_call_build_validator(self):
+        with mock.patch.object(bm, '_require_platform_build', side_effect=AssertionError('HTTP build gate')):
+            for mode in ('install', 'retry', 'recover', 'status'):
+                world = RunWorld(self, 'http-build-'+mode)
+                world.produce_on_sleep(adapter_payload(mode))
+                self.assertTrue(world.run(mode)['ok'])
+                self.assertNotIn('Application.GetProperties', world.methods())
+            world, _ = self.run_path_fixture('http-build-platform')
+            self.assertTrue(world.run('platform_check', git_repo=FIXTURE.repo)['ok'])
+            self.assertNotIn('Application.GetProperties', world.methods())
 
 
 class TestCurrentHelperCredentials(TripwireTestCase):
