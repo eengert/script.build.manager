@@ -875,6 +875,15 @@ class ProcessVanished(Exception):
     """
 
 
+# Observation only: never used to authorize a PID or choose a retry/API.
+# Readers without this optional metadata report ERRNO_UNAVAILABLE. No raw errno,
+# syscall text, process display field or executable path enters census errors.
+_EXECUTABLE_FAILURE_CATEGORIES = frozenset({
+    "ENOENT", "ESRCH", "EPERM", "EACCES", "EINVAL", "OTHER_ERRNO",
+    "ERRNO_UNAVAILABLE", "INVALID_RESULT_LENGTH",
+})
+
+
 def parse_ps_listing(text: str) -> List[ProcessInfo]:
     """Validate every ps row before any executable lookup; names are not authority.
 
@@ -885,16 +894,16 @@ def parse_ps_listing(text: str) -> List[ProcessInfo]:
     Structural validity does not establish global completeness or atomicity.
     """
     if not isinstance(text, str) or not text or not text.endswith("\n") or "\ufffd" in text:
-        raise HelperError("process_listing_failed")
+        raise HelperError("process_listing_failed", stage="initial_parse", reason="invalid_output")
     found: List[ProcessInfo] = []
     pids = set()
     for line in text.split("\n")[:-1]:
         match = re.fullmatch(r" *(0|[1-9][0-9]*) +([^\x00-\x1f\x7f-\x9f\u2028\u2029]+)", line)
         if match is None or len(match.group(1)) > 10:
-            raise HelperError("process_listing_failed")
+            raise HelperError("process_listing_failed", stage="initial_parse", reason="malformed_row")
         pid = int(match.group(1))
         if pid > 2147483647 or pid in pids:
-            raise HelperError("process_listing_failed")
+            raise HelperError("process_listing_failed", stage="initial_parse", reason="invalid_pid")
         pids.add(pid)
         found.append(ProcessInfo(pid, match.group(2)))
     return found
@@ -930,12 +939,23 @@ class MacProcessReader:
         an errno of zero, an unexpected errno or a malformed length, stays an
         unreadable identity.
         """
+        # Optional immediate-call provenance; reset even after a prior failure.
+        # The return/ProcessVanished contract remains authoritative and unchanged.
+        self.last_executable_failure = None
         buffer = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
         ctypes.set_errno(0)
         count = self.lib.proc_pidpath(pid, buffer, len(buffer))
-        if count == 0 and ctypes.get_errno() == errno.ESRCH:
+        error = ctypes.get_errno()
+        if count == 0:
+            names = {errno.ENOENT: "ENOENT", errno.ESRCH: "ESRCH", errno.EPERM: "EPERM",
+                     errno.EACCES: "EACCES", errno.EINVAL: "EINVAL"}
+            self.last_executable_failure = names.get(
+                error, "OTHER_ERRNO" if error in errno.errorcode else "ERRNO_UNAVAILABLE")
+        if count == 0 and error == errno.ESRCH:
             raise ProcessVanished()
         if count <= 0 or count >= len(buffer):
+            if count != 0:
+                self.last_executable_failure = "INVALID_RESULT_LENGTH"
             return None
         return os.fsdecode(buffer.value)
 
@@ -999,22 +1019,36 @@ class PsProcessLister:
                 pending.add(process.pid)
                 continue
             if not exe:
-                raise HelperError("process_listing_failed")
+                category = getattr(self.native, "last_executable_failure", None)
+                if type(category) is not str or category not in _EXECUTABLE_FAILURE_CATEGORIES:
+                    category = "ERRNO_UNAVAILABLE"
+                raise HelperError("process_listing_failed", stage="executable_lookup",
+                                  reason="identity_unavailable", pid=process.pid,
+                                  errno_category=category)
             found.append(ProcessInfo(process.pid, exe))
         if pending:
             # One successful, structurally complete snapshot validates every
             # pending PID. Presence (including reuse) or uncertainty refuses.
             # Absence is point-in-time evidence, not continuous exclusion.
             if pending & self._fresh_pid_snapshot():
-                raise HelperError("process_listing_failed")
+                raise HelperError("process_listing_failed", stage="esrch_confirmation",
+                                  reason="pending_pid_present")
         return found
 
     def _fresh_pid_snapshot(self) -> Set[int]:
         """Use the same structural validation, retaining only confirmation PIDs."""
-        code, text = self._ps(["-axww", "-o", "pid=,comm="])
+        try:
+            code, text = self._ps(["-axww", "-o", "pid=,comm="])
+        except HelperError:
+            raise HelperError("process_listing_failed", stage="confirmation_ps",
+                              reason="execution_failed") from None
         if code != 0:
-            raise HelperError("process_listing_failed")
-        return {process.pid for process in parse_ps_listing(text)}
+            raise HelperError("process_listing_failed", stage="confirmation_ps", reason="nonzero_exit")
+        try:
+            return {process.pid for process in parse_ps_listing(text)}
+        except HelperError as exc:
+            raise HelperError("process_listing_failed", stage="confirmation_parse",
+                              reason=exc.detail["reason"]) from None
 
     def _ps(self, arguments: Sequence[str]) -> Tuple[int, str]:
         try:
@@ -1028,13 +1062,16 @@ class PsProcessLister:
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError):
-            raise HelperError("process_listing_failed") from None
+            raise HelperError("process_listing_failed", stage="ps_execution", reason="execution_failed") from None
         return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
     def list_all(self) -> List[ProcessInfo]:
-        code, text = self._ps(["-axww", "-o", "pid=,comm="])
+        try:
+            code, text = self._ps(["-axww", "-o", "pid=,comm="])
+        except HelperError:
+            raise HelperError("process_listing_failed", stage="initial_ps", reason="execution_failed") from None
         if code != 0:
-            raise HelperError("process_listing_failed")
+            raise HelperError("process_listing_failed", stage="initial_ps", reason="nonzero_exit")
         return self.kernel_processes(parse_ps_listing(text))
 
     def command_line(self, pid: int) -> Optional[Tuple[str, ...]]:

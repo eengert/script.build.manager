@@ -8671,3 +8671,168 @@ class TestSemanticWitnessFinalization(SnapshotTestCase):
                 self.assertNotIn(SENTINEL_PRIVATE, json.dumps(result))
                 self.assertTrue(copies)
                 self.assertTrue(all(not path.exists() for path in copies))
+
+
+class TestCensusRefusalDiagnostics(TripwireTestCase):
+    """Synthetic listings/libSystem only; provenance must never authorize a PID."""
+
+    def setUp(self):
+        super().setUp()
+        self.target = make_fake_app(self.tmp)
+
+    lister = TestProcessCensusRace.lister
+
+    def refusal(self, operation, detail):
+        with self.assertRaises(bm.HelperError) as raised:
+            operation()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        self.assertEqual(raised.exception.detail, detail)
+        encoded = json.dumps(bm._error_payload("snapshot", raised.exception))
+        for sensitive in (SENTINEL_PRIVATE, "/stale/ps/comm", "/secret/exe", "SECRET-PS", "PRIVATE_ENV"):
+            self.assertNotIn(sensitive, encoded)
+        return raised.exception
+
+    def test_initial_execution_and_nonzero_exit_provenance(self):
+        for error in (OSError(SENTINEL_PRIVATE), subprocess.TimeoutExpired("SECRET-PS", 30),
+                      subprocess.SubprocessError("PRIVATE_ENV")):
+            runner = mock.Mock(side_effect=error)
+            native = SimpleNamespace(executable=mock.Mock())
+            self.refusal(bm.PsProcessLister(runner, native=native).list_all,
+                         {"stage": "initial_ps", "reason": "execution_failed"})
+            self.assertEqual(runner.call_count, 1)
+            native.executable.assert_not_called()
+        runner = fake_runner({("/bin/ps",): (17, b"SECRET-PS\n")})
+        self.refusal(bm.PsProcessLister(runner).list_all,
+                     {"stage": "initial_ps", "reason": "nonzero_exit"})
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_invalid_initial_listing_is_complete_before_lookups(self):
+        for data, reason in ((b"", "invalid_output"), (b"1 SECRET-PS", "invalid_output"),
+                             (b"1 /ok\nPRIVATE_ENV\n", "malformed_row"),
+                             (b"1 /ok\n1 SECRET-PS\n", "invalid_pid"),
+                             (b"2147483648 SECRET-PS\n", "invalid_pid"),
+                             (b"1 SECRET-PS\xff\n", "invalid_output")):
+            with self.subTest(data=data):
+                native = SimpleNamespace(executable=mock.Mock())
+                runner = fake_runner({("/bin/ps",): (0, data)})
+                self.refusal(bm.PsProcessLister(runner, native=native).list_all,
+                             {"stage": "initial_parse", "reason": reason})
+                native.executable.assert_not_called()
+                self.assertEqual(len(runner.calls), 1)
+
+    def test_immediate_native_errno_categories_remain_refusals(self):
+        cases = [(errno.ENOENT, 0, "ENOENT"), (errno.EPERM, 0, "EPERM"),
+                 (errno.EACCES, 0, "EACCES"), (errno.EINVAL, 0, "EINVAL"),
+                 (errno.EIO, 0, "OTHER_ERRNO"), (0, 0, "ERRNO_UNAVAILABLE"),
+                 (12345, 0, "ERRNO_UNAVAILABLE"), (errno.ESRCH, -1, "INVALID_RESULT_LENGTH"),
+                 (errno.EPERM, 4096, "INVALID_RESULT_LENGTH"), (0, 5000, "INVALID_RESULT_LENGTH")]
+        for error, count, category in cases:
+            with self.subTest(error=error, count=count):
+                native = mac_reader({8: failed(error, result=count)})
+                lister = self.lister(native, 0, 8, 9)
+                self.refusal(lister.list_all, {"stage": "executable_lookup",
+                             "reason": "identity_unavailable", "pid": 8, "errno_category": category})
+                self.assertEqual(native.lib.calls, [8])
+                self.assertEqual(len(lister._run.calls), 1)
+
+    def test_metadata_clears_and_never_uses_stale_errno(self):
+        native = mac_reader({1: failed(errno.EPERM), 2: ok_path("/secret/exe"),
+                             3: failed(None), 4: failed(errno.ESRCH)})
+        self.assertIsNone(native.executable(1))
+        self.assertEqual(native.last_executable_failure, "EPERM")
+        self.assertEqual(native.executable(2), "/secret/exe")
+        self.assertIsNone(native.last_executable_failure)
+        ctypes.set_errno(errno.ENOENT)
+        self.assertIsNone(native.executable(3))
+        self.assertEqual(native.last_executable_failure, "ERRNO_UNAVAILABLE")
+        with self.assertRaises(bm.ProcessVanished):
+            native.executable(4)
+        self.assertEqual(native.last_executable_failure, "ESRCH")
+        self.assertEqual(native.lib.calls, [1, 2, 3, 4])
+
+    def test_reader_without_metadata_does_not_invent_errno(self):
+        ctypes.set_errno(errno.EPERM)
+        for value in (None, SENTINEL_PRIVATE, {"raw": SENTINEL_PRIVATE}, 5):
+            native = SimpleNamespace(executable=mock.Mock(return_value=None),
+                                     last_executable_failure=value)
+            lister = self.lister(native, 8, 9)
+            self.refusal(lister.list_all, {"stage": "executable_lookup", "reason": "identity_unavailable",
+                                         "pid": 8, "errno_category": "ERRNO_UNAVAILABLE"})
+            self.assertEqual(native.executable.call_args_list, [mock.call(8)])
+            self.assertEqual(len(lister._run.calls), 1)
+
+    def test_errno_metadata_is_not_an_esrch_or_admission_rule(self):
+        native = SimpleNamespace(executable=lambda pid: None, last_executable_failure="ESRCH")
+        lister = self.lister(native, 8, second_pids=(1,))
+        self.refusal(lister.list_all, {"stage": "executable_lookup", "reason": "identity_unavailable",
+                                     "pid": 8, "errno_category": "ESRCH"})
+        self.assertEqual(len(lister._run.calls), 1)  # metadata cannot schedule confirmation
+        native.executable = lambda pid: "/real/executable"
+        native.last_executable_failure = "EPERM"
+        lister = self.lister(native, 8)
+        self.assertEqual(lister.list_all(), [bm.ProcessInfo(8, "/real/executable")])
+
+    def test_first_unreadable_positive_pid_only_and_no_extra_lookup(self):
+        native = mac_reader({7: failed(errno.ESRCH), 8: failed(errno.ENOENT), 9: failed(errno.EACCES)})
+        lister = self.lister(native, 0, 7, 8, 9)
+        self.refusal(lister.list_all, {"stage": "executable_lookup", "reason": "identity_unavailable",
+                                     "pid": 8, "errno_category": "ENOENT"})
+        self.assertEqual(native.lib.calls, [7, 8])
+        self.assertEqual(len(lister._run.calls), 1)
+
+    def test_pending_esrch_presence_and_absence_use_one_confirmation(self):
+        for present in (False, True):
+            native = mac_reader({7: failed(errno.ESRCH), 8: failed(errno.ESRCH)})
+            lister = self.lister(native, 0, 7, 8, second_pids=(0, 8) if present else (0, 1))
+            if present:
+                self.refusal(lister.list_all, {"stage": "esrch_confirmation", "reason": "pending_pid_present"})
+            else:
+                self.assertEqual(lister.list_all(), [])
+            self.assertEqual(native.lib.calls, [7, 8])
+            self.assertEqual(len(lister._run.calls), 2)
+
+    def test_confirmation_execution_exit_and_parser_provenance(self):
+        for response, detail in (((1, b"SECRET-PS\n"), {"stage": "confirmation_ps", "reason": "nonzero_exit"}),
+                                 ((0, b""), {"stage": "confirmation_parse", "reason": "invalid_output"}),
+                                 ((0, b"1 /ok\nPRIVATE_ENV\n"), {"stage": "confirmation_parse", "reason": "malformed_row"}),
+                                 ((0, b"1 /ok\n1 SECRET-PS\n"), {"stage": "confirmation_parse", "reason": "invalid_pid"})):
+            native = mac_reader({8: failed(errno.ESRCH)})
+            lister = self.lister(native, 8, second_response=response)
+            self.refusal(lister.list_all, detail)
+            self.assertEqual(native.lib.calls, [8])
+            self.assertEqual(len(lister._run.calls), 2)
+        native = mac_reader({8: failed(errno.ESRCH)})
+        runner = mock.Mock(side_effect=[SimpleNamespace(returncode=0, stdout=b"8 SECRET-PS\n"),
+                                        OSError(SENTINEL_PRIVATE)])
+        self.refusal(bm.PsProcessLister(runner, native=native).list_all,
+                     {"stage": "confirmation_ps", "reason": "execution_failed"})
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(native.lib.calls, [8])
+
+    def test_target_argv_unreadability_and_esrch_still_fail_closed(self):
+        for outcomes in ((failed(errno.ENOENT), ok_path("/real/exe")),
+                         (ok_path("/real/exe"), failed(errno.EACCES)),
+                         (ok_path("/real/exe"), failed(errno.ESRCH))):
+            native = mac_reader({8: outcomes[0]})
+            def argv(pid):
+                native.lib.outcomes[pid] = outcomes[1]
+                return None
+            native.argv = mock.Mock(side_effect=argv)
+            self.assertIsNone(bm.PsProcessLister(native=native).command_line(8))
+            self.assertEqual(native.lib.calls, [8, 8])
+            native.argv.assert_called_once_with(8)
+
+    def test_cli_serializes_bounded_provenance_without_native_or_sensitive_output(self):
+        native = mac_reader({8: failed(errno.ENOENT)})
+        services = make_services(self.target, process_lister=self.lister(native, 8))
+        output = io.StringIO()
+        services.stdout = output
+        status = bm.main(["identify"], services=services)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(status, bm.EXIT_FAILED)
+        self.assertEqual(payload["error"], {"code": "process_listing_failed", "detail": {
+            "stage": "executable_lookup", "reason": "identity_unavailable", "pid": 8,
+            "errno_category": "ENOENT"}})
+        self.assertNotIn(SENTINEL_PRIVATE, output.getvalue())
+        self.assertEqual(native.lib.calls, [8])
+        self.assertEqual(services.transport.requests, [])
