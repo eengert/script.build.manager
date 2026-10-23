@@ -867,10 +867,11 @@ class ProcessInfo:
 
 
 class ProcessVanished(Exception):
-    """The kernel reported ESRCH for a pid: it exited after the ps snapshot.
+    """Legacy-named marker for an executable-path lookup reporting ESRCH.
 
-    Internal marker only. It carries no text, is never part of helper output,
-    and every caller either skips the stale pid or fails closed.
+    ESRCH does not prove that the PID exited or was reaped. The census must
+    confirm absence in a fresh PID snapshot; target-specific lookups refuse.
+    This internal marker carries no text and is never part of helper output.
     """
 
 
@@ -906,8 +907,9 @@ class MacProcessReader:
     def executable(self, pid: int) -> Optional[str]:
         """Kernel executable path, None if unreadable, ProcessVanished on ESRCH.
 
-        Only a failed proc_pidpath call whose own errno is exactly ESRCH proves
-        the pid exited. errno is cleared first and read straight after (ctypes
+        A failed proc_pidpath call whose own errno is exactly ESRCH is marked
+        for independent census confirmation, never proof the PID exited.
+        errno is cleared first and read straight after (ctypes
         keeps a private copy because the library is opened with use_errno), so
         a stale value can never pass for ESRCH. Every other failure, including
         an errno of zero, an unexpected errno or a malformed length, stays an
@@ -970,15 +972,45 @@ class PsProcessLister:
 
     def kernel_processes(self, listed: Iterable[ProcessInfo]) -> List[ProcessInfo]:
         found = []
+        pending = set()
         for process in listed:
             try:
                 exe = self.native.executable(process.pid)
             except ProcessVanished:
-                continue  # exited after the ps snapshot; the kernel said so
+                pending.add(process.pid)
+                continue
             if not exe:
                 raise HelperError("process_listing_failed")
             found.append(ProcessInfo(process.pid, exe))
+        if pending:
+            # One successful, structurally complete snapshot validates every
+            # pending PID. Presence (including reuse) or uncertainty refuses.
+            # Absence is point-in-time evidence, not continuous exclusion.
+            if pending & self._fresh_pid_snapshot():
+                raise HelperError("process_listing_failed")
         return found
+
+    def _fresh_pid_snapshot(self) -> Set[int]:
+        """Strict PID-only interpretation of the existing ps census contract.
+
+        Names never establish executable identity. Refuse detectable incomplete
+        output, malformed rows and duplicates instead of silently dropping them.
+        As with the initial census, completeness relies on successful ps output;
+        a well-formed snapshot cannot prove absence between observations.
+        """
+        code, text = self._ps(["-axww", "-o", "pid=,comm="])
+        if code != 0 or not text or not text.endswith("\n") or "\ufffd" in text:
+            raise HelperError("process_listing_failed")
+        pids = set()
+        for line in text.split("\n")[:-1]:
+            match = re.fullmatch(r"[ \t]*([0-9]+)[ \t]+([^\x00-\x1f\x7f]+)", line)
+            if match is None or len(match.group(1)) > 10 or not match.group(2).strip():
+                raise HelperError("process_listing_failed")
+            pid = int(match.group(1))
+            if pid > 2147483647 or pid in pids:
+                raise HelperError("process_listing_failed")
+            pids.add(pid)
+        return pids
 
     def _ps(self, arguments: Sequence[str]) -> Tuple[int, str]:
         try:
@@ -1007,7 +1039,7 @@ class PsProcessLister:
             argv = self.native.argv(pid)
             after = self.native.executable(pid)
         except ProcessVanished:
-            return None  # the target exited mid-read: no identity, as before
+            return None  # unavailable target identity, regardless of PID liveness
         if not before or before != after or not argv:
             return None
         # Preserve the two sanctioned Data-volume spellings without accepting

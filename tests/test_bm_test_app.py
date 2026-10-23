@@ -1353,15 +1353,29 @@ def mac_reader(outcomes):
 
 
 class TestProcessCensusRace(TripwireTestCase):
-    """Only a pid the kernel proved gone (ESRCH) may leave the ps census."""
+    """Path ESRCH needs independent, point-in-time PID absence confirmation."""
 
     def setUp(self):
         super().setUp()
         self.target = make_fake_app(self.tmp)
 
-    def lister(self, native, *pids):
+    def lister(self, native, *pids, second_pids=None, second_response=None):
         listing = "".join(f"{pid} /stale/ps/comm/{pid}\n" for pid in pids)
-        return bm.PsProcessLister(fake_runner({("/bin/ps",): (0, listing.encode())}), native=native)
+        second = second_response
+        if second is None:
+            second_listing = listing if second_pids is None else "".join(
+                f"{pid} /untrusted/second/name\n" for pid in second_pids)
+            second = (0, second_listing.encode())
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((list(command), kwargs))
+            self.assertEqual(command, ["/bin/ps", "-axww", "-o", "pid=,comm="])
+            code, stdout = (0, listing.encode()) if len(calls) % 2 else second
+            return SimpleNamespace(returncode=code, stdout=stdout, stderr=b"")
+
+        runner.calls = calls
+        return bm.PsProcessLister(runner, native=native)
 
     def test_esrch_pid_is_omitted_and_the_census_succeeds(self):
         native = mac_reader({
@@ -1369,16 +1383,19 @@ class TestProcessCensusRace(TripwireTestCase):
             8: failed(errno.ESRCH),
             9: ok_path("/usr/bin/python3"),
         })
-        lister = self.lister(native, 7, 8, 9)
+        lister = self.lister(native, 7, 8, 9, second_pids=(7, 9))
         self.assertEqual(lister.list_all(),
                          [bm.ProcessInfo(7, "/sbin/launchd"), bm.ProcessInfo(9, "/usr/bin/python3")])
         self.assertEqual(native.lib.calls, [7, 8, 9])
+        self.assertEqual(len(lister._run.calls), 2)
         services = make_services(self.target, process_lister=lister)
         self.assertEqual(bm.identify(services).state, "not_running")
 
     def test_every_pid_vanishing_is_an_empty_census_not_an_error(self):
-        lister = self.lister(mac_reader({4: failed(errno.ESRCH), 5: failed(errno.ESRCH)}), 4, 5)
+        lister = self.lister(mac_reader({4: failed(errno.ESRCH), 5: failed(errno.ESRCH)}),
+                             4, 5, second_pids=(1,))
         self.assertEqual(lister.list_all(), [])
+        self.assertEqual(len(lister._run.calls), 2)
 
     def test_any_other_native_failure_still_fails_closed(self):
         cases = (
@@ -1387,6 +1404,7 @@ class TestProcessCensusRace(TripwireTestCase):
             ("EIO", failed(errno.EIO)),
             ("EINVAL", failed(errno.EINVAL)),
             ("ENOENT", failed(errno.ENOENT)),
+            ("unknown errno", failed(12345)),
             ("errno zero", failed(0)),
             ("negative result with ESRCH", failed(errno.ESRCH, result=-1)),
             ("oversized result with ESRCH", failed(errno.ESRCH, result=4096)),
@@ -1403,7 +1421,7 @@ class TestProcessCensusRace(TripwireTestCase):
 
     def test_stale_errno_is_never_mistaken_for_esrch(self):
         # The fake fails without touching errno, as a failure with no errno of
-        # its own would: a leftover ESRCH must not make the pid look vanished.
+        # its own would: a leftover ESRCH must not permit absence confirmation.
         lister = self.lister(mac_reader({8: failed(None)}), 8)
         ctypes.set_errno(errno.ESRCH)
         self.assertIsNone(lister.native.executable(8))
@@ -1429,7 +1447,7 @@ class TestProcessCensusRace(TripwireTestCase):
         self.assertIsNone(native.executable(4))
 
     def native_by_pid(self, paths):
-        """Per-pid executable fake; a value of None means the pid vanished."""
+        """Per-pid executable fake; None means a path lookup reported ESRCH."""
         def executable(pid):
             if paths[pid] is None:
                 raise bm.ProcessVanished()
@@ -1448,7 +1466,8 @@ class TestProcessCensusRace(TripwireTestCase):
         )
         for label, paths, expected_error in scenarios:
             with self.subTest(label=label):
-                lister = self.lister(self.native_by_pid(paths), *paths)
+                lister = self.lister(self.native_by_pid(paths), *paths,
+                                     second_pids=tuple(p for p, path in paths.items() if path is not None))
                 services = make_services(self.target, process_lister=lister)
                 if expected_error:
                     with self.assertRaises(bm.HelperError) as raised:
@@ -1476,6 +1495,150 @@ class TestProcessCensusRace(TripwireTestCase):
         with self.assertRaises(bm.HelperError) as raised:
             bm.identify(make_services(self.target, process_lister=lister))
         self.assertEqual(raised.exception.code, "test_app_process_ambiguous")
+
+    def test_esrch_pid_still_present_is_refused_without_second_path_lookup(self):
+        native = mac_reader({8: failed(errno.ESRCH)})
+        lister = self.lister(native, 8, second_pids=(8,))
+        with self.assertRaises(bm.HelperError) as raised:
+            lister.list_all()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        self.assertEqual(native.lib.calls, [8])
+        self.assertEqual(len(lister._run.calls), 2)
+
+    def test_reused_pid_or_misleading_second_name_never_excuses_esrch(self):
+        for name in ("/unrelated/innocent", "/Applications/Kodi.app/Contents/MacOS/Kodi",
+                     os.fspath(self.target.macos_dir / "Kodi")):
+            with self.subTest(name=name):
+                native = mac_reader({8: failed(errno.ESRCH)})
+                lister = self.lister(native, 8, second_response=(0, f"8 {name}\n".encode()))
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.identify(make_services(self.target, process_lister=lister))
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [8])
+
+    def test_second_snapshot_failure_is_refused(self):
+        for code in (1, 2, 127):
+            with self.subTest(code=code):
+                lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8,
+                                     second_response=(code, b"1 /ignored\n"))
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister.list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(len(lister._run.calls), 2)
+
+    def test_second_snapshot_execution_error_is_refused(self):
+        lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
+        first = lister._run
+
+        def runner(command, **kwargs):
+            if first.calls:
+                raise subprocess.TimeoutExpired("ps", 30)
+            return first(command, **kwargs)
+
+        lister._run = runner
+        with self.assertRaises(bm.HelperError) as raised:
+            lister.list_all()
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def test_malformed_incomplete_or_ambiguous_second_snapshot_is_refused(self):
+        outputs = (b"", b"\n", b"not a process\n", b"1 /ok\ntruncated", b"1 /ok",
+                   b"1 /ok\n8\n", b"1 /ok\n1 /duplicate\n", b"-8 /bad\n",
+                   b"2147483648 /bad\n", b"8 \n", b"1 /ok\n\n", b"1 /bad\x00\n",
+                   b"1 /bad\r\n", b"1 /bad\xff\n", b"1    \n",
+                   b"9" * 5000 + b" /bad\n")
+        for output in outputs:
+            with self.subTest(output=output):
+                native = mac_reader({8: failed(errno.ESRCH)})
+                lister = self.lister(native, 8, second_response=(0, output))
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister.list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [8])
+                self.assertEqual(len(lister._run.calls), 2)
+
+    def test_multiple_esrch_pids_share_one_snapshot_and_all_must_be_absent(self):
+        for second in ((1,), (1, 8), (1, 9), (1, 8, 9)):
+            with self.subTest(second=second):
+                native = mac_reader({8: failed(errno.ESRCH), 9: failed(errno.ESRCH)})
+                lister = self.lister(native, 8, 9, second_pids=second)
+                if second == (1,):
+                    self.assertEqual(lister.list_all(), [])
+                else:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        lister.list_all()
+                    self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [8, 9])
+                self.assertEqual(len(lister._run.calls), 2)
+
+    def test_no_esrch_uses_one_snapshot_and_ignores_ps_names(self):
+        native = mac_reader({8: ok_path("/real/executable")})
+        lister = self.lister(native, 8, second_response=(1, b"must not be used"))
+        self.assertEqual(lister.list_all(), [bm.ProcessInfo(8, "/real/executable")])
+        self.assertEqual(native.lib.calls, [8])
+        self.assertEqual(len(lister._run.calls), 1)
+
+    def test_non_esrch_failure_does_not_trigger_confirmation_snapshot(self):
+        for err in (errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 12345, 0):
+            with self.subTest(err=err):
+                lister = self.lister(mac_reader({8: failed(err)}), 8)
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister.list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(len(lister._run.calls), 1)
+
+    def test_target_path_esrch_remains_ambiguous_without_another_census(self):
+        lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
+        self.assertIsNone(lister.command_line(8))
+        self.assertEqual(lister._run.calls, [])
+
+    def test_unresolved_esrch_blocks_control_before_git_or_tcp(self):
+        for enabled in (None, True, False):
+            with self.subTest(enabled=enabled):
+                lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
+                services = make_services(self.target, process_lister=lister)
+                manifest = {"driver": {"adapter_version": "0.0.16"}}
+                with mock.patch.object(bm, "verify_installed") as verify, \
+                        mock.patch.object(bm, "TcpRpcClient") as client:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        bm.run_platform_control(services, manifest=manifest, git_repo=self.tmp,
+                                                host="127.0.0.1", port=9090, enabled=enabled,
+                                                expected_enabled=None if enabled is None else not enabled)
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                verify.assert_not_called()
+                client.assert_not_called()
+                self.assertEqual(services.transport.requests, [])
+
+    def test_unresolved_esrch_blocks_adapter_execution_before_any_request(self):
+        lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
+        services = make_services(self.target, process_lister=lister)
+        with mock.patch.object(bm, "verify_installed") as verify, \
+                mock.patch.object(bm, "TcpRpcClient") as client:
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_adapter(services, mode="platform_check", manifest={}, manifest_sha256="0" * 64,
+                               rpc={"host": "127.0.0.1", "port": 9090}, git_repo=self.tmp,
+                               timeout=1, rpc_transport="tcp")
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        verify.assert_not_called()
+        client.assert_not_called()
+        self.assertEqual(services.transport.requests, [])
+
+    def test_unresolved_esrch_blocks_staging_before_build_or_mutation(self):
+        lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
+        build_runner = mock.Mock(side_effect=AssertionError("unexpected build"))
+        services = make_services(self.target, process_lister=lister, build_runner=build_runner)
+        values = dict(ADAPTER_VALUES)
+        for key in bm.ADAPTER_PATH_KEYS:
+            values[key] = str(self.tmp / (key.lower() + ".json"))
+        with mock.patch.object(bm, "load_candidate") as load, \
+                mock.patch.object(bm, "write_tree") as write:
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_stage(services, candidate_id="0" * 40, config={"adapter": values},
+                             repo=self.tmp, evidence_dir=None, dry_run=False)
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        load.assert_not_called()
+        write.assert_not_called()
+        build_runner.assert_not_called()
+        self.assertFalse(self.target.stage_area.exists())
 
 
 @unittest.skipUnless(sys.platform == "darwin", "proc_pidpath is macOS only")
