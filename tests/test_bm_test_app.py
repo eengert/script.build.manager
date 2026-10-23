@@ -1262,7 +1262,7 @@ class TestPsAndLsofParsing(TripwireTestCase):
             b"1 /tab\tname\n", b"\t1 /tab-padding\n", b"1 /vertical\x0b\n",
             b"1 /formfeed\x0c\n", b"1 /escape\x1b\n", b"1 /delete\x7f\n",
             "1 /next-line\u0085\n".encode(), "1 /line\u2028break\n".encode(),
-            "1 /paragraph\u2029break\n".encode(), b"1\n", b"1 \n", b"1    \n",
+            "1 /paragraph\u2029break\n".encode(), b"1\n", b"1 \n",
             b"1 /ok\n+8 /Applications/Kodi.app/Contents/MacOS/Kodi\n",
             b"1 /ok\n00 /Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi\n",
         )
@@ -1287,6 +1287,101 @@ class TestPsAndLsofParsing(TripwireTestCase):
         self.assertEqual(lister._fresh_pid_snapshot(), {0, 1, 42, 12345, 2147483647})
         native.executable.assert_not_called()
         self.assertEqual(len(runner.calls), 2)
+
+    def test_space_only_display_retains_pids_in_initial_and_confirmation_snapshots(self):
+        text = "  0  \n   1    \n42      \n"
+        parsed = bm.parse_ps_listing(text)
+        self.assertEqual([p.pid for p in parsed], [0, 1, 42])
+        self.assertTrue(all(p.exe and not p.exe.strip() for p in parsed))
+        native = SimpleNamespace(executable=mock.Mock(side_effect=lambda pid: f"/kernel/{pid}"))
+        runner = fake_runner({("/bin/ps",): (0, text.encode())})
+        lister = bm.PsProcessLister(runner, native=native)
+        self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, "/kernel/1"),
+                                            bm.ProcessInfo(42, "/kernel/42")])
+        self.assertEqual(native.executable.call_args_list, [mock.call(1), mock.call(42)])
+        self.assertEqual(len(runner.calls), 1)
+        native.executable.reset_mock()
+        self.assertEqual(lister._fresh_pid_snapshot(), {0, 1, 42})
+        native.executable.assert_not_called()
+        self.assertEqual(len(runner.calls), 2)
+        for missing in ("1\n", "1 \n"):
+            with self.subTest(missing=missing), self.assertRaises(bm.HelperError) as raised:
+                bm.parse_ps_listing(missing)
+            self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def test_space_only_display_classification_uses_kernel_path_and_portable_argv(self):
+        target = make_fake_app(self.tmp)
+        exe = os.fspath(target.macos_dir / "Kodi")
+        cases = ((exe, None), ("/Applications/Kodi.app/Contents/MacOS/Kodi", "foreign_kodi_process_present"),
+                 (os.fspath(target.auxiliary_executable), "test_app_process_mismatch"),
+                 (os.fspath(target.macos_dir / "Unexpected"), "test_app_process_mismatch"),
+                 ("/unrelated/executable", None))
+        for path, error in cases:
+            with self.subTest(path=path):
+                paths = {1: "/sbin/launchd", 42: path}
+                native = SimpleNamespace(executable=mock.Mock(side_effect=lambda pid: paths[pid]),
+                                         argv=mock.Mock(return_value=(path, "-p")))
+                runner = fake_runner({("/bin/ps",): (0, b"0  \n1 launchd\n42    \n")})
+                services = make_services(target, process_lister=bm.PsProcessLister(runner, native=native))
+                if error:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        bm.identify(services)
+                    self.assertEqual(raised.exception.code, error)
+                else:
+                    identity = bm.identify(services)
+                    self.assertEqual((identity.state, identity.pid),
+                                     ("running_portable", 42) if path == exe else ("not_running", None))
+                self.assertEqual(native.executable.call_args_list[:2], [mock.call(1), mock.call(42)])
+                if path == exe:
+                    native.argv.assert_called_once_with(42)
+                    self.assertEqual(native.executable.call_count, 4)
+                else:
+                    native.argv.assert_not_called()
+                    self.assertEqual(native.executable.call_count, 2)
+                self.assertEqual(len(runner.calls), 1)
+
+    def test_space_only_display_never_excuses_unreadable_positive_kernel_identity(self):
+        for err in (errno.ESRCH, errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 12345, 0):
+            with self.subTest(err=err):
+                native = mac_reader({1: ok_path("/sbin/launchd"), 42: failed(err)})
+                runner = fake_runner({("/bin/ps",): (0, b"0  \n1 launchd\n42    \n")})
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.PsProcessLister(runner, native=native).list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [1, 42])
+                self.assertEqual(len(runner.calls), 2 if err == errno.ESRCH else 1)
+
+    def test_space_only_confirmation_name_cannot_hide_pending_positive_esrch_pid(self):
+        for present in (True, False):
+            with self.subTest(present=present):
+                initial = b"0 kernel_task\n1 launchd\n42 normal-display\n"
+                second = b"0  \n1    \n" + (b"42    \n" if present else b"")
+                replies = [SimpleNamespace(returncode=0, stdout=raw, stderr=b"")
+                           for raw in (initial, second)]
+                runner = mock.Mock(side_effect=replies)
+                native = mac_reader({1: ok_path("/sbin/launchd"), 42: failed(errno.ESRCH)})
+                lister = bm.PsProcessLister(runner, native=native)
+                if present:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        lister.list_all()
+                    self.assertEqual(raised.exception.code, "process_listing_failed")
+                else:
+                    self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, "/sbin/launchd")])
+                self.assertEqual(native.lib.calls, [1, 42])
+                self.assertEqual(runner.call_count, 2)
+                for call in runner.call_args_list:
+                    self.assertEqual(call.args[0], ["/bin/ps", "-axww", "-o", "pid=,comm="])
+
+    def test_space_only_valid_row_does_not_hide_another_malformed_initial_row(self):
+        for suffix in (b"not a process\n", b"42 \n", "０ kernel_task\n".encode()):
+            with self.subTest(suffix=suffix):
+                native = SimpleNamespace(executable=mock.Mock())
+                runner = fake_runner({("/bin/ps",): (0, b"1    \n" + suffix)})
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.PsProcessLister(runner, native=native).list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                native.executable.assert_not_called()
+                self.assertEqual(len(runner.calls), 1)
 
     def test_invalid_initial_snapshot_refuses_before_any_native_lookup(self):
         for output in self.invalid_snapshot_outputs():
@@ -1695,7 +1790,7 @@ class TestProcessCensusRace(TripwireTestCase):
         outputs = (b"", b"\n", b"not a process\n", b"1 /ok\ntruncated", b"1 /ok",
                    b"1 /ok\n8\n", b"1 /ok\n1 /duplicate\n", b"-8 /bad\n",
                    b"2147483648 /bad\n", b"8 \n", b"1 /ok\n\n", b"1 /bad\x00\n",
-                   b"1 /bad\r\n", b"1 /bad\xff\n", b"1    \n",
+                   b"1 /bad\r\n", b"1 /bad\xff\n",
                    b"9" * 5000 + b" /bad\n")
         for output in outputs:
             with self.subTest(output=output):

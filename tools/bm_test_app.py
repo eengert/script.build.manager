@@ -879,6 +879,8 @@ def parse_ps_listing(text: str) -> List[ProcessInfo]:
     """Validate every ps row before any executable lookup; names are not authority.
 
     PID tokens are canonical ASCII decimals, with ordinary space padding.
+    Space-only display fields are opaque; extra separator spaces cannot be
+    distinguished from them. Retain the PID for kernel identity verification.
     Reject detectable truncation and malformed rows, never a partial census.
     Structural validity does not establish global completeness or atomicity.
     """
@@ -888,7 +890,7 @@ def parse_ps_listing(text: str) -> List[ProcessInfo]:
     pids = set()
     for line in text.split("\n")[:-1]:
         match = re.fullmatch(r" *(0|[1-9][0-9]*) +([^\x00-\x1f\x7f-\x9f\u2028\u2029]+)", line)
-        if match is None or len(match.group(1)) > 10 or not match.group(2).strip():
+        if match is None or len(match.group(1)) > 10:
             raise HelperError("process_listing_failed")
         pid = int(match.group(1))
         if pid > 2147483647 or pid in pids:
