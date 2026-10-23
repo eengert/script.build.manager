@@ -974,6 +974,10 @@ class PsProcessLister:
         found = []
         pending = set()
         for process in listed:
+            # macOS reserves PID 0 for the kernel, never a user executable.
+            # Exclude only that numeric identity, regardless of its ps name.
+            if process.pid == 0:
+                continue
             try:
                 exe = self.native.executable(process.pid)
             except ProcessVanished:

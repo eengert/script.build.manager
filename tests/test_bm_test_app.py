@@ -1577,6 +1577,89 @@ class TestProcessCensusRace(TripwireTestCase):
         self.assertEqual(native.lib.calls, [8])
         self.assertEqual(len(lister._run.calls), 1)
 
+    def test_pid_zero_and_readable_pid_one_need_no_lookup_or_confirmation_for_zero(self):
+        for pids in ((0,), (0, 1)):
+            with self.subTest(pids=pids):
+                native = mac_reader({1: ok_path("/sbin/launchd")})
+                lister = self.lister(native, *pids, second_response=(1, b"must not be used"))
+                census = lister.list_all()
+                self.assertEqual(census, [bm.ProcessInfo(1, "/sbin/launchd")] if 1 in pids else [])
+                self.assertEqual(native.lib.calls, [1] if 1 in pids else [])
+                self.assertEqual(len(lister._run.calls), 1)
+                view = bm.classify_processes(census, self.target, "Kodi")
+                self.assertEqual((view.test_app, view.foreign, view.auxiliary, view.inside_bundle_other),
+                                 ((), (), (), ()))
+
+    def test_pid_zero_name_cannot_supply_a_user_or_kodi_identity(self):
+        names = ("kernel_task", "/Applications/Kodi.app/Contents/MacOS/Kodi",
+                 os.fspath(self.target.macos_dir / "Kodi"),
+                 os.fspath(self.target.auxiliary_executable), "/unrelated/user/executable")
+        for name in names:
+            with self.subTest(name=name):
+                native = mac_reader({1: ok_path("/sbin/launchd")})
+                runner = fake_runner({("/bin/ps",): (0, f"0 {name}\n1 launchd\n".encode())})
+                lister = bm.PsProcessLister(runner, native=native)
+                identity = bm.identify(make_services(self.target, process_lister=lister))
+                self.assertEqual((identity.state, identity.test_app_process_count,
+                                  identity.auxiliary_process_count), ("not_running", 0, 0))
+                self.assertEqual(native.lib.calls, [1])
+                self.assertEqual(len(runner.calls), 1)
+
+    def test_pid_zero_does_not_hide_a_verified_portable_main(self):
+        native = self.native_by_pid({1: "/sbin/launchd",
+                                     4242: os.fspath(self.target.macos_dir / "Kodi")})
+        native.executable = mock.Mock(side_effect=native.executable)
+        lister = self.lister(native, 0, 1, 4242, second_response=(1, b"must not be used"))
+        identity = bm.identify(make_services(self.target, process_lister=lister))
+        self.assertEqual((identity.state, identity.pid), ("running_portable", 4242))
+        self.assertEqual(native.executable.call_args_list,
+                         [mock.call(1), mock.call(4242), mock.call(4242), mock.call(4242)])
+        self.assertEqual(len(lister._run.calls), 1)
+
+    def test_positive_kernel_task_name_never_receives_the_pid_zero_exemption(self):
+        for err in (errno.ESRCH, errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 0):
+            with self.subTest(err=err):
+                native = mac_reader({1: ok_path("/sbin/launchd"), 8: failed(err)})
+                runner = fake_runner({("/bin/ps",): (0, b"0 kernel_task\n1 launchd\n8 kernel_task\n")})
+                lister = bm.PsProcessLister(runner, native=native)
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.identify(make_services(self.target, process_lister=lister))
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [1, 8])
+                self.assertEqual(len(runner.calls), 2 if err == errno.ESRCH else 1)
+
+    def test_pid_zero_preserves_one_confirmation_for_all_positive_esrch_pids(self):
+        for second in ((0, 1), (0, 1, 8), (0, 1, 9), (0, 1, 8, 9)):
+            with self.subTest(second=second):
+                native = mac_reader({1: ok_path("/sbin/launchd"),
+                                     8: failed(errno.ESRCH), 9: failed(errno.ESRCH)})
+                lister = self.lister(native, 0, 1, 8, 9, second_pids=second)
+                if second == (0, 1):
+                    self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, "/sbin/launchd")])
+                else:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        lister.list_all()
+                    self.assertEqual(raised.exception.code, "process_listing_failed")
+                self.assertEqual(native.lib.calls, [1, 8, 9])
+                self.assertEqual(len(lister._run.calls), 2)
+
+    def test_pid_zero_does_not_authorize_control_for_an_unresolved_positive_pid(self):
+        native = mac_reader({1: ok_path("/sbin/launchd"), 8: failed(errno.ESRCH)})
+        lister = self.lister(native, 0, 1, 8, second_pids=(0, 1, 8))
+        services = make_services(self.target, process_lister=lister)
+        with mock.patch.object(bm, "verify_installed") as verify, \
+                mock.patch.object(bm, "TcpRpcClient") as client:
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.16"}},
+                                        git_repo=self.tmp, host="127.0.0.1", port=9090,
+                                        enabled=True, expected_enabled=False)
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        verify.assert_not_called()
+        client.assert_not_called()
+        self.assertEqual(services.transport.requests, [])
+        self.assertEqual(native.lib.calls, [1, 8])
+        self.assertEqual(len(lister._run.calls), 2)
+
     def test_non_esrch_failure_does_not_trigger_confirmation_snapshot(self):
         for err in (errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 12345, 0):
             with self.subTest(err=err):
