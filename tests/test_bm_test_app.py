@@ -1233,8 +1233,6 @@ class TestPsAndLsofParsing(TripwireTestCase):
             "    1 /sbin/launchd\n"
             "  523 /Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi\n"
             "99999 /usr/libexec/with  two  spaces\n"
-            "not a process line\n"
-            "\n"
         )
         parsed = bm.parse_ps_listing(text)
         self.assertEqual(
@@ -1243,6 +1241,159 @@ class TestPsAndLsofParsing(TripwireTestCase):
              (523, "/Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi"),
              (99999, "/usr/libexec/with  two  spaces")],
         )
+        for suffix in ("not a process line\n", "\n"):
+            with self.subTest(suffix=suffix), self.assertRaises(bm.HelperError) as raised:
+                bm.parse_ps_listing(text + suffix)
+            self.assertEqual(raised.exception.code, "process_listing_failed")
+
+    def invalid_snapshot_outputs(self):
+        return (
+            b"", b"\n", b"not a process line\n", b"1 /ok\ninvalid row\n2 /other\n",
+            b"1 /ok", b"1 /ok\n2 /truncated", b"1 /ok\n2\n", b"1 /ok\n\n",
+            b"1 /first\n1 /duplicate\n", b"-1 /bad\n", b"+1 /bad\n",
+            b"2147483648 /bad\n", b"9" * 5000 + b" /bad\n",
+            b"00 kernel_task\n", b"000 kernel_task\n", b"01 launchd\n",
+            b"042 /bad\n", b"0 kernel_task\n00 alternative-zero\n",
+            b"1 launchd\n01 alternative-one\n",
+            "０ kernel_task\n".encode(), "٠ kernel_task\n".encode(),
+            "１２ /bad\n".encode(), "١٢ /bad\n".encode(),
+            b"1 /invalid\xff\n", "1 /replacement-\ufffd\n".encode(),
+            b"1 /nul\x00\n", b"1 /carriage\r\n", b"1 /control\x01\n",
+            b"1 /tab\tname\n", b"\t1 /tab-padding\n", b"1 /vertical\x0b\n",
+            b"1 /formfeed\x0c\n", b"1 /escape\x1b\n", b"1 /delete\x7f\n",
+            "1 /next-line\u0085\n".encode(), "1 /line\u2028break\n".encode(),
+            "1 /paragraph\u2029break\n".encode(), b"1\n", b"1 \n", b"1    \n",
+            b"1 /ok\n+8 /Applications/Kodi.app/Contents/MacOS/Kodi\n",
+            b"1 /ok\n00 /Applications/Kodi Build Manager Test.app/Contents/MacOS/Kodi\n",
+        )
+
+    def test_canonical_ascii_rows_share_initial_and_confirmation_validation(self):
+        text = ("    0 kernel_task\n     1 /sbin/launchd\n"
+                "   42 /Applications/Spaced  App.app/Contents/MacOS/Executable\n"
+                "12345 /usr/libexec/with  repeated  spaces\n2147483647 /upper-bound\n")
+        parsed = bm.parse_ps_listing(text)
+        self.assertEqual([p.pid for p in parsed], [0, 1, 42, 12345, 2147483647])
+        self.assertEqual(parsed[2].exe, "/Applications/Spaced  App.app/Contents/MacOS/Executable")
+        self.assertEqual(parsed[3].exe, "/usr/libexec/with  repeated  spaces")
+        native = SimpleNamespace(executable=mock.Mock(side_effect=lambda pid: f"/trusted/{pid}"))
+        runner = fake_runner({("/bin/ps",): (0, text.encode())})
+        lister = bm.PsProcessLister(runner, native=native)
+        self.assertEqual(lister.list_all(), [bm.ProcessInfo(p, f"/trusted/{p}")
+                                            for p in (1, 42, 12345, 2147483647)])
+        self.assertEqual(native.executable.call_args_list,
+                         [mock.call(p) for p in (1, 42, 12345, 2147483647)])
+        self.assertEqual(len(runner.calls), 1)
+        native.executable.reset_mock()
+        self.assertEqual(lister._fresh_pid_snapshot(), {0, 1, 42, 12345, 2147483647})
+        native.executable.assert_not_called()
+        self.assertEqual(len(runner.calls), 2)
+
+    def test_invalid_initial_snapshot_refuses_before_any_native_lookup(self):
+        for output in self.invalid_snapshot_outputs():
+            with self.subTest(output=output):
+                native = SimpleNamespace(executable=mock.Mock(return_value="/trusted/executable"))
+                runner = fake_runner({("/bin/ps",): (0, output)})
+                lister = bm.PsProcessLister(runner, native=native)
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister.list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                native.executable.assert_not_called()
+                self.assertEqual(len(runner.calls), 1)
+
+    def test_confirmation_rejects_the_same_invalid_snapshot_matrix(self):
+        for output in self.invalid_snapshot_outputs():
+            with self.subTest(output=output):
+                native = SimpleNamespace(executable=mock.Mock())
+                runner = fake_runner({("/bin/ps",): (0, output)})
+                lister = bm.PsProcessLister(runner, native=native)
+                with self.assertRaises(bm.HelperError) as raised:
+                    lister._fresh_pid_snapshot()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                native.executable.assert_not_called()
+                self.assertEqual(len(runner.calls), 1)
+
+    def test_nonzero_initial_exit_refuses_even_with_valid_rows(self):
+        for code in (1, 2, 127):
+            with self.subTest(code=code):
+                native = SimpleNamespace(executable=mock.Mock())
+                runner = fake_runner({("/bin/ps",): (code, b"0 kernel_task\n1 launchd\n")})
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.PsProcessLister(runner, native=native).list_all()
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                native.executable.assert_not_called()
+
+    def test_valid_padded_listing_preserves_exact_portable_authority(self):
+        target = make_fake_app(self.tmp)
+        exe = os.fspath(target.macos_dir / "Kodi")
+        paths = {1: "/sbin/launchd", 42: exe}
+        native = SimpleNamespace(executable=mock.Mock(side_effect=lambda pid: paths[pid]),
+                                 argv=mock.Mock(return_value=(exe, "-p")))
+        runner = fake_runner({("/bin/ps",): (0, b"    0 kernel_task\n    1 launchd\n   42 misleading name\n")})
+        identity = bm.identify(make_services(target, process_lister=bm.PsProcessLister(runner, native=native)))
+        self.assertEqual((identity.state, identity.pid), ("running_portable", 42))
+        self.assertEqual(native.executable.call_args_list,
+                         [mock.call(1), mock.call(42), mock.call(42), mock.call(42)])
+        native.argv.assert_called_once_with(42)
+        self.assertEqual(len(runner.calls), 1)
+
+    def malformed_census_services(self):
+        target = make_fake_app(self.tmp)
+        native = SimpleNamespace(executable=mock.Mock(), argv=mock.Mock())
+        runner = fake_runner({("/bin/ps",): (0, b"1 /readable\n00 kernel_task\n")})
+        services = make_services(target, process_lister=bm.PsProcessLister(runner, native=native),
+                                 build_runner=mock.Mock())
+        return services, native, runner
+
+    def test_invalid_initial_rows_block_preflight_and_enablement_before_tcp(self):
+        services, native, runner = self.malformed_census_services()
+        for enabled in (None, True, False):
+            with self.subTest(enabled=enabled):
+                with mock.patch.object(bm, "verify_installed") as verify, \
+                        mock.patch.object(bm, "TcpRpcClient") as client:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.16"}},
+                                                git_repo=self.tmp, host="127.0.0.1", port=9090,
+                                                enabled=enabled,
+                                                expected_enabled=None if enabled is None else not enabled)
+                self.assertEqual(raised.exception.code, "process_listing_failed")
+                verify.assert_not_called()
+                client.assert_not_called()
+        native.executable.assert_not_called()
+        native.argv.assert_not_called()
+        self.assertEqual(services.transport.requests, [])
+        self.assertEqual(len(runner.calls), 3)
+
+    def test_invalid_initial_rows_block_adapter_execution_before_rpc(self):
+        services, native, runner = self.malformed_census_services()
+        with mock.patch.object(bm, "verify_installed") as verify, \
+                mock.patch.object(bm, "TcpRpcClient") as client:
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_adapter(services, mode="platform_check", manifest={}, manifest_sha256="0" * 64,
+                               rpc={"host": "127.0.0.1", "port": 9090}, git_repo=self.tmp,
+                               timeout=1, rpc_transport="tcp")
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        verify.assert_not_called()
+        client.assert_not_called()
+        native.executable.assert_not_called()
+        self.assertEqual(services.transport.requests, [])
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_invalid_initial_rows_block_staging_before_build_or_write(self):
+        services, native, runner = self.malformed_census_services()
+        values = dict(ADAPTER_VALUES)
+        for key in bm.ADAPTER_PATH_KEYS:
+            values[key] = str(self.tmp / (key.lower() + ".json"))
+        with mock.patch.object(bm, "load_candidate") as load, mock.patch.object(bm, "write_tree") as write:
+            with self.assertRaises(bm.HelperError) as raised:
+                bm.run_stage(services, candidate_id="0" * 40, config={"adapter": values},
+                             repo=self.tmp, evidence_dir=None, dry_run=False)
+        self.assertEqual(raised.exception.code, "process_listing_failed")
+        load.assert_not_called()
+        write.assert_not_called()
+        services.build_runner.assert_not_called()
+        native.executable.assert_not_called()
+        self.assertFalse(services.target.stage_area.exists())
+        self.assertEqual(len(runner.calls), 1)
 
     def test_ps_lister_commands_are_fixed_argv_without_a_shell(self):
         runner = fake_runner({

@@ -876,12 +876,25 @@ class ProcessVanished(Exception):
 
 
 def parse_ps_listing(text: str) -> List[ProcessInfo]:
-    """Parse ``ps -o pid=,comm=`` output; the path may contain spaces."""
+    """Validate every ps row before any executable lookup; names are not authority.
+
+    PID tokens are canonical ASCII decimals, with ordinary space padding.
+    Reject detectable truncation and malformed rows, never a partial census.
+    Structural validity does not establish global completeness or atomicity.
+    """
+    if not isinstance(text, str) or not text or not text.endswith("\n") or "\ufffd" in text:
+        raise HelperError("process_listing_failed")
     found: List[ProcessInfo] = []
-    for line in text.splitlines():
-        match = re.match(r"\s*(\d+)\s+(.+?)\s*$", line)
-        if match:
-            found.append(ProcessInfo(int(match.group(1)), match.group(2)))
+    pids = set()
+    for line in text.split("\n")[:-1]:
+        match = re.fullmatch(r" *(0|[1-9][0-9]*) +([^\x00-\x1f\x7f-\x9f\u2028\u2029]+)", line)
+        if match is None or len(match.group(1)) > 10 or not match.group(2).strip():
+            raise HelperError("process_listing_failed")
+        pid = int(match.group(1))
+        if pid > 2147483647 or pid in pids:
+            raise HelperError("process_listing_failed")
+        pids.add(pid)
+        found.append(ProcessInfo(pid, match.group(2)))
     return found
 
 
@@ -995,26 +1008,11 @@ class PsProcessLister:
         return found
 
     def _fresh_pid_snapshot(self) -> Set[int]:
-        """Strict PID-only interpretation of the existing ps census contract.
-
-        Names never establish executable identity. Refuse detectable incomplete
-        output, malformed rows and duplicates instead of silently dropping them.
-        As with the initial census, completeness relies on successful ps output;
-        a well-formed snapshot cannot prove absence between observations.
-        """
+        """Use the same structural validation, retaining only confirmation PIDs."""
         code, text = self._ps(["-axww", "-o", "pid=,comm="])
-        if code != 0 or not text or not text.endswith("\n") or "\ufffd" in text:
+        if code != 0:
             raise HelperError("process_listing_failed")
-        pids = set()
-        for line in text.split("\n")[:-1]:
-            match = re.fullmatch(r"[ \t]*([0-9]+)[ \t]+([^\x00-\x1f\x7f]+)", line)
-            if match is None or len(match.group(1)) > 10 or not match.group(2).strip():
-                raise HelperError("process_listing_failed")
-            pid = int(match.group(1))
-            if pid > 2147483647 or pid in pids:
-                raise HelperError("process_listing_failed")
-            pids.add(pid)
-        return pids
+        return {process.pid for process in parse_ps_listing(text)}
 
     def _ps(self, arguments: Sequence[str]) -> Tuple[int, str]:
         try:
