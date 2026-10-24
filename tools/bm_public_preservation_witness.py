@@ -358,17 +358,23 @@ def main(argv=None):
         try:
             descriptor = stream.fileno()
         except (AttributeError, io.UnsupportedOperation):
-            pass  # StringIO and descriptor-less captured streams remain supported.
+            # Captured streams have no kernel descriptor; retain their explicit
+            # write/flush contract without changing interpreter-wide IO state.
+            payload = text + '\n'
+            written = stream.write(payload)
+            if type(written) is not int or written != len(payload):
+                return 2
+            stream.flush()
         else:
             if type(descriptor) is not int or descriptor < 0:
                 return 2
-            os.fstat(descriptor)  # Reject a known closed descriptor before buffering.
-        payload = text + '\n'
-        written = stream.write(payload)
-        if type(written) is not int or written != len(payload):
-            return 2
-        stream.flush()
-        # Stream acceptance/flush is not downstream delivery or persistence proof.
+            os.fstat(descriptor)
+            # Never put our JSON in TextIOWrapper's buffer: a failed flush can
+            # otherwise be retried at shutdown, exposing an exception/exit 120.
+            payload = (text + '\n').encode('utf-8')
+            if os.write(descriptor, payload) != len(payload):
+                return 2  # Partial output is an output failure; do not retry.
+        # Write acceptance is not downstream delivery or persistence proof.
     except Exception:
         # An unavailable output channel cannot deliver JSON; never traceback or
         # relabel that IO failure as the genuine-negative exit status 1.

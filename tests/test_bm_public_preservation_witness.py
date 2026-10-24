@@ -548,3 +548,127 @@ class StdoutFailureTests(unittest.TestCase):
             self.assertEqual(payload['qualification'], 'not_qualified')
             self.assertTrue(SECRET not in text, 'private output detected (withheld)')
             self.assertNotIn('Traceback', text)
+
+
+class BufferedStdoutTests(unittest.TestCase):
+    """Exercise real buffered streams through ordinary child interpreter exit."""
+    setUp = PreservationTests.setUp
+    populate = PreservationTests.populate
+    path = PreservationTests.path
+
+    def child(self, mode, expected, status=None, regular=False):
+        # No shutdown bypass, signal change, or stream repair: the interpreter
+        # finalizes normally, exposing any JSON left in a failed Python buffer.
+        driver = r'''
+import errno, io, os, runpy, sys
+sys.path.insert(0, sys.argv[1])
+module = runpy.run_path(sys.argv[2])
+mode = sys.argv[3]
+original = sys.stdout
+if mode == 'broken_pipe':
+    reader, writer = os.pipe()
+    os.close(reader)
+    os.dup2(writer, 1)
+    os.close(writer)
+elif mode == 'read_only':
+    descriptor = os.open(sys.argv[4], os.O_RDONLY)
+    os.dup2(descriptor, 1)
+    os.close(descriptor)
+elif mode == 'closed':
+    os.close(1)
+elif mode == 'enospc':
+    class Full(io.RawIOBase):
+        def writable(self): return True
+        def fileno(self): return 1
+        def write(self, data): raise OSError(errno.ENOSPC, 'synthetic disk full')
+    sys.stdout = io.TextIOWrapper(io.BufferedWriter(Full()), encoding='utf-8')
+    def full_write(fd, data): raise OSError(errno.ENOSPC, 'synthetic disk full')
+    os.write = full_write
+elif mode in ('partial', 'write_error'):
+    def descriptor_write(fd, data):
+        if mode == 'partial': return len(data) - 1
+        raise OSError(errno.EIO, 'synthetic write failure')
+    os.write = descriptor_write
+elif mode == 'StringIO':
+    sys.stdout = io.StringIO()
+elif mode in ('stream_write_error', 'stream_flush_error'):
+    class Capture:
+        closed = False
+        def __init__(self): self.flushes = 0
+        def write(self, text):
+            if mode == 'stream_write_error': raise OSError('synthetic capture write failure')
+            return len(text)
+        def flush(self):
+            self.flushes += 1
+            if mode == 'stream_flush_error' and self.flushes == 1:
+                raise OSError('synthetic capture flush failure')
+    sys.stdout = Capture()
+code = module['main'](['--before', sys.argv[4], '--after', sys.argv[5], '--offline-copies'])
+if mode == 'StringIO':
+    text = sys.stdout.getvalue()
+    sys.stdout = original
+    sys.stdout.write(text)
+    sys.stdout.flush()
+raise SystemExit(code)
+'''
+        # read_only needs a regular fixture, not the directory passed to main.
+        driver = driver.replace('os.open(sys.argv[4], os.O_RDONLY)',
+                                'os.open(sys.argv[4] + "/userdata/guisettings.xml", os.O_RDONLY)')
+        output = self.base / 'child-output.json'
+        with (output.open('wb') if regular else contextlib.nullcontext(subprocess.PIPE)) as channel:
+            child = subprocess.run([sys.executable, '-B', '-c', driver,
+                                    str(Path(w.__file__).absolute().parent),
+                                    str(Path(w.__file__).absolute()), mode,
+                                    str(self.before), str(self.after)],
+                                   stdout=channel, stderr=subprocess.PIPE, timeout=20, check=False)
+        stdout = output.read_bytes() if regular else child.stdout
+        self.assertTrue(SECRET.encode() not in stdout + child.stderr,
+                        'private output detected (withheld)')
+        print('STDOUT_CHILD ' + json.dumps({'mode': mode, 'expected': expected,
+              'exit': child.returncode, 'stdout': stdout.decode('utf-8'),
+              'stderr': child.stderr.decode('utf-8')}), file=sys.stderr)
+        self.assertEqual(child.returncode, expected)
+        self.assertEqual(child.stderr, b'')
+        if status is None:
+            self.assertEqual(stdout, b'')
+        else:
+            self.assertLess(len(stdout), 8192)
+            result = json.loads(stdout)
+            self.assertEqual(result['scope_result'], status)
+            self.assertEqual(result['complete_preservation'], 'UNVERIFIED')
+            self.assertEqual(result['qualification'], 'not_qualified')
+
+    def test_real_child_broken_pipe_has_no_shutdown_retry(self):
+        self.child('broken_pipe', 2)
+
+    def test_real_child_read_only_fd1_has_no_shutdown_retry(self):
+        self.child('read_only', 2)
+
+    def test_real_child_buffered_ENOSPC_has_no_shutdown_retry(self):
+        self.child('enospc', 2)
+
+    def test_real_child_previously_closed_fd1(self):
+        self.child('closed', 2)
+
+    def test_real_child_partial_or_failed_descriptor_write(self):
+        for mode in ('partial', 'write_error'):
+            with self.subTest(mode=mode): self.child(mode, 2)
+
+    def test_child_descriptorless_write_and_flush_failure(self):
+        for mode in ('stream_write_error', 'stream_flush_error'):
+            with self.subTest(mode=mode): self.child(mode, 2)
+
+    def test_child_regular_file_has_exact_JSON_and_exit_codes(self):
+        self.success_cases('regular', regular=True)
+
+    def test_child_StringIO_has_exact_JSON_and_exit_codes(self):
+        self.success_cases('StringIO')
+
+    def success_cases(self, mode, regular=False):
+        path = self.path(self.after, 4); original = path.read_bytes()
+        for raw, code, status in ((original, 0, 'PRESERVED'),
+                                  (original.replace(SECRET.encode(), b'changed'), 1, 'CHANGED_OR_MISSING'),
+                                  (b'<broken', 2, 'UNVERIFIED')):
+            with self.subTest(status=status):
+                path.write_bytes(raw)
+                self.child(mode, code, status, regular)
