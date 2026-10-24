@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -453,3 +455,96 @@ class ReviewBlockerTests(unittest.TestCase):
                 w.compare(self.before, self.after)
             with mock.patch.object(w, 'compare', side_effect=failure), self.assertRaises(type(failure)):
                 w.main(['--before', str(self.before), '--after', str(self.after), '--offline-copies'])
+
+
+class StdoutFailureTests(unittest.TestCase):
+    """Synthetic files/streams and explicitly authorized fd-closed child checks."""
+    setUp = PreservationTests.setUp
+    populate = PreservationTests.populate
+    path = PreservationTests.path
+
+    def invoke(self, stream):
+        error = io.StringIO()
+        with mock.patch.object(sys, 'stdout', stream), contextlib.redirect_stderr(error):
+            try:
+                code = w.main(['--before', str(self.before), '--after', str(self.after), '--offline-copies'])
+            except Exception:
+                raise AssertionError('output exception escaped (details withheld)') from None
+        self.assertEqual(error.getvalue(), '')
+        return code
+
+    def test_stdout_None_and_closed_stream_are_output_failures(self):
+        closed = io.StringIO(); closed.close()
+        for stream in (None, closed):
+            with self.subTest(channel='absent' if stream is None else 'closed'):
+                self.assertEqual(self.invoke(stream), 2)
+
+    def test_end_to_end_child_fd1_closed_never_returns_success_or_negative(self):
+        path = self.path(self.after, 4); original = path.read_bytes()
+        variants = (original, original.replace(SECRET.encode(), b'changed'), b'<broken')
+        for state, raw in zip(('preserved', 'changed', 'unverified'), variants):
+            with self.subTest(comparison=state):
+                path.write_bytes(raw)
+                child = subprocess.run(
+                    [sys.executable, '-B', str(Path(w.__file__).absolute()), '--before', str(self.before),
+                     '--after', str(self.after), '--offline-copies'],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+                    preexec_fn=lambda: os.close(1), check=False)
+                self.assertEqual(child.returncode, 2)
+                self.assertEqual(child.stdout, b'')
+                self.assertEqual(child.stderr, b'')
+
+    class Stream:
+        closed = False
+        def __init__(self): self.data = ''; self.writes = 0; self.flushes = 0
+        def write(self, text):
+            self.writes += 1; self.data += text; return len(text)
+        def flush(self): self.flushes += 1
+
+    def test_write_failure_returns2_without_sensitive_stderr(self):
+        class Failure(self.Stream):
+            def write(self, text): raise RuntimeError(SECRET)
+        self.assertEqual(self.invoke(Failure()), 2)
+
+    def test_flush_failure_returns2_even_after_a_successful_write(self):
+        class Failure(self.Stream):
+            def flush(self):
+                self.flushes += 1; raise RuntimeError(SECRET)
+        stream = Failure()
+        self.assertEqual(self.invoke(stream), 2)
+        self.assertEqual(stream.flushes, 1)
+        # Bytes accepted by a stream are not evidence of downstream persistence.
+        self.assertTrue(SECRET not in stream.data, 'private output detected (withheld)')
+
+    def test_advertised_closed_descriptor_is_checked_before_writing(self):
+        read_fd, write_fd = os.pipe(); os.close(read_fd); os.close(write_fd)
+        class ClosedDescriptor(self.Stream):
+            def fileno(self): return write_fd
+        stream = ClosedDescriptor()
+        # Keep the closed descriptor deterministic: this injected comparison does no IO.
+        with mock.patch.object(w, 'compare', return_value={
+                'scope_result': 'PRESERVED', 'complete_preservation': 'UNVERIFIED',
+                'qualification': 'not_qualified'}):
+            self.assertEqual(self.invoke(stream), 2)
+        self.assertEqual(stream.writes, 0)
+
+    def test_short_or_unconfirmed_write_never_returns0_or1(self):
+        for written in (0, None):
+            class Short(self.Stream):
+                def write(self, text): return written
+            self.assertEqual(self.invoke(Short()), 2)
+
+    def test_StringIO_retains_exact_exit_codes_and_valid_bounded_JSON(self):
+        path = self.path(self.after, 4); original = path.read_bytes()
+        for raw, expected, status in ((original, 0, 'PRESERVED'),
+                                     (original.replace(SECRET.encode(), b'changed'), 1, 'CHANGED_OR_MISSING'),
+                                     (b'<broken', 2, 'UNVERIFIED')):
+            path.write_bytes(raw); stream = io.StringIO()
+            self.assertEqual(self.invoke(stream), expected)
+            text = stream.getvalue(); payload = json.loads(text)
+            self.assertLess(len(text), 8192)
+            self.assertEqual(payload['scope_result'], status)
+            self.assertEqual(payload['complete_preservation'], 'UNVERIFIED')
+            self.assertEqual(payload['qualification'], 'not_qualified')
+            self.assertTrue(SECRET not in text, 'private output detected (withheld)')
+            self.assertNotIn('Traceback', text)

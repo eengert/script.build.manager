@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -351,7 +352,23 @@ def main(argv=None):
         # Literal fallback works even when comparison/JSON serialization failed.
         text, code = _UNVERIFIED_JSON, 2
     try:
-        print(text)
+        stream = sys.stdout
+        if stream is None or getattr(stream, 'closed', False):
+            return 2
+        try:
+            descriptor = stream.fileno()
+        except (AttributeError, io.UnsupportedOperation):
+            pass  # StringIO and descriptor-less captured streams remain supported.
+        else:
+            if type(descriptor) is not int or descriptor < 0:
+                return 2
+            os.fstat(descriptor)  # Reject a known closed descriptor before buffering.
+        payload = text + '\n'
+        written = stream.write(payload)
+        if type(written) is not int or written != len(payload):
+            return 2
+        stream.flush()
+        # Stream acceptance/flush is not downstream delivery or persistence proof.
     except Exception:
         # An unavailable output channel cannot deliver JSON; never traceback or
         # relabel that IO failure as the genuine-negative exit status 1.
