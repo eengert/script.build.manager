@@ -62,6 +62,29 @@ class Unverified(Exception):
     """Fixed codes only; never forward parser, filesystem or SQLite messages."""
 
 
+_REFUSAL_REASONS = frozenset({
+    'unsupported_schema', 'unsafe_root', 'unsafe_node', 'input_changed',
+    'sqlite_sidecar_uncertain', 'input_too_large', 'unsafe_xml',
+    'sqlite_wal_mode_uncertain', 'missing_input', 'arguments_invalid',
+    'xml_value_normalization_uncertain',
+})
+_UNVERIFIED_JSON = ('{"complete_preservation":"UNVERIFIED","qualification":"not_qualified",'
+                    '"schema":"bm-offline-semantic-comparison/1","scope_result":"UNVERIFIED"}')
+
+
+def refusal_reason(exc, fallback):
+    # Do not invoke exception __str__ or forward arbitrary injected reason text.
+    if (type(exc) is Unverified and len(exc.args) == 1 and type(exc.args[0]) is str
+            and exc.args[0] in _REFUSAL_REASONS):
+        return exc.args[0]
+    return fallback
+
+
+def unverified_result():
+    return {'schema': 'bm-offline-semantic-comparison/1', 'scope_result': 'UNVERIFIED',
+            'complete_preservation': 'UNVERIFIED', 'qualification': 'not_qualified'}
+
+
 def require(ok, code='unsupported_schema'):
     if not ok:
         raise Unverified(code)
@@ -129,11 +152,37 @@ def read_copy(root, relative, limit):
         return b''.join(chunks), identity(st)
 
 
+def refuse_normalized_values(text, kind):
+    """Lexical guard only; the existing strict XML parser still defines schemas.
+
+    XML folds literal CR/CRLF in text and literal TAB/LF/CR in attributes.
+    Refuse those ambiguous values; references retain their decoded distinctions.
+    Quote-aware tag boundaries permit indentation and whitespace outside values.
+    """
+    inside_setting = False
+    end = 0
+    for match in re.finditer(r'''<(?:[^<>"']|"[^"]*"|'[^']*')*>''', text):
+        # Peripheral values live in attributes; its whitespace-only element
+        # body is formatting, as already required by the strict schema below.
+        if inside_setting and kind != 4:
+            require('\r' not in text[end:match.start()], 'xml_value_normalization_uncertain')
+        tag = match.group()
+        for quoted in re.finditer(r'''"([^"]*)"|'([^']*)' ''', tag, re.VERBOSE):
+            value = quoted.group(1) if quoted.group(1) is not None else quoted.group(2)
+            require(not any(c in value for c in '\t\n\r'), 'xml_value_normalization_uncertain')
+        if re.match(r'<setting(?=[\s/>])', tag):
+            inside_setting = not tag.endswith('/>')
+        elif re.match(r'</setting\s*>', tag):
+            inside_setting = False
+        end = match.end()
+
+
 def xml_projection(raw, kind):
     require(len(raw) <= MAX_XML, 'input_too_large')
-    raw.decode('utf-8')
+    text_source = raw.decode('utf-8')
     require(b'\x00' not in raw and b'<!' not in raw and b'<?' not in raw.replace(
         b'<?xml version="1.0" encoding="UTF-8"?>', b''), 'unsafe_xml')
+    refuse_normalized_values(text_source, kind)
     # Existing entity/DTD refusal is reused before full, strictly bounded XML parsing.
     bm.extract_settings(raw, ())
     root = ET.fromstring(raw)
@@ -234,7 +283,7 @@ def database_projection(raw, kind):
     return result
 
 
-def compare(before, after):
+def _compare(before, after):
     """Only this sanitized result is public; all private comparisons die in memory."""
     reports = [{'file': name, 'scope': scope, 'status': 'UNVERIFIED', 'reason': 'not_observed'}
                for name, scope in zip(FILES, SCOPES)]
@@ -259,7 +308,7 @@ def compare(before, after):
                 report.update(status='PRESERVED' if values[0] == values[1] else 'CHANGED_OR_MISSING',
                               reason='scoped_comparison')
             except (Unverified, OSError, ValueError, sqlite3.Error, ET.ParseError) as ex:
-                report['reason'] = str(ex) if isinstance(ex, Unverified) else 'unsupported_or_malformed'
+                report['reason'] = refusal_reason(ex, 'unsupported_or_malformed')
         # Re-read all sources through the same pinned/no-follow readers; reject moving observations.
         for root, snapshot in zip(roots, observations):
             require(snapshot == [read_copy(root, name, MAX_DB if i < 2 else MAX_XML)
@@ -268,10 +317,18 @@ def compare(before, after):
             result['scope_result'] = ('PRESERVED' if all(r['status'] == 'PRESERVED' for r in reports)
                                       else 'CHANGED_OR_MISSING')
     except (Unverified, OSError, ValueError, TypeError) as ex:
-        reason = str(ex) if isinstance(ex, Unverified) else 'unverifiable_input'
+        reason = refusal_reason(ex, 'unverifiable_input')
         for report in reports:
             report.update(status='UNVERIFIED', reason=reason)
     return result
+
+
+def compare(before, after):
+    """Contain ordinary operational faults; never publish partial success on one."""
+    try:
+        return _compare(before, after)
+    except Exception:
+        return unverified_result()
 
 
 class Parser(argparse.ArgumentParser):
@@ -280,18 +337,26 @@ class Parser(argparse.ArgumentParser):
 
 
 def main(argv=None):
-    parser = Parser(description='Compare two quiescent offline copies; never reads live profiles.')
-    parser.add_argument('--before', required=True)
-    parser.add_argument('--after', required=True)
-    parser.add_argument('--offline-copies', action='store_true', required=True)
     try:
+        parser = Parser(description='Compare two quiescent offline copies; never reads live profiles.')
+        parser.add_argument('--before', required=True)
+        parser.add_argument('--after', required=True)
+        parser.add_argument('--offline-copies', action='store_true', required=True)
         args = parser.parse_args(argv)
         result = compare(args.before, args.after)
-    except (Unverified, KeyboardInterrupt):
-        result = {'schema': 'bm-offline-semantic-comparison/1', 'scope_result': 'UNVERIFIED',
-                  'complete_preservation': 'UNVERIFIED', 'qualification': 'not_qualified'}
-    print(json.dumps(result, sort_keys=True))
-    return {'PRESERVED': 0, 'CHANGED_OR_MISSING': 1, 'UNVERIFIED': 2}[result['scope_result']]
+        code = {'PRESERVED': 0, 'CHANGED_OR_MISSING': 1, 'UNVERIFIED': 2}[result['scope_result']]
+        text = json.dumps(result, sort_keys=True)
+        require(type(text) is str and len(text) < 8192, 'input_too_large')
+    except (Exception, KeyboardInterrupt):
+        # Literal fallback works even when comparison/JSON serialization failed.
+        text, code = _UNVERIFIED_JSON, 2
+    try:
+        print(text)
+    except Exception:
+        # An unavailable output channel cannot deliver JSON; never traceback or
+        # relabel that IO failure as the genuine-negative exit status 1.
+        return 2
+    return code
 
 
 if __name__ == '__main__':

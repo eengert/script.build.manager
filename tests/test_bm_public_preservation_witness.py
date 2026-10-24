@@ -286,3 +286,170 @@ class PreservationTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             code = w.main(['--before', SECRET])
         self.assertEqual(code, 2); self.assertNotIn(SECRET, output.getvalue())
+
+
+class ReviewBlockerTests(unittest.TestCase):
+    """B1/B2 reproductions over synthetic data; operational output is captured."""
+    setUp = PreservationTests.setUp
+    populate = PreservationTests.populate
+    path = PreservationTests.path
+
+    def safe_compare(self):
+        try:
+            result = w.compare(self.before, self.after)
+        except Exception:
+            self.fail('ordinary comparison exception escaped (details withheld)')
+        self.assertTrue(SECRET not in json.dumps(result), 'private result detected (withheld)')
+        return result
+
+    def cli(self):
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = w.main(['--before', str(self.before), '--after', str(self.after), '--offline-copies'])
+        except Exception:
+            self.fail('ordinary CLI exception escaped (details withheld)')
+        self.assertEqual(err.getvalue(), '')
+        self.assertTrue(SECRET not in out.getvalue(), 'private output detected (withheld)')
+        value = json.loads(out.getvalue())
+        self.assertLess(len(out.getvalue()), 8192)
+        return status, value
+
+    def unknown(self, result):
+        self.assertEqual(result['scope_result'], 'UNVERIFIED')
+        self.assertEqual(result['complete_preservation'], 'UNVERIFIED')
+        if 'files' in result:
+            self.assertTrue(all(row['status'] == 'UNVERIFIED' for row in result['files']))
+
+    def test_B1_guisettings_CRLF_value_cannot_be_preserved_as_LF(self):
+        for index in (2, 3):
+            with self.subTest(index=index):
+                before = self.path(self.before, index); after = self.path(self.after, index)
+                original = before.read_bytes()
+                before.write_bytes(original.replace(SECRET.encode(), b'a\r\nb'))
+                after.write_bytes(original.replace(SECRET.encode(), b'a\nb'))
+                result = self.safe_compare()
+                self.assertNotEqual(result['files'][index]['status'], 'PRESERVED')
+                before.write_bytes(original); after.write_bytes(original)
+
+    def test_B1_keyboard_literal_TAB_cannot_be_preserved_as_SPACE(self):
+        original = self.path(self.before, 4).read_bytes()
+        self.path(self.before, 4).write_bytes(original.replace(SECRET.encode(), b'a\tb'))
+        self.path(self.after, 4).write_bytes(original.replace(SECRET.encode(), b'a b'))
+        self.assertNotEqual(self.safe_compare()['files'][4]['status'], 'PRESERVED')
+
+    def test_B1_literal_attribute_normalization_all_supported_XML_files(self):
+        for index in (2, 3, 4):
+            for whitespace in (b'\t', b'\n', b'\r', b'\r\n'):
+                with self.subTest(index=index, whitespace=whitespace):
+                    before = self.path(self.before, index); after = self.path(self.after, index)
+                    original = before.read_bytes()
+                    # IDs are values too; do not let normalized identifiers merge records.
+                    before.write_bytes(original.replace(b'id="', b'id="a'+whitespace, 1))
+                    after.write_bytes(original.replace(b'id="', b'id="a ', 1))
+                    self.assertNotEqual(self.safe_compare()['files'][index]['status'], 'PRESERVED')
+                    before.write_bytes(original); after.write_bytes(original)
+
+    def test_B1_character_references_keep_value_distinctions(self):
+        for index, left, right in ((2, b'a&#13;b', b'a&#10;b'),
+                                   (3, b'a&#xD;b', b'a&#xA;b'),
+                                   (4, b'a&#9;b', b'a&#32;b')):
+            before = self.path(self.before, index); after = self.path(self.after, index)
+            original = before.read_bytes()
+            before.write_bytes(original.replace(SECRET.encode(), left))
+            after.write_bytes(original.replace(SECRET.encode(), right))
+            self.assertEqual(self.safe_compare()['files'][index]['status'], 'CHANGED_OR_MISSING')
+            before.write_bytes(original); after.write_bytes(original)
+        original = self.path(self.before, 2).read_bytes()
+        self.path(self.before, 2).write_bytes(original.replace(SECRET.encode(), b'a\rb'))
+        self.path(self.after, 2).write_bytes(original.replace(SECRET.encode(), b'a&#13;b'))
+        self.assertNotEqual(self.safe_compare()['files'][2]['status'], 'PRESERVED')
+
+    def test_B1_LF_TAB_indentation_and_equivalent_references_remain_supported(self):
+        for index in (2, 3, 4):
+            path = self.path(self.after, index)
+            raw = path.read_bytes().replace(b'><', b'>\n\t<').replace(SECRET.encode(), b'a&amp;b')
+            self.path(self.before, index).write_bytes(
+                self.path(self.before, index).read_bytes().replace(SECRET.encode(), b'a&#38;b'))
+            path.write_bytes(raw)
+        self.assertEqual(self.safe_compare()['scope_result'], 'PRESERVED')
+        keyboard = self.path(self.after, 4)
+        keyboard.write_bytes(keyboard.read_bytes().replace(b'/>', b'>\r\n\t</setting>'))
+        self.assertEqual(self.safe_compare()['scope_result'], 'PRESERVED')
+        self.path(self.before, 2).write_bytes(self.path(self.before, 2).read_bytes().replace(b'a&#38;b', b'a\nb'))
+        self.path(self.after, 2).write_bytes(self.path(self.after, 2).read_bytes().replace(b'a&amp;b', b'a&#10;b'))
+        self.assertEqual(self.safe_compare()['scope_result'], 'PRESERVED')
+
+    def test_B2_reused_path_validation_exceptions_are_contained(self):
+        for failure in (w.bm.HelperError('argument_path_invalid', secret=SECRET),
+                        w.isolation.Refusal(SECRET)):
+            with self.subTest(kind=type(failure).__name__), \
+                    mock.patch.object(w.bm, 'is_forbidden_path', side_effect=failure):
+                self.unknown(self.safe_compare())
+                status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+
+    def test_B2_runtime_errors_at_reader_parser_and_database_boundaries(self):
+        for name in ('read_copy', 'xml_projection', 'database_projection', 'texture_projection'):
+            with self.subTest(boundary=name), mock.patch.object(w, name, side_effect=RuntimeError(SECRET)):
+                self.unknown(self.safe_compare())
+                status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+
+    def test_B2_comparison_operator_exception_invalidates_partial_observations(self):
+        class InvalidComparison:
+            def __eq__(self, other):
+                raise RuntimeError(SECRET)
+        with mock.patch.object(w, 'xml_projection', side_effect=lambda *a: InvalidComparison()):
+            self.unknown(self.safe_compare())
+            status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+
+    def test_B2_runtime_cleanup_and_SQLite_close_exceptions_fail_closed(self):
+        cleanup = w.tempfile.TemporaryDirectory.cleanup
+        def fail(instance):
+            cleanup(instance)
+            raise RuntimeError(SECRET)
+        with mock.patch.object(w.tempfile.TemporaryDirectory, 'cleanup', fail):
+            self.unknown(self.safe_compare())
+            status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+        connect = w.sqlite3.connect
+        class BadClose:
+            def __init__(self, conn): self.conn = conn
+            def __getattr__(self, name): return getattr(self.conn, name)
+            def close(self):
+                self.conn.close(); raise RuntimeError(SECRET)
+        with mock.patch.object(w.sqlite3, 'connect', side_effect=lambda *a, **k: BadClose(connect(*a, **k))):
+            self.unknown(self.safe_compare())
+            status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+
+    def test_B2_CLI_execution_and_serialization_boundaries_return_JSON_exit2(self):
+        for owner, name in ((w, 'Parser'), (w.Parser, 'add_argument'), (w.Parser, 'parse_args'),
+                             (w, 'compare'), (w.json, 'dumps')):
+            with self.subTest(boundary=name), mock.patch.object(owner, name, side_effect=RuntimeError(SECRET)):
+                status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+
+    def test_B2_exception_strings_are_never_used_as_reason_values(self):
+        with mock.patch.object(w, 'offline_root', side_effect=w.Unverified(SECRET)):
+            self.unknown(self.safe_compare())
+            status, result = self.cli(); self.assertEqual(status, 2); self.unknown(result)
+        class BadString(RuntimeError):
+            def __str__(self): raise RuntimeError(SECRET)
+        with mock.patch.object(w, 'read_copy', side_effect=BadString(SECRET)):
+            self.unknown(self.safe_compare())
+
+    def test_B2_exact_CLI_exit_codes_and_known_refusal_reasons(self):
+        status, result = self.cli(); self.assertEqual(status, 0)
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        path = self.path(self.after, 4)
+        path.write_bytes(path.read_bytes().replace(SECRET.encode(), b'genuine change'))
+        status, result = self.cli(); self.assertEqual(status, 1)
+        self.assertEqual(result['scope_result'], 'CHANGED_OR_MISSING')
+        path.write_bytes(b'<broken')
+        status, result = self.cli(); self.assertEqual(status, 2)
+        self.assertEqual(result['files'][4]['reason'], 'unsupported_or_malformed')
+        self.assertEqual(w.compare('relative', self.after)['files'][0]['reason'], 'unsafe_root')
+
+    def test_B2_fatal_BaseExceptions_are_not_indiscriminately_suppressed(self):
+        for failure in (SystemExit(7), GeneratorExit()):
+            with mock.patch.object(w, 'read_copy', side_effect=failure), self.assertRaises(type(failure)):
+                w.compare(self.before, self.after)
+            with mock.patch.object(w, 'compare', side_effect=failure), self.assertRaises(type(failure)):
+                w.main(['--before', str(self.before), '--after', str(self.after), '--offline-copies'])
