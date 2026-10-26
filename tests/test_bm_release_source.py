@@ -15,6 +15,56 @@ from tools import bm_release_source as r
 SECRET = 'synthetic-private-value-must-never-export'
 
 
+class ProtectedPathTests(unittest.TestCase):
+    PROFILE = '/Users/eengert/Library/Application Support/Kodi'
+
+    def protected_strings(self):
+        mixed = '/Users/eengert/Library/application support/kodi'
+        for root in (self.PROFILE, mixed, self.PROFILE.upper(), self.PROFILE.lower()):
+            yield root
+            yield root + '/x'
+            yield root + '/Database/Addons33.db'
+        for app in ('/Applications/Kodi.app', '/Applications/Kodi Build Manager Test.app',
+                    '/private/tmp/Synthetic.App'):
+            for root in (app, app.upper(), app.lower()):
+                yield root
+                yield root + '/Contents/x'
+
+    def test_protected_case_variants_refused_before_filesystem_operations(self):
+        # Tripwires fail on any attempted IO, including ancestry/root probes.
+        with mock.patch.object(r.os, 'open', side_effect=AssertionError('filesystem open')), \
+             mock.patch.object(r.os, 'stat', side_effect=AssertionError('filesystem stat')), \
+             mock.patch.object(r.os, 'lstat', side_effect=AssertionError('filesystem lstat')), \
+             mock.patch.object(r.os, 'listdir', side_effect=AssertionError('filesystem listdir')), \
+             mock.patch.object(Path, 'resolve', side_effect=AssertionError('filesystem resolve')):
+            for value in self.protected_strings():
+                for entry in ('path', 'directory', 'read_file'):
+                    with self.subTest(value=value, entry=entry):
+                        with self.assertRaisesRegex(r.Refusal, '^protected_path$'):
+                            if entry == 'directory':
+                                with r.directory(value):
+                                    self.fail('protected directory admitted')
+                            else:
+                                getattr(r, entry)(value)
+
+    def test_similar_names_remain_lexically_admitted(self):
+        for value in (self.PROFILE + 'x', self.PROFILE + '.old/x',
+                      '/Users/eengert/Library/Application Support/Kodi Backup/x',
+                      '/Users/eengert/Library/Application Support/Kodi2/x',
+                      '/Users/eengert/Library/Application Support2/Kodi/x',
+                      '/Users/eengert2/Library/Application Support/Kodi/x',
+                      '/private/tmp/Kodi/app/x', '/private/tmp/Kodi.app.backup/x'):
+            with self.subTest(value=value):
+                self.assertEqual(r.path(value), Path(value))
+
+    def test_disposable_mixed_case_directory_remains_admitted(self):
+        with tempfile.TemporaryDirectory(prefix='bm-path-case-', dir='/private/tmp') as temp:
+            target = Path(temp) / 'Application Support' / 'Kodi2'
+            target.mkdir(parents=True)
+            with r.directory(target) as fd:
+                self.assertTrue(stat.S_ISDIR(os.fstat(fd).st_mode))
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bm-release-test-', dir='/private/tmp')

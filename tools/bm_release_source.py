@@ -59,8 +59,11 @@ def path(value):
     need(type(raw) is str and raw.startswith('/') and '\\' not in raw and '\0' not in raw
          and len(raw) <= 4096 and all(p not in ('', '.', '..') for p in raw.split('/')[1:]), 'unsafe_path')
     result = Path(raw)
-    forbidden = Path('/Users/eengert/Library/Application Support/Kodi')
-    need(not result.is_relative_to(forbidden)
+    # Lexically reject aliases before any IO on case-insensitive filesystems.
+    # Compare components so similarly prefixed sibling names remain admissible.
+    folded = tuple(part.casefold() for part in result.parts)
+    forbidden = Path('/Users/eengert/Library/Application Support/Kodi').parts
+    need(folded[:len(forbidden)] != tuple(part.casefold() for part in forbidden)
          and not any(p.casefold().endswith('.app') for p in result.parts), 'protected_path')
     return result
 
