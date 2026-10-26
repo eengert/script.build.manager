@@ -1,6 +1,9 @@
 """Synthetic Git objects and scratch exports only; no runtime/profile access."""
+import builtins
+import contextlib
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -63,6 +66,77 @@ class ProtectedPathTests(unittest.TestCase):
             target.mkdir(parents=True)
             with r.directory(target) as fd:
                 self.assertTrue(stat.S_ISDIR(os.fstat(fd).st_mode))
+
+    @contextlib.contextmanager
+    def no_filesystem(self):
+        operations = [(os, name) for name in ('open', 'stat', 'lstat', 'listdir', 'scandir', 'readlink')]
+        operations += [(os.path, 'realpath'), (Path, 'resolve'), (Path, 'open'),
+                       (Path, 'stat'), (Path, 'lstat'), (Path, 'iterdir'),
+                       (builtins, 'open'), (io, 'open')]
+        with contextlib.ExitStack() as stack:
+            guards = [stack.enter_context(mock.patch.object(owner, name,
+                      side_effect=AssertionError('filesystem operation forbidden')))
+                      for owner, name in operations]
+            yield
+            for guard in guards:
+                guard.assert_not_called()
+
+    def test_Data_profile_case_variants_and_descendants_rejected_without_IO(self):
+        prefixes = ('/System/Volumes/Data', '/SYSTEM/VOLUMES/DATA',
+                    '/system/volumes/data', '/sYsTeM/vOlUmEs/dAtA')
+        profiles = (self.PROFILE, self.PROFILE.upper(), self.PROFILE.lower(),
+                    '/Users/eengert/Library/application support/kodi')
+        with self.no_filesystem():
+            for prefix in prefixes:
+                for profile in profiles:
+                    for suffix in ('', '/x', '/Database/Addons33.db'):
+                        value = prefix + profile + suffix
+                        for entry in ('path', 'directory', 'read_file'):
+                            with self.subTest(value=value, entry=entry):
+                                with self.assertRaisesRegex(r.Refusal, '^protected_path$'):
+                                    if entry == 'directory':
+                                        with r.directory(value):
+                                            self.fail('protected Data directory admitted')
+                                    else:
+                                        getattr(r, entry)(value)
+
+    def test_Data_prefix_boundaries_and_profile_siblings_preserve_identity(self):
+        values = ('/System/Volumes/Data2' + self.PROFILE,
+                  '/System/Volumes/Database' + self.PROFILE,
+                  '/System/Volumes/Data.old' + self.PROFILE,
+                  '/System/Volumes/DataUsers/eengert/Library/Application Support/Kodi',
+                  '/System/Volumes/Data/' + 'Users/eengert/Library/Application Support/Kodi2/x',
+                  '/System/Volumes/Data' + self.PROFILE + '.old/x',
+                  '/System/Volumes/Data' + self.PROFILE + ' Backup/x',
+                  '/System/Volumes/Data/Users/eengert2/Library/Application Support/Kodi',
+                  '/System/Volumes/Data/Users/eengert/Library/Application Support2/Kodi',
+                  '/Other/System/Volumes/Data' + self.PROFILE)
+        with self.no_filesystem():
+            for value in values:
+                with self.subTest(value=value):
+                    self.assertEqual(r.path(value), Path(value))
+                    self.assertEqual(str(r.path(value)), value)
+
+    def test_Data_scratch_spelling_is_lexical_only_and_not_rewritten(self):
+        # path() only: no directory/export/verify call through a real Data alias.
+        # Export's existing literal /private/tmp policy is not broadened.
+        with self.no_filesystem():
+            for prefix in ('/System/Volumes/Data', '/sYsTeM/vOlUmEs/dAtA'):
+                value = prefix + '/private/tmp/SyntheticScratch'
+                self.assertEqual(r.path(value), Path(value))
+                self.assertEqual(str(r.path(value)), value)
+
+    def test_Data_apps_and_casefold_Unicode_profile_aliases_refused_without_IO(self):
+        values = ('/System/Volumes/Data/Applications/Kodi.app',
+                  '/sYsTeM/vOlUmEs/dAtA/private/tmp/Synthetic.ApP/Contents/x',
+                  '/U\u017fers/eengert/Library/Application \u017fupport/\u212aodi',
+                  '/Sy\u017ftem/Volumes/Data/U\u017fers/eengert/Library/Application \u017fupport/\u212aodi',
+                  '/SYSTEM/VOLUMES/DATA/Users/eengert/Library/Application Support/\u212aodi/x')
+        with self.no_filesystem():
+            for value in values:
+                with self.subTest(value=value):
+                    with self.assertRaisesRegex(r.Refusal, '^protected_path$'):
+                        r.path(value)
 
 
 class ReleaseTests(unittest.TestCase):

@@ -62,6 +62,11 @@ def path(value):
     # Lexically reject aliases before any IO on case-insensitive filesystems.
     # Compare components so similarly prefixed sibling names remain admissible.
     folded = tuple(part.casefold() for part in result.parts)
+    # Fold this one Data-volume spelling for protection checks only. Preserve
+    # result itself, including its actual spelling and output-root identity.
+    data_root = ('/', 'system', 'volumes', 'data')
+    if folded[:len(data_root)] == data_root:
+        folded = ('/',) + folded[len(data_root):]
     forbidden = Path('/Users/eengert/Library/Application Support/Kodi').parts
     need(folded[:len(forbidden)] != tuple(part.casefold() for part in forbidden)
          and not any(p.casefold().endswith('.app') for p in result.parts), 'protected_path')
