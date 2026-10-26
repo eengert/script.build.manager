@@ -4062,15 +4062,17 @@ def public_database_witness(target: TestAppTarget, guard: ReadGuard) -> Dict[str
 
 
 def _project_public_database(path: Path, report: Dict[str, Any]) -> Dict[str, Any]:
+    """Borrow a private copy; its caller must remove it before publishing KNOWN.
+
+    Keep it linked through queries and close: native proxy discovery can make
+    immutable reads of an already-unlinked copy fail on this macOS runtime.
+    Both owning callers gate publication on their subsequent cleanup.
+    """
     candidate = dict(report)
     try:
         uri = "file:" + urllib.parse.quote(os.fspath(path)) + "?mode=ro&immutable=1"
         connection = sqlite3.connect(uri, uri=True, timeout=1.0)
         try:
-            # POSIX/macOS immutable SQLite keeps the opened file descriptor.
-            # Unlink before querying so close/cleanup failures normally leave
-            # no named raw database copy. No SQLite sidecars can be created.
-            path.unlink()
             connection.execute("PRAGMA query_only = 1")
             connection.execute("PRAGMA trusted_schema = OFF")
             budget = [0]

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -672,3 +673,116 @@ raise SystemExit(code)
             with self.subTest(status=status):
                 path.write_bytes(raw)
                 self.child(mode, code, status, regular)
+
+
+class SQLiteLifetimeTests(unittest.TestCase):
+    """Synthetic copies stay linked through close; only owners remove them."""
+    setUp = PreservationTests.setUp
+    populate = PreservationTests.populate
+    path = PreservationTests.path
+    fingerprint = PreservationTests.fingerprint
+
+    def audited_compare(self, fault=None, affected=None):
+        connect = sqlite3.connect; unlink = Path.unlink
+        cleanup = tempfile.TemporaryDirectory.cleanup
+        originals = {i: self.path(self.before, i).read_bytes() for i in (0, 1)}
+        before = self.fingerprint(); copies = {}; events = []
+        case = self
+
+        class Connection:
+            def __init__(self, connection, path, kind):
+                self.connection = connection; self.path = path; self.kind = kind; self.closed = False
+            def __getattr__(self, name): return getattr(self.connection, name)
+            def execute(self, sql, *args):
+                case.assertTrue(self.path.is_file(), 'copy must be linked during every query')
+                case.assertFalse(self.closed)
+                case.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ['copy.db'])
+                events.append(('query', self.path))
+                if fault == 'query' and self.kind == affected: raise sqlite3.OperationalError(SECRET)
+                return self.connection.execute(sql, *args)
+            def close(self):
+                case.assertTrue(self.path.is_file(), 'copy must remain linked through close')
+                self.connection.close(); self.closed = True; events.append(('close', self.path))
+                if fault == 'close' and self.kind == affected: raise sqlite3.OperationalError(SECRET)
+
+        def private_connection(database_uri, **kwargs):
+            self.assertTrue(kwargs['uri']); self.assertTrue(database_uri.endswith('?mode=ro&immutable=1'))
+            p = Path(w.urllib.parse.unquote(database_uri[5:].split('?')[0]))
+            self.assertNotIn(str(self.before), str(p)); self.assertNotIn(str(self.after), str(p))
+            self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(p.parent.stat().st_mode), 0o700)
+            raw = p.read_bytes(); kind = next(i for i, data in originals.items() if data == raw)
+            connection = connect(database_uri, **kwargs)
+            # A write attempt must fail even while the private pathname exists.
+            with self.assertRaises(sqlite3.OperationalError): connection.execute('CREATE TABLE forbidden(x)')
+            wrapper = Connection(connection, p, kind); copies[p] = wrapper
+            return wrapper
+
+        def remove(p, *args, **kwargs):
+            if p in copies:
+                self.assertTrue(copies[p].closed, 'owner must close before unlink')
+                events.append(('unlink', p))
+                if fault == 'unlink' and copies[p].kind == affected: raise OSError(SECRET)
+            return unlink(p, *args, **kwargs)
+
+        def finalize(instance):
+            cleanup(instance); events.append(('cleanup', Path(instance.name)))
+            if fault == 'cleanup' and any(p.parent == Path(instance.name) and c.kind == affected
+                                          for p, c in copies.items()): raise OSError(SECRET)
+
+        with mock.patch.object(w.sqlite3, 'connect', side_effect=private_connection), \
+             mock.patch.object(Path, 'unlink', remove), \
+             mock.patch.object(w.tempfile.TemporaryDirectory, 'cleanup', finalize):
+            result = w.compare(self.before, self.after)
+        self.assertEqual(self.fingerprint(), before)
+        self.assertTrue(copies)
+        for p, connection in copies.items():
+            self.assertTrue(connection.closed)
+            self.assertFalse(p.exists()); self.assertFalse(p.parent.exists())
+            self.assertLess(events.index(('close', p)), events.index(('unlink', p)))
+            self.assertLess(events.index(('unlink', p)), events.index(('cleanup', p.parent)))
+        encoded = json.dumps(result)
+        self.assertTrue(SECRET not in encoded, 'private output detected (withheld)')
+        self.assertNotIn('OperationalError', encoded); self.assertNotIn(str(self.base), encoded)
+        self.assertEqual(result['complete_preservation'], 'UNVERIFIED')
+        self.assertEqual(result['qualification'], 'not_qualified')
+        return result, copies
+
+    def test_direct_proxy_discovery_then_both_linked_projections(self):
+        import _scproxy
+        _scproxy._get_proxies()  # Discard settings; never inspect or log proxy values.
+        result, copies = self.audited_compare()
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        self.assertEqual({c.kind for c in copies.values()}, {0, 1}); self.assertEqual(len(copies), 4)
+
+    def test_linked_queries_close_unlink_cleanup_and_immutable_permissions(self):
+        result, copies = self.audited_compare()
+        self.assertEqual(result['scope_result'], 'PRESERVED'); self.assertEqual(len(copies), 4)
+
+    def test_query_failure_cleans_both_projection_types(self):
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                result, _ = self.audited_compare('query', kind)
+                self.assertEqual(result['scope_result'], 'UNVERIFIED')
+                self.assertEqual(result['files'][kind]['status'], 'UNVERIFIED')
+
+    def test_close_failure_cleans_both_and_never_publishes_success(self):
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                result, _ = self.audited_compare('close', kind)
+                self.assertEqual(result['scope_result'], 'UNVERIFIED')
+                self.assertEqual(result['files'][kind]['status'], 'UNVERIFIED')
+
+    def test_unlink_failure_cleans_both_and_never_publishes_success(self):
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                result, _ = self.audited_compare('unlink', kind)
+                self.assertEqual(result['scope_result'], 'UNVERIFIED')
+                self.assertEqual(result['files'][kind]['status'], 'UNVERIFIED')
+
+    def test_directory_cleanup_failure_cannot_publish_either_projection(self):
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                result, _ = self.audited_compare('cleanup', kind)
+                self.assertEqual(result['scope_result'], 'UNVERIFIED')
+                self.assertEqual(result['files'][kind]['status'], 'UNVERIFIED')

@@ -226,10 +226,11 @@ def sql_normalize(sql):
 
 
 def texture_projection(path):
+    # Borrow the linked private copy. database_projection owns its removal,
+    # after this connection's finally-close, and gates return on cleanup.
     uri = 'file:' + urllib.parse.quote(os.fspath(path)) + '?mode=ro&immutable=1'
     connection = sqlite3.connect(uri, uri=True, timeout=1)
     try:
-        path.unlink()  # private copy only, before any schema/record query
         connection.execute('PRAGMA query_only=1')
         connection.execute('PRAGMA trusted_schema=OFF')
         budget = [0]
@@ -260,7 +261,7 @@ def texture_projection(path):
 
 
 def database_projection(raw, kind):
-    """Disposable copy pattern matches the accepted public witness's cleanup gate."""
+    """Own the linked copy until projection/close, then unlink and clean before return."""
     require(raw[:16] == b'SQLite format 3\x00')
     # WAL-mode headers are uncertain even if sidecar copies have been omitted.
     require(len(raw) >= 100 and raw[18:20] == b'\x01\x01', 'sqlite_wal_mode_uncertain')

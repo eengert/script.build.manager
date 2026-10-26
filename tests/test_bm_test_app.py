@@ -8614,7 +8614,7 @@ class TestSemanticWitnessFinalization(SnapshotTestCase):
             self.assertEqual(after['database']['live_admission'], 'PROHIBITED')
             self.assertEqual(bm.compare_public_preservation(before, after)['scope_result'], 'UNKNOWN')
             self.assertTrue((Path(retained[0].name) / 'database.db').is_file())
-            self.assertEqual(len(attempts), 3)  # early unlink plus two bounded cleanup attempts
+            self.assertEqual(len(attempts), 2)  # owning caller's two bounded cleanup attempts
             self.assertNotIn(SENTINEL_PRIVATE, json.dumps(after))
             self.assertNotIn(SENTINEL_PASSWORD, json.dumps(after))
         finally:
@@ -8836,3 +8836,76 @@ class TestCensusRefusalDiagnostics(TripwireTestCase):
         self.assertNotIn(SENTINEL_PRIVATE, output.getvalue())
         self.assertEqual(native.lib.calls, [8])
         self.assertEqual(services.transport.requests, [])
+
+
+class TestPublicSqliteLinkedLifetime(SnapshotTestCase):
+    """The public witness owns linked-copy removal and gates publication."""
+    def audited(self, query_failure=False, unlink_failure=False):
+        connect = sqlite3.connect; unlink = Path.unlink
+        source = self.userdata / 'Database' / 'Addons33.db'
+        original = source.read_bytes(); before = fingerprint(self.target.root)
+        copies = {}; events = []; attempts = []; case = self
+
+        class Connection:
+            def __init__(self, conn, path): self.conn = conn; self.path = path; self.closed = False
+            def __getattr__(self, name): return getattr(self.conn, name)
+            def execute(self, sql, *args):
+                case.assertTrue(self.path.is_file(), 'linked through every query')
+                case.assertFalse(self.closed)
+                case.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ['database.db'])
+                events.append(('query', self.path))
+                if query_failure: raise sqlite3.OperationalError(SENTINEL_PRIVATE)
+                return self.conn.execute(sql, *args)
+            def close(self):
+                case.assertTrue(self.path.is_file(), 'linked through close')
+                self.conn.close(); self.closed = True; events.append(('close', self.path))
+
+        def private(database_uri, **kwargs):
+            self.assertTrue(kwargs['uri']); self.assertTrue(database_uri.endswith('?mode=ro&immutable=1'))
+            path = Path(bm.urllib.parse.unquote(database_uri[5:].split('?')[0]))
+            self.assertNotEqual(path, source); self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            conn = connect(database_uri, **kwargs)
+            with self.assertRaises(sqlite3.OperationalError): conn.execute('CREATE TABLE forbidden(x)')
+            wrapper = Connection(conn, path); copies[path] = wrapper
+            return wrapper
+
+        def remove(path, *args, **kwargs):
+            if path in copies:
+                self.assertTrue(copies[path].closed, 'close precedes owning caller unlink')
+                events.append(('unlink', path)); attempts.append(path)
+                if unlink_failure and len(attempts) == 1: raise OSError(SENTINEL_PASSWORD)
+            return unlink(path, *args, **kwargs)
+
+        with mock.patch.object(bm.sqlite3, 'connect', side_effect=private), \
+             mock.patch.object(Path, 'unlink', remove):
+            result = bm.public_preservation_witness(self.target)
+        self.assertEqual(source.read_bytes(), original); self.assertEqual(fingerprint(self.target.root), before)
+        self.assertEqual(len(copies), 1)
+        for path, conn in copies.items():
+            self.assertTrue(conn.closed); self.assertFalse(path.exists()); self.assertFalse(path.parent.exists())
+            self.assertLess(events.index(('close', path)), events.index(('unlink', path)))
+        encoded = json.dumps(result)
+        self.assertNotIn(SENTINEL_PRIVATE, encoded); self.assertNotIn(SENTINEL_PASSWORD, encoded)
+        self.assertNotIn('OperationalError', encoded)
+        self.assertNotIn(str(next(iter(copies))), encoded)
+        return result, attempts
+
+    def test_proxy_discovery_keeps_public_copy_linked_until_closed(self):
+        import _scproxy
+        _scproxy._get_proxies()  # Never retain or log proxy values.
+        result, attempts = self.audited()
+        self.assertEqual(result['database']['status'], 'KNOWN'); self.assertEqual(len(attempts), 1)
+
+    def test_query_failure_still_closes_removes_and_keeps_unknown(self):
+        result, _ = self.audited(query_failure=True)
+        self.assertEqual(result['database']['status'], 'UNKNOWN')
+
+    def test_recovered_unlink_failure_still_refuses_known_projection(self):
+        result, attempts = self.audited(unlink_failure=True)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(result['database']['status'], 'UNKNOWN')
+        self.assertEqual(result['database']['temporary_cleanup'], 'COMPLETE')
+        self.assertEqual(result['database']['raw_copy'], 'REMOVED')
+        self.assertEqual(result['database']['live_admission'], 'PROHIBITED')
