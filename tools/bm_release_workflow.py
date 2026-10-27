@@ -5,17 +5,21 @@ verification is point-in-time, not immunity to a hostile same-UID writer.
 Ambiguous failed workspaces are preserved rather than recursively deleted.
 """
 import contextlib
+import ctypes
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import selectors
 import signal
 import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -132,28 +136,153 @@ def environment(tmp):
             'TMPDIR': str(tmp), 'DEVELOPER_DIR': '/Library/Developer/CommandLineTools'}
 
 
-def run(argv, cwd, env, timeout=30):
-    process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, start_new_session=True)
-    try:
-        out, err = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        # Only this just-created session/group, never enumerate native processes.
-        for sig in (signal.SIGTERM, signal.SIGKILL):
+# Retain the Popen object on an uncertain cleanup. Its destructor must not reap
+# the identity anchor while this interpreter could still handle the refusal.
+_UNCONFIRMED_CHILDREN = []
+
+
+class _Siginfo(ctypes.Structure):
+    # Darwin LP64 siginfo_t; unlike waitpid, WNOWAIT retains the child/PID.
+    _fields_ = [('signo', ctypes.c_int), ('error', ctypes.c_int),
+                ('code', ctypes.c_int), ('pid', ctypes.c_int),
+                ('uid', ctypes.c_uint), ('status', ctypes.c_int),
+                ('addr', ctypes.c_void_p), ('value', ctypes.c_void_p),
+                ('band', ctypes.c_long), ('pad', ctypes.c_ulong * 7)]
+
+
+class _Sigaction(ctypes.Structure):
+    _fields_ = [('handler', ctypes.c_void_p), ('mask', ctypes.c_uint),
+                ('flags', ctypes.c_int)]
+
+
+class _ChildGroup:
+    """Original setsid group only, anchored by our exclusively waited child.
+
+    No poll/communicate/wait is allowed until confirmation. XNU removes group
+    membership and releases the PID at reap, not at WNOWAIT observation.
+    proc_listpgrppids supplies only this group's members, including zombies.
+    This fixed CLI requires one thread and default SIGCHLD (no other reaper).
+    Deliberate setpgid/setsid escape and hostile in-process code are not covered.
+    """
+    def __init__(self):
+        need(sys.platform == 'darwin' and ctypes.sizeof(_Siginfo) == 104
+             and ctypes.sizeof(_Sigaction) == 16, 'child_authority_unavailable')
+        self.libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+        self.libproc = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+        self.libc.waitid.argtypes = [ctypes.c_uint, ctypes.c_uint,
+                                     ctypes.POINTER(_Siginfo), ctypes.c_int]
+        self.libc.waitid.restype = ctypes.c_int
+        self.libc.sigaction.argtypes = [ctypes.c_int, ctypes.c_void_p,
+                                        ctypes.POINTER(_Sigaction)]
+        self.libc.sigaction.restype = ctypes.c_int
+        self.libproc.proc_listpgrppids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        self.libproc.proc_listpgrppids.restype = ctypes.c_int
+        self.process = None
+        self.confirmed = False
+        self.require_exclusive_waiter()
+
+    def require_exclusive_waiter(self):
+        action = _Sigaction()
+        need(threading.current_thread() is threading.main_thread()
+             and threading.active_count() == 1, 'child_waiter_not_exclusive')
+        need(self.libc.sigaction(signal.SIGCHLD, None, ctypes.byref(action)) == 0
+             and not action.handler and not action.flags & 0x0020,
+             'child_waiter_not_exclusive')  # Darwin SA_NOCLDWAIT
+
+    def exited(self):
+        self.require_exclusive_waiter()
+        need(self.process.returncode is None, 'child_anchor_lost')
+        info = _Siginfo()  # WNOHANG need not initialize a no-event result.
+        result = self.libc.waitid(os.P_PID, self.process.pid, ctypes.byref(info),
+                                  os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        need(result == 0 and info.pid in (0, self.process.pid), 'child_anchor_lost')
+        return info.pid == self.process.pid
+
+    def members(self):
+        self.exited()  # ECHILD, another reaper or auto-reap forbids any signal.
+        pids = (ctypes.c_int * 4096)()
+        ctypes.set_errno(0)
+        count = self.libproc.proc_listpgrppids(self.process.pid, pids, ctypes.sizeof(pids))
+        need(ctypes.get_errno() == 0 and 0 < count < len(pids), 'child_group_unconfirmed')
+        values = list(pids[:count])
+        need(len(set(values)) == count and all(pid > 0 for pid in values)
+             and self.process.pid in values, 'child_group_unconfirmed')
+        return set(values)
+
+    def finish(self, pump):
+        def complete():
+            members = self.members()
+            return self.exited() and members == {self.process.pid}
+        if complete():
+            self.confirmed = True
+            return
+        for sig, grace in ((signal.SIGTERM, .5), (signal.SIGKILL, 2.0)):
+            # Recheck the unreaped anchor immediately before each group signal.
+            self.members()
+            self.exited()
             try:
-                os.killpg(process.pid, sig)
+                os.killpg(self.process.pid, sig)
             except ProcessLookupError:
-                pass
+                pass  # A zombie-only group still requires explicit confirmation.
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline:
+                if complete():
+                    self.confirmed = True
+                    return
+                pump()
+        raise source.Refusal('child_cleanup_failed')
+
+
+def run(argv, cwd, env, timeout=30):
+    group = _ChildGroup()  # Admit authority before creating any process.
+    process = None
+    output = [bytearray(), bytearray()]
+    selector = selectors.DefaultSelector()
+
+    def pump():
+        for key, _ in selector.select(.02):
+            raw = os.read(key.fileobj.fileno(), 65536)
+            if raw:
+                output[key.data].extend(raw)
+            else:
+                selector.unregister(key.fileobj)
+
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True)
+        group.process = process
+        for index, stream in enumerate((process.stdout, process.stderr)):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, index)
+        deadline = time.monotonic() + timeout
+        while not group.exited():
+            if time.monotonic() >= deadline:
+                raise source.Refusal('child_timeout')
+            pump()
+        group.finish(pump)
+        process.wait()  # Only now release the PID/PGID; no later group signal.
+        deadline = time.monotonic() + .5
+        while selector.get_map() and time.monotonic() < deadline:
+            pump()
+        need(not selector.get_map(), 'child_output_unconfirmed')
+        out, err = map(bytes, output)
+        need(len(out) <= 65536 and len(err) <= 65536, 'child_output_size')
+        return process.returncode, out, err
+    except BaseException:
+        if process is not None and not group.confirmed:
             try:
-                process.communicate(timeout=2)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-        else:
-            raise source.Refusal('child_cleanup_failed')
-        raise source.Refusal('child_timeout')
-    need(len(out) <= 65536 and len(err) <= 65536, 'child_output_size')
-    return process.returncode, out, err
+                # Cleanup must not depend on healthy pipes or successful capture.
+                group.finish(lambda: time.sleep(.02))
+                process.wait()
+            except BaseException:
+                _UNCONFIRMED_CHILDREN.append(group)
+                raise source.Refusal('child_cleanup_failed') from None
+        raise
+    finally:
+        selector.close()
+        if process is not None:
+            process.stdout.close()
+            process.stderr.close()
 
 
 def sandbox_argv(work, script_args):

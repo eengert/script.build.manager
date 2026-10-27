@@ -307,3 +307,182 @@ class WorkflowTests(unittest.TestCase):
         # Task-owned toy child only, never a builder or native process probe.
         with self.assertRaisesRegex(s.Refusal,'^child_timeout$'):
             w.run([w.PYTHON,'-B','-c','import time;time.sleep(20)'],Path('/private/tmp'),w.environment('/private/tmp'),0.1)
+
+
+class ChildLifecycleTests(unittest.TestCase):
+    """Bounded task-owned sessions only; never enumerate unrelated processes."""
+    CHILD = r'''
+import os,signal,sys,time
+from pathlib import Path
+root=Path(sys.argv[1]);mode=sys.argv[2]
+signal.alarm(7)
+if os.fork()==0:
+    if mode=='grandchild' and os.fork():os._exit(0)
+    if mode=='resistant':signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    if mode in ('grandchild','resistant'):
+        fd=os.open('/dev/null',os.O_RDWR)
+        for n in (0,1,2):os.dup2(fd,n)
+    (root/'ready').write_text(str(os.getpid()))
+    time.sleep(2)
+    if not (root/'stop').exists():(root/'survived').write_text('yes')
+    while not (root/'stop').exists():time.sleep(.01)
+    os._exit(0)
+while not (root/'ready').exists():time.sleep(.01)
+if mode in ('responsive','resistant'):time.sleep(5)
+raise SystemExit(7 if mode=='nonzero' else 0)
+'''
+
+    def setUp(self):
+        self.retained = len(w._UNCONFIRMED_CHILDREN)
+        self.addCleanup(self.finish_uncertain)
+
+    def finish_uncertain(self):
+        # Fault injection is removed before cleanup; each retained anchor remains
+        # unreaped and is checked afresh. No numeric PGID is saved for later use.
+        import time
+        for group in w._UNCONFIRMED_CHILDREN[self.retained:]:
+            if group.process.returncode is None:
+                group.finish(lambda: time.sleep(.02))
+                group.process.wait()
+        del w._UNCONFIRMED_CHILDREN[self.retained:]
+
+    def exercise(self, mode):
+        import select
+        import signal
+        import time
+        with tempfile.TemporaryDirectory(prefix='bm-lifecycle-test-',dir='/private/tmp') as tmp:
+            root=Path(tmp);queue=select.kqueue();registered=[];confirmed=[];sent=[]
+            original_finish=w._ChildGroup.finish;original_signal=os.killpg
+            def finish(group,pump):
+                if not registered:
+                    pid=int((root/'ready').read_text())
+                    queue.control([select.kevent(pid,filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD|select.KQ_EV_ONESHOT,fflags=select.KQ_NOTE_EXIT)],0,0)
+                    registered.append(pid)
+                original_finish(group,pump)
+                self.assertTrue(group.exited())
+                self.assertEqual(group.members(),{group.process.pid})
+                confirmed.append(group.process.pid)
+            def send(pid,sig):
+                sent.append((pid,sig));return original_signal(pid,sig)
+            try:
+                with mock.patch.object(w._ChildGroup,'finish',finish),mock.patch.object(w.os,'killpg',side_effect=send):
+                    call=lambda:w.run([w.PYTHON,'-B','-c',self.CHILD,tmp,mode],root,w.environment(root),
+                                       .2 if mode in ('responsive','resistant') else 3)
+                    if mode in ('responsive','resistant'):
+                        with self.assertRaisesRegex(s.Refusal,'^child_timeout$'):call()
+                    else:
+                        code,out,err=call()
+                        self.assertEqual(code,7 if mode=='nonzero' else 0)
+                        self.assertEqual((out,err),(b'',b''))
+                self.assertEqual(len(confirmed),1)
+                self.assertTrue(sent)
+                self.assertTrue(all(pid==confirmed[0] for pid,_ in sent))
+                if mode=='resistant':self.assertIn(signal.SIGKILL,[sig for _,sig in sent])
+                self.assertFalse((root/'survived').exists())
+            finally:
+                # Cooperative stop and inherited alarm also bound a regression
+                # that returns without cleanup. Kernel exit event confirms exit.
+                (root/'stop').touch()
+                try:
+                    if registered:self.assertEqual(len(queue.control(None,1,8)),1)
+                finally:queue.close()
+
+    def test_normal_no_descendants_preserves_output_and_code(self):
+        with mock.patch.object(w.os,'killpg') as send:
+            for code in (0,7):
+                actual,out,err=w.run([w.PYTHON,'-B','-c',
+                    'import sys;print("bounded");sys.stderr.write("err");sys.exit('+str(code)+')'],
+                    Path('/private/tmp'),w.environment('/private/tmp'))
+                self.assertEqual((actual,out,err),(code,b'bounded\n',b'err'))
+            send.assert_not_called()
+
+    def test_normal_surviving_same_group_child(self):self.exercise('normal')
+    def test_redirected_stdio_grandchild(self):self.exercise('grandchild')
+    def test_nonzero_with_surviving_descendant(self):self.exercise('nonzero')
+    def test_timeout_term_responsive_descendant(self):self.exercise('responsive')
+    def test_timeout_term_resistant_descendant(self):self.exercise('resistant')
+
+    def failing_run(self):
+        return w.run([w.PYTHON,'-B','-c','import signal,time;signal.alarm(4);time.sleep(3)'],
+                     Path('/private/tmp'),w.environment('/private/tmp'),.1)
+
+    def test_signal_failure_refuses_and_retains_anchor(self):
+        with mock.patch.object(w.os,'killpg',side_effect=PermissionError(PRIVATE)):
+            with self.assertRaisesRegex(s.Refusal,'^child_cleanup_failed$'):self.failing_run()
+        self.assertEqual(len(w._UNCONFIRMED_CHILDREN),self.retained+1)
+        self.assertIsNone(w._UNCONFIRMED_CHILDREN[-1].process.returncode)
+
+    def test_confirmation_failure_never_signals_unconfirmed_group(self):
+        with mock.patch.object(w._ChildGroup,'members',side_effect=s.Refusal('child_group_unconfirmed')), \
+             mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_cleanup_failed$'):self.failing_run()
+            send.assert_not_called()
+        self.assertEqual(len(w._UNCONFIRMED_CHILDREN),self.retained+1)
+
+    def test_lost_anchor_never_signals_stale_pgid(self):
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group.libc,'waitid',return_value=-1),mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_anchor_lost$'):group.finish(lambda:None)
+            send.assert_not_called()
+
+    def test_reaped_anchor_never_signals(self):
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=0)
+        with mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_anchor_lost$'):group.finish(lambda:None)
+            send.assert_not_called()
+
+    def test_truncated_group_inventory_refused(self):
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group,'exited',return_value=True),mock.patch.object(
+                group.libproc,'proc_listpgrppids',return_value=4096),mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_group_unconfirmed$'):group.finish(lambda:None)
+            send.assert_not_called()
+
+    def test_auto_reap_and_competing_threads_refused_before_launch(self):
+        import signal
+        previous=signal.signal(signal.SIGCHLD,signal.SIG_IGN)
+        try:
+            with mock.patch.object(w.subprocess,'Popen') as launch:
+                with self.assertRaisesRegex(s.Refusal,'^child_waiter_not_exclusive$'):self.failing_run()
+                launch.assert_not_called()
+        finally:signal.signal(signal.SIGCHLD,previous)
+        with mock.patch.object(w.threading,'active_count',return_value=2),mock.patch.object(w.subprocess,'Popen') as launch:
+            with self.assertRaisesRegex(s.Refusal,'^child_waiter_not_exclusive$'):self.failing_run()
+            launch.assert_not_called()
+
+    def test_capture_exception_cleans_group_before_propagation(self):
+        with mock.patch.object(w.selectors,'DefaultSelector') as factory:
+            factory.return_value.register.side_effect=RuntimeError(PRIVATE)
+            with self.assertRaisesRegex(RuntimeError,PRIVATE):self.failing_run()
+        self.assertEqual(len(w._UNCONFIRMED_CHILDREN),self.retained)
+
+
+    def test_lingering_members_after_kill_refuse_completion(self):
+        import itertools
+        import signal
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group,'members',return_value={12345,12346}), \
+             mock.patch.object(group,'exited',return_value=True), \
+             mock.patch.object(w.time,'monotonic',side_effect=itertools.count()), \
+             mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_cleanup_failed$'):group.finish(lambda:None)
+            self.assertFalse(group.confirmed)
+            self.assertEqual(send.call_args_list,[mock.call(12345,signal.SIGTERM),mock.call(12345,signal.SIGKILL)])
+
+    def test_signal_esrch_requires_confirmation(self):
+        import itertools
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group,'members',return_value={12345,12346}), \
+             mock.patch.object(group,'exited',return_value=True), \
+             mock.patch.object(w.time,'monotonic',side_effect=itertools.count()), \
+             mock.patch.object(w.os,'killpg',side_effect=ProcessLookupError):
+            with self.assertRaisesRegex(s.Refusal,'^child_cleanup_failed$'):group.finish(lambda:None)
+            self.assertFalse(group.confirmed)
+
+
+    def test_capture_setup_failure_happens_before_child_creation(self):
+        with mock.patch.object(w.selectors,'DefaultSelector',side_effect=RuntimeError(PRIVATE)), \
+             mock.patch.object(w.subprocess,'Popen') as launch:
+            with self.assertRaisesRegex(RuntimeError,PRIVATE):self.failing_run()
+            launch.assert_not_called()
