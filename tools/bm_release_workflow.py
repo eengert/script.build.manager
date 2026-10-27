@@ -211,8 +211,11 @@ class _ChildGroup:
 
     def finish(self, pump):
         def complete():
-            members = self.members()
-            return self.exited() and members == {self.process.pid}
+            # A live leader can fork after an inventory snapshot. Establish its
+            # unreaped exit first, then obtain the inventory used for completion.
+            if not self.exited():
+                return False
+            return self.members() == {self.process.pid}
         if complete():
             self.confirmed = True
             return

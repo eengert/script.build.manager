@@ -317,7 +317,9 @@ from pathlib import Path
 root=Path(sys.argv[1]);mode=sys.argv[2]
 signal.alarm(7)
 if os.fork()==0:
+    signal.alarm(7) # Forked children do not inherit alarm timers.
     if mode=='grandchild' and os.fork():os._exit(0)
+    signal.alarm(7) # Also bound the grandchild after the second fork.
     if mode=='resistant':signal.signal(signal.SIGTERM,signal.SIG_IGN)
     if mode in ('grandchild','resistant'):
         fd=os.open('/dev/null',os.O_RDWR)
@@ -486,3 +488,127 @@ raise SystemExit(7 if mode=='nonzero' else 0)
              mock.patch.object(w.subprocess,'Popen') as launch:
             with self.assertRaisesRegex(RuntimeError,PRIVATE):self.failing_run()
             launch.assert_not_called()
+
+
+class CompletionRaceTests(unittest.TestCase):
+    LEADER = r'''
+import os,signal,sys,time
+from pathlib import Path
+root=Path(sys.argv[1]);signal.alarm(8)
+(root/'leader-ready').touch()
+while not (root/'fork').exists():time.sleep(.005)
+if os.fork()==0:
+    signal.alarm(6) # A fork does not inherit the parent's alarm timer.
+    (root/'descendant').write_text(str(os.getpid()))
+    while not (root/'stop').exists():time.sleep(.005)
+    os._exit(0)
+os._exit(0)
+'''
+
+    def race(self, window):
+        import select,time
+        with tempfile.TemporaryDirectory(prefix='bm-b1-race-',dir='/private/tmp') as tmp:
+            root=Path(tmp);group=w._ChildGroup();queue=select.kqueue();registered=[];events=[];signals=[]
+            process=subprocess.Popen([w.PYTHON,'-B','-c',self.LEADER,tmp],cwd=root,
+                env=w.environment(root),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            group.process=process
+            real_members=group.members;real_signal=os.killpg
+            def wait_for(predicate):
+                deadline=time.monotonic()+3
+                while not predicate():
+                    if time.monotonic()>=deadline:raise AssertionError('bounded synthetic handshake timed out')
+                    time.sleep(.005)
+            def fork_and_exit():
+                (root/'fork').touch()
+                wait_for(lambda:(root/'descendant').exists() and group.exited())
+                pid=int((root/'descendant').read_text())
+                queue.control([select.kevent(pid,filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD|select.KQ_EV_ONESHOT,fflags=select.KQ_NOTE_EXIT)],0,0)
+                registered.append(pid);events.append('leader_exited_descendant_alive')
+            def snapshot():
+                if not events:
+                    if window=='before':fork_and_exit()
+                    values=real_members()
+                    events.append('inventory_with_descendant' if len(values)>1 else 'live_leader_only_inventory')
+                    if window=='after':fork_and_exit()
+                    return values
+                return real_members()
+            def send(pid,sig):
+                self.assertEqual(pid,process.pid)
+                signals.append(int(sig));return real_signal(pid,sig)
+            try:
+                wait_for(lambda:(root/'leader-ready').exists())
+                self.assertFalse(group.exited())
+                with mock.patch.object(group,'members',side_effect=snapshot),mock.patch.object(w.os,'killpg',side_effect=send):
+                    group.finish(lambda:time.sleep(.01))
+                actual=real_members()
+                print('B1_OBSERVATION '+json.dumps(dict(window=window,events=events,
+                    confirmed=group.confirmed,descendants_remaining=len(actual-{process.pid}),signals=signals)),flush=True)
+                self.assertTrue(group.confirmed)
+                self.assertEqual(actual,{process.pid},'completion accepted a stale pre-exit inventory')
+                self.assertTrue(signals,'live descendant must require task-owned group cleanup')
+            finally:
+                # Keep the leader unreaped, restore real observations and finish
+                # the original owned group even when testing the old false success.
+                (root/'stop').touch()
+                try:
+                    group.finish(lambda:time.sleep(.01))
+                    self.assertEqual(group.members(),{process.pid})
+                    process.wait(timeout=2)
+                    if registered:self.assertEqual(len(queue.control(None,1,7)),1)
+                    print('B1_EXPLICIT_TEARDOWN '+json.dumps(dict(window=window,confirmed=True)),flush=True)
+                finally:queue.close()
+
+    def test_fork_and_exit_after_snapshot_cannot_confirm_cleanup(self):self.race('after')
+    def test_fork_before_snapshot_negative_control(self):self.race('before')
+
+    def test_confirm_exit_before_completion_inventory(self):
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None);events=[]
+        def exited():events.append('exit');return True
+        def members():events.append('inventory');return {12345}
+        with mock.patch.object(group,'exited',side_effect=exited),mock.patch.object(group,'members',side_effect=members),mock.patch.object(w.os,'killpg') as send:
+            group.finish(lambda:None)
+            self.assertEqual(events,['exit','inventory'])
+            send.assert_not_called()
+
+    def test_live_leader_never_confirms_even_with_singleton_inventory(self):
+        import itertools,signal
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group,'exited',return_value=False),mock.patch.object(group,'members',return_value={12345}),mock.patch.object(w.time,'monotonic',side_effect=itertools.count()),mock.patch.object(w.os,'killpg') as send:
+            with self.assertRaisesRegex(s.Refusal,'^child_cleanup_failed$'):group.finish(lambda:None)
+            self.assertFalse(group.confirmed)
+            self.assertEqual(send.call_args_list,[mock.call(12345,signal.SIGTERM),mock.call(12345,signal.SIGKILL)])
+
+    def test_real_zombie_only_zero_term_kill_are_not_completion_authority(self):
+        import errno,signal,time
+        group=w._ChildGroup()
+        process=subprocess.Popen([w.PYTHON,'-B','-c','import signal;signal.alarm(4)'],
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        group.process=process;observed={}
+        try:
+            deadline=time.monotonic()+3
+            while not group.exited():
+                self.assertLess(time.monotonic(),deadline);time.sleep(.005)
+            self.assertEqual(group.members(),{process.pid})
+            for sig in (0,signal.SIGTERM,signal.SIGKILL):
+                # Exact original group, held by its unreaped zombie leader.
+                self.assertTrue(group.exited());self.assertEqual(group.members(),{process.pid})
+                try:os.killpg(process.pid,sig)
+                except OSError as exc:
+                    self.assertIn(exc.errno,(errno.EPERM,errno.ESRCH));observed[str(int(sig))]=errno.errorcode[exc.errno]
+                else:observed[str(int(sig))]='returned_zero'
+            with mock.patch.object(w.os,'killpg') as send:
+                group.finish(lambda:None);send.assert_not_called()
+            self.assertTrue(group.confirmed)
+            print('ZOMBIE_ONLY_OBSERVATION '+json.dumps(dict(signals=observed,
+                completion_authority='WNOWAIT exit then singleton inventory',confirmed=True)),flush=True)
+        finally:
+            group.finish(lambda:time.sleep(.01));process.wait(timeout=2)
+
+    def test_actual_signaling_eperm_is_inconclusive(self):
+        import errno,signal
+        group=w._ChildGroup();group.process=mock.Mock(pid=12345,returncode=None)
+        with mock.patch.object(group,'exited',return_value=True),mock.patch.object(group,'members',return_value={12345,12346}),mock.patch.object(w.os,'killpg',side_effect=PermissionError(errno.EPERM,'synthetic denied')) as send:
+            with self.assertRaises(PermissionError):group.finish(lambda:None)
+            self.assertFalse(group.confirmed)
+            send.assert_called_once_with(12345,signal.SIGTERM)
