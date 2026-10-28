@@ -14,7 +14,7 @@ from resources.lib.artifacts import ArtifactStore
 from tests import test_frozen as capture
 from tests import test_d028_admission as admission
 from tests import test_d028_preparation as standalone
-from tests.builtin_evidence import core_node
+from tests.builtin_evidence import SyntheticBuiltinBackend, core_node
 from tests.test_status import DEMO
 
 CORE = '<import addon="xbmc.core" version="0.1.0"/>'
@@ -48,6 +48,7 @@ class B1DependencyTests(unittest.TestCase):
                 backend = frozen.InMemoryInventoryBackend([capture._addon('plugin.test')],
                     {'plugin.test': payload}, package_cache={('plugin.test', '1.0.0'):
                         [('test.zip', capture._zip('plugin.test', xml_bytes=payload))]})
+                backend.read_verified_builtin_metadata = SyntheticBuiltinBackend().read_verified_builtin_metadata
                 store = ArtifactStore(Path(tmp))
                 result = frozen.capture_frozen_build(backend=backend, store=store,
                     root_addon_ids=['plugin.test'], build_id='boolean', name='Boolean', created_at='now')

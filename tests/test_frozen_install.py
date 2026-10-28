@@ -2332,6 +2332,8 @@ class PlatformProvidedInstallTests(unittest.TestCase):
             _kodi_rpc(self.entries if entries is None else entries),
             addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
         )
+        # Capture authority is independent of the target state mutated by install tests.
+        backend.read_verified_builtin_metadata = SyntheticBuiltinBackend().read_verified_builtin_metadata
         return close_python(capture_frozen_build(
             backend=backend, store=self.artifacts, root_addon_ids=[PLATFORM_ROOT],
             build_id="platform-install", name="Platform install", created_at="2026-10-09T00:00:00Z",
