@@ -495,6 +495,10 @@ class InventoryBackend:
     def get_source_metadata(self) -> Mapping[str, str]:
         return {}
 
+    def read_verified_builtin_metadata(self, edge: DependencyEdge) -> Optional[InstalledMetadata]:
+        """Native builtin authority is unavailable unless explicitly supplied."""
+        return None
+
 
 class InMemoryInventoryBackend(InventoryBackend):
     """Small deterministic backend for tests and disposable harness fixtures."""
@@ -705,6 +709,16 @@ class KodiInventoryBackend(InventoryBackend):
             return None
         origin = InstalledOrigin.APPLICATION if root is self._application else InstalledOrigin.HOME
         return InstalledMetadata(xml_bytes, origin)
+
+    def read_verified_builtin_metadata(self, edge: DependencyEdge) -> Optional[InstalledMetadata]:
+        # Reuse the same native registration/origin/ABI proof as admission. Lazy
+        # import avoids the frozen/frozen_install module dependency at import time.
+        from resources.lib.frozen_install import KodiRuntimeFrozenArtifactBackend
+        verifier = KodiRuntimeFrozenArtifactBackend()
+        try:
+            return verifier.read_verified_builtin_metadata(edge)
+        finally:
+            verifier.close()
 
     def _trusted_roots(self):
         roots = [(_HOME_ADDONS_PREFIX, self._home)]
@@ -1132,6 +1146,7 @@ def capture_frozen_build(
     edges_by_id: Dict[str, List[DependencyEdge]] = {}
     optional_by_id: Dict[str, bool] = {}
     system_min_versions: Dict[str, str] = {}
+    builtin_versions: Dict[str, Tuple[str, str]] = {}
     metadata_errors = set()
     platform_ids = set()
     declared_points_by_id: Dict[str, Tuple[str, ...]] = {}
@@ -1148,6 +1163,37 @@ def capture_frozen_build(
             return
         visited.add(addon_id)
         if _is_system_dependency(addon_id):
+            from resources.lib.frozen_install import _builtin_metadata_edges
+            visiting.add(addon_id)
+            try:
+                metadata = backend.read_verified_builtin_metadata(
+                    DependencyEdge(addon_id, system_min_versions.get(addon_id, "")))
+                if not isinstance(metadata, InstalledMetadata) or metadata.origin is not InstalledOrigin.APPLICATION:
+                    raise CaptureError("unverified builtin metadata")
+                root = ET.fromstring(metadata.xml_bytes)
+                version = root.get("version", "")
+                _check_addon_xml_identity(metadata.xml_bytes, addon_id, version)
+                floors = root.findall("backwards-compatibility")
+                abi = floors[0].get("abi", "") if len(floors) == 1 else ""
+                if not abi or not _builtin_version_satisfies(version, abi):
+                    raise CaptureError("invalid builtin ABI interval")
+                edges = _builtin_metadata_edges(metadata, addon_id)
+                if addon_id in ("xbmc.python", "xbmc.gui", "kodi.resource") and not any(
+                        e.addon_id == "xbmc.core" and not e.optional for e in edges):
+                    raise CaptureError("missing mandatory core requirement")
+                builtin_versions[addon_id] = (version, abi)
+                edges_by_id[addon_id] = list(edges)
+                for edge in edges:
+                    if _is_system_dependency(edge.addon_id):
+                        system_min_versions.setdefault(edge.addon_id, edge.min_version)
+                    walk(edge.addon_id, optional or edge.optional)
+            except Exception:
+                # Never expose native exception details or infer a version from
+                # an incoming requirement when trusted metadata is unavailable.
+                errors.append(f"{addon_id}: trusted builtin closure unavailable")
+                metadata_errors.add(addon_id)
+            finally:
+                visiting.remove(addon_id)
             return
         raw = installed.get(addon_id)
         if raw is None:
@@ -1192,6 +1238,12 @@ def capture_frozen_build(
             if edge.min_version and not edge.optional:
                 incoming_minima.setdefault(edge.addon_id, []).append(edge.min_version)
 
+    for addon_id, (version, abi) in builtin_versions.items():
+        if any(not _builtin_version_satisfies(version, minimum)
+               or not _builtin_version_satisfies(minimum, abi)
+               for minimum in incoming_minima.get(addon_id, ())):
+            errors.append(f"{addon_id}: incompatible builtin requirement")
+
     nodes: List[AddonCaptureNode] = []
     for addon_id in sorted(visited):
         if _is_system_dependency(addon_id):
@@ -1199,11 +1251,12 @@ def capture_frozen_build(
             nodes.append(
                 AddonCaptureNode(
                     addon_id=addon_id,
-                    version=str(raw.get("version", "")) or system_min_versions.get(addon_id, ""),
+                    version=builtin_versions.get(addon_id, ("", ""))[0],
                     addon_type=str(raw.get("type", "system")),
                     desired_enabled=True,
                     provenance=ProvenanceStatus.UNKNOWN,
                     system=True,
+                    dependency_edges=_combine_edges(edges_by_id.get(addon_id, ())),
                     optional=optional_by_id.get(addon_id, False),
                     status=CaptureStatus.SYSTEM,
                 )

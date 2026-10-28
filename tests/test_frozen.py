@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from resources.lib.artifacts import ArtifactStore
+from tests.builtin_evidence import SyntheticBuiltinBackend
 from resources.lib.frozen import (
     CaptureStatus,
     FrozenBuildManifest,
@@ -81,10 +82,12 @@ class TestFrozenCapture(unittest.TestCase):
         addons = [_addon("plugin.root", addon_type="xbmc.python.plugin.video")]
         xml = {"plugin.root": _xml("plugin.root", imports=(("xbmc.python", "3.0.0", False),))}
         package = {("plugin.root", "1.0.0"): [("plugin.root.zip", _zip("plugin.root", xml_bytes=xml["plugin.root"]))]}
+        backend = InMemoryInventoryBackend(addons, xml, package_cache=package)
+        backend.read_verified_builtin_metadata = SyntheticBuiltinBackend().read_verified_builtin_metadata
         with tempfile.TemporaryDirectory() as directory:
             store = ArtifactStore(Path(directory))
             result = capture_frozen_build(
-                backend=InMemoryInventoryBackend(addons, xml, package_cache=package),
+                backend=backend,
                 store=store, root_addon_ids=["plugin.root"],
                 build_id="build-a", name="Example", created_at="now",
             )
@@ -714,6 +717,9 @@ class PlatformProvidedCaptureTests(unittest.TestCase):
             _kodi_rpc(self.entries if entries is None else entries),
             addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
         )
+        # Disposable inventory has no Kodi runtime; supply explicit synthetic
+        # native authority, rather than granting trust to its ordinary XML.
+        backend.read_verified_builtin_metadata = SyntheticBuiltinBackend().read_verified_builtin_metadata
         return capture_frozen_build(
             backend=backend, store=ArtifactStore(self.store_dir), root_addon_ids=list(roots),
             build_id="platform-fixture", name="Platform fixture", created_at="2026-10-09T00:00:00Z",

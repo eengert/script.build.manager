@@ -15,6 +15,7 @@ from resources.lib.config import ConfigurationBackend, ConfigSettingType as T, C
 from resources.lib.create_capture import (CreateBuildRequest, CreateBuildCaptureEngine, CreateCaptureStatus as S,
     PublicCaptureSpecification as Spec, PublicSettingTarget as Target, CreateRequestError, describe_capture)
 from resources.lib.frozen import InMemoryInventoryBackend, FrozenBuildManifest, KodiInventoryBackend
+from tests.builtin_evidence import SyntheticBuiltinBackend
 from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind as K
 from resources.lib.private_resource import StructuredPrivateResourceManager
 from resources.lib.redlight_resource import RedLightSettingsAdapter
@@ -779,6 +780,7 @@ class BundledCreateCaptureTests(unittest.TestCase):
             ]),
             addons_dir=self.home, package_cache_dir=self.cache, application_addons_dir=self.application,
         )
+        inventory.read_verified_builtin_metadata = SyntheticBuiltinBackend().read_verified_builtin_metadata
         self.store = ArtifactStore(self.base / 'artifacts')
         self.config = Configuration()
         self.state = SimpleNamespace(platform='macos', kodi_version='21.0', active_skin='')
