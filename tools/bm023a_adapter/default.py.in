@@ -181,11 +181,13 @@ try:
         inspect_retained_inputs,
         parse_adapter_mode,
         recover_frozen_install,
+        recover_library_frozen_install,
         retry_held_frozen_install,
         safe_failure_payload,
         read_adapter_status,
         read_platform_check,
         _platform_directory,
+        _platform_read,
         write_platform_result,
         reject_cached_production_modules,
         repair_frozen_install_source,
@@ -316,6 +318,8 @@ try:
                 ]
             if mode in ("recover", "retry"):
                 production_module_names.append("resources.lib.frozen")
+            if mode == "recover":
+                production_module_names.append("resources.lib.build_library")
             if mode == "retry":
                 production_module_names.append("resources.lib.build_manager")
             elif mode == "install":
@@ -401,7 +405,15 @@ try:
                 require_retained_inputs(RETAINED_INPUTS_RECORD, require_artifacts=False)
                 manifest_text = Path(MANIFEST_PATH).read_text(encoding="utf-8")
                 FAILING_CALLABLE = "FrozenBuildManifest.from_json"
-                manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)
+                recovery_document = json.loads(manifest_text)
+                library_recovery = (isinstance(recovery_document, dict)
+                    and recovery_document.get("schema") == "bm-library-recovery/1")
+                if library_recovery:
+                    # Require the explicit recovery document to survive the
+                    # existing descriptor-pinned reader before using its pins.
+                    recovery_document = json.loads(_platform_read(
+                        MANIFEST_PATH, 4 * 1024 * 1024).decode("utf-8"))
+                manifest = None if library_recovery else frozen_module.FrozenBuildManifest.from_json(manifest_text)
 
                 STAGE = "CHECK_RECOVERY_PRECONDITIONS"
                 FAILING_CALLABLE = "pathlib.Path"
@@ -411,31 +423,30 @@ try:
                     raise AdapterBootstrapError(
                         STAGE, FAILING_CALLABLE, "path_missing_or_unreadable"
                     )
-                store = frozen_install_module.FrozenInstallStore(root=frozen_root)
+                store = (frozen_install_module.FrozenInstallStore(root=frozen_root, create=False)
+                         if library_recovery else frozen_install_module.FrozenInstallStore(root=frozen_root))
                 policy_backend = update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc)
                 installer = frozen_install_module.KodiRuntimeFrozenArtifactBackend()
-                coordinator = frozen_install_module.FrozenInstallCoordinator(
-                    store=store,
-                    artifact_store=artifacts_module.ArtifactStore(artifact_root),
-                    policy_backend=policy_backend,
-                    installer=installer,
-                )
                 STAGE = "CHECK_RECOVERY_PRECONDITIONS"
                 FAILING_CALLABLE = "FrozenInstallStore.inspect"
-                payload = recover_frozen_install(
-                    coordinator,
-                    store,
-                    policy_backend,
-                    installer,
-                    Path(restart_module.TransactionStore().transaction_path),
-                    manifest=manifest,
-                    manifest_path=MANIFEST_PATH,
-                    configuration_manifest_path=CONFIGURATION_PATH,
-                    device_profile_id=DEVICE_PROFILE_ID,
-                    expected_overlay_id=EXPECTED_OVERLAY_ID,
-                    needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
-                    update_policy_type=update_guard_module.AddonUpdatePolicy,
-                )
+                if library_recovery:
+                    library_module = importlib.import_module("resources.lib.build_library")
+                    verify_production_module_sources(addon_root, {"resources.lib.build_library": library_module})
+                    payload = recover_library_frozen_install(recovery_document, store=store,
+                        policy_backend=policy_backend, installer=installer,
+                        restart_transaction_path=Path(restart_module.TransactionStore().transaction_path))
+                else:
+                    coordinator = frozen_install_module.FrozenInstallCoordinator(
+                        store=store, artifact_store=artifacts_module.ArtifactStore(artifact_root),
+                        policy_backend=policy_backend, installer=installer)
+                    payload = recover_frozen_install(
+                        coordinator, store, policy_backend, installer,
+                        Path(restart_module.TransactionStore().transaction_path),
+                        manifest=manifest, manifest_path=MANIFEST_PATH,
+                        configuration_manifest_path=CONFIGURATION_PATH,
+                        device_profile_id=DEVICE_PROFILE_ID, expected_overlay_id=EXPECTED_OVERLAY_ID,
+                        needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION,
+                        update_policy_type=update_guard_module.AddonUpdatePolicy)
             elif mode == "retry":
                 build_manager_module = importlib.import_module("resources.lib.build_manager")
                 frozen_module = importlib.import_module("resources.lib.frozen")

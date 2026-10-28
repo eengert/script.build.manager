@@ -626,6 +626,73 @@ def recover_frozen_install(
     }
 
 
+def recover_library_frozen_install(request, *, store, policy_backend, installer,
+                                   restart_transaction_path):
+    """Explicit native-library recovery; no caller-selected library or source path."""
+    from uuid import UUID
+    from resources.lib.build_library import default_build_library, LibraryInstallTarget
+    from resources.lib.frozen_install import FrozenInstallCoordinator, FrozenInstallPhase
+    from resources.lib.update_guard import AddonUpdatePolicy
+
+    stage = "CHECK_RECOVERY_PRECONDITIONS"
+    def refuse():
+        return _bootstrap_error(stage, "FrozenInstallStore.inspect", "recovery_identity_mismatch")
+
+    keys = {"schema", "transaction_id", "build_id", "entry_id", "device_profile_id",
+            "manifest_fingerprint", "phase", "status_code", "original_update_policy"}
+    try:
+        if (not isinstance(request, dict) or set(request) != keys
+                or request["schema"] != "bm-library-recovery/1"
+                or str(UUID(request["transaction_id"])) != request["transaction_id"]
+                or not _is_sha256_digest(request["entry_id"])
+                or not _is_sha256_digest(request["manifest_fingerprint"])
+                or request["phase"] != "needs_attention"
+                or request["status_code"] != "RESOLUTION_PERSISTENCE_FAILED"
+                or type(request["original_update_policy"]) is not int):
+            raise ValueError()
+        expected_policy = AddonUpdatePolicy(request["original_update_policy"])
+        library = default_build_library()
+        if store.root != Path(library.root).parent:
+            raise ValueError()
+        target = LibraryInstallTarget.from_plan_target(
+            library.plan_target(request["entry_id"], request["device_profile_id"]))
+        _, manifest, _ = target.load()
+        if manifest.build_id != request["build_id"] or manifest.fingerprint() != request["manifest_fingerprint"]:
+            raise ValueError()
+    except Exception:
+        raise refuse() from None
+
+    with store.locked_recovery_access() as access:
+        transaction = access.inspect()
+        if (transaction is None or transaction.transaction_id != request["transaction_id"]
+                or transaction.library_target != target
+                or transaction.phase is not FrozenInstallPhase.NEEDS_ATTENTION
+                or transaction.status_code != request["status_code"]
+                or transaction.original_update_policy is not expected_policy
+                or transaction.private_overlay_required or transaction.private_overlay_id
+                or transaction.private_overlay_fingerprint
+                or transaction.activation_hold_ids and not transaction.activation_hold_released
+                or restart_transaction_path.exists()):
+            raise refuse()
+        # Existing identity validation also binds empty standalone paths, build,
+        # profile and the authoritative library manifest before any mutation.
+        before = (library.current_applied_association(), library.publication_journal(),
+                  library.current_selection())
+        if library.pending_publication() is not None:
+            raise refuse()
+        coordinator = FrozenInstallCoordinator(store=access, artifact_store=None,
+            policy_backend=policy_backend, installer=installer)
+        result = recover_frozen_install(coordinator, access, policy_backend, installer,
+            restart_transaction_path, manifest=manifest, manifest_path="",
+            configuration_manifest_path="", device_profile_id=request["device_profile_id"],
+            expected_overlay_id="", needs_attention_phase=FrozenInstallPhase.NEEDS_ATTENTION,
+            update_policy_type=AddonUpdatePolicy)
+        if before != (library.current_applied_association(), library.publication_journal(),
+                      library.current_selection()):
+            raise _bootstrap_error("INVOKE_RECOVERY", "FrozenInstallCoordinator.abandon", "operation_failed")
+        return result
+
+
 def _safe_held_retry_result(result: Any) -> Dict[str, Any]:
     """Summarize only fixed labels and booleans from a held retry result."""
     allowed_outcomes = {"complete", "failed", "needs_attention", "awaiting_restart"}

@@ -713,6 +713,26 @@ class FrozenInstallStore:
     def locked(self) -> FrozenInstallLock:
         return FrozenInstallLock(self.lock_path)
 
+    @contextmanager
+    def locked_recovery_access(self):
+        """One synchronous recovery owner; nested store operations share its lock."""
+        import threading
+        active = True
+        owner = threading.get_ident()
+
+        class RecoveryAccess(FrozenInstallStore):
+            @contextmanager
+            def locked(access):
+                if not active or threading.get_ident() != owner:
+                    raise FrozenInstallStateConflict("recovery access is no longer owned")
+                yield
+
+        with self.locked():
+            try:
+                yield RecoveryAccess(self.root, create=False)
+            finally:
+                active = False
+
     def inspect(self) -> Optional[FrozenInstallTransaction]:
         with self.locked():
             if not self.transaction_path.exists():

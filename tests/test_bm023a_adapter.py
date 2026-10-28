@@ -867,9 +867,11 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
             manifest_unreadable=False,
             artifact_entries=1,
             recovery_changes=None,
+            library_recovery_request=None,
         ):
             with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                # Library requests use canonical no-follow descriptor chains.
+                root = Path(tmp).resolve() if library_recovery_request else Path(tmp)
                 profile_root = (
                     root / "Kodi Build Manager Test.app" / "Contents" / "Resources"
                     / "Kodi" / "portable_data" / "userdata"
@@ -892,6 +894,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     "resources.lib.build_manager",
                     "resources.lib.frozen",
                     "resources.lib.private_overlay",
+                    "resources.lib.build_library",
                 ):
                     module_source = lib_root / f"{module_name.rsplit('.', 1)[1]}.py"
                     if module_name == "resources.lib.frozen_install":
@@ -908,7 +911,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
 
                 manifest_path = root / "reviewed-manifest.json"
                 if create_manifest:
-                    manifest_path.write_text("{}", encoding="utf-8")
+                    manifest_path.write_text(json.dumps(library_recovery_request or {}), encoding="utf-8")
                     if manifest_unreadable:
                         manifest_path.chmod(0)
                         if os.access(manifest_path, os.R_OK):
@@ -998,8 +1001,9 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                 manager = object()
 
                 class FakeFrozenStore:
-                    def __init__(self, root=None):
+                    def __init__(self, root=None, *, create=True):
                         self.root = Path(root) if root is not None else durable_root
+                        self.create = create
                         self.current = (
                             transaction if mode == "retry"
                             else recovery_transaction
@@ -1131,6 +1135,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     ModuleType("resources.lib.private_overlay")
                 )
                 private_overlay_module.PrivateOverlayStore = FakePrivateOverlayStore
+                library_module = bind_production_source(ModuleType("resources.lib.build_library"))
 
                 resources_lib_module = ModuleType("resources.lib")
                 resources_lib_module.__file__ = str(lib_init)
@@ -1181,6 +1186,10 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     return actual_retry_helper(*args, **kwargs)
 
                 support_module.recover_frozen_install = tracked_recovery
+                def tracked_library_recovery(request, **kwargs):
+                    dispatch["library_recover"] = (request, kwargs)
+                    return {"ok": True, "adapter_mode": "recover", "transaction_cleared": True}
+                support_module.recover_library_frozen_install = tracked_library_recovery
                 support_module.retry_held_frozen_install = tracked_retry
 
                 stub_modules = {
@@ -1198,6 +1207,7 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     "resources.lib.build_manager": build_manager_module,
                     "resources.lib.frozen": frozen_module,
                     "resources.lib.private_overlay": private_overlay_module,
+                    "resources.lib.build_library": library_module,
                 }
                 cached_module_names = (
                     "resources",
@@ -1252,6 +1262,17 @@ class TestBm023aGeneratedEntrypointDispatch(unittest.TestCase):
                     manager,
                     durable_artifacts_dir.is_dir(),
                 )
+
+        with self.subTest(mode="recover", source="native library request"):
+            request = {"schema": "bm-library-recovery/1", "transaction_id": "explicit-pin"}
+            payload, dispatch, coordinators = execute("recover", library_recovery_request=request)[:3]
+            self.assertTrue(payload["ok"])
+            self.assertEqual(dispatch["library_recover"][0], request)
+            self.assertFalse(dispatch["library_recover"][1]["store"].create)
+            self.assertEqual(dispatch["recover"], [])
+            self.assertEqual(dispatch["install"], [])
+            self.assertEqual(dispatch["retry"], [])
+            self.assertEqual(coordinators, [])
 
         for mode in ("install", "recover", "retry"):
             with self.subTest(mode=mode):
