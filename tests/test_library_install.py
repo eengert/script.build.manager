@@ -459,8 +459,11 @@ class LibraryInstallTests(unittest.TestCase):
     def test_missing_entry_and_frozen_identity_mismatch_on_resume(self):
         target = self.target(); first = self.awaiting(target)
         raw = first.transaction.to_dict()
-        mismatch = FrozenInstallTransaction.from_dict({**raw, "manifest_fingerprint": "a" * 64})
-        with self.assertRaises(Exception): load_transaction_manifest(mismatch, forbidden)
+        with self.assertRaises(Exception):
+            # A contextual completion identity can reject source substitution
+            # during parsing, before the existing source loader gets control.
+            mismatch = FrozenInstallTransaction.from_dict({**raw, "manifest_fingerprint": "a" * 64})
+            load_transaction_manifest(mismatch, forbidden)
         self.fixture.envelope(target.source.entry_id).unlink()
         before = (dict(self.backend.installed), list(self.policy.calls), list(self.config.mutations))
         result = self.coordinator(session=SESSION_B).resume_after_restart()

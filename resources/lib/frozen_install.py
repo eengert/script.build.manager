@@ -77,6 +77,7 @@ from resources.lib.frozen_resolution import (
     effective_policy,
     install_plan_fingerprint,
     resolution_fingerprint,
+    completed_resolution_fingerprint,
     resolved_software_fingerprint,
     summarize_frozen_recoverability,
 )
@@ -327,7 +328,17 @@ class FrozenInstallTransaction:
             raise FrozenInstallValidationError("lifecycle_restart_count is invalid")
         if self.resolution_records:
             expected_resolution = resolution_fingerprint(self.resolution_records)
-            if self.resolution_fingerprint and self.resolution_fingerprint != expected_resolution:
+            # Legacy and in-flight decisions retain their records-only identity.
+            # A new completion additionally binds every immutable manifest field.
+            completed_resolution = ""
+            if (self.install_plan_fingerprint and self.resolved_software_fingerprint
+                    and all(r.state in (ResolutionState.INSTALLED, ResolutionState.SKIPPED)
+                            for r in self.resolution_records)):
+                completed_resolution = completed_resolution_fingerprint(
+                    self.build_id, self.manifest_fingerprint, self.install_plan_fingerprint,
+                    self.resolved_software_fingerprint, self.resolution_records)
+            if self.resolution_fingerprint and self.resolution_fingerprint not in (
+                    expected_resolution, completed_resolution):
                 raise FrozenInstallValidationError("transaction resolution fingerprint does not match")
 
     def to_dict(self) -> dict:
@@ -2750,14 +2761,16 @@ class FrozenInstallCoordinator:
     def _persist_resolutions(self, transaction, manifest, records):
         records = tuple(sorted(records, key=lambda record: record.addon_id))
         resolved_fingerprint = ""
+        fingerprint = resolution_fingerprint(records)
         if all(record.state in (ResolutionState.INSTALLED, ResolutionState.SKIPPED) for record in records):
             resolved_fingerprint = resolved_software_fingerprint(manifest, records)
+            fingerprint = self._make_resolution_manifest(manifest, transaction, records).resolution_fingerprint
         return self.store.transition_expected(
             transaction_id=transaction.transaction_id,
             expected_phase=transaction.phase,
             new_phase=transaction.phase,
             resolution_records=records,
-            resolution_fingerprint_value=resolution_fingerprint(records),
+            resolution_fingerprint_value=fingerprint,
             resolved_software_fingerprint_value=resolved_fingerprint,
         )
 
@@ -3680,7 +3693,9 @@ class FrozenInstallCoordinator:
         if manifest.fingerprint() != transaction.manifest_fingerprint:
             raise FrozenInstallValidationError("frozen manifest changed before resume")
         if transaction.resolution_records:
-            if resolution_fingerprint(records) != transaction.resolution_fingerprint:
+            if (resolution_fingerprint(records) != transaction.resolution_fingerprint
+                    and self._make_resolution_manifest(manifest, transaction, records).resolution_fingerprint
+                    != transaction.resolution_fingerprint):
                 raise FrozenInstallValidationError("durable resolution fingerprint changed")
             resulting = resolved_software_fingerprint(manifest, records)
             if transaction.resolved_software_fingerprint != resulting and not (

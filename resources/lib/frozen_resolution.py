@@ -514,9 +514,22 @@ def install_plan_fingerprint(
 
 
 def resolution_fingerprint(records: Sequence[InstallResolutionRecord]) -> str:
+    """Legacy record identity, also used for in-flight resolution decisions."""
     return _canonical_digest([
         record.semantic_dict() for record in sorted(records, key=lambda row: row.addon_id)
     ])
+
+
+def completed_resolution_fingerprint(build_id, source, plan, resulting, records) -> str:
+    """Immutable completion identity binds the full manifest, not just software rows."""
+    return _canonical_digest({
+        "schema_version": 2,
+        "build_id": build_id,
+        "source_software_fingerprint": source,
+        "install_plan_fingerprint": plan,
+        "resulting_software_fingerprint": resulting,
+        "records": [r.to_dict() for r in sorted(records, key=lambda r: r.addon_id)],
+    })
 
 
 def resolved_software_fingerprint(
@@ -579,14 +592,19 @@ class FrozenInstallResolutionManifest:
     install_plan_fingerprint: str
     resulting_software_fingerprint: str
     records: Tuple[InstallResolutionRecord, ...]
+    schema_version: int = 2
 
     @property
     def resolution_fingerprint(self) -> str:
-        return resolution_fingerprint(self.records)
+        if self.schema_version == 1:
+            return resolution_fingerprint(self.records)
+        return completed_resolution_fingerprint(
+            self.build_id, self.source_software_fingerprint, self.install_plan_fingerprint,
+            self.resulting_software_fingerprint, self.records)
 
     def to_dict(self) -> dict:
         return {
-            "schema_version": 1,
+            "schema_version": self.schema_version,
             "resolution_id": f"sha256:{self.resolution_fingerprint}",
             "build_id": self.build_id,
             "source_software_fingerprint": self.source_software_fingerprint,
@@ -603,7 +621,8 @@ class FrozenInstallResolutionManifest:
             "install_plan_fingerprint", "resolution_fingerprint",
             "resulting_software_fingerprint", "records",
         }
-        if not isinstance(value, dict) or set(value) != required or value["schema_version"] != 1:
+        if (not isinstance(value, dict) or set(value) != required
+                or type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2)):
             raise FrozenResolutionError("install resolution manifest fields are unsupported")
         raw_records = value["records"]
         if not isinstance(raw_records, list):
@@ -615,6 +634,7 @@ class FrozenInstallResolutionManifest:
                 install_plan_fingerprint=value["install_plan_fingerprint"],
                 resulting_software_fingerprint=value["resulting_software_fingerprint"],
                 records=tuple(InstallResolutionRecord.from_dict(item) for item in raw_records),
+                schema_version=value["schema_version"],
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise FrozenResolutionError("install resolution manifest contains invalid values") from exc
