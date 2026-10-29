@@ -37,7 +37,7 @@ SENTINEL = "SENTINEL-KEYCHAIN-SECRET-DoNotLeak-5521"
 STDERR_SENTINEL = "SENTINEL-SECURITY-STDERR-9917"
 EXPECTED_ARGV = [
     "/usr/bin/security", "find-generic-password",
-    "-a", "kodi", "-s", "ai-supervisor.test-app-kodi", "-w",
+    "-a", "kodi", "-s", "BM-TestApp-HTTP-RPC", "-w",
 ]
 
 
@@ -121,7 +121,7 @@ class TestKeychainLookup(helper_tests.TripwireTestCase):
         self.assertEqual(argv, EXPECTED_ARGV)
         self.assertTrue(all(isinstance(item, str) for item in argv))
         self.assertEqual((kc.SECURITY_BIN, kc.KEYCHAIN_SERVICE, kc.KEYCHAIN_ACCOUNT),
-                         ("/usr/bin/security", "ai-supervisor.test-app-kodi", "kodi"))
+                         ("/usr/bin/security", "BM-TestApp-HTTP-RPC", "kodi"))
         for banned in ("-g", "dump-keychain", "find-internet-password", "list-keychains", "-D", "-j"):
             self.assertNotIn(banned, argv)
 
@@ -463,7 +463,7 @@ class TestWrapperStaticSafety(unittest.TestCase):
 
     def test_constants_are_exact_literals_defined_once(self):
         self.assertEqual(WRAPPER_SOURCE.count('"/usr/bin/security"'), 1)
-        self.assertEqual(WRAPPER_SOURCE.count('"ai-supervisor.test-app-kodi"'), 1)
+        self.assertEqual(WRAPPER_SOURCE.count('"BM-TestApp-HTTP-RPC"'), 1)
         self.assertEqual(WRAPPER_SOURCE.count('KEYCHAIN_ACCOUNT = "kodi"'), 1)
         self.assertEqual(WRAPPER_SOURCE.count('"find-generic-password"'), 1)
 

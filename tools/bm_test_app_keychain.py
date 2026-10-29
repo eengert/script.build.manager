@@ -36,7 +36,7 @@ from tools import bm_test_app as bm  # noqa: E402
 
 # The trusted wrapper identity. Deliberately not configurable from anywhere.
 SECURITY_BIN = "/usr/bin/security"
-KEYCHAIN_SERVICE = "ai-supervisor.test-app-kodi"
+KEYCHAIN_SERVICE = "BM-TestApp-HTTP-RPC"
 KEYCHAIN_ACCOUNT = "kodi"
 LOOKUP_ARGV = (
     SECURITY_BIN,
