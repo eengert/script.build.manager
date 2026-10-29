@@ -235,10 +235,10 @@ secret registry and the output leak guard) stays inside `bm_test_app.py`.
   (`/dev/tty`, never stdin). Use it when the password is entered by hand.
 - `tools/bm_test_app_keychain.py`: same arguments, JSON output and exit codes,
   but the password comes from one fixed macOS Keychain item read inside the local
-  process (service `ai-supervisor.test-app-kodi`, account `kodi`), so an agent
-  that runs it never receives the password. The lookup is exactly
-  `/usr/bin/security find-generic-password -a kodi -s ai-supervisor.test-app-kodi -w`:
-  argv list, no shell, stdin closed, stderr discarded, fixed minimal environment,
+  process (service `BM-TestApp-HTTP-RPC`, account `kodi`), so an agent
+  that runs it never receives the password. The lookup result is captured inside
+  the wrapper process and is never displayed. The lookup uses a fixed argument
+  list, no shell, stdin closed, stderr discarded, fixed minimal environment,
   15 s timeout, strict validation of the item. The item identity is a constant of
   that file; it cannot come from the command line, environment, config or stdin.
 
