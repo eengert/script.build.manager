@@ -185,6 +185,7 @@ try:
         retry_held_frozen_install,
         safe_failure_payload,
         read_adapter_status,
+        read_native_recovery_identity,
         read_platform_check,
         _platform_directory,
         _platform_read,
@@ -308,6 +309,7 @@ try:
                 production_module_names = [
                     "resources.lib.frozen_install",
                     "resources.lib.transaction",
+                    "resources.lib.build_library",
                 ]
             else:
                 production_module_names = [
@@ -361,9 +363,11 @@ try:
             elif mode == "status":
                 frozen_install_module = importlib.import_module("resources.lib.frozen_install")
                 transaction_module = importlib.import_module("resources.lib.transaction")
+                library_module = importlib.import_module("resources.lib.build_library")
                 verify_production_module_sources(addon_root, {
                     "resources.lib.frozen_install": frozen_install_module,
                     "resources.lib.transaction": transaction_module,
+                    "resources.lib.build_library": library_module,
                 })
 
                 STAGE = "READ_STATUS"
@@ -379,6 +383,9 @@ try:
                     transaction_module.RestartTransaction.from_dict,
                 )
                 payload = {"ok": True, "status": status}
+                identity = read_native_recovery_identity(frozen_root, restart_store.transaction_path)
+                if identity is not None:
+                    payload["recovery_identity"] = identity
             else:
                 artifacts_module = importlib.import_module("resources.lib.artifacts")
                 frozen_install_module = importlib.import_module("resources.lib.frozen_install")

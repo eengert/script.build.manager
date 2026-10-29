@@ -501,6 +501,99 @@ def _require_transaction_identity(
         raise _bootstrap_error(stage, "FrozenInstallStore.inspect", category)
 
 
+def project_recovery_identity(value):
+    """Closed public nine-field request; never expose paths or arbitrary text."""
+    import re
+    from uuid import UUID
+
+    keys = {"schema", "transaction_id", "build_id", "entry_id", "device_profile_id",
+            "manifest_fingerprint", "phase", "status_code", "original_update_policy"}
+    try:
+        valid = (isinstance(value, dict) and set(value) == keys
+            and value["schema"] == "bm-library-recovery/1"
+            and isinstance(value["transaction_id"], str)
+            and str(UUID(value["transaction_id"])) == value["transaction_id"]
+            and all(isinstance(value[key], str)
+                    and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", value[key])
+                    for key in ("build_id", "device_profile_id"))
+            and all(_is_sha256_digest(value[key]) for key in ("entry_id", "manifest_fingerprint"))
+            and value["phase"] == "needs_attention"
+            and value["status_code"] == "RESOLUTION_PERSISTENCE_FAILED"
+            and type(value["original_update_policy"]) is int
+            and value["original_update_policy"] in (0, 1, 2))
+    except (ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        raise ValueError("invalid recovery identity")
+    return {key: value[key] for key in sorted(keys)}
+
+
+def read_native_recovery_identity(frozen_root, restart_transaction_path):
+    """Point-in-time runtime authority, without locks, writes or recovery calls.
+
+    Omit identity on any unavailable proof. Recovery must separately revalidate
+    these pins under its own lock; this observation grants no mutation authority.
+    """
+    def restart_absent():
+        parent = _platform_directory(Path(restart_transaction_path).parent)
+        try:
+            try:
+                os.stat(Path(restart_transaction_path).name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return True
+            return False
+        finally:
+            os.close(parent)
+
+    try:
+        from resources.lib.build_library import default_build_library, LibraryInstallTarget
+        from resources.lib.frozen_install import FrozenInstallStore, FrozenInstallTransaction, FrozenInstallPhase
+        from resources.lib.update_guard import AddonUpdatePolicy
+
+        path = Path(frozen_root) / "frozen_install_transaction.json"
+        raw = _platform_read(path, _STATUS_FROZEN_MAX_BYTES)
+        transaction = FrozenInstallStore.read_snapshot(root=frozen_root)
+        if (not isinstance(transaction, FrozenInstallTransaction)
+                or transaction != FrozenInstallTransaction.from_dict(json.loads(raw))
+                or transaction.phase is not FrozenInstallPhase.NEEDS_ATTENTION
+                or transaction.status_code != "RESOLUTION_PERSISTENCE_FAILED"
+                or not isinstance(transaction.original_update_policy, AddonUpdatePolicy)
+                or transaction.private_overlay_required or transaction.private_overlay_id
+                or transaction.private_overlay_fingerprint
+                or transaction.activation_hold_ids and not transaction.activation_hold_released
+                or transaction.restart_transaction_id):
+            return None
+        # A directory, symlink, unreadable owner or missing parent also refuses.
+        if not restart_absent():
+            return None
+        library = default_build_library()
+        if Path(frozen_root) != Path(library.root).parent or transaction.library_target is None:
+            return None
+        target = LibraryInstallTarget.from_plan_target(library.plan_target(
+            transaction.library_target.source.entry_id, transaction.device_profile_id))
+        if transaction.library_target != target or library.pending_publication() is not None:
+            return None
+        _, manifest, _ = target.load()
+        _require_transaction_identity(transaction, manifest,
+            stage="READ_STATUS", category="recovery_identity_mismatch", manifest_path="",
+            configuration_manifest_path="", device_profile_id=target.device_profile_id,
+            expected_overlay_id="")
+        identity = project_recovery_identity({
+            "schema": "bm-library-recovery/1", "transaction_id": transaction.transaction_id,
+            "build_id": manifest.build_id, "entry_id": target.source.entry_id,
+            "device_profile_id": target.device_profile_id,
+            "manifest_fingerprint": manifest.fingerprint(), "phase": transaction.phase.value,
+            "status_code": transaction.status_code,
+            "original_update_policy": int(transaction.original_update_policy)})
+        if (_platform_read(path, _STATUS_FROZEN_MAX_BYTES) != raw
+                or target.load()[1].fingerprint() != identity["manifest_fingerprint"]
+                or library.pending_publication() is not None or not restart_absent()):
+            return None
+        return identity
+    except Exception:
+        return None
+
+
 def recover_frozen_install(
     coordinator: Any,
     store: Any,

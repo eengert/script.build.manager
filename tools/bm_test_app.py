@@ -2970,7 +2970,8 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
         "retry_invoked": _v_bool,
         "transaction": _RETRY_TRANSACTION,
     },
-    "status": {"status": _STATUS_RECORD},
+    "status": {"status": _STATUS_RECORD,
+               "recovery_identity": _adapter.project_recovery_identity},
     "platform_check": {"platform_check": _adapter.project_platform_check},
 }
 
