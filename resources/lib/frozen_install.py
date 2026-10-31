@@ -43,6 +43,7 @@ from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.build_library import LibraryInstallTarget, LibraryError
 from resources.lib.build_manager import ActionFailureDiagnostic, ReconcileRequest
 from resources.lib.skin import SkinFailureCode
+from resources.lib.skin_approval_state import SkinApprovalState, AUTHORIZED as SKIN_AUTHORIZED, CANCELLED as SKIN_CANCELLED
 from resources.lib.private_resource import ResourceInitializationStage
 from resources.lib.readonly_io import ReadOnlyStateError, UnsafeStateFile, read_regular_file
 from resources.lib.frozen import (
@@ -252,8 +253,15 @@ class FrozenInstallTransaction:
     # from. Empty means no prior outcome. Identity-bearing: a request or resume with a
     # different prior is a different operation.
     prior_resolution_fingerprint: str = ""
+    skin_approval: Optional[SkinApprovalState] = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.phase, FrozenInstallPhase):
+            raise FrozenInstallValidationError("invalid frozen-install phase")
+        if self.skin_approval is not None:
+            if not isinstance(self.skin_approval, SkinApprovalState):
+                raise FrozenInstallValidationError("invalid skin approval state")
+            self.skin_approval.validate_transaction(self)
         _valid_uuid(self.transaction_id, "transaction_id")
         _valid_uuid(self.originating_kodi_session_id, "originating_kodi_session_id")
         if not isinstance(self.build_id, str) or not self.build_id:
@@ -343,7 +351,8 @@ class FrozenInstallTransaction:
 
     def to_dict(self) -> dict:
         return {
-            "schema_version": _TRANSACTION_SCHEMA,
+            "schema_version": 5 if self.skin_approval is not None else _TRANSACTION_SCHEMA,
+            **({"skin_approval": self.skin_approval.to_dict()} if self.skin_approval is not None else {}),
             "library_target": self.library_target.to_dict() if self.library_target is not None else None,
             "transaction_id": self.transaction_id,
             "build_id": self.build_id,
@@ -387,6 +396,7 @@ class FrozenInstallTransaction:
             "updated_at", "status_code", "status_message",
         }
         optional = {
+            "skin_approval",
             "private_overlay_id", "private_overlay_fingerprint",
             "private_overlay_required",
             "install_plan_fingerprint", "policies", "resolution_records",
@@ -397,22 +407,26 @@ class FrozenInstallTransaction:
         }
         if set(value) - required - optional or not required.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction fields are unsupported")
-        if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2, 3, _TRANSACTION_SCHEMA):
+        if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2, 3, _TRANSACTION_SCHEMA, 5):
             raise FrozenInstallPersistenceError("unsupported frozen transaction schema")
-        if value["schema_version"] in (2, 3, _TRANSACTION_SCHEMA) and not {
+        if value["schema_version"] in (2, 3, _TRANSACTION_SCHEMA, 5) and not {
             "install_plan_fingerprint", "policies", "resolution_records",
             "resolution_fingerprint", "resolved_software_fingerprint",
         }.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction is missing resolution metadata")
-        if value["schema_version"] in (3, _TRANSACTION_SCHEMA) and not {
+        if value["schema_version"] in (3, _TRANSACTION_SCHEMA, 5) and not {
             "configuration_manifest_path", "lifecycle_stage", "activation_hold_ids",
             "activation_hold_released", "lifecycle_restart_count",
         }.issubset(value):
             raise FrozenInstallPersistenceError("frozen transaction is missing lifecycle metadata")
-        if value["schema_version"] == _TRANSACTION_SCHEMA and "library_target" not in value:
+        if value["schema_version"] in (_TRANSACTION_SCHEMA, 5) and "library_target" not in value:
             raise FrozenInstallPersistenceError("frozen transaction is missing source metadata")
-        if value["schema_version"] != _TRANSACTION_SCHEMA and value.get("library_target") is not None:
+        if value["schema_version"] not in (_TRANSACTION_SCHEMA, 5) and value.get("library_target") is not None:
             raise FrozenInstallPersistenceError("legacy transaction cannot declare a library source")
+        if (value["schema_version"] == 5) != (value.get("skin_approval") is not None):
+            raise FrozenInstallPersistenceError("skin approval schema mismatch")
+        if value["schema_version"] != 5 and "skin_approval" in value:
+            raise FrozenInstallPersistenceError("legacy skin approval field refused")
         try:
             library_target = (
                 LibraryInstallTarget.from_dict(value["library_target"])
@@ -431,6 +445,7 @@ class FrozenInstallTransaction:
                 for item in value.get("resolution_records", [])
             )
             return cls(
+                skin_approval=SkinApprovalState.from_dict(value["skin_approval"]) if value["schema_version"] == 5 else None,
                 library_target=library_target,
                 transaction_id=value["transaction_id"],
                 build_id=value["build_id"],
@@ -774,6 +789,8 @@ class FrozenInstallStore:
         with self.locked():
             from resources.lib.capture_lifecycle import require_no_capture
             require_no_capture(self.root)
+            if transaction.skin_approval is not None and transaction.skin_approval.phase != SKIN_AUTHORIZED:
+                raise FrozenInstallStateConflict("skin protocol must start at authorization")
             if self.transaction_path.exists():
                 raise FrozenInstallStateConflict("a frozen install transaction is already active")
             self._write_unlocked(transaction)
@@ -807,6 +824,8 @@ class FrozenInstallStore:
                 raise FrozenInstallStateConflict("frozen transaction identity changed")
             if current.phase is not expected_phase:
                 raise FrozenInstallStateConflict("frozen transaction phase changed")
+            if current.skin_approval is not None:
+                raise FrozenInstallStateConflict("skin approval requires dedicated state API")
             if current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
                 raise FrozenInstallStateConflict("publication fence cannot be transitioned")
             if new_phase is FrozenInstallPhase.PUBLICATION_PENDING and (
@@ -873,6 +892,8 @@ class FrozenInstallStore:
                 return False
             if current.transaction_id != transaction_id or current.phase is not expected_phase:
                 raise FrozenInstallStateConflict("frozen transaction changed before clear")
+            if current.skin_approval is not None:
+                raise FrozenInstallStateConflict("skin approval evidence cannot be cleared")
             if current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
                 raise FrozenInstallStateConflict("publication fence requires publication completion")
             try:
@@ -926,6 +947,8 @@ class FrozenInstallStore:
     def clear(self) -> bool:
         with self.locked():
             current = self._read_unlocked()
+            if current is not None and current.skin_approval is not None:
+                raise FrozenInstallStateConflict("skin approval evidence cannot be cleared")
             if current is not None and current.phase is FrozenInstallPhase.PUBLICATION_PENDING:
                 raise FrozenInstallStateConflict("publication fence requires publication completion")
             try:
@@ -2948,6 +2971,11 @@ class FrozenInstallCoordinator:
                                        message="capture lifecycle prevents frozen installation")
         try:
             from resources.lib.build_library import authoritative_build_library
+            pending_approval = self.store.inspect()
+            if pending_approval is not None and pending_approval.skin_approval is not None:
+                return FrozenInstallResult("needs_attention", transaction=pending_approval,
+                    code="SKIN_APPROVAL_PROTOCOL_PENDING",
+                    message="skin approval protocol is not executable through ordinary install")
             try:
                 library = authoritative_build_library()
             except Exception:
@@ -4109,6 +4137,14 @@ class FrozenInstallCoordinator:
         bm020_result: object = None,
         transaction_access: Optional[object] = None,
     ) -> FrozenInstallResult:
+        try:
+            pending_approval = self.store.inspect()
+        except Exception:
+            return FrozenInstallResult("needs_attention", code="FROZEN_TRANSACTION_UNREADABLE",
+                message="frozen transaction identity could not be established")
+        if pending_approval is not None and pending_approval.skin_approval is not None:
+            return FrozenInstallResult("needs_attention", transaction=pending_approval,
+                code="SKIN_APPROVAL_PROTOCOL_PENDING", message="fresh explicit approval is required")
         publication = recover_applied_publication(store=self.store, policy_backend=self.policy_backend)
         if publication is not None:
             return publication
@@ -4248,6 +4284,10 @@ class FrozenInstallCoordinator:
         transaction = self._safe_inspect()
         if transaction is None:
             return FrozenInstallResult("complete", message="no frozen transaction is active")
+        if transaction.skin_approval is not None:
+            return FrozenInstallResult("needs_attention", transaction=transaction,
+                code="SKIN_APPROVAL_EXPLICIT_CANCELLATION_REQUIRED",
+                message="skin approval protocol cannot use ordinary abandon")
         if transaction.phase is FrozenInstallPhase.PUBLICATION_PENDING:
             return FrozenInstallResult(
                 "needs_attention", transaction=transaction,
@@ -5248,6 +5288,25 @@ def run_frozen_install_startup(
     continuation even when BM-020 correctly reports ``no_transaction``.
     """
     target = store or FrozenInstallStore()
+    pending_approval = target.inspect()
+    if pending_approval is not None and pending_approval.skin_approval is not None:
+        # Dormant protocol: never invoke a configuration runner, restart resume,
+        # publication recovery, or policy setter. Phase and evidence survive.
+        backend = policy_backend or _default_policy_backend()
+        try:
+            if pending_approval.skin_approval.phase == SKIN_CANCELLED:
+                observed_policy = backend.get_policy()
+                if not isinstance(observed_policy, AddonUpdatePolicy) or observed_policy != pending_approval.original_update_policy:
+                    raise FrozenInstallStateConflict("cancelled policy mismatch")
+            else:
+                precondition = ensure_frozen_install_guard(store=target, policy_backend=backend)
+                if not precondition.allowed and precondition.code != "FROZEN_NEEDS_ATTENTION":
+                    raise FrozenInstallStateConflict("pending approval protection unverified")
+            code = "SKIN_APPROVAL_PROTOCOL_PENDING"
+        except Exception:
+            code = "SKIN_APPROVAL_PROTECTION_UNVERIFIED"
+        return FrozenInstallResult("needs_attention", transaction=pending_approval,
+            code=code, message="skin approval state retained; no automatic continuation")
     publication = recover_applied_publication(store=target, policy_backend=policy_backend)
     if publication is not None:
         return publication
