@@ -35,7 +35,8 @@ class SkinApprovalStateTests(unittest.TestCase):
         self.journal = SkinApprovalJournal(self.store)
         self.policy = FakePolicy()
         self.binding = SkinApprovalBinding('build', 'profile', 'a'*64, 'b'*64,
-            'c'*64, 'd'*64, 'skin.estuary', AppliedBuildAssociation('e'*64, 'profile', 'f'*64))
+            'c'*64, 'd'*64, 'skin.estuary', AppliedBuildAssociation('e'*64, 'profile', 'f'*64),
+            previous_skin_version='5.0.0')  # Synthetic authority, not a native version claim.
         self.tx = FrozenInstallTransaction(transaction_id=SESSION_A, build_id='build',
             manifest_path='', device_profile_id='profile', manifest_fingerprint='b'*64,
             phase=P.NEEDS_ATTENTION, originating_kodi_session_id=SESSION_A,
@@ -57,8 +58,11 @@ class SkinApprovalStateTests(unittest.TestCase):
             observed_skin=self.binding.skin_id, observed_version='3.3.12', stable=True, witness='1'*64)
 
     def observe(self, skin=None):
-        return dict(policy_backend=self.policy, observed_skin=skin or self.binding.skin_id,
-                    observed_version='3.3.12', stable=True)
+        skin = skin or self.binding.skin_id
+        return dict(policy_backend=self.policy, observed_skin=skin,
+                    observed_version=(self.binding.previous_skin_version
+                                      if skin == self.binding.previous_skin else self.binding.skin_version),
+                    stable=True)
 
     def test_real_roundtrip_pending_and_binding(self):
         tx = self.pending()
@@ -105,7 +109,7 @@ class SkinApprovalStateTests(unittest.TestCase):
         tx = self.begin()
         for field,value in [('source_entry_id','0'*64),('profile_id','other'),
                 ('frozen_fingerprint','0'*64),('configuration_fingerprint','0'*64),
-                ('first_review_fingerprint','0'*64)]:
+                ('first_review_fingerprint','0'*64),('previous_skin_version','5.0.1')]:
             with self.subTest(field=field), self.assertRaises(FrozenInstallStateConflict):
                 self.journal.confirm_transition(tx, replace(self.binding, **{field:value},
                     **({'previous_applied':None} if field=='profile_id' else {})), **self.observe(), witness='1'*64)
@@ -119,9 +123,72 @@ class SkinApprovalStateTests(unittest.TestCase):
         self.journal.reserve(self.tx)
         tx=self.journal.confirm_cancel(self.tx, self.binding, **self.observe('skin.estuary'))
         self.assertEqual(tx.skin_approval.phase, CANCELLED)
+        self.assertEqual(tx.status_code, 'SKIN_CANCELLED_NOT_APPLIED')
         self.assertFalse(tx.updater_guard_required)
         self.assertEqual(self.policy.calls, [])
         self.assertEqual(self.store.inspect(), tx)  # terminal evidence retained
+
+    def test_previous_version_is_required_typed_and_part_of_durable_binding(self):
+        self.journal.reserve(self.tx)
+        self.assertEqual(self.store.inspect().skin_approval.binding.previous_skin_version, '5.0.0')
+        self.assertNotEqual(self.binding.fingerprint,
+                            replace(self.binding, previous_skin_version='5.0.1').fingerprint)
+        before = self.store.transaction_path.read_bytes()
+        for version in (None, '', 'unknown', '5.x', '5.0?', ' 5.0.0', '5.0.0 ',
+                        '５.０.０', 5, True, '5'*65):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                replace(self.binding, previous_skin_version=version)
+        raw = self.tx.to_dict()
+        del raw['skin_approval']['binding']['previous_skin_version']
+        with self.assertRaises(Exception):
+            FrozenInstallTransaction.from_dict(raw)
+        self.assertEqual(self.store.transaction_path.read_bytes(), before)
+
+    def test_pretransition_cancel_checks_truthful_previous_identity_on_both_steps(self):
+        self.journal.reserve(self.tx)
+        AddonUpdateGuard(self.policy).engage_with_original(self.tx.original_update_policy)
+        tx = self.journal.request_cancel(self.tx, self.binding, **self.observe(self.binding.previous_skin))
+        self.assertFalse(tx.skin_approval.transition_witness)
+        AddonUpdateGuard(self.policy).restore_original(tx.original_update_policy)
+        done = self.journal.confirm_cancel(tx, self.binding, **self.observe(self.binding.previous_skin))
+        self.assertEqual(done.status_code, 'SKIN_CANCELLED_NOT_APPLIED')
+        self.assertEqual(self.store.inspect(), done)
+        self.assertEqual(done.skin_approval.binding.previous_applied, self.binding.previous_applied)
+
+    def test_pretransition_cancel_refuses_false_unknown_and_incompatible_observations(self):
+        self.journal.reserve(self.tx)
+        invalid = [('observed_version', v) for v in ('3.3.12', '5.0.1', '', None, 'unknown', 5)]
+        invalid += [('observed_skin', self.binding.skin_id), ('stable', False), ('stable', None)]
+        # Both direct cancellation and intent reservation use the same observation contract.
+        for operation in ('request_cancel', 'confirm_cancel'):
+            self.policy.policy = Policy.NEVER_CHECK if operation == 'request_cancel' else Policy.AUTOMATIC
+            before = self.store.transaction_path.read_bytes()
+            before_calls = list(self.policy.calls)
+            for field, value in invalid:
+                args = self.observe(self.binding.previous_skin)
+                args[field] = value
+                with self.subTest(operation=operation, field=field, value=value):
+                    with self.assertRaises(FrozenInstallStateConflict):
+                        getattr(self.journal, operation)(self.tx, self.binding, **args)
+                    self.assertEqual(self.store.transaction_path.read_bytes(), before)
+                    self.assertEqual(self.policy.calls, before_calls)
+
+    def test_pending_cancel_rejects_previous_version_for_target_and_retains_witness(self):
+        tx = self.pending()
+        for operation in ('request_cancel', 'confirm_cancel'):
+            if operation == 'confirm_cancel':
+                tx = self.journal.request_cancel(tx, self.binding, **self.observe())
+                AddonUpdateGuard(self.policy).restore_original(tx.original_update_policy)
+            before = self.store.transaction_path.read_bytes()
+            args = self.observe()
+            args['observed_version'] = self.binding.previous_skin_version
+            with self.subTest(operation=operation), self.assertRaises(FrozenInstallStateConflict):
+                getattr(self.journal, operation)(tx, self.binding, **args)
+            self.assertEqual(self.store.transaction_path.read_bytes(), before)
+        done = self.journal.confirm_cancel(tx, self.binding, **self.observe())
+        self.assertEqual(done.status_code, 'SKIN_CANCELLED_NOT_FULLY_APPLIED')
+        self.assertEqual(self.store.inspect(), done)
+        self.assertEqual(done.skin_approval.transition_witness, '1'*64)
 
     def test_cancel_after_verified_transition_no_rollback_or_early_release(self):
         tx=self.pending()
@@ -132,7 +199,7 @@ class SkinApprovalStateTests(unittest.TestCase):
         AddonUpdateGuard(self.policy).restore_original(tx.original_update_policy)
         done=self.journal.confirm_cancel(tx, self.binding, **self.observe())
         self.assertEqual(done.skin_approval.phase, CANCELLED)
-        self.assertEqual(done.status_code, 'SKIN_CANCELLED_NOT_APPLIED')
+        self.assertEqual(done.status_code, 'SKIN_CANCELLED_NOT_FULLY_APPLIED')
         self.assertEqual(done.skin_approval.transition_witness, '1'*64)
         self.assertEqual(done.skin_approval.binding.previous_applied,self.binding.previous_applied)
         with self.assertRaises(FrozenInstallStateConflict): self.store.clear()
@@ -255,3 +322,37 @@ class SkinApprovalStateTests(unittest.TestCase):
                 parsed=FrozenInstallTransaction.from_dict(raw)
                 self.assertIsNone(parsed.skin_approval)
                 self.assertEqual(parsed.phase,P.PREPARING)
+
+    def test_startup_corrupt_records_retain_legacy_needs_attention_result(self):
+        for name, payload in (
+                ('invalid_json', '{not json'),
+                ('directory', None),
+                ('schema_99', json.dumps({'schema_version': 99}))):
+            with self.subTest(record=name):
+                store = FrozenInstallStore(self.root / name)
+                if payload is None:
+                    store.transaction_path.mkdir()
+                else:
+                    store.transaction_path.write_text(payload)
+                runner = Mock(side_effect=AssertionError('configuration forbidden'))
+                before_calls = list(self.policy.calls)
+                result = run_frozen_install_startup(bm020_status=None, store=store,
+                    policy_backend=self.policy, configuration_runner=runner)
+                self.assertEqual(result.outcome, 'needs_attention')
+                self.assertEqual(result.code, 'APPLIED_ASSOCIATION_PERSISTENCE_FAILED')
+                self.assertEqual(result.message, 'completed association publication requires recovery')
+                runner.assert_not_called()
+                self.assertEqual(self.policy.calls, before_calls)
+                if payload is None:
+                    self.assertTrue(store.transaction_path.is_dir())
+                    self.assertEqual(list(store.transaction_path.iterdir()), [])
+                else:
+                    self.assertEqual(store.transaction_path.read_text(), payload)
+
+    def test_startup_absent_record_control_is_unchanged(self):
+        runner = Mock(side_effect=AssertionError('configuration forbidden'))
+        self.assertIsNone(run_frozen_install_startup(bm020_status=None, store=self.store,
+            policy_backend=self.policy, configuration_runner=runner))
+        runner.assert_not_called()
+        self.assertIsNone(self.store.inspect())
+        self.assertEqual(self.policy.calls, [])

@@ -5288,7 +5288,14 @@ def run_frozen_install_startup(
     continuation even when BM-020 correctly reports ``no_transaction``.
     """
     target = store or FrozenInstallStore()
-    pending_approval = target.inspect()
+    try:
+        pending_approval = target.inspect()
+    except Exception:
+        # Preserve the legacy recovery result for unreadable/unsupported records.
+        # No retry or continuation may consume uncertain transaction evidence.
+        return FrozenInstallResult("needs_attention",
+            code="APPLIED_ASSOCIATION_PERSISTENCE_FAILED",
+            message="completed association publication requires recovery")
     if pending_approval is not None and pending_approval.skin_approval is not None:
         # Dormant protocol: never invoke a configuration runner, restart resume,
         # publication recovery, or policy setter. Phase and evidence survive.

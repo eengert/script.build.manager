@@ -4,6 +4,8 @@ Only a future trusted coordinator may supply authenticated observations here.
 These persistence APIs do not authenticate Kodi or execute either approval.
 Cancellation records remain owned/auditable until a separately reviewed release
 path exists; ordinary abandon/clear must never consume this protocol.
+Cancellation without a transition witness records NOT_APPLIED; after a witnessed
+switch it records NOT_FULLY_APPLIED and never implies that the skin was rolled back.
 """
 from dataclasses import dataclass, replace
 import hashlib
@@ -41,6 +43,7 @@ class SkinApprovalBinding:
     first_review_fingerprint: str
     previous_skin: str
     previous_applied: AppliedBuildAssociation | None
+    previous_skin_version: str
     skin_id: str = 'skin.arctic.fuse.3'
     skin_version: str = '3.3.12'
 
@@ -48,6 +51,12 @@ class SkinApprovalBinding:
         _identifier(self.build_id)
         _identifier(self.profile_id)
         _identifier(self.previous_skin)
+        # Exact prior-version identity is supplied by the future trusted owner,
+        # independently of the fixed target version. Unknown encodings refuse.
+        if (not isinstance(self.previous_skin_version, str)
+                or len(self.previous_skin_version) > 64
+                or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', self.previous_skin_version)):
+            raise ValueError('previous skin version invalid')
         if (not self.previous_skin.startswith('skin.') or self.previous_skin == self.skin_id
                 or self.skin_id != 'skin.arctic.fuse.3' or self.skin_version != '3.3.12'):
             raise ValueError('unsupported skin transition binding')
@@ -178,7 +187,9 @@ class SkinApprovalJournal:
             state = expected.skin_approval
             if phase in (AWAITING, CANCELLING, CANCELLED):
                 wanted = binding.skin_id if state.transition_witness or phase == AWAITING else binding.previous_skin
-                if (observed_skin != wanted or observed_version != binding.skin_version or stable is not True):
+                wanted_version = (binding.skin_version if wanted == binding.skin_id
+                                  else binding.previous_skin_version)
+                if (observed_skin != wanted or observed_version != wanted_version or stable is not True):
                     raise FrozenInstallStateConflict('skin transition observation invalid')
             if phase == AWAITING:
                 _digest(witness)
@@ -186,7 +197,8 @@ class SkinApprovalJournal:
             state = replace(state, revision=state.revision + 1, phase=phase)
             updated = replace(expected, phase=FrozenInstallPhase.NEEDS_ATTENTION, skin_approval=state,
                 updater_guard_required=phase != CANCELLED, updated_at=_utc_now(),
-                status_code=('SKIN_CANCELLED_NOT_APPLIED' if phase == CANCELLED else
+                status_code=(('SKIN_CANCELLED_NOT_FULLY_APPLIED' if state.transition_witness
+                              else 'SKIN_CANCELLED_NOT_APPLIED') if phase == CANCELLED else
                     'SKIN_APPROVAL_UNRESOLVED' if phase == 'needs_attention' else ''), status_message='')
             self.store._write_unlocked(updated)
             return updated
@@ -206,6 +218,7 @@ class SkinApprovalJournal:
     def confirm_cancel(self, expected, binding, *, policy_backend, observed_skin, observed_version, stable):
         # Does NOT restore updater or release ownership. It records verified
         # restoration only; a future reviewed cancel owner must perform it.
+        # Durable witness presence distinguishes no switch from an incomplete build.
         return self._change(expected, binding, CANCELLED, policy_backend=policy_backend,
             observed_skin=observed_skin, observed_version=observed_version, stable=stable)
 
