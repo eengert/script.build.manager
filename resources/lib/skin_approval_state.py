@@ -22,6 +22,15 @@ CANCELLING = 'skin_cancellation_pending'
 CANCELLED = 'skin_cancelled'
 PHASES = frozenset((AUTHORIZED, TRANSITIONING, AWAITING, CANCELLING, CANCELLED))
 
+# Omega a3a448d26b xbmc/addons/AddonVersion.cpp: ':' epoch, '-' revision,
+# and ASCII .+_@~ suffix characters. Admit numeric releases with nonempty
+# suffix/revision tokens, not Kodi's permissive invalid-input fallbacks.
+# This validates identity syntax only; never normalize or compare versions here.
+_PREVIOUS_VERSION = re.compile(
+    r'(?:(?P<epoch>[0-9]+):)?[0-9]+(?:\.[0-9]+)*(?:[A-Za-z][A-Za-z0-9]*)?'
+    r'(?:[+_@~][A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)*'
+    r'(?:-[A-Za-z0-9]+(?:[.+_@~][A-Za-z0-9]+)*)?')
+
 
 def _digest(value):
     if not isinstance(value, str) or not re.fullmatch('[a-f0-9]{64}', value):
@@ -53,9 +62,12 @@ class SkinApprovalBinding:
         _identifier(self.previous_skin)
         # Exact prior-version identity is supplied by the future trusted owner,
         # independently of the fixed target version. Unknown encodings refuse.
+        version = self.previous_skin_version
+        match = _PREVIOUS_VERSION.fullmatch(version) if isinstance(version, str) and len(version) <= 64 else None
         if (not isinstance(self.previous_skin_version, str)
-                or len(self.previous_skin_version) > 64
-                or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', self.previous_skin_version)):
+                or match is None
+                or (match['epoch'] is not None and int(match['epoch']) > 2147483647)):
+            # Kodi exposes epoch as int; reject overflow rather than infer identity.
             raise ValueError('previous skin version invalid')
         if (not self.previous_skin.startswith('skin.') or self.previous_skin == self.skin_id
                 or self.skin_id != 'skin.arctic.fuse.3' or self.skin_version != '3.3.12'):

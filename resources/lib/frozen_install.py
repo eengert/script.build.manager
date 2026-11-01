@@ -3091,7 +3091,9 @@ class FrozenInstallCoordinator:
             return FrozenInstallResult(
                 "failed",
                 code=getattr(exc, "code", "FROZEN_MANIFEST_INVALID"),
-                message="frozen install plan validation failed",
+                message=("could not read or persist the frozen transaction"
+                         if isinstance(exc, FrozenInstallPersistenceError)
+                         else "frozen install plan validation failed"),
             )
         active = self._safe_inspect()
         if active is not None and any(

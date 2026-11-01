@@ -14,7 +14,7 @@ from resources.lib.build_library import (BuildLibrary, LibraryInstallTarget, Lib
     AppliedBuildAssociation, isolated_library_install_authority)
 from resources.lib.frozen_install import (FrozenInstallTransaction, FrozenInstallStore,
     FrozenInstallPhase as P, FrozenInstallCoordinator, FrozenInstallStateConflict,
-    run_frozen_install_startup)
+    FrozenInstallPersistenceError, FrozenInstallValidationError, run_frozen_install_startup)
 from resources.lib.skin_approval_state import (SkinApprovalBinding, SkinApprovalState, SkinApprovalJournal,
     AWAITING, CANCELLED)
 from resources.lib.update_guard import AddonUpdatePolicy as Policy, AddonUpdateGuard
@@ -140,7 +140,7 @@ class SkinApprovalStateTests(unittest.TestCase):
                 replace(self.binding, previous_skin_version=version)
         raw = self.tx.to_dict()
         del raw['skin_approval']['binding']['previous_skin_version']
-        with self.assertRaises(Exception):
+        with self.assertRaises(FrozenInstallPersistenceError):
             FrozenInstallTransaction.from_dict(raw)
         self.assertEqual(self.store.transaction_path.read_bytes(), before)
 
@@ -354,5 +354,152 @@ class SkinApprovalStateTests(unittest.TestCase):
         self.assertIsNone(run_frozen_install_startup(bm020_status=None, store=self.store,
             policy_backend=self.policy, configuration_runner=runner))
         runner.assert_not_called()
+        self.assertIsNone(self.store.inspect())
+        self.assertEqual(self.policy.calls, [])
+
+    def test_kodi_version_forms_preserve_exact_durable_identity(self):
+        # Omega a3a448d26b AddonVersion.cpp and TestAddonVersion.cpp: synthetic
+        # numeric releases, prereleases, local builds, epochs and revisions.
+        versions = ('5', '1.00', '5.0.0', '1.0.0~alpha2', '0.1.0~beta3+git010cab3',
+                    '1.0.0+matrix.1', '1.0.0+Matrix.1', '5.0.0rc1',
+                    '5.0.0-beta.1+build.2', '5.0.0_git1', '5.0.0@git1',
+                    '5.0.0-1', '1:1.0.0', '1:1.0.0-2', '01:5.0.0~Beta1+GitABC-2',
+                    '2147483647:5.0', '5.0.0+' + 'a'*58)
+        for index, version in enumerate(versions):
+            with self.subTest(version=version):
+                binding = replace(self.binding, previous_skin_version=version)
+                tx = replace(self.tx, skin_approval=SkinApprovalState(binding))
+                store = FrozenInstallStore(self.root / ('version-' + str(index)))
+                journal = SkinApprovalJournal(store)
+                journal.reserve(tx)
+                loaded = store.inspect()
+                self.assertEqual(loaded, tx)
+                self.assertEqual(loaded.skin_approval.binding.to_dict()['previous_skin_version'], version)
+                done = journal.confirm_cancel(loaded, binding, policy_backend=self.policy,
+                    observed_skin=binding.previous_skin, observed_version=version, stable=True)
+                self.assertEqual(store.inspect(), done)
+                self.assertEqual(done.status_code, 'SKIN_CANCELLED_NOT_APPLIED')
+        self.assertEqual(self.policy.calls, [])
+
+    def test_malformed_version_forms_refuse_before_reservation(self):
+        for version in ('unknown', 'unverified', 'v5.0', '5.x', '5..0', '.5', '5.',
+                        '5.0+', '5.0~', '5.0--1', '5.0-', ':5.0', '-1:5.0',
+                        'one:5.0', '1:2:5.0', '1:', '2147483648:5.0', '5.0/1', '5.0\\1', '5.0%20',
+                        '5.0\x00', '5.0\n', '5.0\r', '5.0\t', '５.０', '5.0~β',
+                        '5.0+' + 'a'*61):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                replace(self.binding, previous_skin_version=version)
+        self.assertIsNone(self.store.inspect())
+        self.assertEqual(self.policy.calls, [])
+
+    def test_suffixed_version_cancel_requires_exact_identity_and_cas(self):
+        binding = replace(self.binding, previous_skin_version='1:5.0.0~Beta1+GitABC-2')
+        tx = replace(self.tx, skin_approval=SkinApprovalState(binding))
+        self.journal.reserve(tx)
+        AddonUpdateGuard(self.policy).engage_with_original(tx.original_update_policy)
+        before = self.store.transaction_path.read_bytes()
+        alternatives = ('1:5.0.0~beta1+gitabc-2', '5.0.0~Beta1+GitABC-2',
+                        '1:5.0.0~Beta1+GitABC-3', '1:5.0.0~Beta1+GitABD-2', '3.3.12')
+        for version in alternatives:
+            with self.subTest(version=version), self.assertRaises(FrozenInstallStateConflict):
+                self.journal.request_cancel(tx, binding, policy_backend=self.policy,
+                    observed_skin=binding.previous_skin, observed_version=version, stable=True)
+            self.assertEqual(self.store.transaction_path.read_bytes(), before)
+        changed = replace(binding, previous_skin_version=alternatives[0])
+        self.assertNotEqual(binding.fingerprint, changed.fingerprint)
+        with self.assertRaises(FrozenInstallStateConflict):
+            self.journal.request_cancel(tx, changed, policy_backend=self.policy,
+                observed_skin=binding.previous_skin, observed_version=changed.previous_skin_version, stable=True)
+        cancelling = self.journal.request_cancel(tx, binding, policy_backend=self.policy,
+            observed_skin=binding.previous_skin, observed_version=binding.previous_skin_version, stable=True)
+        with self.assertRaises(FrozenInstallStateConflict):
+            self.journal.request_cancel(tx, binding, policy_backend=self.policy,
+                observed_skin=binding.previous_skin, observed_version=binding.previous_skin_version, stable=True)
+        AddonUpdateGuard(self.policy).restore_original(tx.original_update_policy)
+        for version in alternatives:
+            with self.subTest(confirm_version=version), self.assertRaises(FrozenInstallStateConflict):
+                self.journal.confirm_cancel(cancelling, binding, policy_backend=self.policy,
+                    observed_skin=binding.previous_skin, observed_version=version, stable=True)
+        done = self.journal.confirm_cancel(cancelling, binding, policy_backend=self.policy,
+            observed_skin=binding.previous_skin, observed_version=binding.previous_skin_version, stable=True)
+        self.assertEqual(self.store.inspect(), done)
+
+    def test_schema5_binding_fields_are_strict_even_when_constructor_defaults_exist(self):
+        raw = self.tx.to_dict()
+        for field in ('skin_id', 'skin_version', 'previous_skin_version', 'unknown_field'):
+            with self.subTest(field=field):
+                malformed = json.loads(json.dumps(raw))
+                binding = malformed['skin_approval']['binding']
+                if field == 'unknown_field':
+                    binding[field] = 'synthetic'
+                else:
+                    del binding[field]
+                self.store.transaction_path.write_text(json.dumps(malformed))
+                before = self.store.transaction_path.read_bytes()
+                with self.assertRaises(FrozenInstallPersistenceError):
+                    self.store.inspect()
+                self.assertEqual(self.store.transaction_path.read_bytes(), before)
+        for version in (None, 5, '', 'unknown', '5.0\n', '5.0/1'):
+            with self.subTest(version=version):
+                malformed = json.loads(json.dumps(raw))
+                malformed['skin_approval']['binding']['previous_skin_version'] = version
+                self.store.transaction_path.write_text(json.dumps(malformed))
+                before = self.store.transaction_path.read_bytes()
+                with self.assertRaises(FrozenInstallPersistenceError):
+                    self.store.inspect()
+                self.assertEqual(self.store.transaction_path.read_bytes(), before)
+        self.assertEqual(FrozenInstallTransaction.from_dict(raw), self.tx)
+        self.assertEqual(self.policy.calls, [])
+
+    def test_unreadable_record_diagnostics_remain_truthful_and_nonmutating(self):
+        for kind, payload in (('json', '{not json'), ('directory', None),
+                              ('schema99', json.dumps({'schema_version': 99}))):
+            for entry in ('install', 'resume', 'startup'):
+                with self.subTest(kind=kind, entry=entry):
+                    store = FrozenInstallStore(self.root / (kind + '-' + entry))
+                    if payload is None:
+                        store.transaction_path.mkdir()
+                    else:
+                        store.transaction_path.write_text(payload)
+                    runner, installer = Mock(), Mock()
+                    coordinator = FrozenInstallCoordinator(store=store, artifact_store=Mock(),
+                        policy_backend=self.policy, installer=installer, configuration_runner=runner)
+                    with patch.object(store, 'inspect', wraps=store.inspect) as read, \
+                         patch.object(store, '_write_unlocked', side_effect=AssertionError('write forbidden')):
+                        if entry == 'install':
+                            result = coordinator.install_target(self.tx.library_target)
+                            expected = ('failed', 'FROZEN_TRANSACTION_PERSISTENCE_FAILED',
+                                        'could not read or persist the frozen transaction')
+                        elif entry == 'resume':
+                            result = coordinator.resume_after_restart()
+                            expected = ('needs_attention', 'FROZEN_TRANSACTION_UNREADABLE',
+                                        'frozen transaction identity could not be established')
+                        else:
+                            result = run_frozen_install_startup(bm020_status=None, store=store,
+                                policy_backend=self.policy, configuration_runner=runner)
+                            expected = ('needs_attention', 'APPLIED_ASSOCIATION_PERSISTENCE_FAILED',
+                                        'completed association publication requires recovery')
+                        read.assert_called_once_with()
+                    self.assertEqual((result.outcome, result.code, result.message), expected)
+                    self.assertNotIn('Traceback', result.message)
+                    self.assertNotIn('not json', result.message)
+                    self.assertEqual(runner.mock_calls, [])
+                    self.assertEqual(installer.mock_calls, [])
+                    if payload is None:
+                        self.assertTrue(store.transaction_path.is_dir())
+                        self.assertEqual(list(store.transaction_path.iterdir()), [])
+                    else:
+                        self.assertEqual(store.transaction_path.read_text(), payload)
+        self.assertEqual(self.policy.calls, [])
+        self.assertEqual(self.policy.reads, 0)
+
+    def test_genuine_manifest_validation_keeps_its_code_and_message(self):
+        coordinator = FrozenInstallCoordinator(store=self.store, artifact_store=Mock(),
+            policy_backend=self.policy, installer=Mock(), configuration_runner=Mock())
+        with patch.object(LibraryInstallTarget, 'load',
+                          side_effect=FrozenInstallValidationError('synthetic manifest error')):
+            result = coordinator.install_target(self.tx.library_target)
+        self.assertEqual((result.outcome, result.code, result.message),
+            ('failed', 'FROZEN_MANIFEST_INVALID', 'frozen install plan validation failed'))
         self.assertIsNone(self.store.inspect())
         self.assertEqual(self.policy.calls, [])
