@@ -231,7 +231,43 @@ class TestPracticalAutoKeep(unittest.TestCase):
         self.assertFalse(any('busydialog' in command.lower() for command, _ in kodi.commands))
 
 
+class HandleProgress:
+    """Pinned handle semantics, without a native destructor or shared GUI.
+
+    Kodi starts with null handle/open=False and close refuses a null handle.
+    Injected failures after handle publication model partial initialization;
+    arbitrary close failures are fault controls, not claims about native frequency.
+    """
+    def __init__(self, *, create_error=None, partial=False, close_error=None):
+        self.create_error, self.partial = create_error, partial
+        self.close_error = close_error
+        self.handle = None
+        self.open = False
+        self.creates = self.closes = 0
+
+    def create(self, heading):
+        self.creates += 1
+        if self.create_error is not None and not self.partial:
+            raise self.create_error
+        self.handle = SimpleNamespace(finished=False)
+        self.open = True
+        if self.create_error is not None:
+            raise self.create_error
+
+    def close(self):
+        self.closes += 1
+        if self.handle is None:
+            raise RuntimeError('Dialog not created.')
+        if self.close_error is not None:
+            raise self.close_error
+        self.handle.finished = True
+        self.open = False
+
+
 class TestBackgroundProgress(unittest.TestCase):
+    def wrapper(self, busy):
+        return NativeDialogs(Mock(), Mock(), Mock(), busy=busy)
+
     def test_callback_closes_only_its_handle_and_is_idempotent(self):
         gui = Mock()
         progress = gui.DialogProgressBG.return_value
@@ -262,16 +298,19 @@ class TestBackgroundProgress(unittest.TestCase):
 
     def test_next_operation_gets_its_own_new_handle(self):
         gui = Mock()
-        first, second = Mock(), Mock()
+        first, second = HandleProgress(), HandleProgress()
         gui.DialogProgressBG.side_effect = [first, second]
         busy = entry.background_busy(gui, 'Build Manager')
         busy(True)
         busy(False)
         busy(True)
-        first.close.assert_called_once_with()
-        second.close.assert_not_called()
+        self.assertEqual(first.closes, 1)
+        self.assertTrue(first.handle.finished)
+        self.assertEqual(second.closes, 0)
+        self.assertTrue(second.open)
         busy(False)
-        second.close.assert_called_once_with()
+        self.assertEqual(second.closes, 1)
+        self.assertTrue(second.handle.finished)
 
     def test_execution_exception_closes_owned_progress(self):
         gui = Mock()
@@ -282,17 +321,125 @@ class TestBackgroundProgress(unittest.TestCase):
 
     def test_progress_creation_exception_cleans_up_before_execution(self):
         gui = Mock()
-        gui.DialogProgressBG.return_value.create.side_effect = RuntimeError('create failed')
+        primary = RuntimeError('create failed before handle allocation')
+        first, second = HandleProgress(create_error=primary), HandleProgress()
+        gui.DialogProgressBG.side_effect = [first, second]
+        busy = entry.background_busy(gui, 'Build Manager')
         action = Mock()
-        ui = NativeDialogs(Mock(), Mock(), Mock(), busy=entry.background_busy(gui, 'Build Manager'))
-        with self.assertRaisesRegex(RuntimeError, 'create failed'):
+        ui = self.wrapper(busy)
+        with self.assertRaises(RuntimeError) as caught:
             ui.execute_install(action)
+        self.assertIs(caught.exception, primary)  # null-handle cleanup must not mask it
         action.assert_not_called()
-        gui.DialogProgressBG.return_value.close.assert_called_once_with()
+        self.assertEqual(first.closes, 1)
+        self.assertIsNone(first.handle)
+        self.assertFalse(first.open)
+        busy(False)  # wrapper cleanup already ran; must now be a harmless no-op
+        self.assertEqual(first.closes, 1)
+        self.assertEqual(ui.execute_install(lambda: 'second completed'), 'second completed')
+        self.assertEqual(second.creates, 1)
+        self.assertTrue(second.handle.finished)
+        self.assertFalse(second.open)
 
     def test_progress_close_failure_propagates_instead_of_claiming_completion(self):
         gui = Mock()
-        gui.DialogProgressBG.return_value.close.side_effect = RuntimeError('close failed')
-        ui = NativeDialogs(Mock(), Mock(), Mock(), busy=entry.background_busy(gui, 'Build Manager'))
-        with self.assertRaisesRegex(RuntimeError, 'close failed'):
-            ui.execute_install(lambda: 'completed')
+        primary = RuntimeError('close failed')
+        first, second = HandleProgress(close_error=primary), HandleProgress()
+        gui.DialogProgressBG.side_effect = [first, second]
+        busy = entry.background_busy(gui, 'Build Manager')
+        ui = self.wrapper(busy)
+        action = Mock(return_value='completed work')
+        with self.assertRaises(RuntimeError) as caught:
+            ui.execute_install(action)
+        self.assertIs(caught.exception, primary)
+        action.assert_called_once_with()
+        busy(False)
+        self.assertEqual(first.closes, 1)
+        # An unexpected native failure before MarkFinished could leave a handle
+        # open. Clearing Python state is not proof that native cleanup succeeded.
+        self.assertTrue(first.open)
+        self.assertEqual(ui.execute_install(lambda: 'next completed'), 'next completed')
+        self.assertTrue(second.handle.finished)
+
+    def test_constructor_failure_does_not_poison_next_operation(self):
+        gui = Mock()
+        primary, good = RuntimeError('constructor failed'), HandleProgress()
+        gui.DialogProgressBG.side_effect = [primary, good]
+        ui = self.wrapper(entry.background_busy(gui, 'Build Manager'))
+        action = Mock()
+        with self.assertRaises(RuntimeError) as caught:
+            ui.execute_install(action)
+        self.assertIs(caught.exception, primary)
+        action.assert_not_called()
+        self.assertEqual(ui.execute_install(lambda: 'completed'), 'completed')
+        self.assertTrue(good.handle.finished)
+
+    def test_partial_create_failure_explicitly_closes_only_its_handle(self):
+        gui = Mock()
+        primary = RuntimeError('failed after handle publication')
+        first, second, unrelated = (HandleProgress(create_error=primary, partial=True),
+                                    HandleProgress(), HandleProgress())
+        unrelated.create('another caller')
+        gui.DialogProgressBG.side_effect = [first, second]
+        busy = entry.background_busy(gui, 'Build Manager')
+        ui = self.wrapper(busy)
+        with self.assertRaises(RuntimeError) as caught:
+            ui.execute_install(Mock(side_effect=AssertionError('must not execute')))
+        self.assertIs(caught.exception, primary)
+        self.assertTrue(first.handle.finished)
+        self.assertFalse(first.open)
+        self.assertEqual(first.closes, 1)
+        self.assertEqual(unrelated.closes, 0)
+        self.assertTrue(unrelated.open)
+        self.assertEqual(ui.execute_install(lambda: 'completed'), 'completed')
+        self.assertTrue(second.handle.finished)
+        self.assertFalse(unrelated.handle.finished)
+
+    def test_partial_create_and_cleanup_failure_preserve_primary_and_fresh_state(self):
+        gui = Mock()
+        primary = RuntimeError('primary create failure')
+        first = HandleProgress(create_error=primary, partial=True,
+                               close_error=RuntimeError('secondary cleanup failure'))
+        good = HandleProgress()
+        gui.DialogProgressBG.side_effect = [first, good]
+        busy = entry.background_busy(gui, 'Build Manager')
+        ui = self.wrapper(busy)
+        with self.assertRaises(RuntimeError) as caught:
+            ui.execute_install(Mock(side_effect=AssertionError('must not execute')))
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(first.closes, 1)
+        busy(False)
+        self.assertEqual(first.closes, 1)
+        self.assertTrue(first.open)  # unresolved cleanup is not modelled as success
+        self.assertEqual(ui.execute_install(lambda: 'completed'), 'completed')
+        self.assertTrue(good.handle.finished)
+
+    def test_create_workflow_wrapper_cleans_failed_start_then_accepts_fresh_handle(self):
+        from tests.test_create_workflow import WorkflowTests, NativeDialog, CreateAddon
+        fixture = WorkflowTests(methodName='runTest')
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        workflow = fixture.workflow
+        workflow.execute = Mock(wraps=workflow.execute)
+        primary = RuntimeError('create progress failed')
+        first, good = HandleProgress(create_error=primary), HandleProgress()
+        gui = Mock()
+        gui.DialogProgressBG.side_effect = [first, good]
+        busy = entry.background_busy(gui, 'Build Manager')
+        def ui():
+            # Create renders a sanitized failure and returns to its menu; Back
+            # exits that existing UI path. Unlike execute_install it doesn't
+            # propagate an execution exception to its caller.
+            dialog = NativeDialog([0, 5, 1, 0, 7], inputs=['B1 synthetic build'], confirms=[True])
+            return NativeDialogs(CreateAddon(), dialog, lambda ms: None,
+                                 create_provider=lambda: workflow, busy=busy)
+        first_ui = ui()
+        first_ui.create()
+        self.assertIn('32732', first_ui.dialog.results[0][1])
+        self.assertNotIn(str(primary), str(first_ui.dialog.results))
+        workflow.execute.assert_not_called()
+        self.assertEqual(first.closes, 1)
+        ui().create()
+        workflow.execute.assert_called_once()
+        self.assertTrue(good.handle.finished)
+        self.assertEqual(good.closes, 1)

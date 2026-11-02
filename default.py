@@ -10,18 +10,35 @@ def status_provider(xbmc):
 
 
 def background_busy(xbmcgui, heading):
-    """Own one modeless progress handle; never close another caller's dialog."""
+    """Track one successfully created modeless handle and close it explicitly.
+
+    Unexpected native allocation/close failures may leave cleanup uncertain;
+    clearing this callback's state is not proof of native cleanup. Never rely
+    on the native destructor (which can close the shared progress window).
+    """
     progress = None
 
     def busy(active):
         nonlocal progress
         if active:
             if progress is None:
-                progress = xbmcgui.DialogProgressBG()
-                progress.create(heading)
+                created = xbmcgui.DialogProgressBG()
+                try:
+                    created.create(heading)
+                except Exception:
+                    # close() refuses a null handle if create failed early.
+                    # Preserve the primary failure; do not retain this object.
+                    try:
+                        created.close()
+                    except Exception:
+                        pass
+                    raise
+                progress = created
         elif progress is not None:
-            progress.close()
-            progress = None
+            try:
+                progress.close()
+            finally:
+                progress = None
     return busy
 
 
