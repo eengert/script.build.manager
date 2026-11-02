@@ -36,6 +36,7 @@ ADAPTER_STAGES = frozenset({
     "CHECK_RETRY_PRECONDITIONS",
     "INVOKE_RETRY",
     "READ_STATUS",
+    "AF3_FIXTURE",
     "PLATFORM_CHECK",
     "SERIALIZE_RESULT",
 })
@@ -62,6 +63,7 @@ ADAPTER_CALLABLES = frozenset({
     "KodiRuntimeFrozenArtifactBackend.get_addon_details",
     "read_adapter_status",
     "read_platform_check",
+    "run_af3_fixture",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -249,7 +251,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover", "retry", "status", "platform_check"):
+        if token in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify"):
             return token
         if token == "?mode=install":
             return "install"
@@ -259,6 +261,8 @@ def parse_adapter_mode(arguments: list[str]) -> str:
             return "retry"
         if token == "?mode=status":
             return "status"
+        if token in ("?mode=af3_fixture", "?mode=af3_fixture_verify"):
+            return token.removeprefix("?mode=")
         if token == "?mode=platform_check":
             return "platform_check"
     raise _bootstrap_error(
@@ -269,7 +273,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
     safe_mode = (
-        mode if mode in ("install", "recover", "retry", "status", "platform_check") else "unselected"
+        mode if mode in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify") else "unselected"
     )
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
@@ -1752,3 +1756,325 @@ def project_platform_check(value):
     if graph['status'] == 'verified' and not complete: raise ValueError('diagnostic partial graph')
     # Round-trip closes off custom objects and returns no unvalidated fields.
     return json.loads(json.dumps(value, sort_keys=True))
+
+
+# Qualification-only AF3 fixture. No repository/source override or resume.
+AF3_FIXTURE_MODES = ("af3_fixture", "af3_fixture_verify")
+_AF3_HOME = Path("/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data")
+_AF3_STORE = Path("/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/item8-d028-public-artifact-store-20261022")
+_AF3_MANIFEST = _AF3_STORE.parent / "item8-d028-trusted-admission-20261020/authored-af3-manifest.json"
+_AF3_MANIFEST_SHA = "30bd44d3f6897b0e17b40afdd44881dcf24acca906cdad8827dad7c095101420"
+_AF3_PACKAGES = {'plugin.video.themoviedb.helper': ('6.17.9',
+                                    'b1023f7fc82b2d3c037758384fcd32ea6b906f2551be674859c0e1deb37f7989',
+                                    4322239),
+ 'resource.font.robotocjksc': ('0.0.3',
+                               '58c3e32cafbbf0984896c4ab317c820e555f3deacae977598e4a03a0f8139743',
+                               51599422),
+ 'resource.images.studios.coloured': ('0.0.24',
+                                      'de985b7c671e1f171f8ac8a71a9f24f035ffabebaeee3c3a173e570d8b3c50d6',
+                                      60584821),
+ 'resource.images.weathericons.white': ('0.0.6',
+                                        '89466f3c5d1e269e68f9caf3a3b732bc85875f62ab3dd5536730eae19e4d5a2c',
+                                        71550),
+ 'script.module.addon.signals': ('0.0.6+matrix.1',
+                                 'a41629f328429d08d79ef3c8b59c93d6f4c06b1a6e76806babd44f2457a9a1fb',
+                                 19835),
+ 'script.module.certifi': ('2023.5.7',
+                           'c16d4cd2efe6e57dbb5e8d71a9beb3af213b1e3d717e8b0b24f0cbdc4c645070',
+                           162689),
+ 'script.module.chardet': ('5.1.0',
+                           'd5010fc55a9523d86a306ae9e6a8dea0e3248fe079b9ed37280fe86110cd766a',
+                           204491),
+ 'script.module.idna': ('3.10.0', 'c4ff34dbfab2736e9214a374d331bd6f558d8b3fea8eb7902e210749509242b3', 73349),
+ 'script.module.infotagger': ('0.0.9',
+                              '5fb83664bb732bca773d420f9f5b1383be594ed88836f59178032f36bc668336',
+                              23148),
+ 'script.module.jurialmunkey': ('0.2.35',
+                                '80302314cdbc5a75611b0c2866eb1c7b4e93ccadaf20208ef7eb79b79c1fb749',
+                                55792),
+ 'script.module.qrcode': ('6.1.0+matrix.3',
+                          'e5c01d0ff83bdb7687c3150dcda5a01896a2281c28ffe9813f6e4763ea44f132',
+                          32990),
+ 'script.module.requests': ('2.31.0',
+                            'a5704f0fd7afb4154e1beea9b5f05a002bcd75fa581a1e5fd15ece39bf2bd38a',
+                            67576),
+ 'script.module.six': ('1.16.0+matrix.1',
+                       '4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860',
+                       16999),
+ 'script.module.urllib3': ('2.2.3',
+                           '740b2d63bb50eee9fb35f01c567ec8d3588c5bbd548e2b8d280932be30d82f53',
+                           130842),
+ 'script.skinvariables': ('2.2.9',
+                          '7bbac52948ff0934fd29ccbf0657d4d625da22514a9afe4818bc4070d08d50b2',
+                          236686),
+ 'script.texturemaker': ('0.2.11',
+                         '051bca651c467901b12fcae56ca430402427149d801fa7a7cfd1254d386a738b',
+                         171850),
+ 'skin.arctic.fuse.3': ('3.3.12',
+                        'baa7f38da51379f4a65f9aee421e27b369ce799103d58fdef9087920b9041492',
+                        58482102)}
+
+
+def _af3_inputs(manifest_path, artifact_root):
+    """Read all original bytes before mutation; retain immutable byte objects."""
+    from resources.lib.artifacts import ArtifactMetadata
+    from resources.lib.addon_zip import validated_root
+    from resources.lib.frozen import FrozenBuildManifest
+    from resources.lib.frozen_install import validate_frozen_manifest
+    if Path(manifest_path) != _AF3_MANIFEST or Path(artifact_root) != _AF3_STORE:
+        raise ValueError('fixture input path refused')
+    raw = _platform_read(_AF3_MANIFEST, 1024 * 1024)
+    if hashlib.sha256(raw).hexdigest() != _AF3_MANIFEST_SHA:
+        raise ValueError('fixture manifest identity')
+    manifest = FrozenBuildManifest.from_json(raw.decode('utf-8'))
+    nodes = {n.addon_id: n for n in manifest.addons if n.artifact is not None}
+    if set(nodes) != set(_AF3_PACKAGES): raise ValueError('fixture package set')
+    store = _PlatformArtifacts(_AF3_STORE, ArtifactMetadata)
+    plan = validate_frozen_manifest(manifest, store)
+    if len(plan.nodes) != 22 or sum(len(n.dependency_edges) for n in plan.nodes.values()) != 45:
+        raise ValueError('fixture graph identity')
+    packages = {}
+    for aid, (version, digest, size) in _AF3_PACKAGES.items():
+        node = nodes[aid]
+        if (node.version, node.artifact.sha256, node.artifact.size) != (version, digest, size):
+            raise ValueError('fixture node identity')
+        data = store.read_bytes(digest)
+        if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError('fixture package identity')
+        package = validated_root(data, aid, version)
+        packages[aid] = (data, package.xml_bytes)
+    return plan, packages
+
+
+def _af3_public_tree(path, limit=16 * 1024 * 1024):
+    """Creation-free hash of public library/resolutions only, no private roots."""
+    path = Path(path)
+    try:
+        fd = _platform_directory(path)
+    except FileNotFoundError:
+        return None
+    try:
+        original = os.fstat(fd)
+        result = {}
+        for name in sorted(os.listdir(fd)):
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            child = path / name
+            if stat.S_ISDIR(info.st_mode):
+                result[name] = _af3_public_tree(child, limit)
+            elif stat.S_ISREG(info.st_mode):
+                result[name] = hashlib.sha256(_platform_read(child, limit)).hexdigest()
+            else:
+                raise ValueError('fixture public state type')
+        fresh = _platform_directory(path)
+        try:
+            current, linked = os.fstat(fd), os.fstat(fresh)
+            fields = ('st_dev', 'st_ino', 'st_mtime_ns', 'st_ctime_ns')
+            if (tuple(getattr(original, k) for k in fields) != tuple(getattr(current, k) for k in fields)
+                    or (original.st_dev, original.st_ino) != (linked.st_dev, linked.st_ino)):
+                raise ValueError('fixture public state changed')
+        finally: os.close(fresh)
+        return result
+    finally:
+        os.close(fd)
+
+
+def _af3_expected_tree(data, aid, version):
+    """Original member hashes only; this never extracts or executes a package."""
+    import io
+    import zipfile
+    from resources.lib.addon_zip import validated_root
+    validated_root(data, aid, version)
+    expected = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for member in archive.infolist():
+            parts = member.filename.rstrip('/').split('/')[1:]
+            if not parts: continue
+            tree = expected
+            for part in parts[:-1]: tree = tree.setdefault(part, {})
+            if member.is_dir(): tree.setdefault(parts[-1], {})
+            else: tree[parts[-1]] = hashlib.sha256(archive.read(member)).hexdigest()
+    return expected
+
+
+def _af3_runtime_state(backend):
+    """Native authority, not caller-supplied claims or a captured manifest."""
+    import xbmcvfs
+    from resources.lib import frozen_install as fi
+    from resources.lib.transaction import TransactionStore
+    from resources.lib.capture_lifecycle import CaptureStore
+    from resources.lib.activation import current_activation_holds
+    from resources.lib.build_library import default_build_library
+    profile = _AF3_HOME / 'userdata'
+    bm_root = profile / 'addon_data/script.build.manager'
+    if (Path(xbmcvfs.translatePath('special://home/')) != _AF3_HOME or
+            Path(xbmcvfs.translatePath('special://profile/')) != profile or
+            Path(xbmcvfs.translatePath('special://home/addons')) != _AF3_HOME / 'addons' or
+            fi.default_frozen_install_root() != bm_root):
+        raise ValueError('fixture runtime profile')
+    for path in (_AF3_HOME, profile, bm_root):
+        fd = _platform_directory(path); os.close(fd)
+    if (fi.FrozenInstallStore(bm_root).inspect() is not None or
+            TransactionStore().inspect() is not None or
+            CaptureStore(bm_root).read() is not None or current_activation_holds()):
+        raise ValueError('fixture transaction or hold')
+    library = default_build_library()
+    if library.pending_publication() is not None: raise ValueError('fixture publication')
+    # Typed association read authenticates the existing applied resolution.
+    association = library.current_applied_association()
+    selection_state, selection = library.selection_state()
+    if (association is None or selection_state != 'selected' or selection is None
+            or association.entry_id != selection.entry_id
+            or association.device_profile_id != selection.device_profile_id):
+        raise ValueError('fixture library identity')
+    settings = {}
+    for key in ('general.addonupdates', 'lookandfeel.skin'):
+        row = backend._rpc('Settings.GetSettingValue', {'setting': key}).get('result')
+        if not isinstance(row, dict) or 'value' not in row: raise ValueError('fixture setting unavailable')
+        settings[key] = row['value']
+    if settings['lookandfeel.skin'] != 'skin.estuary': raise ValueError('fixture skin')
+    if type(settings['general.addonupdates']) is not int or settings['general.addonupdates'] not in (0, 1, 2):
+        raise ValueError('fixture updater observation')
+    rows = backend._rpc('Addons.GetAddons', {'installed': True,
+        'properties': ['version', 'enabled', 'broken']}).get('result')
+    if not isinstance(rows, dict) or not isinstance(rows.get('addons'), list):
+        raise ValueError('fixture native inventory')
+    inventory = {}
+    for row in rows['addons']:
+        if (not isinstance(row, dict) or not isinstance(row.get('addonid'), str) or
+                not isinstance(row.get('version'), str) or type(row.get('enabled')) is not bool or
+                type(row.get('broken')) is not bool or row['addonid'] in inventory):
+            raise ValueError('fixture native inventory entry')
+        inventory[row['addonid']] = (row['version'], row['enabled'], row['broken'])
+    if 'script.keymap' not in inventory or inventory['script.keymap'][0] != '1.4.0' or inventory['script.keymap'][2]:
+        raise ValueError('fixture Keymap identity')
+    return (settings, {k: v for k, v in inventory.items() if k not in _AF3_PACKAGES},
+            repr(association), _af3_public_tree(bm_root / 'build-library'),
+            _af3_public_tree(bm_root / 'install_resolutions'))
+
+
+def run_af3_fixture(addon_root, driver_root, binding, manifest_path, artifact_root, *, verify=False):
+    """One admitted fixture attempt. Journal existence always fences provision.
+
+    Native use must go through Git-bound HTTP run; never invoke this as an
+    arbitrary script. Only the existing exclusive package publisher mutates
+    packages. No coordinator, updater setter, configuration or publication call.
+    """
+    addon_root, driver_root = Path(addon_root), Path(driver_root)
+    if (addon_root != _AF3_HOME / 'addons/script.build.manager' or
+            driver_root != _AF3_HOME / 'addons/script.build.manager.bm023a_driver'):
+        raise ValueError('fixture target refused')
+    from resources.lib.frozen_install import KodiRuntimeFrozenArtifactBackend
+    from resources.lib.addon_zip import publish_package
+    from resources.lib.frozen import InstalledMetadata, InstalledOrigin
+    _platform_sources(binding, addon_root, driver_root)
+    plan, packages = _af3_inputs(manifest_path, artifact_root)
+    # This reuses current runtime registration, pinned application origin,
+    # ABI/dependency closure and PIL admission. Static evidence is insufficient.
+    check = read_platform_check(addon_root, driver_root, binding, manifest_path, artifact_root)
+    if check.get('ok') is not True: raise ValueError('fixture native platform requirements')
+    diagnostic = check['platform_check']
+    home_fd = addons_fd = profile_fd = journal_fd = backend = None
+    journal = 'bm-af3-fixture-v1.jsonl'
+    def fresh():
+        for path, pinned in ((_AF3_HOME, home_fd), (_AF3_HOME / 'addons', addons_fd),
+                             (_AF3_HOME / 'userdata', profile_fd)):
+            fd = _platform_directory(path)
+            try:
+                if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (os.fstat(pinned).st_dev, os.fstat(pinned).st_ino):
+                    raise ValueError('fixture ancestor changed')
+            finally: os.close(fd)
+        _platform_sources(binding, addon_root, driver_root)
+        with backend._passive_build_binding(backend._inventory()) as native_fresh:
+            if native_fresh() is not True: raise ValueError('fixture native identity changed')
+        if hashlib.sha256(_platform_read(manifest_path, 1024 * 1024)).hexdigest() != _AF3_MANIFEST_SHA:
+            raise ValueError('fixture manifest changed')
+    def row(stage, aid=None):
+        return {'stage': stage, 'addon_id': aid, 'manifest_sha256': _AF3_MANIFEST_SHA,
+                'source_sha256': _platform_digest(diagnostic['source']),
+                'baseline_sha256': _platform_digest(before)}
+    def record(stage, aid=None):
+        raw = json.dumps(row(stage, aid),
+                         sort_keys=True).encode('ascii') + b'\n'
+        with os.fdopen(os.dup(journal_fd), 'ab', closefd=True) as out:
+            out.write(raw); out.flush(); os.fsync(out.fileno())
+    try:
+        home_fd = _platform_directory(_AF3_HOME)
+        addons_fd = _platform_directory(_AF3_HOME / 'addons')
+        profile_fd = _platform_directory(_AF3_HOME / 'userdata')
+        backend = KodiRuntimeFrozenArtifactBackend()
+        before = _af3_runtime_state(backend)
+        if verify:
+            raw = _platform_read(_AF3_HOME / 'userdata' / journal, 16384)
+            records = [json.loads(line) for line in raw.splitlines()]
+            expected = [row('started')]
+            for node in plan.install_order:
+                if node.addon_id in packages:
+                    expected.extend((row('installing', node.addon_id), row('installed', node.addon_id)))
+            expected.append(row('complete'))
+            if records != expected:
+                raise ValueError('fixture completion evidence absent')
+        else:
+            # Validate every target before journal/package mutation. Exact prior
+            # versions also refuse: no adoption of preexisting/partial installs.
+            for aid in packages:
+                if backend.get_addon_details(aid) is not None:
+                    raise ValueError('fixture registered collision')
+                try: os.stat(aid, dir_fd=addons_fd, follow_symlinks=False)
+                except FileNotFoundError: pass
+                else: raise ValueError('fixture directory collision')
+            fresh()
+            journal_fd = os.open(journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=profile_fd)
+            record('started'); os.fsync(profile_fd)
+            for node in plan.install_order:
+                aid = node.addon_id
+                if aid not in packages: continue
+                fresh()
+                if _af3_runtime_state(backend) != before: raise ValueError('fixture unrelated state changed')
+                record('installing', aid)
+                if backend.get_addon_details(aid) is not None:
+                    raise ValueError('fixture late registered collision')
+                # Direct exclusive publisher, not install_exact's adopt-existing
+                # shortcut: a race may never turn into trusting another install.
+                publish_package(packages[aid][0], aid, _AF3_HOME / 'addons' / aid, node.version)
+                backend._xbmc().executebuiltin('UpdateLocalAddons')
+                detail = backend._wait_for_exact(aid, node.version)
+                if detail.version != node.version or detail.broken: raise ValueError('fixture registration')
+                if not detail.enabled: backend.set_addon_enabled(aid, True)
+                record('installed', aid)
+        for aid, (version, digest, size) in _AF3_PACKAGES.items():
+            detail = backend.get_addon_details(aid)
+            if detail is None or detail.version != version or detail.enabled is not True or detail.broken is not False:
+                raise ValueError('fixture native health')
+            metadata = backend.read_installed_metadata(aid)
+            if (not isinstance(metadata, InstalledMetadata) or metadata.origin is not InstalledOrigin.HOME
+                    or metadata.xml_bytes != packages[aid][1]):
+                raise ValueError('fixture installed origin')
+            if _af3_public_tree(_AF3_HOME / 'addons' / aid, 128 * 1024 * 1024) != _af3_expected_tree(packages[aid][0], aid, version):
+                raise ValueError('fixture installed package bytes')
+        final_platform = read_platform_check(addon_root, driver_root, binding, manifest_path, artifact_root)
+        if final_platform.get('ok') is not True: raise ValueError('fixture final platform requirements')
+        fresh()
+        if _af3_runtime_state(backend) != before: raise ValueError('fixture preservation mismatch')
+        if not verify: record('complete')
+        return {'ok': True, 'platform_check': diagnostic, 'af3_fixture': {
+            'schema': 1, 'status': 'verified' if verify else 'complete',
+            'package_count': 17, 'manifest_sha256': _AF3_MANIFEST_SHA,
+            'preservation_checked': True, 'native_health_checked': True}}
+    finally:
+        if journal_fd is not None: os.close(journal_fd)
+        if backend is not None: backend.close()
+        for fd in (profile_fd, addons_fd, home_fd):
+            if fd is not None: os.close(fd)
+
+
+def project_af3_fixture(value):
+    if (not isinstance(value, dict) or set(value) != {'schema','status','package_count',
+            'manifest_sha256','preservation_checked','native_health_checked'} or
+            type(value['schema']) is not int or value['schema'] != 1 or
+            value['status'] not in ('complete','verified') or
+            type(value['package_count']) is not int or value['package_count'] != 17 or
+            value['manifest_sha256'] != _AF3_MANIFEST_SHA or
+            value['preservation_checked'] is not True or value['native_health_checked'] is not True):
+        raise ValueError('fixture result invalid')
+    return dict(value)

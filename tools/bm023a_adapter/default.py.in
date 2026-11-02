@@ -3,7 +3,8 @@ import sys
 
 _PLATFORM_REQUESTED = bool(sys.argv[1:]) and (
     sys.argv[1].startswith("platform_check") or
-    sys.argv[1].startswith("?mode=platform_check"))
+    sys.argv[1].startswith("?mode=platform_check") or
+    sys.argv[1].startswith("af3_fixture") or sys.argv[1].startswith("?mode=af3_fixture"))
 _PREVIOUS_BYTECODE_FLAG = sys.dont_write_bytecode
 _PREVIOUS_SYS_PATH = list(sys.path)
 _PREVIOUS_META_PATH = list(sys.meta_path)
@@ -19,7 +20,8 @@ _PREVIOUS_PLATFORM_MODULES = {name: module for name, module in sys.modules.copy(
 try:
     if _PLATFORM_REQUESTED:
         # Invalid diagnostic requests never import adapter code or write a result.
-        if sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"]):
+        if sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],
+                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"]):
             raise SystemExit("platform_check arguments refused")
         if _PREVIOUS_PLATFORM_MODULES:
             raise ImportError("platform_check preloaded module refused")
@@ -187,6 +189,7 @@ try:
         read_adapter_status,
         read_native_recovery_identity,
         read_platform_check,
+        run_af3_fixture,
         _platform_directory,
         _platform_read,
         write_platform_result,
@@ -267,6 +270,7 @@ try:
         payload = {"ok": False, "error_type": "not_started"}
         # Early location failures must also use the directory-preserving writer.
         mode = "platform_check" if _PLATFORM_REQUESTED else "unselected"
+        fixture_mode = None
         try:
             STAGE = "LOCATE_BUILD_MANAGER"
             FAILING_CALLABLE = "xbmcvfs.translatePath"
@@ -296,6 +300,11 @@ try:
             # Kodi's script argv is [script_path, first_addon_argument, ...].
             # The mode must be taken from argv[1], not argv[2].
             mode = parse_adapter_mode(sys.argv[1:])
+            # Reuse the identical source-only platform bootstrap/dispatch path;
+            # preserve the externally selected fixture mode in the result.
+            fixture_mode = mode if mode in ("af3_fixture", "af3_fixture_verify") else None
+            if fixture_mode is not None:
+                mode = "platform_check"
 
             if mode != "platform_check":
                 sys.path.insert(0, str(addon_root))
@@ -358,8 +367,15 @@ try:
                 STAGE = "PLATFORM_CHECK"
                 FAILING_CALLABLE = "read_platform_check"
                 import adapter_config
-                payload = read_platform_check(addon_root, Path(__file__).parent,
-                    getattr(adapter_config, "PLATFORM_SOURCE_BINDING", None), MANIFEST_PATH, ARTIFACT_ROOT)
+                if fixture_mode is None:
+                    payload = read_platform_check(addon_root, Path(__file__).parent,
+                        getattr(adapter_config, "PLATFORM_SOURCE_BINDING", None), MANIFEST_PATH, ARTIFACT_ROOT)
+                else:
+                    STAGE = "AF3_FIXTURE"
+                    FAILING_CALLABLE = "run_af3_fixture"
+                    payload = run_af3_fixture(addon_root, Path(__file__).parent,
+                        getattr(adapter_config, "PLATFORM_SOURCE_BINDING", None), MANIFEST_PATH, ARTIFACT_ROOT,
+                        verify=fixture_mode == "af3_fixture_verify")
             elif mode == "status":
                 frozen_install_module = importlib.import_module("resources.lib.frozen_install")
                 transaction_module = importlib.import_module("resources.lib.transaction")
@@ -638,7 +654,7 @@ try:
                 }
         except Exception as exc:
             payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)
-        payload = identify_adapter_result(payload, mode)
+        payload = identify_adapter_result(payload, fixture_mode or mode)
         if FROZEN_INSTALL_SOURCE_RECORD is not None:
             payload["frozen_install_source"] = dict(FROZEN_INSTALL_SOURCE_RECORD)
         if RETAINED_INPUTS_RECORD is not None:

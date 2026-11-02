@@ -96,7 +96,7 @@ _DATA_VOLUME_ALIAS = "/System/Volumes/Data"
 
 BUILD_MANAGER_ID = _adapter.ADDON_ID
 DRIVER_ID = _adapter.DRIVER_ADDON_ID
-ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check")
+ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
@@ -2973,6 +2973,8 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
     "status": {"status": _STATUS_RECORD,
                "recovery_identity": _adapter.project_recovery_identity},
     "platform_check": {"platform_check": _adapter.project_platform_check},
+    "af3_fixture": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
+    "af3_fixture_verify": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
 }
 
 
@@ -3013,6 +3015,12 @@ def project_adapter_result(mode: str, raw: Any) -> Tuple[Dict[str, Any], Dict[st
                 (diagnostic is None and ok) or
                 (diagnostic is not None and ok != (diagnostic["overall"] == "requirements_verified"))):
             raise HelperError("result_malformed", reason="platform_check")
+    if mode in ("af3_fixture", "af3_fixture_verify") and ok:
+        fixture = projected.get("af3_fixture")
+        expected_status = "verified" if mode == "af3_fixture_verify" else "complete"
+        if (fixture is None or fixture["status"] != expected_status or invalid or
+                projected.get("platform_check", {}).get("overall") != "requirements_verified"):
+            raise HelperError("result_malformed", reason="af3_fixture")
     return projected, withheld
 
 
@@ -3409,7 +3417,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
             "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
 
 
-DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300}
+DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
 # A graceful Kodi shutdown (settings save, add-on teardown) is short; an
@@ -3454,7 +3462,7 @@ def _kodi_addon_view(client: RpcClient, manifest: Mapping[str, Any]) -> Dict[str
     return view
 
 
-def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, Any]) -> tuple:
+def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, Any], *, fixture_addons=False) -> tuple:
     """Independent host witness for one diagnostic execution window.
 
     Content restoration cannot restore ctime. Directory change metadata also
@@ -3497,7 +3505,7 @@ def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, 
             fd = os.open(component, flags, dir_fd=parent)
             descriptors.append(fd)
             current = current / component
-            full = target.contains(current)
+            full = target.contains(current) and not (fixture_addons and current == target.addons_dir)
             directories.append((fd, parent, component, full, identity(os.fstat(fd), True, full)))
         for name in sorted(DRIVER_FILES):
             source_fd = os.open(name, _read_flags(), dir_fd=fd)
@@ -3581,6 +3589,35 @@ def _platform_invocation_snapshot(target: TestAppTarget, manifest: Mapping[str, 
             os.close(descriptor)
 
 
+def _af3_invocation_snapshot(target, manifest):
+    """Keep source-window protection while allowing only the 17 fixture roots.
+
+    Publishing necessarily changes the addons directory timestamps. Its inode
+    and all protected product/driver identities remain bound; every nonfixture
+    entry and its metadata must remain unchanged. The ordinary platform witness
+    retains its original stricter behavior.
+    """
+    source = _platform_invocation_snapshot(target, manifest, fixture_addons=True)
+    target.require_chain(target.addons_dir)
+    fd = os.open(target.addons_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        entries = []
+        for name in sorted(os.listdir(fd)):
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if name in _adapter._AF3_PACKAGES:
+                if not stat.S_ISDIR(info.st_mode): raise HelperError("platform_source_unverifiable")
+                continue
+            entries.append((name, info.st_dev, info.st_ino, info.st_mode,
+                            info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+        target.require_chain(target.addons_dir)
+        fresh = os.stat(target.addons_dir, follow_symlinks=False)
+        if (fresh.st_dev, fresh.st_ino) != (os.fstat(fd).st_dev, os.fstat(fd).st_ino):
+            raise HelperError("platform_source_unverifiable")
+        return source, tuple(entries)
+    finally:
+        os.close(fd)
+
+
 def run_adapter(
     services: "Services",
     *,
@@ -3598,6 +3635,8 @@ def run_adapter(
     if mode == "platform_check" and git_repo is None:
         raise HelperError("argument_invalid")
     if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
+        raise HelperError("argument_invalid")
+    if mode in ("af3_fixture", "af3_fixture_verify") and git_repo is None:
         raise HelperError("argument_invalid")
     target = services.target
     identity = identify(services, require="running")
@@ -3618,7 +3657,7 @@ def run_adapter(
     if identity.pid is None:
         raise HelperError("test_app_not_running")
     platform_binding = None
-    if mode == "platform_check":
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify"):
         config_path = target.addon_dir(DRIVER_ID) / "adapter_config.py"
         target.require_chain(config_path.parent)
         try:
@@ -3648,6 +3687,7 @@ def run_adapter(
     invoked_ns = services.clock.time_ns()
     invoked_utc = iso_utc_from_ns(invoked_ns)
     platform_witness = _platform_invocation_snapshot(target, manifest) if mode == "platform_check" else None
+    fixture_witness = _af3_invocation_snapshot(target, manifest) if mode in _adapter.AF3_FIXTURE_MODES else None
     accepted = client.call("Addons.ExecuteAddon", {"addonid": DRIVER_ID, "params": mode, "wait": False})
     if accepted != "OK":
         raise HelperError("rpc_execute_rejected")
@@ -3679,7 +3719,7 @@ def run_adapter(
     except (ValueError, UnicodeDecodeError):
         raise HelperError("result_malformed", reason="json") from None
     projected, withheld = project_adapter_result(mode, raw)
-    if mode == "platform_check" and projected.get("platform_check", {}).get("source") is not None:
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify") and projected.get("platform_check", {}).get("source") is not None:
         diagnostic_source = projected["platform_check"]["source"]
         expected_source = {"candidate_commit": manifest["candidate"]["commit"],
             "product_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]}),
@@ -3697,6 +3737,8 @@ def run_adapter(
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
     if mode == "platform_check" and _platform_invocation_snapshot(target, manifest) != platform_witness:
+        raise HelperError("platform_source_changed")
+    if mode in _adapter.AF3_FIXTURE_MODES and _af3_invocation_snapshot(target, manifest) != fixture_witness:
         raise HelperError("platform_source_changed")
     post_run = {
         "installed_equals_manifest": final["installed_equals_manifest"],

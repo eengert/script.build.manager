@@ -377,3 +377,73 @@ investigate.
 If a held retry fails or state is contradictory, stop and preserve evidence; do
 not improvise another recovery. The helper has no reset or delete command and
 never edits transaction or lock files.
+
+## Qualification-only AF3 fixture
+
+`run af3_fixture` provisions one fixed, original-byte AF3 3.3.12 closure into
+the disposable portable Test.app. This is not a general installer or a saved
+build Apply. Native use requires independent review and separate authorization;
+adding these modes does not authorize staging, launch or execution.
+
+The modes require HTTP loopback, authenticated PID-bound listener admission,
+an exact Git-bound stage manifest and the existing source-isolated adapter.
+TCP and `--no-git-binding` are refused. The fixed target is
+`/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data`.
+No target, package-set, version, digest or acquisition override is provided.
+
+Prepare a new matching diagnostic adapter through the existing stopped-state
+staging workflow. Its configuration must use these exact existing public inputs:
+
+- `MANIFEST_PATH`: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/item8-d028-trusted-admission-20261020/authored-af3-manifest.json`
+- `ARTIFACT_ROOT`: `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/item8-d028-public-artifact-store-20261022`
+
+The manifest SHA256 is
+`30bd44d3f6897b0e17b40afdd44881dcf24acca906cdad8827dad7c095101420`.
+The adapter pins all 17 package IDs, versions, sizes and original ZIP SHA256s
+in `_AF3_PACKAGES`, and checks the reviewed 22-node/45-edge graph with production
+validation before any package publication. The font's declared ID remains
+`resource.font.robotocjksc`, with original ZIP root `resource.font.robotcjksc`.
+No repacking occurs. Configuration and overlay inputs required by the existing
+adapter builder are not read or applied by these two modes.
+
+After separately authorized admission, staging and portable launch, use the
+existing `tools/bm_test_app.py run af3_fixture --manifest <new-stage-manifest>
+--repo <exact-worktree> --config <approved-http-config> --output <new-output>`
+interface. Existing secure credential handling applies. Never place a password
+in command arguments, configuration, environment, logs or evidence.
+
+Before publishing, the adapter requires current native builtin/ABI/closure and
+application-origin PIL verification, Estuary, an authenticated matching applied
+and selected association, Keymap 1.4.0, and no frozen/restart/capture transaction,
+activation hold or pending publication. Every fixture ID must be absent from
+both native registration and the add-ons directory. Even an exact pre-existing
+version refuses; it is not adopted. Keymap's enabled state and updater policy
+are observed and preserved, never changed by this helper.
+
+The existing `publish_package` performs exclusive validated extraction and
+atomic publication in dependency order. `UpdateLocalAddons`, exact native
+registration checks and targeted enablement establish the closure. No generic
+Install from ZIP, repository acquisition, coordinator, skin activation,
+configuration application or saved-build publication is invoked. Completion
+requires exact version, enabled/nonbroken native state, HOME metadata origin,
+original installed member bytes, fresh platform verification and unchanged
+scoped public library/resolution/settings/nonfixture inventory observations.
+
+An exclusive, fsynced `userdata/bm-af3-fixture-v1.jsonl` journal binds source,
+manifest, baseline and ordered progress. Any interruption or refusal preserves
+published packages and journal evidence. A later provision attempt refuses;
+there is no automatic retry, resume, overwrite, adoption or destructive rollback.
+Do not delete this fence to rerun. A separately authorized read-only
+`run af3_fixture_verify` uses the same bindings and requires a complete journal,
+exact installed bytes and native health; it cannot complete a partial attempt.
+The normal bounded diagnostic result file is still updated by verify mode.
+
+The host execution-window witness permits changes only to the 17 fixture roots
+and the add-ons parent timestamps; its inode, protected product/driver sources
+and all nonfixture top-level entries remain bound. Ordinary `platform_check`
+keeps its original stricter witness. These observations are not an atomic global
+lock, full-profile preservation proof or a restriction on independent Kodi
+background activity. Unexpected native-generated files, updater activity or
+state drift can cause safe refusal. Native compatibility remains unverified
+until a separately authorized disposable run passes. Preserve failure evidence
+and stop rather than weakening checks or improvising cleanup.
