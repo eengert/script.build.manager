@@ -44,7 +44,7 @@ class FakeSkinBackend(SkinBackend):
         self.active_reads = list(active_reads or ["skin.estuary"])
         self.skins: Dict[str, SkinState] = dict(skins or {})
         self.setting = setting
-        self.dialog_visibility = list(dialog_visibility or [False, True, True, False])
+        self.dialog_visibility = list(dialog_visibility or [False, False, True, True, False])
         self.calls: List[str] = []
         self.observed_dialog = False
 
@@ -79,6 +79,10 @@ class FakeSkinBackend(SkinBackend):
         if not self.observed_dialog:
             raise AssertionError("confirmation clicked before dialog was observed")
         self.calls.append("confirm")
+
+    def is_expected_confirmation(self):
+        self.calls.append("expected")
+        return True
 
 
 def _backend(**kwargs):
@@ -138,9 +142,9 @@ class TestSkinActivator(unittest.TestCase):
         self.assertEqual(result.status, SkinStatus.ACTIVATED)
         self.assertIsNone(result.failure_code)
         self.assertEqual(backend.calls, [
-            "get_active", "get_state:skin.foo", "dialog:False",
+            "get_active", "get_state:skin.foo", "dialog:False", "dialog:False",
             "set_setting:skin.foo", "get_active", "dialog:True",
-            "confirm", "dialog:True", "dialog:False", "dialog:False",
+            "expected", "confirm", "dialog:True", "dialog:False", "dialog:False",
             "get_setting", "get_active", "get_setting", "get_active",
             "get_setting", "get_active",
         ])
@@ -153,7 +157,7 @@ class TestSkinActivator(unittest.TestCase):
         self.assertNotIn("confirm", backend.calls)
 
     def test_confirmation_never_closes_is_failure(self):
-        backend = _backend(dialog_visibility=[False, True, True])
+        backend = _backend(dialog_visibility=[False, False, True, True])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
         self.assertEqual(result.failure_code, SkinFailureCode.CONFIRMATION_NOT_CLOSED)
@@ -164,7 +168,7 @@ class TestSkinActivator(unittest.TestCase):
         backend = _backend(active_reads=["skin.estuary", "skin.foo", "skin.estuary"])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
-        self.assertIn("Loaded skin", result.message)
+        self.assertIn("Reported skin", result.message)
         self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_ACTIVE)
 
     def test_persisted_setting_mismatch_is_failure(self):
@@ -178,14 +182,14 @@ class TestSkinActivator(unittest.TestCase):
         )
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
-        self.assertIn("Persisted skin setting", result.message)
+        self.assertIn("Reported skin setting", result.message)
         self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_PERSISTED)
 
     def test_loaded_skin_mismatch_is_failure(self):
         backend = _backend(active_reads=["skin.estuary", "skin.foo", "skin.other"])
         result = self._activate(backend)
         self.assertEqual(result.status, SkinStatus.FAILED)
-        self.assertIn("Loaded skin", result.message)
+        self.assertIn("Reported skin", result.message)
         self.assertEqual(result.failure_code, SkinFailureCode.TARGET_SKIN_NOT_ACTIVE)
 
     def test_backend_exception_is_failure(self):
@@ -252,7 +256,7 @@ class TestSkinActivator(unittest.TestCase):
 
             def is_confirmation_visible(self):
                 self.dialog_reads += 1
-                if self.dialog_reads == 1:
+                if self.dialog_reads <= 2:
                     return False
                 raise RuntimeError("untrusted dialog diagnostic")
 
@@ -272,9 +276,9 @@ class TestSkinActivator(unittest.TestCase):
 
             def is_confirmation_visible(self):
                 self.dialog_reads += 1
-                if self.dialog_reads == 1:
+                if self.dialog_reads <= 2:
                     return False
-                if self.dialog_reads == 2:
+                if self.dialog_reads == 3:
                     self.observed_dialog = True
                     return True
                 raise RuntimeError("untrusted dialog diagnostic")

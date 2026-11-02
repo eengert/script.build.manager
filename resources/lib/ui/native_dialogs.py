@@ -224,9 +224,9 @@ class NativeDialogs:
                             self.settle(200)
                             if not confirmed:
                                 break
-                            if self.busy:
-                                self.busy(True)
                             try:
+                                if self.busy:
+                                    self.busy(True)
                                 terminal = workflow.execute(preview)
                             finally:
                                 if self.busy:
@@ -280,9 +280,9 @@ class NativeDialogs:
         return self.execute_install(prepare)
 
     def execute_install(self, execute):
-        if self.busy:
-            self.busy(True)
         try:
+            if self.busy:
+                self.busy(True)
             return execute()
         finally:
             if self.busy:

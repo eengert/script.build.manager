@@ -2,8 +2,10 @@
 
 Skin selection is a Kodi setting, not a builtin. The production backend uses
 the Settings JSON-RPC methods and waits for Kodi's keep/revert dialog before
-clicking the established ``SendClick(11)`` Yes action. Success is reported
-only after both the persisted setting and loaded skin are verified.
+clicking the established ``SendClick(11)`` Yes action. Localized content and
+topmost checks are presentation safeguards, not atomic dialog ownership: a
+replacement after the final check can still receive the click. Success means
+stable reported configuration, not loaded-object identity or disk durability.
 """
 
 from __future__ import annotations
@@ -139,6 +141,9 @@ class SkinBackend:
     def is_confirmation_visible(self) -> bool:
         raise NotImplementedError
 
+    def is_expected_confirmation(self) -> bool:
+        raise NotImplementedError
+
     def confirm_skin_change(self) -> None:
         raise NotImplementedError
 
@@ -187,12 +192,12 @@ class SkinActivator:
             if active == addon_id:
                 return SkinResult(
                     addon_id, SkinStatus.ALREADY_ACTIVE, active,
-                    "Skin is already active; no mutation performed",
+                    "Kodi already reports this skin; no mutation performed",
                 )
 
             # Do not claim ownership of a dialog that predates this operation.
-            # The post-mutation visibility check must observe a newly-created
-            # confirmation dialog before SendClick(11) is permitted.
+            # Also check after preparation; a dialog can appear while Home is
+            # being requested. These observations do not prove invocation identity.
             failure_code = SkinFailureCode.TARGET_SKIN_STATE_READ_FAILED
             state = self._backend.get_skin_state(addon_id)
             if not state.installed:
@@ -220,6 +225,12 @@ class SkinActivator:
             prepare = getattr(self._backend, "prepare_skin_change", None)
             if callable(prepare):
                 prepare()
+            failure_code = SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
+            if self._backend.is_confirmation_visible():
+                return self._failed(
+                    addon_id, active, "Conflicting Yes/No dialog appeared during preparation",
+                    SkinFailureCode.PREEXISTING_CONFIRMATION_DIALOG,
+                )
             failure_code = SkinFailureCode.SET_SKIN_COMMAND_FAILED
             self._backend.set_skin_setting(addon_id)
             failure_code = SkinFailureCode.CONFIRMATION_NOT_OBSERVED
@@ -227,7 +238,9 @@ class SkinActivator:
             if wait_failure is not None:
                 return self._failed(
                     addon_id, self._safe_active_skin(),
-                    "Skin confirmation dialog did not appear before timeout",
+                    ("Skin confirmation did not match the expected Keep Skin prompt"
+                     if wait_failure is SkinFailureCode.CONFIRMATION_ACTION_FAILED
+                     else "Skin confirmation could not be established before timeout"),
                     wait_failure,
                 )
 
@@ -249,13 +262,13 @@ class SkinActivator:
             if persisted != addon_id:
                 return self._failed(
                     addon_id, active,
-                    f"Persisted skin setting is {persisted!r}, expected {addon_id!r}",
+                    f"Reported skin setting is {persisted!r}, expected {addon_id!r}",
                     SkinFailureCode.TARGET_SKIN_NOT_PERSISTED,
                 )
             if active != addon_id:
                 return self._failed(
                     addon_id, active,
-                    f"Loaded skin is {active!r}, expected {addon_id!r}",
+                    f"Reported skin is {active!r}, expected {addon_id!r}",
                     SkinFailureCode.TARGET_SKIN_NOT_ACTIVE,
                 )
             failure_code = SkinFailureCode.SKIN_DID_NOT_REMAIN_STABLE
@@ -263,12 +276,12 @@ class SkinActivator:
             if wait_failure is not None:
                 return self._failed(
                     addon_id, self._safe_active_skin(),
-                    "Skin setting or loaded skin did not remain stable after confirmation",
+                    "Reported skin configuration did not remain stable after confirmation",
                     wait_failure,
                 )
             return SkinResult(
                 addon_id, SkinStatus.ACTIVATED, active,
-                "Skin activated and persisted state verified",
+                "Skin confirmation completed; reported configuration remained stable",
             )
         except Exception as exc:
             safe_code = getattr(exc, "failure_code", None)
@@ -290,7 +303,7 @@ class SkinActivator:
     def _wait_for_confirmation(
         self, addon_id: str,
     ) -> Optional[SkinFailureCode]:
-        """Wait until the requested skin is loaded and its dialog is visible."""
+        """Wait for the target report and the expected confirmation presentation."""
         deadline = self._clock() + self._timeout
         last_read_failure = None
         while True:
@@ -306,6 +319,11 @@ class SkinActivator:
                         last_read_failure = SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
                     else:
                         if visible:
+                            try:
+                                if not self._backend.is_expected_confirmation():
+                                    return SkinFailureCode.CONFIRMATION_ACTION_FAILED
+                            except Exception:
+                                return SkinFailureCode.CONFIRMATION_STATE_READ_FAILED
                             return None
                         last_read_failure = None
                 else:
@@ -317,7 +335,7 @@ class SkinActivator:
     def _wait_for_confirmation_close(
         self, addon_id: str,
     ) -> Optional[SkinFailureCode]:
-        """Require the dialog to stay closed while the requested skin is active."""
+        """Require repeated closed-dialog observations before final state reads."""
         deadline = self._clock() + self._timeout
         last_read_failure = None
         samples_required = (
@@ -535,13 +553,43 @@ class KodiRuntimeSkinBackend(SkinBackend):
         return False
 
     def confirm_skin_change(self) -> None:
-        xbmc = self._xbmc()
+        # Reinspect immediately before the single reply. No retry, even on a
+        # TypeError: the binding might have dispatched before raising. This is
+        # deliberately NOT an atomic compare-and-confirm; see module limitation.
         try:
-            # The wait flag makes Kodi process the click before returning;
-            # older Python bindings accept only the one-argument form.
-            xbmc.executebuiltin("SendClick(11)", True)
-        except TypeError:
-            xbmc.executebuiltin("SendClick(11)")
+            expected = self.is_expected_confirmation()
+        except Exception as exc:
+            raise SkinError("Keep Skin prompt could not be read") from exc
+        if not expected:
+            raise SkinError("Keep Skin prompt changed or is unavailable")
+        try:
+            self._xbmc().executebuiltin("SendClick(11)", True)
+        except Exception as exc:
+            raise SkinError("Automatic skin confirmation could not be established") from exc
+
+    def is_expected_confirmation(self) -> bool:
+        """Match pinned Omega's localized prompt and bracket it by modal reads.
+
+        Estuary and AF3 use heading 1 and body textbox 9. Missing APIs, empty
+        translations or unreadable content must not fall back to generic Yes/No.
+        Control.GetLabel uses Kodi's topmost-modal context; the final modal read
+        catches an observed context change, but cannot prevent a later replacement.
+        """
+        import xbmcgui  # noqa: PLC0415
+        xbmc = self._xbmc()
+        topmost = xbmcgui.getCurrentWindowDialogId()
+        if type(topmost) is not int or topmost != 10100:
+            return False
+        if not self.is_confirmation_visible():
+            return False
+        for localization, control in ((13123, 1), (13111, 9)):
+            expected = xbmc.getLocalizedString(localization)
+            actual = xbmc.getInfoLabel(f"Control.GetLabel({control})")
+            if (not isinstance(expected, str) or not expected.strip()
+                    or not isinstance(actual, str) or actual != expected):
+                return False
+        topmost = xbmcgui.getCurrentWindowDialogId()
+        return type(topmost) is int and topmost == 10100
 
 
 class KodiRuntimeSkinSettingsBackend:

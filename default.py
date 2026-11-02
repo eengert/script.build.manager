@@ -9,6 +9,22 @@ def status_provider(xbmc):
     return provide
 
 
+def background_busy(xbmcgui, heading):
+    """Own one modeless progress handle; never close another caller's dialog."""
+    progress = None
+
+    def busy(active):
+        nonlocal progress
+        if active:
+            if progress is None:
+                progress = xbmcgui.DialogProgressBG()
+                progress.create(heading)
+        elif progress is not None:
+            progress.close()
+            progress = None
+    return busy
+
+
 def main():
     import xbmc
     import xbmcaddon
@@ -23,8 +39,7 @@ def main():
         def repair_provider():
             from resources.lib.update_repair_workflow import runtime_update_repair_workflow
             return runtime_update_repair_workflow()
-        def busy(active):
-            xbmc.executebuiltin('ActivateWindow(busydialognocancel)' if active else 'Dialog.Close(busydialognocancel)')
+        busy = background_busy(xbmcgui, addon.getLocalizedString(32101))
         NativeDialogs(addon, xbmcgui.Dialog(), xbmc.sleep, status_provider(xbmc),
                       create_provider=runtime_create_workflow, busy=busy, install_provider=install_provider,
                       repair_provider=repair_provider).run()
