@@ -3680,6 +3680,8 @@ def run_adapter(
               if rpc_transport == "tcp" else RpcClient(services, identity.pid, host, port, username))
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
+    if mode in _adapter.AF3_FIXTURE_MODES and not client.authenticated:
+        raise HelperError("rpc_auth_failed")
     if rpc_transport == "tcp" and mode == "platform_check":
         _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
     addon_view = _kodi_addon_view(client, manifest)

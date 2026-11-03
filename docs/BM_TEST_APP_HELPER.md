@@ -387,6 +387,8 @@ adding these modes does not authorize staging, launch or execution.
 
 The modes require HTTP loopback, authenticated PID-bound listener admission,
 an exact Git-bound stage manifest and the existing source-isolated adapter.
+Both fixture modes require successful HTTP authentication after Ping; an
+unchallenged connection refuses with `rpc_auth_failed` before adapter dispatch.
 TCP and `--no-git-binding` are refused. The fixed target is
 `/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data`.
 No target, package-set, version, digest or acquisition override is provided.
@@ -417,8 +419,14 @@ application-origin PIL verification, Estuary, an authenticated matching applied
 and selected association, Keymap 1.4.0, and no frozen/restart/capture transaction,
 activation hold or pending publication. Every fixture ID must be absent from
 both native registration and the add-ons directory. Even an exact pre-existing
-version refuses; it is not adopted. Keymap's enabled state and updater policy
-are observed and preserved, never changed by this helper.
+version refuses; it is not adopted. The operator must separately establish
+`general.addonupdates = 2` (`NEVER_CHECK`) before native admission. AUTOMATIC,
+NOTIFY_ONLY, unavailable and malformed values refuse. This gate is checked at
+initial admission, between publications, at completion and during verify.
+Keymap's enabled state and the required updater policy are observed and
+preserved, never configured by this helper. NEVER_CHECK does not establish
+general network isolation; TMDb Helper service/network effects require a
+separate native-admission decision before enablement is authorized.
 
 The existing `publish_package` performs exclusive validated extraction and
 atomic publication in dependency order. `UpdateLocalAddons`, exact native
@@ -437,13 +445,20 @@ Do not delete this fence to rerun. A separately authorized read-only
 `run af3_fixture_verify` uses the same bindings and requires a complete journal,
 exact installed bytes and native health; it cannot complete a partial attempt.
 The normal bounded diagnostic result file is still updated by verify mode.
+If final-record fsync fails after `complete` was written, the original run
+remains failed; a later authorized verify may observe complete bytes and healthy
+state, but cannot prove that the failed fsync made the record durable. Never
+infer safe retry from this ambiguity. Interrupted publisher staging remnants
+may also remain; preserve them for separately authorized inspection.
 
 The host execution-window witness permits changes only to the 17 fixture roots
 and the add-ons parent timestamps; its inode, protected product/driver sources
 and all nonfixture top-level entries remain bound. Ordinary `platform_check`
 keeps its original stricter witness. These observations are not an atomic global
 lock, full-profile preservation proof or a restriction on independent Kodi
-background activity. Unexpected native-generated files, updater activity or
+background activity. Transient nonfixture entries created and removed directly
+under the add-ons parent, and parent metadata-only changes, may go unobserved.
+Unexpected native-generated files, updater activity or
 state drift can cause safe refusal. Native compatibility remains unverified
 until a separately authorized disposable run passes. Preserve failure evidence
 and stop rather than weakening checks or improvising cleanup.

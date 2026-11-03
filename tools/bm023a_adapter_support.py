@@ -1934,6 +1934,8 @@ def _af3_runtime_state(backend):
     if settings['lookandfeel.skin'] != 'skin.estuary': raise ValueError('fixture skin')
     if type(settings['general.addonupdates']) is not int or settings['general.addonupdates'] not in (0, 1, 2):
         raise ValueError('fixture updater observation')
+    if settings['general.addonupdates'] != 2:
+        raise ValueError('fixture updater policy')
     rows = backend._rpc('Addons.GetAddons', {'installed': True,
         'properties': ['version', 'enabled', 'broken']}).get('result')
     if not isinstance(rows, dict) or not isinstance(rows.get('addons'), list):

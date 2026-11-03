@@ -293,15 +293,49 @@ class HostWindowTests(unittest.TestCase):
         with self.assertRaises(host.HelperError):host._af3_invocation_snapshot(world.target,world.manifest)
 
     def test_host_dispatch_accepts_only_fresh_bound_complete_fixture_result(self):
+        for mode in support.AF3_FIXTURE_MODES:
+            with self.subTest(mode=mode):
+                world,result=self.fixture_world()
+                status='verified' if mode.endswith('_verify') else 'complete'
+                result=dict(result,adapter_mode=mode,af3_fixture={
+                    'schema':1,'status':status,'package_count':17,'manifest_sha256':support._AF3_MANIFEST_SHA,
+                    'preservation_checked':True,'native_health_checked':True})
+                world.transport.password=world.password_to_return=self.world.SENTINEL_PASSWORD
+                world.produce_on_sleep(result)
+                report=world.run(mode,git_repo=self.owner.world.FIXTURE.repo)
+                self.assertTrue(report['ok'],report)
+                self.assertTrue(report['invocation']['authenticated'])
+                self.assertEqual(world.executed,[{'addonid':host.DRIVER_ID,'params':mode,'wait':False}])
+                self.assertEqual(report['result']['af3_fixture']['status'],status)
+
+    def test_unchallenged_fixture_modes_refuse_before_dispatch(self):
+        for mode in support.AF3_FIXTURE_MODES:
+            with self.subTest(mode=mode):
+                world,_=self.fixture_world()
+                with self.assertRaises(host.HelperError) as refused:
+                    world.run(mode,git_repo=self.owner.world.FIXTURE.repo)
+                self.assertEqual(refused.exception.code,'rpc_auth_failed')
+                self.assertEqual(world.executed,[])
+                self.assertEqual([r['body']['method'] for r in world.transport.requests],['JSONRPC.Ping'])
+
+    def test_failed_fixture_authentication_refuses_both_modes_before_dispatch(self):
+        for mode in support.AF3_FIXTURE_MODES:
+            with self.subTest(mode=mode):
+                world,_=self.fixture_world()
+                world.transport.password='correct-mock-password'
+                world.password_to_return='wrong-mock-password'
+                with self.assertRaises(host.HelperError) as refused:
+                    world.run(mode,git_repo=self.owner.world.FIXTURE.repo)
+                self.assertEqual(refused.exception.code,'rpc_auth_failed')
+                self.assertEqual(world.executed,[])
+
+    def test_nonfixture_platform_mode_still_accepts_unchallenged_http(self):
         world,result=self.fixture_world()
-        result=dict(result,adapter_mode='af3_fixture',af3_fixture={
-            'schema':1,'status':'complete','package_count':17,'manifest_sha256':support._AF3_MANIFEST_SHA,
-            'preservation_checked':True,'native_health_checked':True})
         world.produce_on_sleep(result)
-        report=world.run('af3_fixture',git_repo=self.owner.world.FIXTURE.repo)
-        self.assertTrue(report['ok'],report)
-        self.assertEqual(world.executed,[{'addonid':host.DRIVER_ID,'params':'af3_fixture','wait':False}])
-        self.assertEqual(report['result']['af3_fixture']['status'],'complete')
+        report=world.run('platform_check',git_repo=self.owner.world.FIXTURE.repo)
+        self.assertTrue(report['ok'])
+        self.assertFalse(report['invocation']['authenticated'])
+        self.assertEqual(len(world.executed),1)
 
 
 class AdditionalRefusalTests(unittest.TestCase):
@@ -377,7 +411,7 @@ class RuntimeStateTests(unittest.TestCase):
         self.scope.enter_context(patch('resources.lib.build_library.default_build_library',return_value=self.library))
         self.backend=Mock()
         self.skin='skin.estuary'
-        self.updater=0
+        self.updater=2
         self.keymap=('1.4.0',False,False)
         def rpc(method,params):
             if method=='Settings.GetSettingValue':
@@ -409,11 +443,91 @@ class RuntimeStateTests(unittest.TestCase):
         with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
         self.skin='skin.estuary';self.updater=True
         with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
-        self.updater=0;self.keymap=('2.0.0',False,False)
+        self.updater=2;self.keymap=('2.0.0',False,False)
         with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
         self.keymap=('1.4.0',False,False)
         self.vfs.translatePath=lambda path:'/tmp/unapproved'
         with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
+
+    def test_only_never_check_passes_and_missing_or_malformed_policy_refuses(self):
+        for value in (0,1,None,True,False,'2',2.0,-1,3):
+            with self.subTest(value=value):
+                self.updater=value
+                with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
+        self.updater=2
+        support._af3_runtime_state(self.backend)
+        self.backend._rpc.side_effect=lambda *args:{'result':{}}
+        with self.assertRaises(ValueError):support._af3_runtime_state(self.backend)
+
+    def connect_provisioner(self):
+        # Exercise the real state reader at every production call site while
+        # retaining fake Kodi authority and the existing temporary publisher.
+        reader=support._af3_runtime_state
+        fixture=FixtureTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        self.home=fixture.home
+        self.bm=self.home/'userdata/addon_data/script.build.manager';self.bm.mkdir(parents=True)
+        self.scope.enter_context(patch.object(fi,'default_frozen_install_root',return_value=self.bm))
+        fixture.backend._rpc.side_effect=self.backend._rpc.side_effect
+        fixture.state.side_effect=reader
+        return fixture
+
+    def test_unsafe_initial_policy_refuses_before_journal_or_publication(self):
+        fixture=self.connect_provisioner()
+        for value in (0,1):
+            self.updater=value
+            with self.assertRaisesRegex(ValueError,'fixture updater policy'):fixture.run_fixture()
+            self.assertEqual(fixture.installs,[])
+            self.assertFalse(fixture.journal.exists())
+
+    def test_policy_drift_stops_before_further_publication(self):
+        fixture=self.connect_provisioner()
+        original=fixture.publisher
+        def publish(*args):
+            original(*args);self.updater=0
+        with patch('resources.lib.addon_zip.publish_package',side_effect=publish):
+            with self.assertRaisesRegex(ValueError,'fixture updater policy'):fixture.run_fixture()
+        self.assertEqual(len(fixture.installs),1)
+        self.assertNotEqual(json.loads(fixture.journal.read_text().splitlines()[-1])['stage'],'complete')
+        self.assertEqual(set(c.args[0] for c in fixture.backend._rpc.call_args_list),
+                         {'Settings.GetSettingValue','Addons.GetAddons'})
+
+    def test_completion_and_verify_require_safe_policy_without_changing_it(self):
+        fixture=self.connect_provisioner()
+        fixture.run_fixture()
+        complete=fixture.journal.read_bytes()
+        for value in (0,1):
+            self.updater=value
+            with self.assertRaisesRegex(ValueError,'fixture updater policy'):fixture.run_fixture(verify=True)
+            self.assertEqual(fixture.journal.read_bytes(),complete)
+        self.updater=2
+        self.assertTrue(fixture.run_fixture(verify=True)['ok'])
+        self.assertEqual(len(fixture.installs),17)
+        # Drift after the last publication is refused at completion as well.
+        calls=0
+        def change_at_completion(backend):
+            nonlocal calls
+            calls+=1
+            if calls==2:self.updater=1
+            return reader(backend)
+        reader=fixture.state.side_effect
+        fixture.state.side_effect=change_at_completion
+        with self.assertRaisesRegex(ValueError,'fixture updater policy'):fixture.run_fixture(verify=True)
+        self.assertEqual(fixture.journal.read_bytes(),complete)
+        self.assertEqual(set(c.args[0] for c in fixture.backend._rpc.call_args_list),
+                         {'Settings.GetSettingValue','Addons.GetAddons'})
+
+    def test_policy_change_after_last_publication_prevents_completion(self):
+        fixture=self.connect_provisioner()
+        original=fixture.publisher
+        def publish(*args):
+            original(*args)
+            if len(fixture.installs)==17:self.updater=1
+        with patch('resources.lib.addon_zip.publish_package',side_effect=publish):
+            with self.assertRaisesRegex(ValueError,'fixture updater policy'):fixture.run_fixture()
+        self.assertEqual(len(fixture.installs),17)
+        self.assertNotEqual(json.loads(fixture.journal.read_text().splitlines()[-1])['stage'],'complete')
+        self.assertEqual(set(c.args[0] for c in fixture.backend._rpc.call_args_list),
+                         {'Settings.GetSettingValue','Addons.GetAddons'})
 
 
 class LegacyScopeTests(unittest.TestCase):
