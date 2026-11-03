@@ -14,6 +14,7 @@ Subcommands (every one prints deterministic, sanitized JSON on stdout):
   snapshot   read-only, secret-blind qualification census
   platform-preflight     Git-bound read-only local TCP runtime preflight
   platform-adapter-state Git-bound checked enable/disable of diagnostic driver
+  af3-health authenticated read-only health inspection of the existing AF3 set
 
 HTTP remains the default. Explicit --rpc-transport tcp is restricted to
 127.0.0.1:9090, the diagnostic control commands, and run platform_check.
@@ -227,7 +228,7 @@ ERROR_CODES = frozenset({
     "platform_source_unverifiable", "platform_source_changed",
     "tcp_endpoint_refused", "tcp_method_refused", "tcp_response_timeout",
     "tcp_response_incomplete", "adapter_state_mismatch", "platform_build_mismatch",
-    "addon_not_visible_to_kodi", "addon_view_mismatch",
+    "addon_not_visible_to_kodi", "addon_view_mismatch", "af3_health_refused",
     "result_path_unsafe", "result_not_produced", "result_stale",
     "result_malformed", "result_from_future", "adapter_mode_mismatch",
     "kodi_exited_before_result", "kodi_quit_rejected", "kodi_quit_timeout",
@@ -3628,9 +3629,12 @@ def run_adapter(
     git_repo: Optional[Path],
     timeout: float,
     rpc_transport: str = "http",
+    require_authenticated: bool = False,
 ) -> Dict[str, Any]:
     """Invoke one BM-023A adapter mode and report its fresh, allowlisted result."""
     if mode not in ADAPTER_MODES:
+        raise HelperError("argument_invalid")
+    if type(require_authenticated) is not bool:
         raise HelperError("argument_invalid")
     if mode == "platform_check" and git_repo is None:
         raise HelperError("argument_invalid")
@@ -3681,6 +3685,8 @@ def run_adapter(
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
     if mode in _adapter.AF3_FIXTURE_MODES and not client.authenticated:
+        raise HelperError("rpc_auth_failed")
+    if require_authenticated and not client.authenticated:
         raise HelperError("rpc_auth_failed")
     if rpc_transport == "tcp" and mode == "platform_check":
         _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
@@ -3781,6 +3787,133 @@ def run_adapter(
         "result_withheld": withheld,
         "stage_verification": verification,
     }
+
+
+_AF3_HEALTH_SOURCE = "ecc1ee15a72fe375629108d5341768938378f473"
+_AF3_HEALTH_STAGE_SHA = "529851628778a71c82077e517871881cbbb16f478af6766093a89118eb29d8e5"
+_AF3_HEALTH_AUDIT = PROJECT / ".qualification-evidence/item8-a11-af3-package-audit-20261103"
+_AF3_HEALTH_AUDIT_SHA = "6654e02f0c3da67667d6944bc4501105e953d773257b5910fb9550bfe4a3bd21"
+_AF3_HEALTH_JOURNAL_SHA = "576aeb430b5d86fcdacb1c6be837ecf2f1d57c9653b4f5e800814c327d252344"
+
+
+def _af3_health_audit():
+    """Authenticate sealed historical evidence; never execute its scripts."""
+    try:
+        seal = _adapter._platform_read(_AF3_HEALTH_AUDIT / "SHA256SUMS", 16384)
+        if hashlib.sha256(seal).hexdigest() != _AF3_HEALTH_AUDIT_SHA:
+            raise ValueError("audit seal")
+        seen = set()
+        total = 0
+        for line in seal.decode("ascii").splitlines():
+            digest, name = line.split("  ", 1)
+            if not _HEX64.fullmatch(digest) or Path(name).name != name or name in (".", "..") or name in seen:
+                raise ValueError("audit member")
+            seen.add(name)
+            data = _adapter._platform_read(_AF3_HEALTH_AUDIT / name, 32 << 20)
+            total += len(data)
+            if total > 64 << 20 or hashlib.sha256(data).hexdigest() != digest:
+                raise ValueError("audit member identity")
+        if len(seen) != 18:
+            raise ValueError("audit inventory")
+    except (ValueError, OSError):
+        raise HelperError("af3_health_refused", reason="historical_audit") from None
+    return {"status": "HISTORICAL_VERIFIED", "audit_seal_sha256": _AF3_HEALTH_AUDIT_SHA,
+            "fresh_runtime_measurement": False, "original_files": 4497, "original_directories": 254}
+
+
+def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc):
+    """Observe this existing set. Never complete its failed provisioning attempt.
+
+    Host health reads plus the existing source-only platform diagnostic. The
+    latter writes its ordinary result witness; no new in-Kodi mode is added.
+    """
+    if (git_repo is None or manifest["candidate"]["commit"] != _AF3_HEALTH_SOURCE
+            or manifest_sha256 != _AF3_HEALTH_STAGE_SHA):
+        raise HelperError("argument_invalid")
+    address = validate_loopback_host(rpc.get("host", DEFAULT_RPC_HOST))
+    if (address != "127.0.0.1" or type(rpc.get("port")) is not int or rpc["port"] != 8080
+            or rpc.get("username", DEFAULT_RPC_USERNAME) != "kodi"):
+        raise HelperError("argument_invalid")
+    rpc = {"host": address, "port": 8080, "username": "kodi"}
+    historical = _af3_health_audit()
+    target = services.target
+    identity = identify(services, require="running")
+    verified = verify_installed(services, manifest, git_repo=git_repo)
+    if not verified["installed_equals_candidate"] or not verified["installed_equals_manifest"]:
+        raise HelperError("installed_tree_mismatch")
+    journal_path = target.userdata_dir / "bm-af3-fixture-v1.jsonl"
+    def journal():
+        try:
+            raw = _adapter._platform_read(journal_path, 16384)
+            if hashlib.sha256(raw).hexdigest() != _AF3_HEALTH_JOURNAL_SHA:
+                raise ValueError("journal identity")
+            return raw
+        except (ValueError, OSError):
+            raise HelperError("af3_health_refused", reason="failed_journal_identity") from None
+    original_journal = journal()
+    witness = _platform_invocation_snapshot(target, manifest)
+    # Fresh platform/ABI/PIL authority cannot be replaced by the historical
+    # package audit or ordinary JSON-RPC inventory. Reuse the reviewed check.
+    platform = run_adapter(services, mode="platform_check", manifest=manifest,
+        manifest_sha256=manifest_sha256, rpc=rpc, git_repo=git_repo, timeout=300,
+        require_authenticated=True)
+    if (not platform["ok"] or not platform["invocation"]["authenticated"]
+            or platform["invocation"]["test_app_pid"] != identity.pid
+            or platform["result"].get("platform_check", {}).get("overall") != "requirements_verified"
+            or platform["result"]["platform_check"]["manifest_sha256"] != _adapter._AF3_MANIFEST_SHA):
+        raise HelperError("af3_health_refused", reason="native_platform")
+    client = RpcClient(services, identity.pid, address, 8080, "kodi")
+    if client.call("JSONRPC.Ping", {}) != "pong":
+        raise HelperError("rpc_response_invalid")
+    if not client.authenticated:
+        raise HelperError("rpc_auth_failed")
+    def settings():
+        values = {}
+        for key in ("lookandfeel.skin", "general.addonupdates"):
+            row = client.call("Settings.GetSettingValue", {"setting": key})
+            if not isinstance(row, dict) or set(row) != {"value"}:
+                raise HelperError("rpc_response_invalid")
+            values[key] = row["value"]
+        if (values["lookandfeel.skin"] != "skin.estuary"
+                or type(values["general.addonupdates"]) is not int or values["general.addonupdates"] != 2):
+            raise HelperError("af3_health_refused", reason="runtime_settings")
+        return values
+    before_settings = settings()
+    build = _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
+    if build["tag"] != "stable":
+        raise HelperError("platform_build_mismatch")
+    packages = {}
+    for aid, (version, _, _) in _adapter._AF3_PACKAGES.items():
+        result = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["version", "enabled", "broken"]})
+        row = result.get("addon") if isinstance(result, dict) else None
+        if (not isinstance(row, dict) or row.get("addonid") != aid or not isinstance(row.get("version"), str)
+                or type(row.get("enabled")) is not bool or type(row.get("broken")) is not bool):
+            raise HelperError("rpc_response_invalid")
+        if row["version"] != version or row["enabled"] is not True or row["broken"] is not False:
+            raise HelperError("addon_view_mismatch", addon_id=aid)
+        packages[aid] = {"version": version, "enabled": True, "broken": False}
+    if settings() != before_settings or journal() != original_journal:
+        raise HelperError("af3_health_refused", reason="state_changed")
+    final_identity = identify(services, require="running")
+    final = verify_installed(services, manifest, git_repo=git_repo)
+    if final_identity.pid != identity.pid:
+        raise HelperError("listener_pid_mismatch", port=8080)
+    if not final["installed_equals_candidate"] or _platform_invocation_snapshot(target, manifest) != witness:
+        raise HelperError("platform_source_changed")
+    return {"ok": True, "command": "af3-health", "candidate_commit": _AF3_HEALTH_SOURCE,
+        "manifest_sha256": manifest_sha256, "authenticated": True, "listener_pid_verified": True,
+        "identity": final_identity.report(), "git_binding": final["git_binding"],
+        "original_package_source_integrity": historical,
+        "native_registration_health": {"status": "PASS", "packages": packages},
+        "platform_check": platform["result"]["platform_check"], "settings": before_settings,
+        "executable_cache_extras": {"trust": "UNVERIFIED", "provenance": "UNVERIFIED",
+            "fresh_runtime_measurement": False, "historical_pyc_files": 76, "historical_cache_directories": 13},
+        "original_provisioning": {"status": "FAIL", "completion": "INCOMPLETE", "journal_unchanged": True,
+            "journal_sha256": _AF3_HEALTH_JOURNAL_SHA, "records": 35, "complete_records": 0},
+        "qualification": "not_qualified", "full_profile_preservation": "UNVERIFIED",
+        "auto_keep_authorized": False,
+        "inspection_rpc_requests": client.requests_sent,
+        "platform_diagnostic": {"freshness": platform["freshness"], "invocation": platform["invocation"]}}
 
 
 def run_quit(
@@ -4684,6 +4817,13 @@ def build_parser() -> argparse.ArgumentParser:
             control.add_argument("--enabled", choices=("true", "false"), required=True)
         _add_output(control)
 
+    health = commands.add_parser("af3-health", help="read-only native health of the pinned existing AF3 set")
+    health.add_argument("--manifest", required=True)
+    health.add_argument("--repo")
+    _add_rpc_arguments(health)
+    health.add_argument("--rpc-transport", choices=("http",), default="http")
+    _add_output(health)
+
     quit_parser = commands.add_parser("quit", help="gracefully quit the Test.app over loopback RPC")
     _add_rpc_arguments(quit_parser)
     quit_parser.add_argument("--timeout", type=float, help="seconds to wait for the process to exit")
@@ -4817,6 +4957,11 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
         if not payload["adapter_ok"]:
             return payload, EXIT_ADAPTER_FAILED
         return payload, EXIT_OK if payload["ok"] else EXIT_FAILED
+    if command == "af3-health":
+        manifest, manifest_sha = load_manifest(args.manifest, services)
+        config_rpc = load_config(Path(args.config), services)["rpc"] if args.config else {}
+        return run_af3_health(services, manifest=manifest, manifest_sha256=manifest_sha,
+            git_repo=_git_repo(args, services), rpc=_merge_rpc(config_rpc, args)), EXIT_OK
     if command in ("platform-preflight", "platform-adapter-state"):
         manifest, _ = load_manifest(args.manifest, services)
         return run_platform_control(services, manifest=manifest, git_repo=_git_repo(args, services),

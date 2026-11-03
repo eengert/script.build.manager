@@ -462,3 +462,65 @@ Unexpected native-generated files, updater activity or
 state drift can cause safe refusal. Native compatibility remains unverified
 until a separately authorized disposable run passes. Preserve failure evidence
 and stop rather than weakening checks or improvising cleanup.
+
+## Existing AF3 native health inspection
+
+`af3-health` is a host-only inspection command for the already-published fixture.
+It adds no in-Kodi mode and does not stage a new adapter. **Independent review
+and explicit separate authorization are required before native use.** This
+command does not launch Test.app, install/enable packages, repair anything,
+change the updater or complete the failed provisioning attempt.
+
+It requires the exact original installed candidate
+`ecc1ee15a72fe375629108d5341768938378f473` and original stage-manifest SHA256
+`529851628778a71c82077e517871881cbbb16f478af6766093a89118eb29d8e5`.
+Git binding cannot be disabled. The new host helper is used with that original
+installed source; do not restage merely to use this host inspection surface.
+HTTP is fixed to authenticated PID-bound `127.0.0.1:8080`, user `kodi`; no TCP
+fallback, unchallenged connection, configurable package set or recovery option.
+The existing reviewed Keychain wrapper supports this command with its unchanged
+credential protection and fail-closed lookup behavior.
+
+After separate native authorization and portable-target admission, the interface
+is `tools/bm_test_app_keychain.py af3-health --manifest <original-stage-manifest>
+--repo <exact-worktree> --rpc-transport http --rpc-host 127.0.0.1 --rpc-port 8080
+--rpc-user kodi --output <new-protected-output>`. Passwords never belong in
+arguments, environment, configuration, logs or evidence. Current authorization
+does not follow from the existence of this example.
+
+The host authenticates the fixed sealed stopped-state package audit (seal
+`6654e02f0c3da67667d6944bc4501105e953d773257b5910fb9550bfe4a3bd21`)
+and the unchanged failed journal (SHA256
+`576aeb430b5d86fcdacb1c6be837ecf2f1d57c9653b4f5e800814c327d252344`).
+It uses the **existing** source-only `platform_check` invocation for fresh
+native build/builtin/ABI/PIL requirements. That read-only diagnostic writes its
+normal bounded result witness inside Test.app; the health operation is not a
+zero-write filesystem observation. Both diagnostic and inspection connections
+must authenticate. The driver must already be enabled; no transition is made.
+
+Ordinary host reads then require all 17 exact native versions, enabled=true,
+broken=false, Estuary and integer updater policy 2. Strict malformed responses
+refuse. The original journal is re-read, source/Git and execution-window
+identities are rechecked, and PID/listener guards remain in force. The only
+adapter execution requested is the original platform diagnostic; no third-party
+add-on import/execution is requested by the health operation.
+
+Results keep four independent facts separate:
+
+- `original_package_source_integrity`: HISTORICAL_VERIFIED from the sealed audit,
+  explicitly not a fresh installed-byte observation.
+- `native_registration_health`: PASS only for successful current health reads;
+  fresh platform proof is separately included.
+- `executable_cache_extras`: the audit's 76 .pyc / 13 cache directories remain
+  historical observations with UNVERIFIED trust/provenance. No cache is read as
+  code, imported, executed, removed, authenticated or blanket-excluded here.
+- `original_provisioning`: FAIL / INCOMPLETE, 35 records, zero complete records,
+  unchanged journal. Health success never rewrites that history.
+
+Native health does not authenticate executable caches or claim current package
+source-byte integrity, atomic/full-profile preservation, original provisioning
+success, AF3 activation safety or authorization for Auto-Keep. Kodi services
+already running may have their own code/cache/network activity; this inspection
+does not isolate them or retroactively authorize a launch. Any failed guard is
+a refusal, with no retry, configuration change or recovery. Preserve evidence
+and stop for Supervisor.
