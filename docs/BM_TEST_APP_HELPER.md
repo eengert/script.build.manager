@@ -524,3 +524,72 @@ already running may have their own code/cache/network activity; this inspection
 does not isolate them or retroactively authorize a launch. Any failed guard is
 a refusal, with no retry, configuration change or recovery. Preserve evidence
 and stop for Supervisor.
+
+### Standalone Auto-Keep qualification (separate native authorization required)
+
+`run auto_keep` is a qualification-only operation for the fixed
+`skin.arctic.fuse.3` **3.3.12** target. It does not enter an Install coordinator,
+create a saved build, publish an association, apply captured configuration or
+activate the dormant two-approval protocol. Production `SkinActivator`,
+`KodiRuntimeSkinBackend`, `default.background_busy` and
+`NativeDialogs.execute_install` run unchanged.
+
+Before any future execution, separately authorize staging the reviewed adapter
+and matching Git-bound product, using a **new** stage manifest. The previously
+installed ecc1ee15 adapter has no such mode. Keep the approved configuration's
+fixed authored AF3 manifest and artifact store; neither is captured runtime
+state. Then, with independently admitted portable Test.app running, the bounded
+host interface is:
+
+```text
+DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+/Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B tools/bm_test_app_keychain.py \
+run auto_keep --manifest <NEW_REVIEWED_STAGE_MANIFEST> \
+--repo /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex \
+--rpc-transport http --rpc-host 127.0.0.1 --rpc-port 8080 --rpc-user kodi \
+--output <NEW_PROTECTED_OUTPUT>
+```
+
+This is documentation, not authorization to stage, launch or execute it.
+Authentication is mandatory before dispatch, with the existing target/PID-bound
+HTTP listener, source-only adapter bootstrap, Git binding, source-window checks
+and sanitized result projector. TCP, arbitrary endpoints/skins and Git bypass
+are refused. The unchanged credential wrapper has no password fallback.
+
+Runtime admission requires Estuary, NEVER_CHECK, all 17 pinned packages enabled
+and nonbroken, the fixed authored graph's native platform/ABI/PIL verification,
+no frozen/restart/capture transaction or hold or pending publication, and the
+expected selected/applied Build 999 / 1.0.1 association and resolution. It also
+requires the exact original failed 35-record fixture-journal digest. That
+journal is read only; its incompleteness does not gate standalone activation.
+Pre-existing modal dialogs refuse. The production activator separately checks
+preparation-time conflicts, localized Keep heading/body and the topmost modal,
+then rechecks immediately before its one `SendClick(11)`.
+
+A new, mode-specific `userdata/bm-auto-keep-attempt-v1.json` exclusive marker is
+written and fsynced **before** the callback. Its existence permanently fences
+another attempt, including after failure, a crash or lost output. This is an
+at-most-once invocation contract, not guaranteed completion: zero activations
+may occur after a consumed claim. Never delete/reset/adopt the marker to retry.
+No automatic rollback or return to Estuary is implemented. A successful run
+leaves AF3 selected; a return transition needs separate authorization.
+
+The sanitized result reports initial prerequisites, callback and progress-cleanup
+return, production status/failure code, final reported setting/skin and a scoped
+public preservation comparison. Exceptions use the existing value-free failure
+payload; they do not imply successful cleanup or unchanged state. Source checks
+and observations are discrete, not atomic. The remaining dialog replacement
+after the final check can still misdirect the click; no label-plus-click or
+window identity proves atomic dialog ownership. Stable configured/reported skin
+is not authenticated loaded-object identity or disk durability. A future task
+must also observe beyond Kodi's Keep/revert timeout and gracefully stop the
+exact target, comparing its bounded baseline without assuming a safe rollback.
+
+Original provisioning remains FAIL/INCOMPLETE. Historical original-file audit
+and native-health observations do not authenticate the 76 historical bytecode
+cache files or prove current cache contents. Cache trust remains UNVERIFIED;
+this operation neither cleans caches nor establishes a new cache policy.
+AF3/services may execute code and change their own runtime data. Such effects
+are not an atomic/full-profile preservation guarantee. A focused Auto-Keep proof
+does not qualify full A11 user-facing Create/Install/configuration reconciliation,
+Item 8 or beta acceptance. D-029/D-030 restrictions remain unchanged.

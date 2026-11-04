@@ -37,6 +37,7 @@ ADAPTER_STAGES = frozenset({
     "INVOKE_RETRY",
     "READ_STATUS",
     "AF3_FIXTURE",
+    "AUTO_KEEP",
     "PLATFORM_CHECK",
     "SERIALIZE_RESULT",
 })
@@ -64,6 +65,7 @@ ADAPTER_CALLABLES = frozenset({
     "read_adapter_status",
     "read_platform_check",
     "run_af3_fixture",
+    "run_auto_keep",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -251,7 +253,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify"):
+        if token in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep"):
             return token
         if token == "?mode=install":
             return "install"
@@ -261,7 +263,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
             return "retry"
         if token == "?mode=status":
             return "status"
-        if token in ("?mode=af3_fixture", "?mode=af3_fixture_verify"):
+        if token in ("?mode=af3_fixture", "?mode=af3_fixture_verify", "?mode=auto_keep"):
             return token.removeprefix("?mode=")
         if token == "?mode=platform_check":
             return "platform_check"
@@ -273,7 +275,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
     safe_mode = (
-        mode if mode in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify") else "unselected"
+        mode if mode in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep") else "unselected"
     )
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
@@ -1896,7 +1898,7 @@ def _af3_expected_tree(data, aid, version):
     return expected
 
 
-def _af3_runtime_state(backend):
+def _af3_runtime_state(backend, *, expected_skin="skin.estuary"):
     """Native authority, not caller-supplied claims or a captured manifest."""
     import xbmcvfs
     from resources.lib import frozen_install as fi
@@ -1931,7 +1933,7 @@ def _af3_runtime_state(backend):
         row = backend._rpc('Settings.GetSettingValue', {'setting': key}).get('result')
         if not isinstance(row, dict) or 'value' not in row: raise ValueError('fixture setting unavailable')
         settings[key] = row['value']
-    if settings['lookandfeel.skin'] != 'skin.estuary': raise ValueError('fixture skin')
+    if settings['lookandfeel.skin'] != expected_skin: raise ValueError('fixture skin')
     if type(settings['general.addonupdates']) is not int or settings['general.addonupdates'] not in (0, 1, 2):
         raise ValueError('fixture updater observation')
     if settings['general.addonupdates'] != 2:
@@ -2079,4 +2081,173 @@ def project_af3_fixture(value):
             value['manifest_sha256'] != _AF3_MANIFEST_SHA or
             value['preservation_checked'] is not True or value['native_health_checked'] is not True):
         raise ValueError('fixture result invalid')
+    return dict(value)
+
+
+_AUTO_KEEP_JOURNAL_SHA = '576aeb430b5d86fcdacb1c6be837ecf2f1d57c9653b4f5e800814c327d252344'
+_AUTO_KEEP_ENTRY = '6c62d98c19d68b3681b68d2ed159679d702aaace317d23b14432756333574c77'
+_AUTO_KEEP_RESOLUTION = '21a26323ecfaf0106abd0e7a1b1bf7e9e9a5a73a2b935cbf9b97529485e5db76'
+_AUTO_KEEP_TARGET = 'skin.arctic.fuse.3'
+
+
+def _auto_keep_state(backend, expected_skin):
+    """Typed native ownership and scoped public witness; never repair state."""
+    from resources.lib.build_library import default_build_library
+    state = _af3_runtime_state(backend, expected_skin=expected_skin)
+    library = default_build_library()
+    applied = library.current_applied_association()
+    if (applied is None or applied.entry_id != _AUTO_KEEP_ENTRY
+            or applied.device_profile_id != 'current-device-8794224972c6'
+            or applied.resolution_fingerprint != _AUTO_KEEP_RESOLUTION):
+        raise ValueError('auto keep association')
+    for aid, (version, _, _) in _AF3_PACKAGES.items():
+        detail = backend.get_addon_details(aid)
+        if (detail is None or detail.version != version or detail.enabled is not True
+                or detail.broken is not False):
+            raise ValueError('auto keep package health')
+    raw = _platform_read(_AF3_HOME / 'userdata/bm-af3-fixture-v1.jsonl', 16384)
+    if hashlib.sha256(raw).hexdigest() != _AUTO_KEEP_JOURNAL_SHA:
+        raise ValueError('auto keep failed journal identity')
+    # Only the expected skin setting may differ in this scoped witness.
+    settings = dict(state[0]); settings.pop('lookandfeel.skin')
+    return (settings, *state[1:])
+
+
+def _auto_keep_claim():
+    """Permanent exclusive attempt fence. Never clear, retry or adopt it.
+
+    A crash after this durable claim consumes the attempt even if no activation
+    occurred. This favors at-most-once mutation over automatic recovery.
+    """
+    parent = _platform_directory(_AF3_HOME / 'userdata')
+    fd = None
+    try:
+        fd = os.open('bm-auto-keep-attempt-v1.json',
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        raw = b'{"schema":1,"attempt_consumed":true,"target":"skin.arctic.fuse.3"}\n'
+        with os.fdopen(os.dup(fd), 'wb') as out:
+            out.write(raw); out.flush(); os.fsync(out.fileno())
+        os.fsync(parent)
+        fresh = _platform_directory(_AF3_HOME / 'userdata')
+        try:
+            if ((os.fstat(fresh).st_dev, os.fstat(fresh).st_ino) !=
+                    (os.fstat(parent).st_dev, os.fstat(parent).st_ino)):
+                raise ValueError('auto keep claim parent changed')
+            current = os.stat('bm-auto-keep-attempt-v1.json', dir_fd=fresh, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (os.fstat(fd).st_dev, os.fstat(fd).st_ino):
+                raise ValueError('auto keep claim changed')
+        finally:
+            os.close(fresh)
+    finally:
+        if fd is not None: os.close(fd)
+        os.close(parent)
+
+
+def _auto_keep_production(addon_root, binding):
+    """Load only bound entry source; no __main__, cache import or replacement UI."""
+    raw = _platform_read(Path(addon_root) / 'default.py', 128 * 1024)
+    document = json.loads(binding)
+    if hashlib.sha256(raw).hexdigest() != document['product']['default.py']:
+        raise ValueError('auto keep entry source')
+    entry = ModuleType('_bm_bound_entry')
+    exec(compile(raw, str(Path(addon_root) / 'default.py'), 'exec'), entry.__dict__)
+    return entry
+
+
+def run_auto_keep(addon_root, driver_root, binding, manifest_path, artifact_root):
+    """Qualification only: fixed AF3, one production callback, no coordinator.
+
+    The failed fixture journal is evidence, never a completion prerequisite.
+    Source isolation and host authentication are supplied by the platform-mode
+    bootstrap/transport. A permanent exclusive claim prevents repeat execution.
+    """
+    import xbmc
+    import xbmcgui
+    import xbmcaddon
+    from resources.lib.frozen_install import KodiRuntimeFrozenArtifactBackend
+    from resources.lib.skin import KodiRuntimeSkinBackend, SkinActivator, SkinStatus
+    from resources.lib.ui.native_dialogs import NativeDialogs
+    if (Path(addon_root) != _AF3_HOME / 'addons/script.build.manager'
+            or Path(driver_root) != _AF3_HOME / 'addons/script.build.manager.bm023a_driver'
+            or Path(manifest_path) != _AF3_MANIFEST or Path(artifact_root) != _AF3_STORE):
+        raise ValueError('auto keep target')
+    _platform_sources(binding, addon_root, driver_root)
+    platform = read_platform_check(addon_root, driver_root, binding, manifest_path, artifact_root)
+    if (platform.get('ok') is not True
+            or platform.get('platform_check', {}).get('overall') != 'requirements_verified'
+            or platform['platform_check'].get('manifest_sha256') != _AF3_MANIFEST_SHA):
+        raise ValueError('auto keep platform')
+    backend = KodiRuntimeFrozenArtifactBackend()
+    try:
+        before = _auto_keep_state(backend, 'skin.estuary')
+        skin_backend = KodiRuntimeSkinBackend()
+        # Refuse ANY modal, including a non-Yes/No modal, before the callback.
+        modal = xbmcgui.getCurrentWindowDialogId()
+        if type(modal) is not int or modal not in (-1, 0):
+            raise ValueError('auto keep modal')
+        entry = _auto_keep_production(addon_root, binding)
+        addon = xbmcaddon.Addon(ADDON_ID)
+        progress = entry.background_busy(xbmcgui, addon.getLocalizedString(32101))
+        ui = NativeDialogs(addon, xbmcgui.Dialog(), xbmc.sleep, busy=progress)
+        _platform_sources(binding, addon_root, driver_root)
+        if _auto_keep_state(backend, 'skin.estuary') != before:
+            raise ValueError('auto keep precondition changed')
+        with backend._passive_build_binding(backend._inventory()) as fresh:
+            if fresh() is not True:
+                raise ValueError('auto keep native identity')
+        modal = xbmcgui.getCurrentWindowDialogId()
+        if type(modal) is not int or modal not in (-1, 0):
+            raise ValueError('auto keep modal changed')
+        _auto_keep_claim()
+        # Never retry an exception, timeout, failed result or lost result file.
+        result = ui.execute_install(lambda: SkinActivator(skin_backend).activate(_AUTO_KEEP_TARGET))
+        observed = {'setting': None, 'reported_active': None}
+        try:
+            observed = {'setting': skin_backend.get_skin_setting(),
+                        'reported_active': skin_backend.get_active_skin()}
+        except Exception:
+            pass
+        preservation = False
+        try:
+            if observed['setting'] in ('skin.estuary', _AUTO_KEEP_TARGET):
+                preservation = _auto_keep_state(backend, observed['setting']) == before
+            _platform_sources(binding, addon_root, driver_root)
+            with backend._passive_build_binding(backend._inventory()) as fresh:
+                if fresh() is not True:
+                    raise ValueError('auto keep final native identity')
+        except Exception:
+            preservation = False
+        success = (result.status is SkinStatus.ACTIVATED and preservation
+                   and observed == {'setting': _AUTO_KEEP_TARGET, 'reported_active': _AUTO_KEEP_TARGET})
+        payload = {'initial_skin': 'skin.estuary', 'prerequisites_verified': True,
+            'attempt_consumed': True, 'callback_returned': True, 'progress_cleanup_returned': True,
+            'status': result.status.value,
+            'failure_code': result.failure_code.value if result.failure_code else None,
+            'final_setting': observed['setting'] if observed['setting'] in ('skin.estuary', _AUTO_KEEP_TARGET) else None,
+            'reported_active': observed['reported_active'] if observed['reported_active'] in ('skin.estuary', _AUTO_KEEP_TARGET) else None,
+            'scoped_preservation': preservation, 'atomic_dialog_ownership': False,
+            'loaded_object_authenticated': False, 'cache_trust': 'UNVERIFIED',
+            'original_provisioning': 'FAIL_INCOMPLETE'}
+        return {'ok': success, 'platform_check': platform['platform_check'], 'auto_keep': payload}
+    finally:
+        backend.close()
+
+
+def project_auto_keep(value):
+    from resources.lib.skin import SkinFailureCode
+    keys = {'initial_skin','prerequisites_verified','attempt_consumed','callback_returned',
+        'progress_cleanup_returned','status','failure_code','final_setting','reported_active',
+        'scoped_preservation','atomic_dialog_ownership','loaded_object_authenticated',
+        'cache_trust','original_provisioning'}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ValueError('auto keep result')
+    for key in ('prerequisites_verified','attempt_consumed','callback_returned','progress_cleanup_returned'):
+        if value[key] is not True: raise ValueError('auto keep evidence')
+    if (type(value['scoped_preservation']) is not bool or value['atomic_dialog_ownership'] is not False
+            or value['loaded_object_authenticated'] is not False or value['cache_trust'] != 'UNVERIFIED'
+            or value['original_provisioning'] != 'FAIL_INCOMPLETE' or value['initial_skin'] != 'skin.estuary'
+            or value['status'] not in ('activated','failed','already_active')
+            or value['failure_code'] not in (None, *(c.value for c in SkinFailureCode))
+            or any(value[k] not in (None,'skin.estuary',_AUTO_KEEP_TARGET) for k in ('final_setting','reported_active'))):
+        raise ValueError('auto keep result')
     return dict(value)

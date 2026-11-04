@@ -97,7 +97,7 @@ _DATA_VOLUME_ALIAS = "/System/Volumes/Data"
 
 BUILD_MANAGER_ID = _adapter.ADDON_ID
 DRIVER_ID = _adapter.DRIVER_ADDON_ID
-ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify")
+ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
@@ -2974,6 +2974,7 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
     "status": {"status": _STATUS_RECORD,
                "recovery_identity": _adapter.project_recovery_identity},
     "platform_check": {"platform_check": _adapter.project_platform_check},
+    "auto_keep": {"platform_check": _adapter.project_platform_check, "auto_keep": _adapter.project_auto_keep},
     "af3_fixture": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
     "af3_fixture_verify": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
 }
@@ -3022,6 +3023,16 @@ def project_adapter_result(mode: str, raw: Any) -> Tuple[Dict[str, Any], Dict[st
         if (fixture is None or fixture["status"] != expected_status or invalid or
                 projected.get("platform_check", {}).get("overall") != "requirements_verified"):
             raise HelperError("result_malformed", reason="af3_fixture")
+    if mode == "auto_keep":
+        result = projected.get("auto_keep")
+        if ok and (result is None or invalid
+                or result["status"] != "activated" or not result["scoped_preservation"]
+                or result["final_setting"] != "skin.arctic.fuse.3"
+                or result["reported_active"] != "skin.arctic.fuse.3"
+                or projected.get("platform_check", {}).get("overall") != "requirements_verified"):
+            raise HelperError("result_malformed", reason="auto_keep")
+        if "auto_keep" in invalid:
+            raise HelperError("result_malformed", reason="auto_keep")
     return projected, withheld
 
 
@@ -3418,7 +3429,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
             "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
 
 
-DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300}
+DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300, "auto_keep": 120}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
 # A graceful Kodi shutdown (settings save, add-on teardown) is short; an
@@ -3640,7 +3651,11 @@ def run_adapter(
         raise HelperError("argument_invalid")
     if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
         raise HelperError("argument_invalid")
-    if mode in ("af3_fixture", "af3_fixture_verify") and git_repo is None:
+    if mode in ("af3_fixture", "af3_fixture_verify", "auto_keep") and git_repo is None:
+        raise HelperError("argument_invalid")
+    if mode == "auto_keep" and (rpc_transport != "http" or git_repo is None
+            or rpc.get("host") != "127.0.0.1" or type(rpc.get("port")) is not int
+            or rpc["port"] != 8080 or rpc.get("username") != "kodi"):
         raise HelperError("argument_invalid")
     target = services.target
     identity = identify(services, require="running")
@@ -3661,7 +3676,7 @@ def run_adapter(
     if identity.pid is None:
         raise HelperError("test_app_not_running")
     platform_binding = None
-    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify"):
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep"):
         config_path = target.addon_dir(DRIVER_ID) / "adapter_config.py"
         target.require_chain(config_path.parent)
         try:
@@ -3684,7 +3699,7 @@ def run_adapter(
               if rpc_transport == "tcp" else RpcClient(services, identity.pid, host, port, username))
     if client.call("JSONRPC.Ping", {}) != "pong":
         raise HelperError("rpc_response_invalid")
-    if mode in _adapter.AF3_FIXTURE_MODES and not client.authenticated:
+    if mode in (*_adapter.AF3_FIXTURE_MODES, "auto_keep") and not client.authenticated:
         raise HelperError("rpc_auth_failed")
     if require_authenticated and not client.authenticated:
         raise HelperError("rpc_auth_failed")
@@ -3694,7 +3709,7 @@ def run_adapter(
     before = observe_result(target)
     invoked_ns = services.clock.time_ns()
     invoked_utc = iso_utc_from_ns(invoked_ns)
-    platform_witness = _platform_invocation_snapshot(target, manifest) if mode == "platform_check" else None
+    platform_witness = _platform_invocation_snapshot(target, manifest) if mode in ("platform_check", "auto_keep") else None
     fixture_witness = _af3_invocation_snapshot(target, manifest) if mode in _adapter.AF3_FIXTURE_MODES else None
     accepted = client.call("Addons.ExecuteAddon", {"addonid": DRIVER_ID, "params": mode, "wait": False})
     if accepted != "OK":
@@ -3727,7 +3742,7 @@ def run_adapter(
     except (ValueError, UnicodeDecodeError):
         raise HelperError("result_malformed", reason="json") from None
     projected, withheld = project_adapter_result(mode, raw)
-    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify") and projected.get("platform_check", {}).get("source") is not None:
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep") and projected.get("platform_check", {}).get("source") is not None:
         diagnostic_source = projected["platform_check"]["source"]
         expected_source = {"candidate_commit": manifest["candidate"]["commit"],
             "product_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]}),
@@ -3744,7 +3759,7 @@ def run_adapter(
     after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
-    if mode == "platform_check" and _platform_invocation_snapshot(target, manifest) != platform_witness:
+    if mode in ("platform_check", "auto_keep") and _platform_invocation_snapshot(target, manifest) != platform_witness:
         raise HelperError("platform_source_changed")
     if mode in _adapter.AF3_FIXTURE_MODES and _af3_invocation_snapshot(target, manifest) != fixture_witness:
         raise HelperError("platform_source_changed")
