@@ -50,7 +50,7 @@ class EntryTests(unittest.TestCase):
         self.scope.enter_context(patch.dict('sys.modules', {'xbmc':self.kodi, 'xbmcgui':self.kodi.gui,
             'xbmcaddon':SimpleNamespace(Addon=Mock(return_value=Mock()))}))
         self.original_topmost = self.kodi.topmost
-        self.kodi.gui.getCurrentWindowDialogId = lambda: -1 if self.kodi.dialog is None else self.original_topmost()
+        self.kodi.gui.getCurrentWindowDialogId = lambda: 9999 if self.kodi.dialog is None else self.original_topmost()
         self.original_journal = self.journal.read_bytes()
 
     def run_entry(self):
@@ -81,6 +81,49 @@ class EntryTests(unittest.TestCase):
                 self.kodi.progress.close.assert_called_once()
                 (self.home/'userdata/bm-auto-keep-attempt-v1.json').unlink()  # synthetic fixture only
         self.assertEqual(self.journal.read_bytes(),self.original_journal)
+
+    def test_kodi_no_modal_9999_reaches_callback_once(self):
+        native_modal = self.kodi.gui.getCurrentWindowDialogId
+        observed = []
+        def observe():
+            value = native_modal()
+            observed.append(value)
+            return value
+        self.kodi.gui.getCurrentWindowDialogId = observe
+        result = self.run_entry()
+        self.assertTrue(result['ok'])
+        self.assertEqual(observed[:2], [9999, 9999])
+        self.assertEqual(self.kodi.clicks, ['keep'])
+        self.assertEqual(len(self.kodi.mutations), 1)
+        self.kodi.progress.create.assert_called_once()
+        self.kodi.progress.close.assert_called_once()
+
+    def assert_modal_values_refused_at(self, location):
+        native_modal = self.kodi.gui.getCurrentWindowDialogId
+        for value in (-1, 0, 10100, True, False, 9999.0, '9999', None):
+            with self.subTest(location=location, value=value):
+                calls = []
+                def modal():
+                    index = len(calls)
+                    result = value if index == location else native_modal()
+                    calls.append(result)
+                    return result
+                self.kodi.gui.getCurrentWindowDialogId = modal
+                expected = 'auto keep modal' if location == 0 else 'auto keep modal changed'
+                with self.assertRaisesRegex(ValueError, '^' + expected + '$'):
+                    self.run_entry()
+                self.assertEqual(len(calls), location + 1)
+                self.assertEqual(self.kodi.mutations, [])
+                self.assertEqual(self.kodi.clicks, [])
+                self.kodi.progress.create.assert_not_called()
+                self.assertFalse((self.home/'userdata/bm-auto-keep-attempt-v1.json').exists())
+                self.assertEqual(self.journal.read_bytes(), self.original_journal)
+
+    def test_initial_modal_check_refuses_invalid_and_real_dialog_ids(self):
+        self.assert_modal_values_refused_at(0)
+
+    def test_final_modal_check_refuses_invalid_and_real_dialog_ids(self):
+        self.assert_modal_values_refused_at(1)
 
     def test_preexisting_modal_refuses_without_claim_or_mutation(self):
         self.kodi.dialog='unrelated'

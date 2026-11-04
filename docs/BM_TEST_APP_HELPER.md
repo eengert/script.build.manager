@@ -562,7 +562,9 @@ no frozen/restart/capture transaction or hold or pending publication, and the
 expected selected/applied Build 999 / 1.0.1 association and resolution. It also
 requires the exact original failed 35-record fixture-journal digest. That
 journal is read only; its incompleteness does not gate standalone activation.
-Pre-existing modal dialogs refuse. The production activator separately checks
+Both standalone admission checks accept only the integer `9999` (Kodi's
+`WINDOW_INVALID`) as no modal; `-1`, `0`, real dialog IDs and non-integer values
+refuse. The production activator separately checks
 preparation-time conflicts, localized Keep heading/body and the topmost modal,
 then rechecks immediately before its one `SendClick(11)`.
 
@@ -580,7 +582,10 @@ public preservation comparison. Exceptions use the existing value-free failure
 payload; they do not imply successful cleanup or unchanged state. Source checks
 and observations are discrete, not atomic. The remaining dialog replacement
 after the final check can still misdirect the click; no label-plus-click or
-window identity proves atomic dialog ownership. Stable configured/reported skin
+window identity proves atomic dialog ownership. The independent offline review
+reproduced a replacement receiving Yes while the operation returned `ok=true`.
+This unresolved risk requires an explicit Supervisor decision before native
+activation; the no-modal sentinel correction does not address it. Stable configured/reported skin
 is not authenticated loaded-object identity or disk durability. A future task
 must also observe beyond Kodi's Keep/revert timeout and gracefully stop the
 exact target, comparing its bounded baseline without assuming a safe rollback.

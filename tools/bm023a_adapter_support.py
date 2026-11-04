@@ -2183,7 +2183,7 @@ def run_auto_keep(addon_root, driver_root, binding, manifest_path, artifact_root
         skin_backend = KodiRuntimeSkinBackend()
         # Refuse ANY modal, including a non-Yes/No modal, before the callback.
         modal = xbmcgui.getCurrentWindowDialogId()
-        if type(modal) is not int or modal not in (-1, 0):
+        if type(modal) is not int or modal != 9999:
             raise ValueError('auto keep modal')
         entry = _auto_keep_production(addon_root, binding)
         addon = xbmcaddon.Addon(ADDON_ID)
@@ -2196,7 +2196,7 @@ def run_auto_keep(addon_root, driver_root, binding, manifest_path, artifact_root
             if fresh() is not True:
                 raise ValueError('auto keep native identity')
         modal = xbmcgui.getCurrentWindowDialogId()
-        if type(modal) is not int or modal not in (-1, 0):
+        if type(modal) is not int or modal != 9999:
             raise ValueError('auto keep modal changed')
         _auto_keep_claim()
         # Never retry an exception, timeout, failed result or lost result file.
