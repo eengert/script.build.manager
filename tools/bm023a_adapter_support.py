@@ -2223,6 +2223,7 @@ def run_auto_keep(addon_root, driver_root, binding, manifest_path, artifact_root
             'attempt_consumed': True, 'callback_returned': True, 'progress_cleanup_returned': True,
             'status': result.status.value,
             'failure_code': result.failure_code.value if result.failure_code else None,
+            'failure_stage': _auto_keep_failure_stage(result),
             'final_setting': observed['setting'] if observed['setting'] in ('skin.estuary', _AUTO_KEEP_TARGET) else None,
             'reported_active': observed['reported_active'] if observed['reported_active'] in ('skin.estuary', _AUTO_KEEP_TARGET) else None,
             'scoped_preservation': preservation, 'atomic_dialog_ownership': False,
@@ -2233,14 +2234,46 @@ def run_auto_keep(addon_root, driver_root, binding, manifest_path, artifact_root
         backend.close()
 
 
+_AUTO_KEEP_FAILURE_STAGES = frozenset({
+    'initial_prompt_rejected', 'final_prompt_read_failed', 'final_prompt_changed',
+    'sendclick_exception', 'unknown',
+})
+
+
+def _auto_keep_failure_stage(result):
+    """Refine only exact fixed production outcomes; never serialize messages.
+
+    A sendclick_exception means the call raised, possibly after dispatch. It
+    establishes neither delivery nor non-delivery. All other messages remain
+    unknown, including messages with appended exception/private text.
+    """
+    from resources.lib.skin import SkinResult, SkinStatus, SkinFailureCode
+    if (not isinstance(result, SkinResult) or result.status is not SkinStatus.FAILED
+            or result.failure_code is not SkinFailureCode.CONFIRMATION_ACTION_FAILED
+            or type(result.message) is not str):
+        return 'unknown'
+    return {
+        'Skin confirmation did not match the expected Keep Skin prompt': 'initial_prompt_rejected',
+        'Skin activation failed: Keep Skin prompt could not be read': 'final_prompt_read_failed',
+        'Skin activation failed: Keep Skin prompt changed or is unavailable': 'final_prompt_changed',
+        'Skin activation failed: Automatic skin confirmation could not be established': 'sendclick_exception',
+    }.get(result.message, 'unknown')
+
+
 def project_auto_keep(value):
     from resources.lib.skin import SkinFailureCode
     keys = {'initial_skin','prerequisites_verified','attempt_consumed','callback_returned',
         'progress_cleanup_returned','status','failure_code','final_setting','reported_active',
         'scoped_preservation','atomic_dialog_ownership','loaded_object_authenticated',
         'cache_trust','original_provisioning'}
-    if not isinstance(value, dict) or set(value) != keys:
+    if not isinstance(value, dict) or set(value) not in (keys, keys | {'failure_stage'}):
         raise ValueError('auto keep result')
+    # Historical results lack the refinement; they cannot be reclassified.
+    stage = value.get('failure_stage', 'unknown')
+    if (type(stage) is not str or stage not in _AUTO_KEEP_FAILURE_STAGES
+            or (stage != 'unknown' and (value['status'] != 'failed'
+                or value['failure_code'] != SkinFailureCode.CONFIRMATION_ACTION_FAILED.value))):
+        raise ValueError('auto keep failure stage')
     for key in ('prerequisites_verified','attempt_consumed','callback_returned','progress_cleanup_returned'):
         if value[key] is not True: raise ValueError('auto keep evidence')
     if (type(value['scoped_preservation']) is not bool or value['atomic_dialog_ownership'] is not False
@@ -2250,4 +2283,4 @@ def project_auto_keep(value):
             or value['failure_code'] not in (None, *(c.value for c in SkinFailureCode))
             or any(value[k] not in (None,'skin.estuary',_AUTO_KEEP_TARGET) for k in ('final_setting','reported_active'))):
         raise ValueError('auto keep result')
-    return dict(value)
+    return {**value, 'failure_stage': stage}

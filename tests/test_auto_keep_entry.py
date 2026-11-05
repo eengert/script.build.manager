@@ -82,6 +82,73 @@ class EntryTests(unittest.TestCase):
                 (self.home/'userdata/bm-auto-keep-attempt-v1.json').unlink()  # synthetic fixture only
         self.assertEqual(self.journal.read_bytes(),self.original_journal)
 
+    def assert_observed_failure_stage(self, stage, clicks):
+        result = self.run_entry()
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['auto_keep']['status'], 'failed')
+        self.assertEqual(result['auto_keep']['failure_code'], 'CONFIRMATION_ACTION_FAILED')
+        self.assertEqual(result['auto_keep']['failure_stage'], stage)
+        self.assertEqual(self.kodi.clicks, clicks)
+        self.kodi.progress.create.assert_called_once()
+        self.kodi.progress.close.assert_called_once()
+        marker = self.home/'userdata/bm-auto-keep-attempt-v1.json'
+        consumed = marker.read_bytes()
+        # A new synthetic session has no modal; only the existing claim fences it.
+        self.kodi.dialog = None
+        commands = list(self.kodi.commands)
+        mutations = list(self.kodi.mutations)
+        with self.assertRaises(FileExistsError): self.run_entry()
+        self.assertEqual(self.kodi.commands, commands)
+        self.assertEqual(self.kodi.mutations, mutations)
+        self.assertEqual(marker.read_bytes(), consumed)
+        self.assertEqual(self.kodi.clicks, clicks)
+        self.assertEqual(self.journal.read_bytes(), self.original_journal)
+        self.assertNotIn('synthetic-private-password', json.dumps(result))
+        support.project_auto_keep(result['auto_keep'])
+        return result
+
+    def test_observe_initial_prompt_rejection_without_click(self):
+        from resources.lib.skin import KodiRuntimeSkinBackend
+        with patch.object(KodiRuntimeSkinBackend, 'is_expected_confirmation', return_value=False):
+            self.assert_observed_failure_stage('initial_prompt_rejected', [])
+
+    def test_observe_final_prompt_read_exception_without_private_text(self):
+        from resources.lib.skin import KodiRuntimeSkinBackend
+        with patch.object(KodiRuntimeSkinBackend, 'is_expected_confirmation',
+                side_effect=[True, RuntimeError('synthetic-private-password')]):
+            self.assert_observed_failure_stage('final_prompt_read_failed', [])
+
+    def test_observe_final_prompt_rejection_without_click(self):
+        from resources.lib.skin import KodiRuntimeSkinBackend
+        with patch.object(KodiRuntimeSkinBackend, 'is_expected_confirmation', side_effect=[True, False]):
+            self.assert_observed_failure_stage('final_prompt_changed', [])
+
+    def test_observe_sendclick_exception_after_possible_delivery(self):
+        dispatch = self.kodi.executebuiltin
+        def raise_after_dispatch(command, wait=False):
+            dispatch(command, wait)
+            if command == 'SendClick(11)':
+                raise RuntimeError('synthetic-private-password')
+        self.kodi.executebuiltin = raise_after_dispatch
+        result = self.assert_observed_failure_stage('sendclick_exception', ['keep'])
+        self.assertNotIn('confirmation_delivered', result['auto_keep'])
+        self.assertNotIn('click_not_delivered', result['auto_keep'])
+
+    def test_unexpected_secret_exception_is_unknown_without_behavior_change(self):
+        from resources.lib.skin import KodiRuntimeSkinBackend
+        with patch.object(KodiRuntimeSkinBackend, 'confirm_skin_change',
+                side_effect=RuntimeError('synthetic-private-password')):
+            self.assert_observed_failure_stage('unknown', [])
+
+    def test_success_keeps_unknown_refinement_without_extra_click_or_retry(self):
+        result = self.run_entry()
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['auto_keep']['failure_stage'], 'unknown')
+        self.assertIsNone(result['auto_keep']['failure_code'])
+        self.assertEqual(self.kodi.clicks, ['keep'])
+        self.kodi.progress.create.assert_called_once()
+        self.kodi.progress.close.assert_called_once()
+
     def test_kodi_no_modal_9999_reaches_callback_once(self):
         native_modal = self.kodi.gui.getCurrentWindowDialogId
         observed = []
@@ -350,3 +417,70 @@ class NativePrerequisiteTests(unittest.TestCase):
         with self.assertRaises(ValueError):support._auto_keep_state(self.backend,'skin.estuary')
         self.vfs.translatePath=lambda _: '/private/tmp/wrong-runtime'
         with self.assertRaises(ValueError):support._auto_keep_state(self.backend,'skin.estuary')
+
+
+class FailureStageTests(unittest.TestCase):
+    MESSAGES = {
+        'Skin confirmation did not match the expected Keep Skin prompt': 'initial_prompt_rejected',
+        'Skin activation failed: Keep Skin prompt could not be read': 'final_prompt_read_failed',
+        'Skin activation failed: Keep Skin prompt changed or is unavailable': 'final_prompt_changed',
+        'Skin activation failed: Automatic skin confirmation could not be established': 'sendclick_exception',
+    }
+
+    def result(self, message, **changes):
+        from resources.lib.skin import SkinResult, SkinStatus, SkinFailureCode
+        values=dict(addon_id=support._AUTO_KEEP_TARGET,status=SkinStatus.FAILED,
+                    active_skin=support._AUTO_KEEP_TARGET,message=message,
+                    failure_code=SkinFailureCode.CONFIRMATION_ACTION_FAILED)
+        values.update(changes)
+        return SkinResult(**values)
+
+    def test_only_exact_typed_fixed_failure_messages_classify(self):
+        from resources.lib.skin import SkinStatus, SkinFailureCode
+        for message,stage in self.MESSAGES.items():
+            self.assertEqual(support._auto_keep_failure_stage(self.result(message)),stage)
+            for changed in (message+' synthetic-private-password',' '+message,message+'\n'):
+                self.assertEqual(support._auto_keep_failure_stage(self.result(changed)),'unknown')
+            for fields in ({'status':SkinStatus.ACTIVATED},{'failure_code':None},
+                           {'failure_code':SkinFailureCode.CONFIRMATION_NOT_OBSERVED}):
+                self.assertEqual(support._auto_keep_failure_stage(self.result(message,**fields)),'unknown')
+
+    def test_unknown_untyped_and_private_messages_are_never_echoed(self):
+        class StringSubclass(str): pass
+        for value in (None,[],{},42,'synthetic-private-password',StringSubclass(next(iter(self.MESSAGES)))):
+            self.assertEqual(support._auto_keep_failure_stage(self.result(value)),'unknown')
+        self.assertEqual(support._auto_keep_failure_stage(object()),'unknown')
+
+    def raw_failure(self):
+        return {'ok':False, 'adapter_mode':'auto_keep', 'auto_keep':{
+            'initial_skin':'skin.estuary','prerequisites_verified':True,'attempt_consumed':True,
+            'callback_returned':True,'progress_cleanup_returned':True,'status':'failed',
+            'failure_code':'CONFIRMATION_ACTION_FAILED','final_setting':support._AUTO_KEEP_TARGET,
+            'reported_active':support._AUTO_KEEP_TARGET,'scoped_preservation':True,
+            'atomic_dialog_ownership':False,'loaded_object_authenticated':False,
+            'cache_trust':'UNVERIFIED','original_provisioning':'FAIL_INCOMPLETE'}}
+
+    def test_projector_accepts_only_safe_stages_and_preserves_legacy_unknown(self):
+        from copy import deepcopy
+        raw=self.raw_failure()
+        projected,_=host.project_adapter_result('auto_keep',raw)
+        self.assertEqual(projected['auto_keep']['failure_stage'],'unknown')
+        self.assertFalse(projected['ok'])
+        for stage in support._AUTO_KEEP_FAILURE_STAGES:
+            fresh=deepcopy(raw);fresh['auto_keep']['failure_stage']=stage
+            projected,_=host.project_adapter_result('auto_keep',fresh)
+            self.assertEqual(projected['auto_keep']['failure_stage'],stage)
+            self.assertEqual(projected['auto_keep']['failure_code'],'CONFIRMATION_ACTION_FAILED')
+            self.assertFalse(projected['ok'])
+        for stage in ('synthetic-private-password',None,[],{},True,1):
+            fresh=deepcopy(raw);fresh['auto_keep']['failure_stage']=stage
+            with self.assertRaises(host.HelperError) as caught:host.project_adapter_result('auto_keep',fresh)
+            self.assertNotIn('synthetic-private-password',str(caught.exception))
+
+    def test_inconsistent_stage_and_raw_text_fields_refuse_projection(self):
+        from copy import deepcopy
+        raw=self.raw_failure()
+        for changes in ({'status':'activated'},{'failure_code':'CONFIRMATION_NOT_OBSERVED'},
+                        {'message':'synthetic-private-password'}, {'heading':'synthetic-private-password'}):
+            value=deepcopy(raw['auto_keep']);value['failure_stage']='initial_prompt_rejected';value.update(changes)
+            with self.assertRaises(ValueError):support.project_auto_keep(value)

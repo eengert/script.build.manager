@@ -598,3 +598,32 @@ AF3/services may execute code and change their own runtime data. Such effects
 are not an atomic/full-profile preservation guarantee. A focused Auto-Keep proof
 does not qualify full A11 user-facing Create/Install/configuration reconciliation,
 Item 8 or beta acceptance. D-029/D-030 restrictions remain unchanged.
+
+The Auto-Keep result's `failure_stage` refines only
+`failed / CONFIRMATION_ACTION_FAILED`, using exact fixed production outcomes:
+
+| Stage | Meaning |
+|---|---|
+| `initial_prompt_rejected` | The initial expected-prompt predicate returned false. |
+| `final_prompt_read_failed` | The final confirmation reinspection raised. |
+| `final_prompt_changed` | The final expected-prompt predicate returned false. |
+| `sendclick_exception` | The SendClick call raised, possibly after dispatch. |
+| `unknown` | A success, different failure, unrecognized outcome or old result without the field. |
+
+Only these fixed values are exported. Raw `SkinResult.message`, exceptions,
+heading/body text, localized values and credentials are not emitted. Matching
+requires the exact typed failure code/status and exact fixed message; there is
+no substring matching or normalization. The host projector validates the enum
+and its failure-code/status consistency. Malformed refinements refuse;
+recognized historical results without the field remain `unknown` and cannot
+be retrospectively classified. The ordinary failure code and success decision
+are unchanged. `sendclick_exception` proves neither delivery nor non-delivery;
+`initial_prompt_rejected` does not identify which presentation predicate failed.
+
+This output-only refinement does not change the confirmation checks, clicks,
+progress lifecycle, retry/rollback behavior or permanent marker. The original
+native attempt remains consumed. No new attempt ID, reset path, versioned
+marker, alternate activation route or native permission is introduced. Any
+future native observation needs separate authorization and an independently
+reviewed safe procedure respecting the retained marker. The known dialog race,
+cache uncertainty and original provisioning FAIL remain unchanged.
