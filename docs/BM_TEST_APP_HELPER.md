@@ -627,3 +627,51 @@ marker, alternate activation route or native permission is introduced. Any
 future native observation needs separate authorization and an independently
 reviewed safe procedure respecting the retained marker. The known dialog race,
 cache uncertainty and original provisioning FAIL remain unchanged.
+
+### A15 stopped-state preservation acquisition (host API only)
+
+`tools.bm_preservation_acquisition.AcquisitionSession` supplies a fixed five-file
+bridge to the existing semantic projections. It has no command-line mode,
+daemon, native-operation callback, persisted baseline or cross-process resume.
+Use one foreground host process for both observations:
+
+```python
+with AcquisitionSession(services, manifest=validated_manifest, git_repo=repo) as session:
+    before = session.begin()
+    # Only ACQUIRED permits separately authorized native work outside this API.
+    # After independently verified graceful shutdown:
+    after = session.finish()
+```
+
+Production services must name the fixed authorized portable Test.app. Each
+acquisition brackets its reads with stopped-state admission and full installed
+product/driver/manifest/Git verification. The bundle identity is bound across
+both observations; all five source bytes and file identities are re-read after
+projection and final admission. This detects observed source changes, but is
+not an atomic snapshot or global writer-exclusion guarantee. The caller must
+separately establish quiescence; never infer writer-free from stopped alone.
+
+Only the five fixed paths declared by `bm_public_preservation_witness.FILES`
+are acquired: Addons33, Textures13, guisettings, Estuary settings and keyboard
+settings. Existing parsers, bounds, no-follow readers, sidecar/WAL refusals and
+semantic comparison rules are reused. A missing baseline file refuses; a
+stably missing after-file is CHANGED_OR_MISSING. Unsupported schema/state or
+uncertain acquisition/cleanup is UNVERIFIED. Changed maintenance fields are
+not deemed harmless. Addons33 covers only add-on IDs/enabled flags; other
+content remains UNVERIFIED. Complete preservation and qualification are never
+claimed. Existing public library/artifact/association/transaction/hold/updater/
+publication witnesses remain separate and must still be collected.
+
+Private projections remain in process memory, never in returned evidence or
+value digests. Sessions refuse copying/pickling, consume finish before reads,
+and discard references on completion, failure or context exit. Repeated calls
+refuse. Do not log private attributes, dump locals, or serialize the process.
+Reference disposal is not secure erasure; OS memory handling is not controlled.
+The accepted SQLite projector still uses private 0600 copies in temporary 0700
+directories, linked through query/close and removed before success. Crash or
+cleanup failure can leave those copies; no crash-residue or secure-erasure
+guarantee is added. No raw five-file baseline is written for the UI interval.
+
+Loss of the host process loses the baseline: refuse qualification rather than
+reconstructing it from hashes, saving private state or retrying a native action.
+This API grants no native operation, staging, recovery or Auto-Keep authority.
