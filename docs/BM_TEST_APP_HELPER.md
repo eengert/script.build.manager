@@ -675,3 +675,58 @@ guarantee is added. No raw five-file baseline is written for the UI interval.
 Loss of the host process loses the baseline: refuse qualification rather than
 reconstructing it from hashes, saving private state or retrying a native action.
 This API grants no native operation, staging, recovery or Auto-Keep authority.
+
+### A15 foreground driver (requires separate native authorization)
+
+From the exact Codex worktree, use the pinned interpreter and reviewed host
+commit with `-B -m tools.bm_preservation_driver --host-commit <full-reviewed-SHA>
+--manifest <verified-stage-manifest> --evidence-dir <new-unused-directory>`.
+The evidence directory must be a new direct child of this worktree's `.qualification-evidence`
+and its parent must already exist. No target/repository override, native action,
+RPC endpoint, private baseline save/load or timeout override is provided.
+
+One foreground process owns one unchanged AcquisitionSession. It first proves
+host Git source bytes, loads the existing validated manifest, creates exclusive
+0700 evidence, obtains separate supported public witnesses and calls begin once.
+Only successful acquisition produces durable `ready.json` and the fixed stdout
+line `READY`. The receipt says native_operation_authorized=false: READY supplies
+no independent authority to launch or mutate Kodi. The external controller must
+hold separate authorization and confirm the driver remains alive.
+
+Keep stdin open and empty until READY. The only accepted coordination lines are
+`FINISH` or `CANCEL`, each followed by newline. Waiting is bounded to 900 seconds.
+Unknown, queued out-of-order or coalesced repeated input refuses. Terminal exit
+consumes the session; later signals cannot start another acquisition or action.
+No native action is invoked by the driver, including on timeout or cancellation.
+
+Before FINISH, the separately authorized controller must gracefully quit the
+exact target and write a fresh `quit.json` in the new evidence directory using
+the existing trusted bm_test_app.py/keychain-wrapper `quit --output` path.
+It must be the original sanitized successful helper result, mode 0600, from
+after READY, with matching bundle, authenticated PID-bound Application.Quit,
+accepted/exited shutdown and no forced termination. The driver does not obtain
+credentials or issue RPC. It validates that receipt, rechecks source and stopped
+public state, calls finish at most once, and compares the separate witnesses.
+The receipt is trusted operator-supplied helper evidence, not a cryptographic
+attestation; same-UID forgery or hostile host control is not excluded.
+
+Public coverage uses the existing snapshot, typed applied/selected/publication
+and resolution readers, plus creation-free public library/resolution/artifact
+trees. Present install/restart/capture owners refuse; no creating transaction
+lock is acquired. Inventory, updater and Estuary must be known. Private overlays,
+AF3 fixture records, caches and the consumed Auto-Keep marker are not traversed.
+Native schema compatibility and safe UI fixture admission must still be proved
+for each separately authorized run. The driver does not establish the actual
+Create conflict wording, confirmation count or absence of unrelated UI actions;
+those require external native UI evidence.
+
+`DONE` means only that terminal output was attempted. Acceptance requires exit
+0 AND a complete durable result.json with state=SCOPED_PRESERVED, as well as the
+external UI evidence. Nonzero exit invalidates acceptance even if an optimistic
+result file exists after a close/output failure. Missing result, process loss,
+EOF, CANCEL, timeout, failed acquisition, drift or differences are non-PASS.
+Do not restart/resume from ready.json or retry the native scenario automatically.
+An orphaned UI session needs separately authorized target-specific safe closure.
+Only sanitized status/projection summaries are written; private baseline values
+remain in the original process. All bridge limitations and crash-copy risks above
+remain. This driver supplies neither complete preservation nor beta acceptance.
