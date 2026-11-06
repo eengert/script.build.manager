@@ -1340,14 +1340,18 @@ class TestPsAndLsofParsing(TripwireTestCase):
                     self.assertEqual(native.executable.call_count, 2)
                 self.assertEqual(len(runner.calls), 1)
 
-    def test_space_only_display_never_excuses_unreadable_positive_kernel_identity(self):
+    def test_space_only_unreadable_identity_is_scoped_except_esrch_confirmation(self):
         for err in (errno.ESRCH, errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 12345, 0):
             with self.subTest(err=err):
                 native = mac_reader({1: ok_path("/sbin/launchd"), 42: failed(err)})
                 runner = fake_runner({("/bin/ps",): (0, b"0  \n1 launchd\n42    \n")})
-                with self.assertRaises(bm.HelperError) as raised:
-                    bm.PsProcessLister(runner, native=native).list_all()
-                self.assertEqual(raised.exception.code, "process_listing_failed")
+                lister = bm.PsProcessLister(runner, native=native)
+                if err == errno.ESRCH:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        lister.list_all()
+                    self.assertEqual(raised.exception.code, "process_listing_failed")
+                else:
+                    self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, "/sbin/launchd")])
                 self.assertEqual(native.lib.calls, [1, 42])
                 self.assertEqual(len(runner.calls), 2 if err == errno.ESRCH else 1)
 
@@ -1533,12 +1537,14 @@ class TestPsAndLsofParsing(TripwireTestCase):
         for malformed in (b"", b"\0" * 4, raw[:12], raw[:40]):
             self.assertIsNone(bm.MacProcessReader.parse_argv(malformed))
 
-    def test_process_listing_uses_kernel_path_and_refuses_unreadable_identity(self):
+    def test_process_listing_uses_kernel_path_and_scopes_unreadable_identity(self):
         runner = fake_runner({("/bin/ps",): (0, b"7 /spoofed/argv0\n")})
         native = SimpleNamespace(executable=lambda pid: "/real/executable")
         self.assertEqual(bm.PsProcessLister(runner, native=native).list_all(),
                          [bm.ProcessInfo(7, "/real/executable")])
         native.executable = lambda pid: None
+        self.assertEqual(bm.PsProcessLister(runner, native=native).list_all(), [])
+        runner = fake_runner({("/bin/ps",): (0, b"7 /suspected/Kodi\n")})
         with self.assertRaises(bm.HelperError) as raised:
             bm.PsProcessLister(runner, native=native).list_all()
         self.assertEqual(raised.exception.code, "process_listing_failed")
@@ -1606,7 +1612,7 @@ class TestProcessCensusRace(TripwireTestCase):
         self.target = make_fake_app(self.tmp)
 
     def lister(self, native, *pids, second_pids=None, second_response=None):
-        listing = "".join(f"{pid} /stale/ps/comm/{pid}\n" for pid in pids)
+        listing = "".join(f"{pid} /stale/ps/comm/Kodi-{pid}\n" for pid in pids)
         second = second_response
         if second is None:
             second_listing = listing if second_pids is None else "".join(
@@ -1862,15 +1868,19 @@ class TestProcessCensusRace(TripwireTestCase):
                          [mock.call(1), mock.call(4242), mock.call(4242), mock.call(4242)])
         self.assertEqual(len(lister._run.calls), 1)
 
-    def test_positive_kernel_task_name_never_receives_the_pid_zero_exemption(self):
+    def test_positive_kernel_task_name_is_looked_up_then_scoped_by_policy(self):
         for err in (errno.ESRCH, errno.ENOENT, errno.EPERM, errno.EACCES, errno.EINVAL, 0):
             with self.subTest(err=err):
                 native = mac_reader({1: ok_path("/sbin/launchd"), 8: failed(err)})
                 runner = fake_runner({("/bin/ps",): (0, b"0 kernel_task\n1 launchd\n8 kernel_task\n")})
                 lister = bm.PsProcessLister(runner, native=native)
-                with self.assertRaises(bm.HelperError) as raised:
-                    bm.identify(make_services(self.target, process_lister=lister))
-                self.assertEqual(raised.exception.code, "process_listing_failed")
+                services = make_services(self.target, process_lister=lister)
+                if err == errno.ESRCH:
+                    with self.assertRaises(bm.HelperError) as raised:
+                        bm.identify(services)
+                    self.assertEqual(raised.exception.code, "process_listing_failed")
+                else:
+                    self.assertEqual(bm.identify(services).state, "not_running")
                 self.assertEqual(native.lib.calls, [1, 8])
                 self.assertEqual(len(runner.calls), 2 if err == errno.ESRCH else 1)
 
@@ -8909,3 +8919,59 @@ class TestPublicSqliteLinkedLifetime(SnapshotTestCase):
         self.assertEqual(result['database']['temporary_cleanup'], 'COMPLETE')
         self.assertEqual(result['database']['raw_copy'], 'REMOVED')
         self.assertEqual(result['database']['live_admission'], 'PROHIBITED')
+
+
+class TestScopedUnreadableProcessAdmission(TripwireTestCase):
+    """Display names select uncertain candidates; kernel paths remain authority."""
+
+    def lister(self, name, outcome):
+        native = mac_reader({1: ok_path('/sbin/launchd'), 42: outcome})
+        runner = fake_runner({('/bin/ps',): (0, ('1 launchd\n42 ' + name + '\n').encode())})
+        return bm.PsProcessLister(runner, native=native)
+
+    def test_crashpad_enoent_does_not_block_stopped_admission(self):
+        lister = self.lister('browser_crashpad_handler', failed(errno.ENOENT))
+        target = make_fake_app(self.tmp)
+        identity = bm.identify(make_services(target, process_lister=lister), require='not_running')
+        self.assertEqual(identity.state, 'not_running')
+        self.assertEqual(lister.native.lib.calls, [1, 42])
+        self.assertEqual(len(lister._run.calls), 1)
+
+    def test_unrelated_permission_failures_are_scoped_out(self):
+        for error in (errno.EPERM, errno.EACCES):
+            with self.subTest(error=error):
+                lister = self.lister('unrelated-background-service', failed(error))
+                self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, '/sbin/launchd')])
+                self.assertEqual(lister.native.lib.calls, [1, 42])
+                self.assertEqual(len(lister._run.calls), 1)
+
+    def test_suspected_main_auxiliary_and_embedded_indicators_still_refuse(self):
+        for name in ('Kodi', 'kOdI', 'XBMC', 'XBMCHelper', 'xbmchelper',
+                     'Kodi Build Manager Test', '/synthetic/Kodi Build Manager Test.app/Helper',
+                     'prefixKODIsuffix', 'prefixxBmCsuffix'):
+            for error in (errno.ENOENT, errno.EPERM, errno.EACCES):
+                with self.subTest(name=name, error=error):
+                    lister = self.lister(name, failed(error))
+                    with self.assertRaises(bm.HelperError) as raised:
+                        lister.list_all()
+                    self.assertEqual(raised.exception.code, 'process_listing_failed')
+                    self.assertEqual(raised.exception.detail['stage'], 'executable_lookup')
+                    self.assertEqual(raised.exception.detail['pid'], 42)
+                    self.assertEqual(len(lister._run.calls), 1)
+
+    def test_authenticated_foreign_kodi_is_detected_despite_unrelated_hint(self):
+        target = make_fake_app(self.tmp)
+        for name in ('Kodi', 'browser_crashpad_handler'):
+            with self.subTest(name=name):
+                lister = self.lister(name, ok_path('/Applications/Kodi.app/Contents/MacOS/Kodi'))
+                with self.assertRaises(bm.HelperError) as raised:
+                    bm.identify(make_services(target, process_lister=lister))
+                self.assertEqual(raised.exception.code, 'foreign_kodi_process_present')
+                self.assertEqual(lister.native.lib.calls, [1, 42])
+
+    def test_valid_inventory_retains_kernel_paths_regardless_of_hints(self):
+        for name in ('Kodi-looking-but-unrelated', 'browser_crashpad_handler'):
+            with self.subTest(name=name):
+                lister = self.lister(name, ok_path('/synthetic/unrelated/executable'))
+                self.assertEqual(lister.list_all(), [bm.ProcessInfo(1, '/sbin/launchd'),
+                                                    bm.ProcessInfo(42, '/synthetic/unrelated/executable')])

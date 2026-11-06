@@ -991,7 +991,15 @@ class MacProcessReader:
 
 
 class PsProcessLister:
-    """ps enumerates PIDs; kernel paths classify them; argv is target-only."""
+    """Kernel paths classify PIDs; display names only scope unreadable identities.
+
+    Kodi/XBMC indicators (including Test.app and XBMCHelper) require kernel
+    identity. Other unreadable identities may be omitted. A disguised Kodi
+    process with both an unrelated display name and unreadable kernel path can
+    escape detection; this census does not claim comprehensive discovery.
+    Successful lookups always retain their kernel path, regardless of name.
+    ESRCH confirmation and target-specific identity checks remain mandatory.
+    """
 
     PS = "/bin/ps"
 
@@ -1020,6 +1028,10 @@ class PsProcessLister:
                 pending.add(process.pid)
                 continue
             if not exe:
+                # Validated ps text is a conservative hint, never executable authority.
+                # Substring matching also covers auxiliary and renamed display prefixes.
+                if not any(name in process.exe.casefold() for name in _KODI_NAME_PREFIXES):
+                    continue
                 category = getattr(self.native, "last_executable_failure", None)
                 if type(category) is not str or category not in _EXECUTABLE_FAILURE_CATEGORIES:
                     category = "ERRNO_UNAVAILABLE"
