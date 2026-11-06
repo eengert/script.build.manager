@@ -669,7 +669,9 @@ uptime/setting-level/event-log state, and application audio state. The witness
 admits only those serializer-defined paths, retains exact leaf text and nested
 child order/multiplicity, and refuses unknown paths, attributes, duplicates
 (except repeated resolutions), mixed content and unsafe XML. Container
-indentation and independent root-record ordering are layout; leaf whitespace
+indentation is limited to XML whitespace (space, tab, CR and LF); Unicode
+spaces in container text/tails refuse. Independent root-record ordering is
+layout; leaf whitespace
 and maintenance fields remain compared data. Total XML nodes and depth are
 bounded. Literal CR in leaf values refuses rather than silently folding to LF;
 explicit character references retain their decoded distinctions. Structural
@@ -778,3 +780,8 @@ An orphaned UI session needs separately authorized target-specific safe closure.
 Only sanitized status/projection summaries are written; private baseline values
 remain in the original process. All bridge limitations and crash-copy risks above
 remain. This driver supplies neither complete preservation nor beta acceptance.
+
+A15 native conflict execution and maintenance-attribution acceptance are defined
+in [A15 Native Preservation Runbook](A15_NATIVE_PRESERVATION_RUNBOOK.md).
+The strict comparison remains authoritative; source-plausible maintenance never
+turns a difference into PRESERVED or establishes its writer.

@@ -298,6 +298,80 @@ class PreservationTests(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(w.Unverified):
                 w.xml_projection(b'<settings><audio><mute>true</mute></audio></settings>',kind)
 
+    def test_only_xml_ascii_whitespace_is_layout_in_all_xml_scopes(self):
+        cases = ((2, '<settings version="2">{0}<setting id="s">value</setting>{0}</settings>'),
+                 (3, '<settings>{0}<setting id="s" type="string">value</setting>{0}</settings>'),
+                 (4, '<settings>{0}<setting id="s" value="value">{0}</setting>{0}</settings>'),
+                 (2, '<settings version="2">{0}<audio>{0}<mute>false</mute>{0}</audio>{0}</settings>'))
+        for kind, template in cases:
+            with self.subTest(kind=kind, template=template):
+                expected = w.xml_projection(template.format('').encode(), kind)
+                for layout in (' ', '\t', '\n', '\r\n', ' \t\r\n '):
+                    self.assertEqual(expected, w.xml_projection(template.format(layout).encode(), kind))
+
+    def test_unicode_whitespace_in_layout_positions_refuses(self):
+        positions = ((2, '<settings version="2">{0}<setting id="s">v</setting></settings>'),
+                     (2, '<settings version="2"><setting id="s">v</setting>{0}</settings>'),
+                     (3, '<settings>{0}<setting id="s" type="string">v</setting></settings>'),
+                     (3, '<settings><setting id="s" type="string">v</setting>{0}</settings>'),
+                     (4, '<settings>{0}<setting id="s" value="v"/></settings>'),
+                     (4, '<settings><setting id="s" value="v"/>{0}</settings>'),
+                     (4, '<settings><setting id="s" value="v">{0}</setting></settings>'),
+                     (2, '<settings version="2"><audio>{0}<mute>false</mute></audio></settings>'),
+                     (2, '<settings version="2"><audio><mute>false</mute>{0}</audio></settings>'),
+                     (2, '<settings version="2"><audio/>{0}</settings>'),
+                     (2, '<settings version="2"><defaultaudiosettings>{0}</defaultaudiosettings></settings>'))
+        for char in ('\u00a0', '\u2003', '\u2007', '\u2028', '\u2029', '\u3000'):
+            for spelling in (char, '&#'+str(ord(char))+';'):
+                for kind, template in positions:
+                    with self.subTest(kind=kind, codepoint=ord(char), template=template), self.assertRaises(w.Unverified):
+                        w.xml_projection(template.format(spelling).encode(), kind)
+
+    def test_unicode_whitespace_is_preserved_as_value_data_and_changes_detected(self):
+        for char in ('\u00a0', '\u2003', '\u3000'):
+            for index in (2,3,4):
+                path = self.path(self.after,index); raw = path.read_bytes()
+                try:
+                    path.write_bytes(raw.replace(SECRET.encode(), (SECRET+char).encode()))
+                    self.changed(index)
+                finally:
+                    path.write_bytes(raw)
+            base = b'<settings version="2"><resolutions><resolution><description>x</description></resolution></resolutions></settings>'
+            changed = base.replace(b'>x<', ('>x'+char+'<').encode())
+            self.assertNotEqual(w.xml_projection(base,2), w.xml_projection(changed,2))
+            self.assertEqual(w.xml_projection(changed,2),w.xml_projection(changed,2))
+
+    def test_unicode_layout_is_unverified_not_false_preserved_at_compare_level(self):
+        for index in (2,3,4):
+            path = self.path(self.after,index); raw = path.read_bytes()
+            try:
+                marker = b'<settings version="2">' if index == 2 else b'<settings>'
+                path.write_bytes(raw.replace(marker,marker+'\u00a0'.encode()))
+                self.unverified(index)
+            finally:
+                path.write_bytes(raw)
+
+    def test_lifecycle_shaped_changes_remain_authoritative_strict_differences(self):
+        raw = b'<settings version="2"><general><systemtotaluptime>10</systemtotaluptime><settinglevel>1</settinglevel></general><viewstates><musicfiles><viewmode>50</viewmode></musicfiles></viewstates></settings>'
+        for side in (self.before,self.after): self.path(side,2).write_bytes(raw)
+        for old,new in ((b'>10<',b'>11<'),(b'>50<',b'>51<'),(b'>1<',b'>2<')):
+            with self.subTest(old=old):
+                self.path(self.after,2).write_bytes(raw.replace(old,new));self.changed(2)
+        self.path(self.after,2).write_bytes(raw)
+        self.sql(1,'UPDATE sizes SET usecount=usecount+1, lastusetime=?',('synthetic-lifecycle-time',))
+        self.changed(1)
+
+    def test_same_maintenance_shaped_delta_cannot_identify_its_writer(self):
+        raw = b'<settings version="2"><general><systemtotaluptime>10</systemtotaluptime></general></settings>'
+        # Deliberately identical synthetic outcomes from two hypothesized writers.
+        lifecycle = raw.replace(b'>10<',b'>11<')
+        overwrite = raw.replace(b'>10<',b'>11<')
+        self.assertEqual(w.xml_projection(lifecycle,2),w.xml_projection(overwrite,2))
+        self.assertNotEqual(w.xml_projection(raw,2),w.xml_projection(lifecycle,2))
+        for side in (self.before,self.after):self.path(side,2).write_bytes(raw)
+        self.path(self.after,2).write_bytes(overwrite)
+        self.changed(2)  # source plausibility must never manufacture PRESERVED
+
     def test_malformed_database_unverified(self):
         self.path(self.after, 1).write_bytes(b'not sqlite '+SECRET.encode()); self.unverified(1)
 

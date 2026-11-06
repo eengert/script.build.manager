@@ -104,11 +104,11 @@ def gui_subsettings(node):
     not data; mixed content refuses. Child order and multiplicity are retained
     (only resolutions may repeat resolution). Attributes/unknown paths refuse.
     """
-    require(not node.attrib and not (node.tail or '').strip())
+    require(not node.attrib and not (node.tail or '').strip(' \t\r\n'))
     if node.tag not in _GUI_CHILDREN:
         require(not list(node))
         return (node.tag, node.text or '', ())
-    require(not (node.text or '').strip())
+    require(not (node.text or '').strip(' \t\r\n'))
     seen = set(); children = []
     for child in node:
         require(child.tag in _GUI_CHILDREN[node.tag])
@@ -273,7 +273,7 @@ def xml_projection(raw, kind):
         else:
             depth -= 1
     root = parser.root
-    require(root.tag == 'settings' and not (root.text or '').strip())
+    require(root.tag == 'settings' and not (root.text or '').strip(' \t\r\n'))
     require(root.attrib == ({'version': '2'} if kind == 2 else {})
             or (kind == 3 and root.attrib == {'version': '2'}))
     require(len(root) <= MAX_ROWS, 'input_too_large')
@@ -284,7 +284,7 @@ def xml_projection(raw, kind):
             require(child.tag not in sections)
             sections[child.tag] = gui_subsettings(child)
             continue
-        require(child.tag == 'setting' and not list(child) and not (child.tail or '').strip())
+        require(child.tag == 'setting' and not list(child) and not (child.tail or '').strip(' \t\r\n'))
         require('id' in child.attrib and bool(child.attrib['id']))
         key = child.attrib['id']; require(key not in rows)
         text = child.text or ''
@@ -300,7 +300,7 @@ def xml_projection(raw, kind):
             require(typ != 'bool' or text in ('true', 'false'))
             value = (typ, text == 'true' if typ == 'bool' else text)
         else:
-            require(set(child.attrib) == {'id', 'value'} and not text.strip())
+            require(set(child.attrib) == {'id', 'value'} and not text.strip(' \t\r\n'))
             value = ('serialized_string', child.attrib['value'])
         rows[key] = value
     # Version metadata is evidence too; never silently erase a root-attribute change.
