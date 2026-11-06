@@ -245,7 +245,33 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    Record the actual visible content-conflict rejection (localized string 32733)
    and acknowledgement. A chooser, receipt or comparison alone is insufficient.
    Do not perform a second Create, Apply, Install, Repair or recovery.
-4. Immediately before quit, use the same supported read-only `identify` command
+
+   **Required UI-exit gate (K1), before step 4:** after the rejection has been
+   observed and acknowledged, call `test_app_observe({})`. Back out of Build
+   Manager's remaining dialogs, results, menus and overview with
+   `test_app_navigate({"direction":"back"})`, one action per call. After each
+   Back, call `test_app_observe({})` and inspect the exact-target image/state.
+   Continue only along an understood, non-mutating back-out path until the Kodi
+   add-on list or home screen is visibly displayed, with no Build Manager dialog,
+   result, menu or overview remaining open. Sending Back alone is not evidence
+   of exit; record `UI_EXIT_VERIFIED` only from that observed outside-BM state.
+   No additional Create confirmation, settings change, installation or Build
+   Manager operation is allowed. Do not invent a Home/close control or send blind
+   batches of navigation. Keep all navigation and observations within the original
+   900-second budget; UI exit does not reset it or extend the quit reserve.
+
+   Record the ordered Back/observe calls, their UTC start/end times, the observed
+   outside-BM screen and its evidence reference, launch-PID correlation, and
+   elapsed/remaining budget in the external run ledger. If an unexpected dialog,
+   confirmation, ambiguous screen, unsupported control, unavailable image or
+   unresponsive Back prevents safe verified exit, stop the normal sequence,
+   preserve evidence and report INCONCLUSIVE. Do not proceed to prequit identity,
+   authenticated quit or FINISH while UI exit remains unverified. Send CANCEL once
+   only if the original driver still responds, solely to dispose its baseline;
+   otherwise its bounded timeout applies. Any unresolved running Test.app process
+   requires separately authorized recovery; this branch grants no fallback quit.
+4. Only after `UI_EXIT_VERIFIED`, immediately before quit, use the same supported
+   read-only `identify` command
    with a fresh `prequit-identity.json` output and require the same launch PID,
    bundle and running portable state. Any ambiguity stops further action.
    Then gracefully quit through the existing trusted helper's authenticated,
@@ -268,7 +294,10 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    Require exit 0, ok=true, graceful=true, authenticated=true, verified listener
    ownership, exact bundle and identity_before/invocation PIDs equal to the recorded
    launch PID, accepted/exited shutdown, no forced termination and identity_after
-   not_running/count=0. The prequit check is not atomic with the helper; the helper
+   not_running/count=0. Successful HTTP shutdown and `graceful=true` do not prove
+   the add-on script was never force-stopped internally by Kodi. The verified
+   UI-exit gate is separate evidence; it does not turn the receipt into a script-
+   lifecycle attestation. The prequit check is not atomic with the helper; the helper
    independently binds/rechecks its actual PID for RPC and receipt correlation
    still must match. Never invent an unsupported expected-PID CLI option.
 
@@ -323,7 +352,9 @@ Retain a protected, sanitized ordered ledger with the exact host/source/manifest
 identities; rendered commands and environment; original driver PTY session ID;
 observed READY time and ready.json identity; each timestamped MCP action/result
 needed to establish the review, one confirmation and rejection; launch identify
-PID/bundle/portable-state result; prequit identity/PID result; the actual original
+PID/bundle/portable-state result; observed `UI_EXIT_VERIFIED`, its outside-BM
+screen/evidence and Back/observe UTC timing; prequit identity/PID result; the actual
+original
 quit command, start/end/exit and its authenticated PID/listener/shutdown facts;
 final stopped/source result; the single FINISH or CANCEL send time and exact
 session ID; and driver DONE/exit/result. Include elapsed/remaining 900-second
@@ -334,7 +365,8 @@ observations in order; a successful form/mtime check is not native attribution.
 ## Predetermined outcome and stop rules
 
 - **PASS (narrow A15 scenario):** complete correlated native conflict evidence,
-  expected rejection, fresh stopped/source verification, all five strict scopes
+  expected rejection, verified UI exit before quit, fresh stopped/source
+  verification, all five strict scopes
   and separate public witnesses PRESERVED, no unsafe transaction/hold/publication
   or unrelated mutation. Report the Addons33 and full-profile limitations.
 - **FAIL (native behavior):** a demonstrably wrong conflict result (for example
@@ -357,8 +389,11 @@ repeat, alter settings or omit fields merely to obtain equality. The procedure
 may advance failure-path evidence without closing A15.
 
 CANCEL/EOF/timeout/host-process loss consumes or loses the private session and
-never controls Kodi or authorizes retry. Before any failed quit/admission, the
-separate native task may still authorize its one graceful quit with retained
+never controls Kodi or authorizes retry. An unverified UI exit remains subject
+to step 3's K1 stop rule: no authenticated quit or FINISH, and any unresolved
+running target needs separately authorized recovery. Otherwise, before any failed
+quit/admission, the separate native task may still authorize its one graceful
+quit with retained
 exact target/control authority; a lost comparison cannot become PASS. After a
 quit or trusted admission failure, step 4's no-retry/separate-recovery-authority
 rule controls. Do not force termination or improvise recovery. On a Create or
