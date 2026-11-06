@@ -3,6 +3,7 @@ import copy
 import io
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -28,6 +29,8 @@ class DriverTests(fixtures.TripwireTestCase):
         (self.tmp/'.qualification-evidence').mkdir()
         self.evidence = self.tmp/'.qualification-evidence'/'run'
         self.manifest = {'candidate':{'commit':'a'*40}}
+        self.invocation_patch = mock.patch.object(driver, 'trusted_invocation')
+        self.invocation = self.invocation_patch.start()
         self.host_patch = mock.patch.object(driver, 'host_source')
         self.host = self.host_patch.start()
         mock.patch.object(bm, 'load_manifest', return_value=(self.manifest,'b'*64)).start()
@@ -108,6 +111,53 @@ class DriverTests(fixtures.TripwireTestCase):
         self.assertEqual(self.output.getvalue(),'READY\nDONE\n')
         self.assertEqual(self.public_call.call_count,2)
         self.assertEqual(self.host.call_count,2)
+        self.assertEqual(result['native_run_attribution'],'UNVERIFIED')
+        self.assertIs(result['external_native_evidence_required'],True)
+        self.assertIs(result['receipt_form_and_file_time_validated'],True)
+        self.assertNotIn('graceful_receipt_validated',result)
+
+    def test_review_p01_recopy_old_receipt_only_proves_form_and_file_time(self):
+        destination = self.evidence
+        self.evidence = self.tmp/'earlier-window'; self.evidence.mkdir()
+        self.write_receipt()
+        earlier = (self.evidence/'quit.json').read_bytes()
+        self.evidence = destination
+        def replay():
+            path = self.evidence/'quit.json'
+            path.write_bytes(earlier); path.chmod(0o600)
+        self.write_receipt = replay
+        code,result = self.run_driver()
+        self.assertEqual(code,0)
+        self.assertEqual(result['state'],'SCOPED_PRESERVED')
+        self.assertEqual(result['native_run_attribution'],'UNVERIFIED')
+        self.assertTrue(result['external_native_evidence_required'])
+        self.assertNotIn('graceful_receipt_validated',result)
+
+    def test_review_p03_future_dated_receipt_is_refused(self):
+        original = self.write_receipt
+        def future():
+            original()
+            stamp = driver.time.time_ns() + 3600 * 10**9
+            os.utime(self.evidence/'quit.json',ns=(stamp,stamp))
+        self.write_receipt = future
+        self.blocked('quit_unverified'); self.assertNotIn('finish',self.calls)
+
+    def test_review_l02_finish_queued_during_begin_refuses_before_ready(self):
+        original = self.session.begin
+        def queued():
+            os.write(self.w,b'FINISH\n')
+            return original()
+        self.session.begin = queued
+        self.blocked('protocol_invalid')
+        self.assertNotIn('READY',self.output.getvalue())
+        self.assertEqual(self.calls,['begin','close'])
+
+    def test_zero_native_activity_after_ready_can_only_be_scoped_preservation(self):
+        # Default fake writes a receipt and FINISH directly at READY: no native UI.
+        code,result = self.run_driver()
+        self.assertEqual(code,0)
+        self.assertEqual(result['native_run_attribution'],'UNVERIFIED')
+        self.assertTrue(result['external_native_evidence_required'])
 
     def test_begin_refusal_including_returned_cancellation_never_announces_ready(self):
         self.begin_result = bridge._result('before','FAILED','acquisition_failed')
@@ -154,6 +204,14 @@ class DriverTests(fixtures.TripwireTestCase):
     def test_wrong_bundle_receipt_refuses(self):
         self.receipt_change = lambda value: value['identity_after'].update(bundle={'wrong':True})
         self.blocked('quit_unverified')
+
+    def test_review_n13_after_state_alone_refuses_with_count_still_zero(self):
+        self.receipt_change = lambda value:value['identity_after']['process'].update(state='running_portable')
+        self.blocked('quit_unverified'); self.assertNotIn('finish',self.calls)
+
+    def test_review_n13_after_count_alone_refuses_with_state_still_stopped(self):
+        self.receipt_change = lambda value:value['identity_after']['process'].update(test_app_process_count=1)
+        self.blocked('quit_unverified'); self.assertNotIn('finish',self.calls)
 
     def test_unauthenticated_receipt_refuses(self):
         self.receipt_change = lambda value: value['invocation'].update(authenticated=False)
@@ -265,6 +323,28 @@ class DriverTests(fixtures.TripwireTestCase):
             return original(evidence,name,value)
         with mock.patch.object(driver.Evidence,'write',write): self.blocked()
 
+    def test_review_n14_replaced_directory_gets_no_durable_output_at_either_path(self):
+        original = self.session.begin
+        moved = self.evidence.with_name('moved')
+        def replace():
+            self.evidence.rename(moved); self.evidence.mkdir(mode=0o700)
+            return original()
+        self.session.begin = replace
+        self.blocked(); self.assertNotIn('READY',self.output.getvalue())
+        for root in (moved,self.evidence):
+            self.assertFalse((root/'ready.json').exists())
+            self.assertFalse((root/'result.json').exists())
+
+    def test_ready_directory_fsync_failure_never_announces_ready(self):
+        original = os.fsync; count = [0]
+        def fail_directory(fd):
+            count[0] += 1
+            if count[0] == 2: raise OSError(SECRET)
+            return original(fd)
+        with mock.patch.object(driver.os,'fsync',side_effect=fail_directory): self.blocked()
+        self.assertNotIn('READY',self.output.getvalue())
+        self.assertNotIn('finish',self.calls)
+
     def test_evidence_close_failure_has_nonzero_exit_even_if_result_exists(self):
         close = driver.Evidence.close
         def failure(evidence):
@@ -276,12 +356,10 @@ class DriverTests(fixtures.TripwireTestCase):
 
     def test_real_host_git_provenance_rejects_source_tampering(self):
         self.host_patch.stop()
-        repo, unused = fixtures.build_candidate_repo(self.tmp)
+        repo, commit = fixtures.build_candidate_repo(self.tmp)
         source = Path(driver.__file__).read_bytes()
-        (repo/'tools/bm_preservation_driver.py').write_bytes(source)
-        fixtures.git(repo,'add','tools/bm_preservation_driver.py')
-        fixtures.git(repo,'commit','-q','-m','driver fixture')
-        commit = fixtures.git(repo,'rev-parse','HEAD').decode().strip()
+        self.assertEqual((repo/'tools/bm_preservation_driver.py').read_bytes(), source)
+        fixtures.git(repo,'ls-files','--error-unmatch','tools/bm_preservation_driver.py')
         with mock.patch.object(driver,'REPO',repo):
             driver.host_source(self.services,commit)
             (repo/'tools/bm_preservation_acquisition.py').write_text('# changed')
@@ -306,6 +384,27 @@ class DriverTests(fixtures.TripwireTestCase):
             self.assertEqual(driver.main(['--invalid',SECRET]),2)
         production.assert_not_called()
         self.assertNotIn(SECRET,out.getvalue()+err.getvalue())
+
+    def test_help_is_informational_nonzero_without_services_or_evidence(self):
+        for option in ('--help','-h'):
+            with mock.patch.object(bm.Services,'production') as production, \
+                 mock.patch('sys.stdout',io.StringIO()) as out:
+                self.assertEqual(driver.main([option]),2)
+            production.assert_not_called()
+            self.assertFalse(self.evidence.exists())
+            self.assertNotIn('READY',out.getvalue())
+
+    def test_fixed_checkout_and_import_origin_checks_before_work(self):
+        self.invocation_patch.stop()
+        with mock.patch.object(driver,'REPO',fixtures.PROJECT):
+            driver.trusted_invocation()
+            with mock.patch.object(Path,'cwd',return_value=self.tmp), self.assertRaises(driver.Refused):
+                driver.trusted_invocation()
+            foreign = SimpleNamespace(__file__=str(self.tmp/'foreign.py'))
+            with mock.patch.dict(sys.modules,{'tools.foreign':foreign}), self.assertRaises(driver.Refused):
+                driver.trusted_invocation()
+            with mock.patch.object(driver,'__file__',str(self.tmp/'bm_preservation_driver.py')), \
+                 self.assertRaises(driver.Refused): driver.trusted_invocation()
 
     def test_public_witness_composition_never_uses_creating_transaction_inspect(self):
         self.public_patch.stop()

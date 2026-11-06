@@ -45,6 +45,34 @@ def need(condition, reason):
         raise Refused(reason)
 
 
+def trusted_invocation():
+    """Reject a foreign checkout/import origin; not an import-time authenticator.
+
+    Imports have already run. The interpreter, startup environment and any
+    already-used bytecode must be trusted; -B only prevents bytecode writes.
+    """
+    need(Path.cwd() == REPO and Path(__file__).absolute() == REPO / 'tools/bm_preservation_driver.py',
+         'source_unverified')
+    for name, module in tuple(sys.modules.items()):
+        if name not in ('tools', 'resources') and not name.startswith(('tools.', 'resources.')):
+            continue
+        expected = REPO.joinpath(*name.split('.'))
+        filename = getattr(module, '__file__', None)
+        if filename is None:
+            # resources is the existing namespace package, not a new loader.
+            paths = list(getattr(module, '__path__', ()))
+            need(name == 'resources' and bool(paths) and all(Path(p) == expected for p in paths),
+                 'source_unverified')
+            continue
+        need(type(filename) is str, 'source_unverified')
+        path = Path(filename)
+        wanted = expected / '__init__.py' if path.name == '__init__.py' else expected.with_suffix('.py')
+        need(path.is_absolute() and path == wanted, 'source_unverified')
+        origin = getattr(getattr(module, '__spec__', None), 'origin', None)
+        need(origin == str(path), 'source_unverified')
+        bm.reject_symlink_components(path)
+
+
 def host_source(services, commit):
     """Existing Git authority, explicit full commit and no mutable HEAD trust."""
     source = bm.GitSource(REPO, services.git_exe, services.git_runner)
@@ -140,10 +168,11 @@ class Evidence:
     def quit_receipt(self, bundle, ready_ns):
         self.check()
         path = self.path / 'quit.json'
+        read_ns = time.time_ns()
         raw = bm.read_regular_file(path, 16384)
         st = os.stat('quit.json', dir_fd=self.fd, follow_symlinks=False)
         need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == os.getuid()
-             and stat.S_IMODE(st.st_mode) == 0o600 and st.st_mtime_ns >= ready_ns
+             and stat.S_IMODE(st.st_mode) == 0o600 and ready_ns <= st.st_mtime_ns <= read_ns
              and (raw.st_dev,raw.st_ino,raw.st_size,raw.st_mtime_ns) ==
                  (st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns), 'quit_unverified')
         value = bm.parse_json_strict(raw.data)
@@ -250,9 +279,11 @@ def project_acquisition(value, boundary):
 def run(services, *, manifest_path, evidence_path, host_commit, signals, output):
     evidence = session = None
     result = {'schema':'bm-a15-driver/1', 'state':'BLOCKED', 'reason':'operation_failed',
-              'complete_preservation':'UNVERIFIED', 'qualification':'not_qualified'}
+              'complete_preservation':'UNVERIFIED', 'qualification':'not_qualified',
+              'native_run_attribution':'UNVERIFIED', 'external_native_evidence_required':True}
     code = 2
     try:
+        trusted_invocation()
         need(services.target.production is True and str(services.target.root) == bm.AUTHORIZED_TEST_APP,
              'arguments_invalid')
         host_source(services, host_commit)
@@ -264,6 +295,7 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         begin = project_acquisition(session.begin(), 'before')
         need(isolation.exists(evidence.fd, 'quit.json') is None, 'quit_unverified')
         ready_ns = time.time_ns()
+        need(not pending(signals), 'protocol_invalid')
         evidence.write('ready.json', {'schema':'bm-a15-driver/1','state':'READY',
             'host_commit':host_commit,'manifest_sha256':manifest_sha,
             'staged_candidate':manifest['candidate']['commit'], 'public_baseline_acquired':True,
@@ -279,7 +311,8 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         result.update(after=after, public_comparison=public_comparison)
         need(after['scope_result'] == 'PRESERVED' and public_comparison == 'PRESERVED', 'changed')
         session.close(); session = None
-        result.update(state='SCOPED_PRESERVED', reason='scoped_comparison', graceful_receipt_validated=True)
+        result.update(state='SCOPED_PRESERVED', reason='scoped_comparison',
+                      receipt_form_and_file_time_validated=True)
         code = 0
     except (Exception, KeyboardInterrupt, SystemExit) as exc:
         reason = (exc.args[0] if type(exc) is Refused and len(exc.args) == 1
@@ -315,10 +348,11 @@ def main(argv=None):
         parser.add_argument('--evidence-dir', required=True)
         parser.add_argument('--host-commit', required=True)
         args = parser.parse_args(argv)
+        trusted_invocation()
         return run(bm.Services.production(), manifest_path=Path(args.manifest),
                    evidence_path=Path(args.evidence_dir), host_commit=args.host_commit,
                    signals=sys.stdin, output=sys.stdout)
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt, SystemExit):
         return 2
 
 

@@ -685,6 +685,17 @@ The evidence directory must be a new direct child of this worktree's `.qualifica
 and its parent must already exist. No target/repository override, native action,
 RPC endpoint, private baseline save/load or timeout override is provided.
 
+The working directory must be the fixed Codex REPO above, in a fresh trusted
+Python process with a trusted startup environment/import path. Before work the
+driver checks its own file and already-loaded tools/resources module origins
+against that REPO (including the existing resources namespace package). This
+detects a different checkout or foreign module origin; it does not authenticate
+import-time execution that has already happened. `-B` prevents bytecode writes,
+not reads of existing valid bytecode. Interpreter/startup code and any used
+bytecode remain trusted host assumptions. No new loader or cache policy is
+provided. Informational `--help`/`-h` returns nonzero without run evidence;
+exit 0 is reserved for the completed limited comparison.
+
 One foreground process owns one unchanged AcquisitionSession. It first proves
 host Git source bytes, loads the existing validated manifest, creates exclusive
 0700 evidence, obtains separate supported public witnesses and calls begin once.
@@ -698,17 +709,37 @@ Keep stdin open and empty until READY. The only accepted coordination lines are
 Unknown, queued out-of-order or coalesced repeated input refuses. Terminal exit
 consumes the session; later signals cannot start another acquisition or action.
 No native action is invoked by the driver, including on timeout or cancellation.
+Input is rechecked after begin and immediately before writing READY. The final
+check and READY delivery are not atomic; this is not an operation-bound handshake
+or proof that a native action occurred after READY.
 
 Before FINISH, the separately authorized controller must gracefully quit the
 exact target and write a fresh `quit.json` in the new evidence directory using
 the existing trusted bm_test_app.py/keychain-wrapper `quit --output` path.
-It must be the original sanitized successful helper result, mode 0600, from
-after READY, with matching bundle, authenticated PID-bound Application.Quit,
+The controller must supply the original sanitized successful helper result,
+mode 0600, from this native run, with matching bundle, authenticated PID-bound Application.Quit,
 accepted/exited shutdown and no forced termination. The driver does not obtain
 credentials or issue RPC. It validates that receipt, rechecks source and stopped
 public state, calls finish at most once, and compares the separate witnesses.
-The receipt is trusted operator-supplied helper evidence, not a cryptographic
-attestation; same-UID forgery or hostile host control is not excluded.
+The result's receipt_form_and_file_time_validated=true means only that the form,
+helper/bundle fields and filesystem mtime interval [READY, receipt read] passed.
+Future-dated receipts refuse. A previous valid receipt copied with a new mtime
+can still pass, as can a zero-native-activity window. Neither is proof of this
+window's launch, UI execution or graceful exit. The driver never emits
+graceful_receipt_validated=true; native_run_attribution remains UNVERIFIED and
+external_native_evidence_required remains true, even for SCOPED_PRESERVED.
+
+Native qualification must separately correlate the saved READY/source/manifest
+identity and observed READY window with exact portable target launch/PID, the
+actual normal-UI Create conflict review/confirmation/result, the matching
+helper quit invocation/PID and receipt, and subsequent stopped-state/source
+verification. Retain that native-run ledger and UI evidence without private
+values. A copied receipt or comparison-only/null window cannot satisfy this
+acceptance procedure. The helper has no nonce/READY binding; the driver cannot
+authenticate this correlation. Trusted operator evidence, not file mtime or
+receipt syntax, supplies it. Same-UID forgery/host compromise remains excluded.
+Stronger machine-verifiable attribution needs a separate design/approval;
+no helper change or new trust mechanism is introduced here.
 
 Public coverage uses the existing snapshot, typed applied/selected/publication
 and resolution readers, plus creation-free public library/resolution/artifact
@@ -719,6 +750,9 @@ Native schema compatibility and safe UI fixture admission must still be proved
 for each separately authorized run. The driver does not establish the actual
 Create conflict wording, confirmation count or absence of unrelated UI actions;
 those require external native UI evidence.
+Owner-file absence is checked at the two observation boundaries. Transient
+in-window transactions/holds, lock churn and changes to the adapter result
+witness are not compared or established absent by this driver.
 
 `DONE` means only that terminal output was attempted. Acceptance requires exit
 0 AND a complete durable result.json with state=SCOPED_PRESERVED, as well as the
