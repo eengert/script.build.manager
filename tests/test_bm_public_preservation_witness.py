@@ -211,6 +211,93 @@ class PreservationTests(unittest.TestCase):
         self.path(self.after, 2).write_text('<settings version="2"><audio><value>1</value></audio></settings>')
         self.unverified(2)
 
+    def native_gui(self):
+        # Synthetic output shapes grounded in pinned Kodi Save implementations.
+        def node(tag):
+            if tag in w._GUI_CHILDREN:
+                return '<'+tag+'>'+''.join(node(n) for n in w._GUI_CHILDREN[tag])+'</'+tag+'>'
+            return '<'+tag+'>'+SECRET+'</'+tag+'>'
+        return ('<settings version="2"><setting id="network.password" default="true">'
+                +SECRET+'</setting>'+''.join(node(n) for n in sorted(w._GUI_SECTIONS))+'</settings>')
+
+    def test_native_gui_subsettings_supported_without_private_output(self):
+        for side in (self.before, self.after):
+            self.path(side, 2).write_text(self.native_gui())
+        self.assertEqual(self.compare()['scope_result'], 'PRESERVED')
+
+    def test_native_gui_every_leaf_change_is_detected(self):
+        original = self.native_gui()
+        self.path(self.before, 2).write_text(original)
+        root = w.ET.fromstring(original)
+        for leaf in root.iter():
+            if list(leaf) or leaf.tag in w._GUI_CHILDREN: continue
+            with self.subTest(tag=leaf.tag):
+                previous = leaf.text; leaf.text = 'changed'
+                self.path(self.after, 2).write_bytes(w.ET.tostring(root))
+                self.changed(2); leaf.text = previous
+
+    def test_native_gui_structure_order_and_multiplicity_not_erased(self):
+        raw = b'<settings version="2"><resolutions><resolution><description>x</description><subtitles>2</subtitles></resolution></resolutions></settings>'
+        base = w.xml_projection(raw, 2)
+        for changed in (
+            raw.replace(b'<subtitles>2</subtitles>', b''),
+            raw.replace(b'<subtitles>2</subtitles>', b'<pixelratio>2</pixelratio>'),
+            raw.replace(b'<description>x</description><subtitles>2</subtitles>', b'<subtitles>2</subtitles><description>x</description>'),
+            raw.replace(b'</resolutions>', b'<resolution><description>x</description><subtitles>2</subtitles></resolution></resolutions>'),
+            raw.replace(b'>x<', b'> x <')):
+            self.assertNotEqual(base, w.xml_projection(changed, 2))
+
+    def test_native_gui_indentation_and_root_record_order_are_layout(self):
+        raw = self.native_gui().encode()
+        root = w.ET.fromstring(raw)
+        root[:] = list(reversed(list(root)))
+        w.ET.indent(root, space='  ')
+        formatted = w.ET.tostring(root)
+        self.assertEqual(w.xml_projection(raw, 2), w.xml_projection(formatted, 2))
+        self.assertEqual(w.xml_projection(raw, 2), w.xml_projection(formatted.replace(b'\n', b'\r\n'), 2))
+
+    def test_native_gui_unknown_paths_attributes_and_mixed_content_refuse(self):
+        for section in ('<unknown/>', '<audio><unknown/></audio>', '<audio attr="x"/>',
+                        '<audio><mute attr="x">true</mute></audio>',
+                        '<audio>meaningful<mute>true</mute></audio>',
+                        '<audio><mute>true</mute>meaningful</audio>',
+                        '<audio><mute><nested/></mute></audio>',
+                        '<audio><mute>true</mute><mute>false</mute></audio>',
+                        '<audio/><audio/>', '<resolutions><overscan/></resolutions>'):
+            with self.subTest(section=section), self.assertRaises(w.Unverified):
+                w.xml_projection(('<settings version="2">'+section+'</settings>').encode(), 2)
+
+    def test_native_gui_literal_cr_refuses_in_all_leaf_values(self):
+        for tag in ('description', 'mute', 'systemtotaluptime', 'videofilter'):
+            parent = {'description':'resolution', 'mute':'audio',
+                      'systemtotaluptime':'general', 'videofilter':'defaultgamesettings'}[tag]
+            body = '<'+parent+'><'+tag+'>one\rtwo</'+tag+'></'+parent+'>'
+            if parent == 'resolution': body = '<resolutions>'+body+'</resolutions>'
+            raw = ('<settings version="2">'+body+'</settings>').encode()
+            with self.subTest(tag=tag), self.assertRaises(w.Unverified) as caught:
+                w.xml_projection(raw, 2)
+            self.assertEqual(caught.exception.args, ('xml_value_normalization_uncertain',))
+            escaped = raw.replace(b'\r', b'&#13;')
+            self.assertNotEqual(w.xml_projection(escaped, 2), w.xml_projection(raw.replace(b'\r',b'\n'), 2))
+
+    def test_native_gui_whitespace_only_leaf_values_are_not_indentation(self):
+        base = b'<settings version="2"><defaultgamesettings><videofilter> </videofilter></defaultgamesettings></settings>'
+        self.assertNotEqual(w.xml_projection(base, 2), w.xml_projection(base.replace(b'> <', b'><'), 2))
+        with self.assertRaises(w.Unverified):
+            w.xml_projection(base.replace(b'> <', b'>\r<'), 2)
+
+    def test_nested_xml_node_and_depth_bounds_refuse(self):
+        for raw in (b'<settings version="2">'+b'<audio/>'*w.MAX_ROWS+b'<audio/></settings>',
+                    b'<settings version="2">'+b'<audio>'*w.MAX_XML_DEPTH+b'</audio>'*w.MAX_XML_DEPTH+b'</settings>'):
+            with self.assertRaises(w.Unverified) as caught:
+                w.xml_projection(raw, 2)
+            self.assertEqual(caught.exception.args, ('input_too_large',))
+
+    def test_unknown_subsettings_not_admitted_to_other_xml_kinds(self):
+        for kind in (3,4):
+            with self.subTest(kind=kind), self.assertRaises(w.Unverified):
+                w.xml_projection(b'<settings><audio><mute>true</mute></audio></settings>',kind)
+
     def test_malformed_database_unverified(self):
         self.path(self.after, 1).write_bytes(b'not sqlite '+SECRET.encode()); self.unverified(1)
 

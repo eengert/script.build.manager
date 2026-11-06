@@ -662,6 +662,20 @@ content remains UNVERIFIED. Complete preservation and qualification are never
 claimed. Existing public library/artifact/association/transaction/hold/updater/
 publication witnesses remain separate and must still be collected.
 
+The guisettings projection supports settings-v2 flat records plus the native
+nested subsettings saved by pinned Kodi 21.3 (`a3a448d26b8d560a65655dab2cd122994dc4e146`):
+display resolutions/overscan, media defaults/playlists, viewstates, general
+uptime/setting-level/event-log state, and application audio state. The witness
+admits only those serializer-defined paths, retains exact leaf text and nested
+child order/multiplicity, and refuses unknown paths, attributes, duplicates
+(except repeated resolutions), mixed content and unsafe XML. Container
+indentation and independent root-record ordering are layout; leaf whitespace
+and maintenance fields remain compared data. Total XML nodes and depth are
+bounded. Literal CR in leaf values refuses rather than silently folding to LF;
+explicit character references retain their decoded distinctions. Structural
+support is not proof of native value validity, runtime health or maintenance
+attribution. Other XML schemas and Addons33 coverage remain unchanged.
+
 Private projections remain in process memory, never in returned evidence or
 value digests. Sessions refuse copying/pickling, consume finish before reads,
 and discard references on completion, failure or context exit. Repeated calls

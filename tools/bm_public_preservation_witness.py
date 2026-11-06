@@ -55,8 +55,83 @@ TEXTURE_SQL = (
 )
 SCOPES = ('installed.addonID,enabled ONLY; all other Addons33 content UNVERIFIED',
           'Textures13 exact schema and all typed rows, including usage/version fields',
-          'flat settings-v2 records; explicit default flags and exact text values',
+          'settings-v2 records and Kodi 21.3 native subsettings; exact leaf text and ordered structure',
           'skin settings string/bool records', 'peripheral settings exact string records')
+
+
+# Pinned Kodi 21.3-Omega (a3a448d26b8d560a65655dab2cd122994dc4e146):
+# Settings::InitializeISubSettings/Save, DisplaySettings::Save,
+# MediaSettings::Save, ViewStateSettings::Save, SysInfo::Save and
+# ApplicationSettingsHandling::Save -> ApplicationVolumeHandling::Save.
+# Only native element paths are admitted. No unknown subtree is discarded.
+_GUI_CHILDREN = {
+    'resolutions': ('resolution',),
+    'resolution': ('description', 'subtitles', 'pixelratio', 'refreshrate',
+                   'output', 'xrandrid', 'overscan'),
+    'overscan': ('left', 'top', 'right', 'bottom'),
+    'defaultvideosettings': (
+        'interlacemethod', 'scalingmethod', 'noisereduction', 'postprocess',
+        'sharpness', 'viewmode', 'zoomamount', 'pixelratio', 'verticalshift',
+        'volumeamplification', 'showsubtitles', 'brightness', 'contrast',
+        'gamma', 'audiodelay', 'subtitledelay', 'nonlinstretch', 'stereomode',
+        'centermixlevel', 'tonemapmethod', 'tonemapparam'),
+    'defaultaudiosettings': (),
+    'defaultgamesettings': ('videofilter', 'stretchmode', 'rotation'),
+    'mymusic': ('playlist', 'needsupdate'),
+    'myvideos': ('watchmodemovies', 'watchmodetvshows', 'watchmodemusicvideos',
+                 'watchmoderecordings', 'playlist', 'needsupdate'),
+    'playlist': ('repeat', 'shuffle'),
+    'viewstates': ('musicnavartists', 'musicnavalbums', 'musicnavsongs', 'musiclastfm',
+                   'videonavactors', 'videonavyears', 'videonavgenres', 'videonavtitles',
+                   'videonavepisodes', 'videonavtvshows', 'videonavseasons',
+                   'videonavmusicvideos', 'programs', 'pictures', 'videofiles',
+                   'musicfiles', 'games'),
+    'general': ('systemtotaluptime', 'settinglevel', 'eventlog'),
+    'eventlog': ('level', 'showhigherlevels'),
+    'audio': ('mute', 'fvolumelevel'),
+}
+for _view in _GUI_CHILDREN['viewstates']:
+    _GUI_CHILDREN[_view] = ('viewmode', 'sortmethod', 'sortorder', 'sortattributes')
+_GUI_SECTIONS = frozenset(('resolutions', 'defaultvideosettings', 'defaultaudiosettings',
+    'defaultgamesettings', 'mymusic', 'myvideos', 'viewstates', 'general', 'audio'))
+MAX_XML_DEPTH = 8
+
+
+def gui_subsettings(node):
+    """Private structural projection, not a claim of runtime value validity.
+
+    Leaf text is exact, including whitespace. Native container indentation is
+    not data; mixed content refuses. Child order and multiplicity are retained
+    (only resolutions may repeat resolution). Attributes/unknown paths refuse.
+    """
+    require(not node.attrib and not (node.tail or '').strip())
+    if node.tag not in _GUI_CHILDREN:
+        require(not list(node))
+        return (node.tag, node.text or '', ())
+    require(not (node.text or '').strip())
+    seen = set(); children = []
+    for child in node:
+        require(child.tag in _GUI_CHILDREN[node.tag])
+        require(node.tag == 'resolutions' or child.tag not in seen)
+        seen.add(child.tag)
+        children.append(gui_subsettings(child))
+    return (node.tag, '', tuple(children))
+
+
+def refuse_normalized_gui_text(text):
+    # Extend the accepted lexical guard to native non-setting leaf values.
+    # Literal CR in values folds during XML parsing; indentation may use CRLF.
+    stack = []; end = 0
+    for match in re.finditer(r'''<(?:[^<>"']|"[^"]*"|'[^']*')*>''', text):
+        if stack and stack[-1] not in _GUI_CHILDREN and stack[-1] != 'settings':
+            require('\r' not in text[end:match.start()], 'xml_value_normalization_uncertain')
+        tag = match.group()
+        opening = re.match(r'<([A-Za-z_][A-Za-z_0-9.-]*)(?=[\s/>])', tag)
+        if tag.startswith('</'):
+            if stack: stack.pop()
+        elif opening and not tag.endswith('/>'):
+            stack.append(opening.group(1))
+        end = match.end()
 
 
 class Unverified(Exception):
@@ -186,13 +261,29 @@ def xml_projection(raw, kind):
     refuse_normalized_values(text_source, kind)
     # Existing entity/DTD refusal is reused before full, strictly bounded XML parsing.
     bm.extract_settings(raw, ())
-    root = ET.fromstring(raw)
+    if kind == 2:
+        refuse_normalized_gui_text(text_source)
+    # Bound total descendants/depth, not only root records, before projection.
+    parser = ET.iterparse(io.BytesIO(raw), events=('start', 'end'))
+    count = depth = 0
+    for event, element in parser:
+        if event == 'start':
+            count += 1; depth += 1
+            require(count <= MAX_ROWS + 1 and depth <= MAX_XML_DEPTH, 'input_too_large')
+        else:
+            depth -= 1
+    root = parser.root
     require(root.tag == 'settings' and not (root.text or '').strip())
     require(root.attrib == ({'version': '2'} if kind == 2 else {})
             or (kind == 3 and root.attrib == {'version': '2'}))
     require(len(root) <= MAX_ROWS, 'input_too_large')
     rows = {}
+    sections = {}
     for child in root:
+        if kind == 2 and child.tag in _GUI_SECTIONS:
+            require(child.tag not in sections)
+            sections[child.tag] = gui_subsettings(child)
+            continue
         require(child.tag == 'setting' and not list(child) and not (child.tail or '').strip())
         require('id' in child.attrib and bool(child.attrib['id']))
         key = child.attrib['id']; require(key not in rows)
@@ -213,7 +304,8 @@ def xml_projection(raw, kind):
             value = ('serialized_string', child.attrib['value'])
         rows[key] = value
     # Version metadata is evidence too; never silently erase a root-attribute change.
-    return (tuple(sorted(root.attrib.items())), sorted(rows.items()))
+    projected = (tuple(sorted(root.attrib.items())), sorted(rows.items()))
+    return projected + (tuple(sorted(sections.items())),) if kind == 2 else projected
 
 
 def sql_normalize(sql):

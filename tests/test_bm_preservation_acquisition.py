@@ -73,6 +73,19 @@ class AcquisitionTests(fixtures.TripwireTestCase):
         self.assertEqual(self.verification.call_count, 6)
         self.assertEqual(self.services.transport.requests, [])
 
+    def test_native_nested_gui_projection_uses_unchanged_bridge(self):
+        path = self.path(self.root, 2)
+        path.write_text(semantic.PreservationTests.native_gui(self))
+        before = path.read_bytes()
+        self.begin()
+        path.write_bytes(before.replace(b'<fvolumelevel>'+semantic.SECRET.encode()+b'</fvolumelevel>',
+                                        b'<fvolumelevel>changed</fvolumelevel>'))
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['scope_result'], 'CHANGED_OR_MISSING')
+        self.assertEqual([r['status'] for r in result['files']],
+                         ['PRESERVED', 'PRESERVED', 'CHANGED_OR_MISSING', 'PRESERVED', 'PRESERVED'])
+        self.assertEqual(self.services.transport.requests, [])
+
     def test_layout_changes_are_semantically_equal(self):
         self.begin()
         path = self.path(self.root, 4)
