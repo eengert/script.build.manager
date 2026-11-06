@@ -185,6 +185,45 @@ Use two coordinated execution surfaces: one foreground trusted host process,
 kept alive throughout, and the existing supported Test.app control. No daemon,
 saved private baseline, extra driver, or new trust mechanism is needed.
 
+### Prepare input and timing before READY
+
+Have the exact public conflict inputs ready before starting the driver:
+`BM-ITEM8-INSTALL-20261015`, version `1.0.0`, and the reviewed distinct public
+root `metadata.generic.albums` at `1.0.20`. Reuse the accepted fixture admission;
+these strings do not replace current source/artifact/fixture checks. Do not
+rename the build or change its version to make entry faster: that would avoid
+the intended same-identity conflict. Preserve the reviewed excluded skin/private
+scope and zero public configuration scope.
+
+The supported MCP navigation interface offers only Back, directional movement
+and Select, one action per call; each navigation call includes a 1.2-second
+settle and an image. It has no text-entry, paste or arbitrary RPC interface.
+For the next separately authorized native attempt, prefer an explicitly scoped
+operator-assisted input step: Eric types the exact public name and version into
+the ordinary Kodi input dialogs using the physical keyboard, while the controller
+uses the existing MCP images/navigation for review and confirmation. Arrange
+operator availability before READY; do not wait indefinitely during acquisition.
+No shell typing, clipboard injection, credential path or new automation is
+implied. If operator assistance is unavailable or direct keyboard entry does not
+work, the remote keyboard-grid route remains uncosted; do not assume it will fit
+or improvise another input method during the run.
+
+Changing the name calls `suggest_version`, so inspect the returned Create menu
+and explicitly set/verify `1.0.0` afterward if necessary. An automatically
+suggested version is not the conflict fixture's required version. Observe the
+completed fields and the full review before the single Create confirmation.
+
+Record host UTC start/end and monotonic elapsed/remaining time for READY,
+launch/identity, each navigation/observation or operator-input interval, completed
+name/version, component selection, final review, rejection, UI exit, prequit,
+quit and FINISH/CANCEL. Keep actual durations separate from estimated remaining
+work. A screenshot clock, call count or predicted overrun is not a measured
+deadline expiry. Use measured progress to decide whether the remaining review,
+verified UI exit and complete shutdown sequence fit the existing reserve; if
+they do not, cancel safely without another confirmation. Retain the 900-second
+deadline and existing 150-second no-new-confirmation cutoff. No extension is
+justified by the prior attempt, which reached no submitted name or confirmation.
+
 1. Record the approved full host commit, old stage manifest path/hash, trusted
    helper/wrapper hashes, command, environment, external controller/foreground
    session handle and UTC start. Verify Git/index/source and all preconditions.
@@ -332,6 +371,20 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    repair state or claim shutdown. Test.app may remain running. Closure/recovery
    requires separately authorized target-specific action after Supervisor review;
    no emergency or fallback closure authority is implied by this procedure.
+
+   In particular, `esrch_confirmation / pending_pid_present` means a failed
+   kernel executable lookup reported ESRCH but its PID appeared in the one fresh
+   confirmation census. It is not proof of a harmless exit, a known background
+   process or PID continuity. Preserve the refusal; do not repeat admission,
+   independently enumerate, or use a second name/path lookup to force success.
+   No independently authenticated fallback closure is established by this runbook.
+   Immediately tell the operator: **the test stopped; Test.app may still be
+   running; CANCEL only disposes the baseline; do not wait for automated quit.**
+   Request separately authorized manual closure of this exact Test.app through
+   its normal GUI after Supervisor disposition, without repair, signals or other
+   Kodi access. Record an eventual operator closure report as such, not as an
+   authenticated stopped-state result. A future task needs its own fresh admission;
+   manual closure cannot rescue this cancelled run or authorize FINISH.
 5. Correlate the original quit invocation/receipt, PID and UTC times with READY,
    launch, UI review/confirmation/rejection and the still-live driver session.
    Require the stop/source observations to belong to this interval. Send exactly
