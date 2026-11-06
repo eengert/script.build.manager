@@ -671,8 +671,7 @@ child order/multiplicity, and refuses unknown paths, attributes, duplicates
 (except repeated resolutions), mixed content and unsafe XML. Container
 indentation is limited to XML whitespace (space, tab, CR and LF); Unicode
 spaces in container text/tails refuse. Independent root-record ordering is
-layout; leaf whitespace
-and maintenance fields remain compared data. Total XML nodes and depth are
+layout; leaf whitespace and maintenance fields remain compared data. Total XML nodes and depth are
 bounded. Literal CR in leaf values refuses rather than silently folding to LF;
 explicit character references retain their decoded distinctions. Structural
 support is not proof of native value validity, runtime health or maintenance

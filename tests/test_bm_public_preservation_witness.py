@@ -256,6 +256,15 @@ class PreservationTests(unittest.TestCase):
         self.assertEqual(w.xml_projection(raw, 2), w.xml_projection(formatted, 2))
         self.assertEqual(w.xml_projection(raw, 2), w.xml_projection(formatted.replace(b'\n', b'\r\n'), 2))
 
+    def test_pinned_audio_root_grammar_and_only_supported_leaf_names(self):
+        valid = b'<settings version="2"><audio><mute>false</mute><fvolumelevel>0.5</fvolumelevel></audio></settings>'
+        baseline = w.xml_projection(valid, 2)
+        for before, after in ((b'>false<', b'>true<'), (b'>0.5<', b'>0.6<')):
+            self.assertNotEqual(baseline, w.xml_projection(valid.replace(before, after), 2))
+        for raw in (valid.replace(b'fvolumelevel', b'volumelevel'),
+                    valid.replace(b'<audio>', b'<general><audio>').replace(b'</audio>', b'</audio></general>')):
+            with self.assertRaises(w.Unverified): w.xml_projection(raw, 2)
+
     def test_native_gui_unknown_paths_attributes_and_mixed_content_refuse(self):
         for section in ('<unknown/>', '<audio><unknown/></audio>', '<audio attr="x"/>',
                         '<audio><mute attr="x">true</mute></audio>',

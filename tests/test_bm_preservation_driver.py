@@ -116,6 +116,16 @@ class DriverTests(fixtures.TripwireTestCase):
         self.assertIs(result['receipt_form_and_file_time_validated'],True)
         self.assertNotIn('graceful_receipt_validated',result)
 
+    def test_false_success_or_graceful_quit_receipt_never_finishes(self):
+        for flag in ('ok', 'graceful'):
+            with self.subTest(flag=flag):
+                self.evidence = self.tmp / '.qualification-evidence' / ('false-' + flag)
+                self.output.seek(0); self.output.truncate(0); self.calls.clear()
+                self.receipt_change = lambda value, key=flag: value.update({key: False})
+                self.blocked('quit_unverified')
+                self.assertEqual(self.calls, ['begin', 'close'])
+                self.assertNotIn('finish', self.calls)
+
     def test_review_p01_recopy_old_receipt_only_proves_form_and_file_time(self):
         destination = self.evidence
         self.evidence = self.tmp/'earlier-window'; self.evidence.mkdir()

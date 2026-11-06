@@ -99,16 +99,85 @@ existing grammar; no new audio permission or runtime claim is introduced.
   Current readiness must be established then; this offline task reads no profile.
 - Exclude known concurrent writers. Stopped state and two stable reads are
   bounded evidence, not a global exclusion lock or atomic snapshot.
-- Establish supported MCP launch/navigation and an authenticated PID-bound
-  HTTP helper quit path before launch. Use the existing accepted credential
-  mechanism without exposing secrets. If either cannot be safely established,
-  do not launch. No alternate GUI automation or credential fallback.
+- While stopped, establish only what is observable: supported MCP launch/UI
+  controls, the persistent PTY control tools below, helper/wrapper source identity,
+  approved expected HTTP loopback/port/user configuration and the fixed credential
+  mechanism. Do not retrieve a credential as a "test" or claim successful HTTP
+  authentication, listener ownership or a running PID before launch.
+- The future native task must explicitly authorize and accept first use of the
+  authenticated HTTP quit on this configuration, including the risk of leaving
+  Test.app running if it fails. Prior authenticated status is not proof of quit.
+  If that authority or the supported tools are missing, do not launch. No alternate
+  GUI automation, transport, credential fallback or forced termination.
 - Keep public evidence secret-blind: fixed results, operation counts, source
   identities and scoped comparison outcomes. Do not publish identifiable add-on
   inventories, settings IDs/values, database rows, private-value digests or raw
   baselines. The driver keeps separate public witnesses in memory; it does not
   need a new durable inventory dump. Retain only bounded, suitably protected UI
   evidence necessary to prove the actual conflict operation.
+
+## Foreground FINISH channel (B1)
+
+Use Codex's supported `exec_command`/`write_stdin` persistent PTY channel,
+through `functions.exec`. This method was rehearsed with the non-Kodi fixture
+in `tests/test_a15_finish_channel.py`, using the production driver's actual
+`pending`, `announce` and `wait_signal`. No FIFO, holder, service or replacement
+driver is introduced. If these tools are unavailable, STOP before begin/launch;
+a terminal tool that cannot write to its running process is not equivalent.
+
+Start the exact rendered driver command from step 1 using:
+
+```javascript
+const started = await tools.exec_command({
+  cmd: renderedDriverCommand,
+  workdir: "/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex",
+  login: false, tty: true, yield_time_ms: 1000
+});
+```
+
+`renderedDriverCommand` must contain the approved full SHA and the single
+recorded absolute evidence path; do not rely on variables from another tool
+shell. Keep the returned `session_id` in the external ledger. The command runs
+in its original foreground PTY after the tool yields; the service keeps stdin
+open. Yielding is not EOF. Poll only that session with `chars: ""` (no input):
+
+```javascript
+const observed = await tools.write_stdin({
+  session_id: driverSessionId, chars: "", yield_time_ms: 1000
+});
+```
+
+Observe actual stdout `READY`, verify durable ready.json and record the time
+before native work. Check that the tool still reports the same running session.
+Do not queue FINISH, inject a blank line, type shell commands into it, send Ctrl-D,
+or close the session. Never start a second driver to obtain another baseline.
+After step 5's original quit evidence, PID correlation and stopped verification,
+send exactly one line to that same returned session:
+
+```javascript
+const completed = await tools.write_stdin({
+  session_id: driverSessionId, chars: "FINISH\n", yield_time_ms: 1000
+});
+```
+
+If it remains running, poll with empty `chars` until exit; do not resend FINISH.
+Record original exit code, DONE and durable result.json. On cancellation send
+`CANCEL\n` once instead, then poll. Cancellation discards the host baseline,
+never quits Kodi and never produces a preservation comparison. After exit the
+PTY is closed by the tool; retain the evidence, remove no historical artifacts.
+There is no FIFO/holder to remove and no private baseline file to clean up.
+EOF, controller loss or the 900-second driver timeout is INCONCLUSIVE, not a
+recoverable baseline. Do not signal Kodi or fabricate FINISH. Any unresolved
+native closure needs the separate authority described below.
+
+Offline replay commands (harmless fixtures only) use the unchanged guard:
+`tools/offline_test_suite.py --verbose tests.test_a15_finish_channel.rehearse_finish`
+(or `.rehearse_cancel`, `.rehearse_eof`, `.rehearse_timeout`), with the pinned
+interpreter and DEVELOPER_DIR. Use the same PTY tools; send FINISH/CANCEL only
+after READY. EOF is a test-only Ctrl-D; the timeout fixture uses an injected
+0.3-second stub deadline. Production WAIT_SECONDS remains 900. These fixtures
+hold only an object in memory, exercise no acquisition/native API and do not
+qualify real state preservation.
 
 ## One executable sequence, with an external ledger
 
@@ -138,10 +207,36 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    fresh single-process `begin()`. Observe stdout READY and durable ready.json,
    verify its host/manifest/staged identities and record observation time.
    READY is not permission to execute; the separate native task supplies that.
-2. Only after READY, invoke supported `test_app_launch` once. Record the exact
-   admitted portable target/PID and observed time. Keep the foreground driver
-   alive; its 900-second deadline must contain the complete native interval.
-   No independent process enumeration or launch/relaunch fallback.
+2. Only after observed READY, invoke supported `test_app_launch` once. Record
+   its timestamped call/result, then immediately obtain the authoritative PID
+   through the existing read-only helper before any UI action:
+
+   ```sh
+   DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+   /Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B \
+     tools/bm_test_app.py identify --output "$A15_RUN/launch-identity.json"
+   ```
+
+   Require exact bundle, `running_portable`, `portable_flag=true`, one target
+   process, and no foreign-process refusal. Record the returned PID as the launch
+   PID; the MCP tool name or an assumed PID is not evidence. This does not verify
+   HTTP authentication/listener ownership. No independent census or relaunch.
+
+   Keep the original driver session alive. Its 900-second wait deadline starts
+   at READY/wait_signal, not at launch or when convenient. Record a controller
+   host `time.monotonic()` reading immediately before the initial exec_command;
+   use that earlier instant as the conservative budget origin (including admission
+   time), since the exact internal wait start is not exported. Reading monotonic
+   time with the pinned interpreter needs no Kodi/process probe. A late READY
+   observation or empty-input poll must never grant another 900 seconds. Plan
+   navigation in advance from the retained fixture observations. A budget is 90 s
+   for launch/identity, 540 s for UI/review/rejection, and 150 s for quit/correlation,
+   leaving 120 s reserve. These are planning limits, not assurances or a sub-minute
+   preservation target. At each checkpoint record elapsed/remaining time. With
+   less than 150 s remaining, do not begin another UI confirmation; close only
+   under retained safe authority and cancel rather than racing the deadline.
+   After FINISH, the comparison has its existing bounded reads; do not claim
+   that the 900-second signal deadline bounds all later filesystem work.
 3. Through supported `test_app_observe` and `test_app_navigate`, perform the
    ordinary Create UI sequence from the retained conflict contract. Record its
    full review: existing name/version, legitimate different public software
@@ -150,7 +245,10 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    Record the actual visible content-conflict rejection (localized string 32733)
    and acknowledgement. A chooser, receipt or comparison alone is insufficient.
    Do not perform a second Create, Apply, Install, Repair or recovery.
-4. Gracefully quit through the existing trusted helper's authenticated,
+4. Immediately before quit, use the same supported read-only `identify` command
+   with a fresh `prequit-identity.json` output and require the same launch PID,
+   bundle and running portable state. Any ambiguity stops further action.
+   Then gracefully quit through the existing trusted helper's authenticated,
    PID-bound HTTP path, retaining its original fresh `quit.json` in the same
    protected evidence folder. The accepted Keychain wrapper command form is:
 
@@ -159,14 +257,52 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    /Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B \
      tools/bm_test_app_keychain.py quit \
      --rpc-host 127.0.0.1 --rpc-port 8080 --rpc-user kodi \
-     --output "$A15_RUN/quit.json"
+     --timeout 60 --output "$A15_RUN/quit.json"
    ```
 
-   This future command requires separately authorized credential/RPC access.
-   Require authentication, listener PID ownership matching the observed launch,
-   exact bundle, accepted/exited shutdown, no forced termination and final
-   stopped state. Do not substitute an MCP attestation, copied old receipt,
-   manual JSON, changed mtime or host signal for the actual helper invocation.
+   This is the single authorized HTTP quit invocation, not a prelaunch probe.
+   Authentication and listener PID ownership are first proved here, after launch,
+   by the unchanged helper. `--timeout 60` bounds its post-acknowledgement shutdown
+   wait; existing HTTP/process operations have their own bounds, so reserve time
+   for the complete command and receipt checks. Never silently raise the timeout.
+   Require exit 0, ok=true, graceful=true, authenticated=true, verified listener
+   ownership, exact bundle and identity_before/invocation PIDs equal to the recorded
+   launch PID, accepted/exited shutdown, no forced termination and identity_after
+   not_running/count=0. The prequit check is not atomic with the helper; the helper
+   independently binds/rechecks its actual PID for RPC and receipt correlation
+   still must match. Never invent an unsupported expected-PID CLI option.
+
+   After a successful quit, independently use the read-only helper commands
+   below before FINISH. These do not enumerate an add-on inventory or settings:
+
+   ```sh
+   DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+   /Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B \
+     tools/bm_test_app.py identify --output "$A15_RUN/final-identity.json"
+   DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+   /Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B \
+     tools/bm_test_app.py verify --manifest "$A15_MANIFEST" \
+     --repo /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex \
+     --output "$A15_RUN/final-source.json"
+   ```
+
+   `A15_MANIFEST` is the exact same absolute manifest path recorded at READY;
+   render all variables consistently in each new tool command. Require exit 0,
+   not_running/count=0 and installed-equals-manifest/candidate plus checked/ok Git
+   binding. Neither command is a retry after a failed admission: on either
+   refusal stop immediately. The driver separately repeats stopped/public/source
+   admission after FINISH. Receipt syntax alone does not prove this interval.
+
+   On authentication, listener/PID binding, quit rejection, timeout, nonzero exit,
+   uncertain output or final admission failure: stop native/UI/RPC actions, record
+   the precise sanitized stage and whether running state is known or UNKNOWN,
+   and preserve the original result/exit. Do NOT send FINISH. If the original
+   driver session still responds, send CANCEL once solely to dispose its private
+   baseline; otherwise allow its bounded timeout and report loss. Do not retry
+   quit, use another transport/MCP quit as a workaround, send a signal, manually
+   repair state or claim shutdown. Test.app may remain running. Closure/recovery
+   requires separately authorized target-specific action after Supervisor review;
+   no emergency or fallback closure authority is implied by this procedure.
 5. Correlate the original quit invocation/receipt, PID and UTC times with READY,
    launch, UI review/confirmation/rejection and the still-live driver session.
    Require the stop/source observations to belong to this interval. Send exactly
@@ -181,17 +317,33 @@ saved private baseline, extra driver, or new trust mechanism is needed.
    launch, UI execution or graceful exit. External trusted correlation remains
    mandatory; do not claim nonce-bound or machine-authenticated UI provenance.
 
+## Minimal external run ledger
+
+Retain a protected, sanitized ordered ledger with the exact host/source/manifest
+identities; rendered commands and environment; original driver PTY session ID;
+observed READY time and ready.json identity; each timestamped MCP action/result
+needed to establish the review, one confirmation and rejection; launch identify
+PID/bundle/portable-state result; prequit identity/PID result; the actual original
+quit command, start/end/exit and its authenticated PID/listener/shutdown facts;
+final stopped/source result; the single FINISH or CANCEL send time and exact
+session ID; and driver DONE/exit/result. Include elapsed/remaining 900-second
+budget at native checkpoints. Record UNKNOWN instead of filling gaps. Protect
+UI evidence and omit unrelated inventories/private values. Correlate the actual
+observations in order; a successful form/mtime check is not native attribution.
+
 ## Predetermined outcome and stop rules
 
 - **PASS (narrow A15 scenario):** complete correlated native conflict evidence,
   expected rejection, fresh stopped/source verification, all five strict scopes
   and separate public witnesses PRESERVED, no unsafe transaction/hold/publication
   or unrelated mutation. Report the Addons33 and full-profile limitations.
-- **FAIL:** a demonstrably wrong native conflict result (for example unexpected
-  success/overwrite), or independently established harmful/unexpected mutation
-  caused by the operation. Preserve evidence; never retry or repair to turn it
-  green. Strict semantic difference is itself a failed equality check, but does
-  not alone prove Build Manager caused damage.
+- **FAIL (native behavior):** a demonstrably wrong conflict result (for example
+  unexpected success/overwrite), or independently established harmful/unexpected
+  mutation caused by the operation. Preserve evidence; no corrective retry.
+- **Strict difference mapping:** the unchanged driver reports `state=INCONCLUSIVE`,
+  `reason=changed`, nonzero exit when either semantic/public equality differs.
+  The underlying `CHANGED_OR_MISSING` stays authoritative, but is not by itself
+  a native-behavior FAIL or proof of BM-caused damage. Do not report it as PASS.
 - **INCONCLUSIVE:** any unsupported/unstable acquisition, missing correlation,
   process/source uncertainty, process loss, timeout, incomplete cleanup or any
   semantic/public difference whose qualification/causal meaning is unresolved.
@@ -205,11 +357,13 @@ repeat, alter settings or omit fields merely to obtain equality. The procedure
 may advance failure-path evidence without closing A15.
 
 CANCEL/EOF/timeout/host-process loss consumes or loses the private session and
-never controls Kodi or authorizes retry. If native work started, graceful quit
-is allowed only with retained exact target/control authority in that separate
-native task. Do not force termination or improvise recovery. On a Create or
-state error stop actions, preserve evidence and safely close only if authorized.
-No baseline may be reconstructed from hashes or persisted private data.
+never controls Kodi or authorizes retry. Before any failed quit/admission, the
+separate native task may still authorize its one graceful quit with retained
+exact target/control authority; a lost comparison cannot become PASS. After a
+quit or trusted admission failure, step 4's no-retry/separate-recovery-authority
+rule controls. Do not force termination or improvise recovery. On a Create or
+state error stop actions and preserve evidence. No baseline may be reconstructed
+from hashes or persisted private data.
 
 This procedure does not qualify A11, whole-profile preservation, global writer
 exclusion, deferred D-030 lifecycles, publication or macOS beta acceptance.
