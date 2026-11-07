@@ -199,19 +199,41 @@ The supported MCP navigation interface offers only Back, directional movement
 and Select, one action per call; each navigation call includes a 1.2-second
 settle and an image. It has no text-entry, paste or arbitrary RPC interface.
 For the next separately authorized native attempt, prefer an explicitly scoped
-operator-assisted input step: Eric types the exact public name and version into
-the ordinary Kodi input dialogs using the physical keyboard, while the controller
-uses the existing MCP images/navigation for review and confirmation. Arrange
-operator availability before READY; do not wait indefinitely during acquisition.
-No shell typing, clipboard injection, credential path or new automation is
-implied. If operator assistance is unavailable or direct keyboard entry does not
-work, the remote keyboard-grid route remains uncosted; do not assume it will fit
-or improvise another input method during the run.
+operator-assisted input step: the operator types the exact public name and version
+into the ordinary Kodi input dialogs using the physical keyboard. Physical entry
+is proposed and not yet natively verified; operator participation requires explicit
+authorization in a future task. Arrange operator availability before READY; do not
+wait indefinitely during acquisition. No shell typing, clipboard injection,
+credential path or new automation is implied.
 
-Changing the name calls `suggest_version`, so inspect the returned Create menu
-and explicitly set/verify `1.0.0` afterward if necessary. An automatically
-suggested version is not the conflict fixture's required version. Observe the
-completed fields and the full review before the single Create confirmation.
+**Verified keyboard-focus gate (B-1), for each input dialog:** the controller must
+show the operator a fresh exact-target MCP observation of the intended Kodi input
+dialog. The operator must confirm at OS level, without clicking inside Kodi's
+content area, that the foreground application is the authorized disposable
+`/Applications/Kodi Build Manager Test.app`. Explicitly confirm that the driver
+terminal or PTY, normal Kodi and all other applications are not focused. MCP
+launch does not establish foreground focus: it returns focus to the prior app.
+Only after both observation and operator confirmation may physical entry begin.
+No MCP navigation is permitted while the operator is typing; use one actor at a
+time. The operator must never type into the foreground driver terminal or PTY:
+after READY, stray input can refuse the driver with `protocol_invalid` and dispose
+its baseline. The operator must acknowledge completion, then the controller must
+obtain a fresh exact-target observation of the entered field before further action.
+Record both confirmations and bounded UI evidence references in the external
+ledger. If any focus requirement is unavailable or ambiguous, do not type; use
+the abandonment path below.
+
+**Unconditional name/version gate (B-2):** enter the name
+`BM-ITEM8-INSTALL-20261015` first. Every name edit calls `suggest_version`, which
+replaces the version and can reset this fixture to `1.0.1`. Open the version
+dialog afterward, clear the prefilled version completely, and enter exactly
+`1.0.0`, applying the keyboard-focus gate to that dialog too. Verify both exact
+name and version in a fresh exact-target observation of the returned Create menu
+before review. Repeat this verification after EVERY subsequent name or version
+edit; a subsequent name edit requires opening, clearing and setting the version
+again before verification. Never confirm Create without verified exact name and
+version and the full intended review. Incorrect input takes the abandonment path;
+do not improvise corrective edits during this attempt.
 
 Record host UTC start/end and monotonic elapsed/remaining time for READY,
 launch/identity, each navigation/observation or operator-input interval, completed
@@ -220,9 +242,40 @@ quit and FINISH/CANCEL. Keep actual durations separate from estimated remaining
 work. A screenshot clock, call count or predicted overrun is not a measured
 deadline expiry. Use measured progress to decide whether the remaining review,
 verified UI exit and complete shutdown sequence fit the existing reserve; if
-they do not, cancel safely without another confirmation. Retain the 900-second
+they do not, take the abandonment path below. Retain the 900-second
 deadline and existing 150-second no-new-confirmation cutoff. No extension is
 justified by the prior attempt, which reached no submitted name or confirmation.
+
+### Incomplete-scenario abandonment (B-3)
+
+If keyboard assistance is unavailable or ineffective, focus verification fails,
+input is incorrect, or remaining time is insufficient, stop entering text and
+performing Create actions. Do not confirm Create or switch to the remote
+keyboard-grid route or any alternative input mechanism. Apply the accepted K1
+back-out procedure even when no rejection was observed: one supported
+`test_app_navigate({"direction":"back"})` action, then
+`test_app_observe({})`, inspecting each exact-target image. Continue only along
+an understood, non-mutating path until an outside-Build-Manager add-on list or
+home screen is positively verified. Record `UI_EXIT_VERIFIED`, UTC/elapsed time
+and bounded evidence references; sending Back does not establish exit.
+
+Dispose of the original driver baseline with exactly one CANCEL if the session
+still responds; otherwise its existing bounded timeout applies. Never send FINISH
+for an incomplete scenario. Preserve evidence and report INCONCLUSIVE regardless
+of whether subsequent authorized shutdown succeeds. CANCEL never quits Kodi.
+
+Only after verified UI exit, and only if the future native task explicitly
+authorizes shutdown on abandonment and enough time remains, apply step 4's
+unchanged prequit identity and authenticated, PID-bound shutdown rules, including
+launch-PID correlation and final stopped/source checks. Then stop; do not proceed
+to step 5 or reuse the disposed baseline. This is no fallback authority and grants
+no quit after a refused admission. If safe UI exit, current identity, sufficient
+shutdown time or authorized shutdown cannot be established, stop the normal
+sequence and require separately authorized recovery. An unexpected dialog,
+confirmation, ambiguous screen or unsupported control stops back-out immediately.
+Tell the operator: **Test.app may still be running; no automated shutdown has
+been established. Leave Test.app and Kodi untouched until Supervisor disposition.**
+Do not retry, switch quit transports, or infer shutdown from CANCEL.
 
 1. Record the approved full host commit, old stage manifest path/hash, trusted
    helper/wrapper hashes, command, environment, external controller/foreground
@@ -379,7 +432,8 @@ justified by the prior attempt, which reached no submitted name or confirmation.
    independently enumerate, or use a second name/path lookup to force success.
    No independently authenticated fallback closure is established by this runbook.
    Immediately tell the operator: **the test stopped; Test.app may still be
-   running; CANCEL only disposes the baseline; do not wait for automated quit.**
+   running; CANCEL only disposes the baseline; do not wait for automated quit.
+   Leave Test.app and Kodi untouched until Supervisor disposition.**
    Request separately authorized manual closure of this exact Test.app through
    its normal GUI after Supervisor disposition, without repair, signals or other
    Kodi access. Record an eventual operator closure report as such, not as an
@@ -412,7 +466,11 @@ quit command, start/end/exit and its authenticated PID/listener/shutdown facts;
 final stopped/source result; the single FINISH or CANCEL send time and exact
 session ID; and driver DONE/exit/result. Include elapsed/remaining 900-second
 budget at native checkpoints. Record UNKNOWN instead of filling gaps. Protect
-UI evidence and omit unrelated inventories/private values. Correlate the actual
+UI evidence and omit unrelated inventories/private values. Retain bounded evidence
+references for significant UI observations, including input dialogs, verified
+name/version, full review, rejection or abandonment, and outside-BM exit. Include
+operator OS-focus confirmations and completion acknowledgements in order.
+Correlate the actual
 observations in order; a successful form/mtime check is not native attribution.
 
 ## Predetermined outcome and stop rules
