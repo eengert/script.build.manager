@@ -36,11 +36,15 @@ evidence.
 For commits created as Eric, the author and committer must both be
 `Eric Engert <eengert@gmail.com>`. Before committing, check the effective
 identities with `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`.
-If either is wrong, correct the current worktree's Git configuration and
-recheck; do not mask an incorrect default with `git -c`, `--author`, or a
-temporary environment override. After committing, inspect the raw fields with
-`git show --format=raw -s HEAD`. These defaults apply to Eric-created commits
-only; preserve another person's intended authorship. Never amend or rewrite
+If either is wrong, inspect Git configuration origins and Git author/committer
+environment overrides, then correct the persistent source and recheck. If the
+controlling source cannot be corrected, stop without committing and report
+it. Do not mask an incorrect default with `git -c`, `--author`, or a temporary
+environment override. After committing, inspect the raw fields with:
+`git show --format=raw -s HEAD`.
+
+These defaults apply to Eric-created commits only;
+preserve another person's intended authorship. Never amend or rewrite
 historical commits to change attribution.
 
 ## Kodi Profiles and Devices
