@@ -31,6 +31,18 @@ evidence.
   task explicitly authorizes an integration operation.
 - Do not create additional branches/worktrees without explicit task authority.
 
+## Git Commit Identity
+
+For commits created as Eric, the author and committer must both be
+`Eric Engert <eengert@gmail.com>`. Before committing, check the effective
+identities with `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`.
+If either is wrong, correct the current worktree's Git configuration and
+recheck; do not mask an incorrect default with `git -c`, `--author`, or a
+temporary environment override. After committing, inspect the raw fields with
+`git show --format=raw -s HEAD`. These defaults apply to Eric-created commits
+only; preserve another person's intended authorship. Never amend or rewrite
+historical commits to change attribution.
+
 ## Kodi Profiles and Devices
 
 - Use **disposable Kodi profiles** (isolated, non-production environments)
