@@ -1,0 +1,107 @@
+--- a/src/core.js
++++ b/src/core.js
+@@ -1,7 +1,9 @@
+ export const APP = '/Applications/Kodi Build Manager Test.app';
+ export const HOST = '127.0.0.1', PORT = 9090;
+ export const NAV = Object.freeze({back:'Input.Back',up:'Input.Up',down:'Input.Down',left:'Input.Left',right:'Input.Right',select:'Input.Select'});
++export const TEXT_HEADINGS = Object.freeze({name:'Build name',version:'Version'});
+ export const tools = ['observe','navigate','launch','quit'].map(action => ({name:`test_app_${action}`,description:`${action} only the fixed portable Test.app`,inputSchema:{type:'object',properties:action==='navigate'?{direction:{type:'string',enum:Object.keys(NAV)}}:{},required:action==='navigate'?['direction']:[],additionalProperties:false}}));
++tools.push({name:'test_app_send_text',description:'Replace public Build Manager name/version text after observing its input dialog; does not submit',inputSchema:{type:'object',properties:{field:{type:'string',enum:['name','version']},text:{type:'string',minLength:1,maxLength:128}},required:['field','text'],additionalProperties:false}});
+ export class SafeError extends Error {}
+ export const fail = code => {throw new SafeError(code)};
+ export function validate(name,args) {
+@@ -9,6 +11,7 @@
+  if(!tool || !args || typeof args!=='object' || Array.isArray(args)) fail('invalid_arguments');
+  const keys=Object.keys(args);
+  if(name==='test_app_navigate') {if(keys.length!==1 || keys[0]!=='direction' || typeof args.direction!=='string' || !Object.hasOwn(NAV,args.direction)) fail('invalid_arguments');}
++ else if(name==='test_app_send_text') {if(keys.length!==2 || !keys.includes('field') || !keys.includes('text') || !Object.hasOwn(TEXT_HEADINGS,args.field) || typeof args.text!=='string' || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/.test(args.text) || (args.field==='version' && !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(args.text))) fail('invalid_arguments');}
+  else if(keys.length) fail('invalid_arguments');
+ }
+ export function pngResult(bytes) {
+@@ -55,6 +58,7 @@
+  catch(error){this.io.log?.(error instanceof SafeError?error.message:'foreground_restore_failed');}
+  }
+  async perform(name,args) {
++ const observed=this.observed;this.observed=null;
+  let id=await this.io.identity();
+  if(name==='test_app_launch' && !id) {
+  const prior=await this.captureForeground();
+@@ -80,8 +84,17 @@
+  for(let i=0;i<30;i++){await this.io.sleep(400);const now=await this.io.identity();if(!now)return {content:[{type:'text',text:'{"state":"stopped"}'}]};if(now.token!==id.token)fail('identity_changed');}
+  fail('quit_timeout');
+  }
++ if(name==='test_app_send_text'){
++ if(!observed || observed.token!==id.token || Date.now()-observed.at>30000)fail('input_observation_required');
++ const state=await this.io.rpc('XBMC.GetInfoBooleans',id);
++ const labels=await this.io.rpc('XBMC.GetInfoLabels',id);
++ if(state?.['Window.IsActive(virtualkeyboard)']!==true || labels?.['Control.GetLabel(311)']!==TEXT_HEADINGS[args.field])fail('input_dialog_mismatch');
++ if(await this.io.rpc('Input.SendText',id,{text:args.text,done:false})!=='OK')fail('rpc_rejected');await this.io.sleep(200);
++ }
+  if(name==='test_app_navigate'){await this.io.rpc(NAV[args.direction],id);await this.io.sleep(1200);}
+  const after=await this.io.identity();if(!after||after.token!==id.token)fail('identity_changed');
+- return pngResult(await this.io.capture(after));
++ const result=pngResult(await this.io.capture(after));
++ if(name==='test_app_observe')this.observed={token:after.token,at:Date.now()};
++ return result;
+  }
+ }
+--- a/src/runtime.js
++++ b/src/runtime.js
+@@ -18,5 +18,5 @@
+  launch:async(command,args)=>{await exec(command,args,{timeout:4000,maxBuffer:4096});},
+  sleep:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
+  log:code=>process.stderr.write(`${code}\n`)
+- };io.rpc=(method,id)=>rpc(method,id,io);return io;
++ };io.rpc=(method,id,params)=>rpc(method,id,io,undefined,params);return io;
+ }
+--- a/src/rpc.js
++++ b/src/rpc.js
+@@ -10,19 +10,23 @@
+  if(end<0)break;try{out.push(JSON.parse(this.buffer.slice(0,end)));}catch{fail('rpc_invalid_response');}this.buffer=this.buffer.slice(end);
+  }return out;}
+ }
+-export async function rpc(method,identity,io,connect=net.createConnection) {
+- if(![...Object.values(NAV),'Application.Quit'].includes(method))fail('rpc_method_denied');
++export async function rpc(method,identity,io,connect=net.createConnection,params) {
++ if(![...Object.values(NAV),'Application.Quit','Input.SendText','XBMC.GetInfoBooleans','XBMC.GetInfoLabels'].includes(method))fail('rpc_method_denied');
++ if(method==='Input.SendText'){if(!params || Object.keys(params).sort().join(',')!=='done,text' || params.done!==false || typeof params.text!=='string' || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/.test(params.text))fail('invalid_arguments');}
++ else if(params!==undefined)fail('invalid_arguments');
++ if(method==='XBMC.GetInfoBooleans')params={booleans:['Window.IsActive(virtualkeyboard)']};
++ if(method==='XBMC.GetInfoLabels')params={labels:['Control.GetLabel(311)']};
+  await io.verify(identity);await io.listener(identity);
+  return new Promise((resolve,reject)=>{
+  const socket=connect({host:HOST,port:PORT});const decoder=new Decoder();let done=false,phase='verifying',requestID;
+- const finish=(error)=>{if(done)return;done=true;clearTimeout(timer);socket.destroy();error?reject(new SafeError(error)):resolve();};
++ const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);socket.destroy();error?reject(new SafeError(error)):resolve(result);};
+  const timer=setTimeout(()=>finish('rpc_timeout'),2500);socket.setEncoding('utf8');socket.setTimeout(2500,()=>finish('rpc_timeout'));
+  socket.once('connect',async()=>{
+  try {
+  await io.verify(identity);if(done)return;
+  await io.listener(identity);if(done)return;
+  requestID=randomUUID();phase='writing';
+- socket.write(JSON.stringify({jsonrpc:'2.0',id:requestID,method}),error=>{
++ socket.write(JSON.stringify({jsonrpc:'2.0',id:requestID,method,...(params===undefined?{}:{params})}),error=>{
+  if(done)return;
+  if(error){finish('rpc_write_failed');return;}
+  phase='sent';
+@@ -33,7 +37,7 @@
+  if(done)return;
+  if(phase!=='sent'){finish('rpc_early_response');return;}
+  try {
+- let matched=false;
++ let matched=false,result;
+  for(const value of decoder.push(chunk)) {
+  if(!value || Array.isArray(value) || typeof value!=='object' || value.jsonrpc!=='2.0')fail('rpc_invalid_response');
+  // Kodi notifications are not responses and cannot complete an operation.
+@@ -43,9 +47,9 @@
+  }
+  if(value.id!==requestID)fail('rpc_response_mismatch');
+  if(value.error || !Object.hasOwn(value,'result') || matched)fail('rpc_rejected');
+- matched=true;
++ matched=true;result=value.result;
+  }
+- if(matched)finish();
++ if(matched)finish(undefined,result);
+  }catch(error){finish(error instanceof SafeError?error.message:'rpc_invalid_response');}
+  });
+  socket.on('error',()=>finish('rpc_transport_failed'));socket.on('end',()=>finish('rpc_incomplete_response'));
