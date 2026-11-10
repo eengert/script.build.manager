@@ -1,0 +1,135 @@
+{
+  "skin.arctic.fuse.3": {
+    "repository": "https://github.com/jurialmunkey/skin.arctic.fuse.3",
+    "revision": "660a05c35546718e90a88be7798bb0a92632abce",
+    "includes": {
+      "Animation_BounceIn_Dialog": {
+        "source": "Includes_Animations.xml",
+        "source_sha256": "6c4b85f5e53cbc49f67f67df3b6155dd12f0a8351fc9d0cc91fb4a48fcceb898",
+        "produces": {}
+      },
+      "Button_Dialog": {
+        "source": "Includes_Buttons.xml",
+        "source_sha256": "661d4ba8601a6f30fad43211e22d4eee6d8014e856bfb58e3d8ba0a38d7f70d5",
+        "produces": {
+          "id": "button",
+          "groupid": "group"
+        }
+      },
+      "Dimension_DialogHugeMenu": {
+        "source": "Includes_Dimensions.xml",
+        "source_sha256": "a2efbb42dcf9408e6b36750f347e506be0ea3c2da0803c8087c4d2a4eccfe9e6",
+        "produces": {}
+      },
+      "Part_Background_Panel": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_Dim_Overlay": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_HeadText": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {
+          "id": "label"
+        }
+      },
+      "Part_Line": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_List_Checkmark": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_List_Highlight": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_Panel": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {}
+      },
+      "Part_Scrollbar_Max": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {
+          "id": "scrollbar"
+        }
+      },
+      "Size_Dialog_Pad": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_Group_Body": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_Group_Head": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_Group_Panel_Right": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_Group_PlotText": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_Grouplist_Pad": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      },
+      "Size_LeftGroup_Main": {
+        "source": "Dialog_Sizes.xml",
+        "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+        "produces": {}
+      }
+    }
+  },
+  "skin.estuary": {
+    "repository": "https://github.com/xbmc/xbmc",
+    "revision": "21.3-Omega",
+    "includes": {
+      "Animation_DialogPopupOpenClose": {
+        "source": "Includes_Animations.xml",
+        "source_sha256": "8ea88fe9e5815fe20d801ba88126c830c969be187fd6668deb8327aeed7b5f20",
+        "produces": {}
+      },
+      "Animation_DialogPopupVisible": {
+        "source": "Includes_Animations.xml",
+        "source_sha256": "8ea88fe9e5815fe20d801ba88126c830c969be187fd6668deb8327aeed7b5f20",
+        "produces": {}
+      },
+      "DefaultDialogButton": {
+        "source": "Includes_Buttons.xml",
+        "source_sha256": "d4033dcebad917cba3e2c2685f167b0d5daa744c9390beb1a18114715ce0f84f",
+        "produces": {
+          "id": "button"
+        }
+      },
+      "DialogBackgroundCommons": {
+        "source": "Includes.xml",
+        "source_sha256": "241af02f9c9d8b5308227047967926e2c3c6fffe99ac9c114c12bab5ff7f98a7",
+        "produces": {
+          "header_id": "label"
+        }
+      }
+    }
+  }
+}

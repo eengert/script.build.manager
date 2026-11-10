@@ -38,6 +38,8 @@ class ScriptedShow:
         self.pages.append(page)
         self.values.append(tuple(r.value for r in page.rows))
         for control, position in next(self.steps):
+            if isinstance(control, str):
+                control = 201 + next(i for i, (key, _) in enumerate(page.actions) if key == control)
             page.focus, page.position = control, position
             if control == -1:
                 return 'cancel'
@@ -48,15 +50,17 @@ class ScriptedShow:
 
 class PageTests(unittest.TestCase):
     def test_field_labels_values_and_action_order(self):
-        show = ScriptedShow([(203, 0)])
+        show = ScriptedShow([('cancel', 0)])
         ui = CreateDialogs(Addon(), show)
         self.assertEqual(ui.edit(session()), 'cancel')
         p = show.pages[0]
         self.assertEqual([r.label for r in p.rows],
             ['Build name', 'Version', 'Device profile', 'Add-ons', 'Include private settings'])
         self.assertEqual([r.value for r in p.rows],
-            ['BM-MANUAL-CREATE-01', '1.0.0', 'Current device', '1 of 2 included', 'Off'])
-        self.assertEqual(p.actions, (('apply', 'Apply'), ('help', 'Help'), ('cancel', 'Cancel')))
+            ['BM-MANUAL-CREATE-01', '1.0.0', 'Current device', '1 of 2 included', ''])
+        self.assertIs(p.rows[4].toggle, False)
+        self.assertTrue(all(r.toggle is None for r in p.rows[:4]))
+        self.assertEqual(p.actions, (('apply', 'Apply'), ('cancel', 'Cancel'), ('help', 'Help')))
 
     def test_addon_labels_current_skin_and_button_order(self):
         show = ScriptedShow([(201, 0)])
@@ -162,19 +166,20 @@ class WorkflowDialogTests(unittest.TestCase):
     def test_apply_review_cancel_preserves_every_edit_without_execute(self):
         self.dialog.input.side_effect = ['New Build', '2.3.4', 'Bedroom']
         self.run_ui([(100, 0)], [(100, 1)], [(100, 2)], [(100, 3)],
-                    [(202, 0), (201, 0)], [(100, 4)], [(201, 0)], [(202, 0)], [(203, 0)])
+                    [(202, 0), (201, 0)], [(100, 4)], [(201, 0)], [(202, 0)], [('cancel', 0)])
         s = self.session
         self.assertEqual((s.name, s.version, s.device_label), ('New Build', '2.3.4', 'Bedroom'))
         self.assertEqual(s.selected, ('script.keymap', 'skin.arctic.fuse.3'))
         self.assertTrue(s.include_private)
-        self.assertEqual(self.show.values[-1], ('New Build', '2.3.4', 'Bedroom', '2 of 2 included', 'On'))
+        self.assertEqual(self.show.values[-1], ('New Build', '2.3.4', 'Bedroom', '2 of 2 included', ''))
+        self.assertIs(self.show.pages[-1].rows[4].toggle, True)
         self.workflow.preview.assert_called_once_with(s)
         self.workflow.execute.assert_not_called()
         self.dialog.yesno.assert_not_called()
         self.assertEqual(self.busy, [])
 
     def test_review_complete_details_without_intermediate_menu(self):
-        self.run_ui([(201, 0)], [(202, 0)], [(203, 0)])
+        self.run_ui([(201, 0)], [(202, 0)], [('cancel', 0)])
         body = self.show.pages[1].body
         for phrase in ('BM-MANUAL-CREATE-01', '1.0.0', 'Current device',
             '1 add-ons included; 1 excluded', 'Current skin excluded',
@@ -186,13 +191,13 @@ class WorkflowDialogTests(unittest.TestCase):
 
     def test_full_excluded_list_is_not_truncated(self):
         self.preview.excluded_labels = tuple('Addon %s' % i for i in range(150))
-        self.run_ui([(201, 0)], [(202, 0)], [(203, 0)])
+        self.run_ui([(201, 0)], [(202, 0)], [('cancel', 0)])
         for label in self.preview.excluded_labels:
             self.assertIn(label, self.show.pages[1].body)
 
     def test_empty_excluded_list_has_localized_none(self):
         self.preview.excluded_labels = ()
-        self.run_ui([(201, 0)], [(202, 0)], [(203, 0)])
+        self.run_ui([(201, 0)], [(202, 0)], [('cancel', 0)])
         self.assertIn('Excluded add-ons\nNone', self.show.pages[1].body)
 
     def test_zero_selection_validation_does_not_reselect_or_execute(self):
@@ -200,14 +205,14 @@ class WorkflowDialogTests(unittest.TestCase):
             if not s.selected: raise CreateValidationError(32725)
             raise AssertionError('must remain empty')
         self.workflow.preview.side_effect = preview
-        self.run_ui([(100, 3)], [(203, 0), (201, 0)], [(201, 0)], [(203, 0)])
+        self.run_ui([(100, 3)], [(203, 0), (201, 0)], [(201, 0)], [('cancel', 0)])
         self.assertEqual(self.session.selected, ())
         self.dialog.ok.assert_called_once_with('Create Build', Addon.strings[32725])
         self.workflow.execute.assert_not_called()
 
     def test_final_confirmation_negative_never_executes(self):
         self.dialog.yesno.return_value = False
-        self.run_ui([(201, 0)], [(201, 0)], [(203, 0)])
+        self.run_ui([(201, 0)], [(201, 0)], [('cancel', 0)])
         self.dialog.yesno.assert_called_once()
         self.workflow.execute.assert_not_called()
         self.assertEqual(self.busy, [])
@@ -224,7 +229,7 @@ class WorkflowDialogTests(unittest.TestCase):
 
     def test_help_retains_the_same_preview_and_review_body(self):
         self.dialog.yesno.return_value = True
-        self.run_ui([(202, 0)], [(201, 0)], [(203, 0)], [(201, 0)])
+        self.run_ui([('help', 0)], [(201, 0)], [('help', 0)], [(201, 0)])
         self.assertEqual(self.dialog.textviewer.call_count, 2)
         self.workflow.preview.assert_called_once()
         self.assertEqual(self.show.pages[2].body, self.show.pages[3].body)
@@ -238,7 +243,7 @@ class WorkflowDialogTests(unittest.TestCase):
     def test_error_remains_redacted_and_busy_is_cleared(self):
         self.dialog.yesno.return_value = True
         self.workflow.execute.side_effect = RuntimeError('private-token')
-        self.run_ui([(201, 0)], [(201, 0)], [(203, 0)])
+        self.run_ui([(201, 0)], [(201, 0)], [('cancel', 0)])
         self.assertEqual(self.busy, [True, False])
         self.dialog.ok.assert_called_once_with('Create Build', Addon.strings[32732])
 
@@ -259,7 +264,10 @@ class Control:
 
 
 class ListItem:
-    def __init__(self, label, label2): self.label, self.label2 = label, label2
+    def __init__(self, label, label2):
+        self.label, self.label2 = label, label2
+        self.properties, self.selected = {}, False
+    def setProperty(self, key, value): self.properties[key] = value
     def setLabel2(self, label): self.label2 = label
     def select(self, selected): self.selected = selected
 
@@ -270,12 +278,14 @@ class WindowBase:
         w.arguments = args
         w.controls = {i: Control() for i in (10, 100, 110, 120, 121, 201, 202, 203, 204)}
         w.closed = 0
+        w.properties = {}
         return w
     def getControl(self, ident):
         # Kodi 21.3 Window::GetControlById has no scrollbar wrapper.
         if ident in (120, 121):
             raise RuntimeError('Unknown control type for python')
         return self.controls[ident]
+    def setProperty(self, key, value): self.properties[key] = value
     def setFocusId(self, ident): self.focus = ident
     def getFocusId(self): return self.focus
     def close(self): self.closed += 1
@@ -307,18 +317,54 @@ class KodiBindingTests(unittest.TestCase):
     def test_individual_and_bulk_actions_immediately_refresh_visible_items(self):
         w = self.window(self.toggle_page())
         def values(): return [(i.label2, i.selected) for i in w.items]
-        self.assertEqual(values(), [('On', True), ('Off', False)])
+        self.assertEqual(values(), [('', True), ('', False)])
         w.getControl(100).selectItem(1)
         w.onClick(100)
-        self.assertEqual(values(), [('On', True), ('On', True)])
+        self.assertEqual(values(), [('', True), ('', True)])
         w.onClick(203)
-        self.assertEqual(values(), [('Off', False), ('Off', False)])
+        self.assertEqual(values(), [('', False), ('', False)])
         w.onClick(202)
-        self.assertEqual(values(), [('On', True), ('On', True)])
+        self.assertEqual(values(), [('', True), ('', True)])
         self.assertEqual(w.closed, 0)
         w.onClick(201)
         self.assertEqual(w.page.result, 'ok')
         self.assertEqual(w.closed, 1)
+
+    def test_private_toggle_uses_visual_state_while_regular_values_stay_text(self):
+        for selected in (False, True):
+            page = CreatePage('Create', [SettingsRow('Name', 'Example'),
+                SettingsRow('Private', '', toggle=selected)], [('cancel', 'Cancel')])
+            w = self.window(page)
+            self.assertEqual(w.items[0].properties['bm.toggle'], 'false')
+            self.assertEqual(w.items[1].properties['bm.toggle'], 'true')
+            self.assertEqual(w.items[1].selected, selected)
+            self.assertEqual(w.items[1].label2, '')
+            self.assertEqual(w.items[0].label2, 'Example')
+
+    def test_bulk_clear_keeps_off_checkboxes_visible_and_cancel_discards_edits(self):
+        p = self.toggle_page()
+        original = set(p.selected)
+        w = self.window(p)
+        w.onClick(203)
+        self.assertTrue(all(i.properties['bm.toggle'] == 'true' and not i.selected for i in w.items))
+        w.onClick(204)
+        self.assertEqual(p.result, 'cancel')
+        self.assertEqual(original, {0})
+
+    def test_native_action_icons_follow_semantics_after_button_reordering(self):
+        p = CreatePage('Create', [], [('apply', 'Apply'), ('cancel', 'Cancel'), ('help', 'Help')])
+        w = self.window(p)
+        self.assertEqual([w.properties['bm.action.%s.icon' % i] for i in (201, 202, 203)],
+            ['special://skin/extras/icons/circle-check.png', 'special://skin/extras/icons/circle-xmark.png',
+             'special://skin/extras/icons/circle-question.png'])
+
+    def test_review_scrollbar_click_does_not_require_list_items(self):
+        p = CreatePage('Review', actions=[('create', 'Create'), ('cancel', 'Cancel'), ('help', 'Help')],
+                       body='details', focus=121)
+        w = self.window(p)
+        w.onClick(121)
+        self.assertEqual(w.closed, 0)
+        self.assertEqual(p.result, 'cancel')
 
     def test_terminal_click_ignores_duplicate_and_queued_events(self):
         p = CreatePage('Review', actions=[('create', 'Create'), ('cancel', 'Cancel')], body='details', focus=201)
@@ -414,62 +460,126 @@ class XmlTests(unittest.TestCase):
     def resources(self):
         return sorted((ROOT / 'resources/skins').rglob('*.xml'))
 
-    def test_kodi_control_contract_and_resolution_for_both_skins(self):
-        files = self.resources()
-        self.assertEqual({p.parent.parent.name for p in files}, {'Default', 'skin.arctic.fuse.3'})
-        for path in files:
+    def contracts(self):
+        import json
+        return json.loads((ROOT / 'tests/fixtures/native_skin_contracts.json').read_text())
+
+    def controls(self, path):
+        """Declared IDs plus the pinned native include contracts (no GUI emulation)."""
+        root = ET.parse(path)
+        controls = {int(c.get('id')): c.get('type') for c in root.findall('.//control[@id]')}
+        native = self.contracts().get(path.parent.parent.name, {}).get('includes', {})
+        for call in root.findall('.//include'):
+            name = call.get('content') or call.text
+            self.assertIn(name, native, path)
+            params = {p.get('name'): p.get('value', p.text) for p in call.findall('param')}
+            for parameter, kind in native[name]['produces'].items():
+                if parameter in params:
+                    ident = int(params[parameter])
+                    self.assertNotIn(ident, controls, path)
+                    controls[ident] = kind
+        return controls
+
+    def test_skin_variants_and_required_kodi_controls(self):
+        self.assertEqual({p.parent.parent.name for p in self.resources()},
+                         {'Default', 'skin.estuary', 'skin.arctic.fuse.3'})
+        required = {10: 'label', 100: 'list', 110: 'textbox', 120: 'scrollbar', 121: 'scrollbar',
+                    201: 'button', 202: 'button', 203: 'button', 204: 'button'}
+        for path in self.resources():
             self.assertEqual(path.parent.name, '1080i')
-            root = ET.parse(path).getroot()
-            controls = {int(c.get('id')): c for c in root.findall('.//control[@id]')}
-            self.assertEqual(set(controls), {10, 100, 110, 120, 121, 201, 202, 203, 204})
-            self.assertEqual(controls[100].get('type'), 'list')
-            self.assertEqual(controls[110].get('type'), 'textbox')
-            self.assertEqual(controls[100].findtext('pagecontrol'), '120')
-            self.assertEqual(controls[110].findtext('pagecontrol'), '121')
-            self.assertEqual(controls[110].findtext('autoscroll'), 'false')
-            self.assertFalse(root.findall('.//onclick'))
-            self.assertFalse(root.findall('.//include'))
+            controls = self.controls(path)
+            self.assertEqual({i: controls[i] for i in required}, required)
+            root = ET.parse(path)
+            self.assertEqual(root.findtext('.//control[@id="100"]/pagecontrol'), '120')
+            self.assertEqual(root.findtext('.//control[@id="110"]/pagecontrol'), '121')
+            self.assertEqual(root.findtext('.//control[@id="110"]/autoscroll'), 'false')
+            self.assertFalse(root.findall('.//onload'))
 
-    def test_columns_do_not_overlap_and_focused_long_names_scroll(self):
-        for path in self.resources():
-            root = ET.parse(path).getroot()
-            listing = root.find('.//control[@id="100"]')
-            labels = listing.findall('./focusedlayout/control[@type="label"]')
-            self.assertEqual([c.findtext('label') for c in labels],
-                ['$INFO[ListItem.Label]', '$INFO[ListItem.Label2]'])
-            self.assertLessEqual(int(labels[0].findtext('left')) + int(labels[0].findtext('width')),
-                                 int(labels[1].findtext('left')))
-            self.assertEqual(labels[1].findtext('align'), 'right')
-            self.assertTrue(all(c.findtext('scroll') == 'true' for c in labels))
-            self.assertIsNotNone(listing.find('./focusedlayout/control[@type="image"]'))
-            self.assertEqual(int(listing.findtext('height')) // int(listing.find('itemlayout').get('height')), 10)
+    def test_native_mappings_use_the_skin_definitions(self):
+        contracts = self.contracts()
+        af3 = ET.parse(ROOT / 'resources/skins/skin.arctic.fuse.3/1080i/script-build-manager-create.xml')
+        names = {n.get('content') or n.text for n in af3.findall('.//include')}
+        self.assertLessEqual({'Part_Background_Panel', 'Dimension_DialogHugeMenu', 'Part_List_Highlight',
+            'Part_List_Checkmark', 'Button_Dialog', 'Part_Scrollbar_Max'}, names)
+        self.assertEqual(contracts['skin.arctic.fuse.3']['revision'], '660a05c35546718e90a88be7798bb0a92632abce')
+        for row in contracts.values():
+            for contract in row['includes'].values():
+                self.assertRegex(contract['source_sha256'], r'^[0-9a-f]{64}$')
+        estuary = ET.parse(ROOT / 'resources/skins/skin.estuary/1080i/script-build-manager-create.xml')
+        names = {n.get('content') or n.text for n in estuary.findall('.//include')}
+        self.assertLessEqual({'DialogBackgroundCommons', 'DefaultDialogButton'}, names)
+        self.assertEqual(contracts['skin.estuary']['revision'], '21.3-Omega')
+        self.assertTrue(estuary.findall('.//texture[.="lists/focus.png"]'))
+        self.assertTrue(estuary.findall('.//texture[.="buttons/radio-button-on.png"]'))
+        self.assertTrue(estuary.findall('.//texture[.="buttons/radio-button-off.png"]'))
 
-    def test_right_column_order_and_bidirectional_scroll_navigation(self):
+    def test_fields_and_toggle_labels_have_separate_space_and_scroll(self):
         for path in self.resources():
-            root = ET.parse(path).getroot()
-            controls = {int(c.get('id')): c for c in root.findall('.//control[@id]')}
-            self.assertEqual([int(controls[i].findtext('top')) for i in range(201, 205)], [230, 320, 410, 500])
-            self.assertTrue(all(int(controls[i].findtext('left')) > 1355 for i in range(201, 205)))
-            self.assertEqual(controls[121].findtext('onright'), '201')
-            self.assertEqual(controls[121].findtext('showonepage'), 'true')
-            self.assertEqual(controls[100].findtext('onright'), '201')
+            root = ET.parse(path)
+            layout = root.find('.//control[@id="100"]/focusedlayout')
+            labels = layout.findall('./control[@type="label"]')
+            self.assertEqual([n.findtext('label') for n in labels],
+                ['$INFO[ListItem.Label]', '$INFO[ListItem.Label]', '$INFO[ListItem.Label2]'])
+            self.assertEqual(labels[0].findtext('right'), '52%')
+            self.assertEqual(labels[2].findtext('left'), '52%')
+            self.assertEqual(labels[2].findtext('align'), 'right')
+            self.assertTrue(all(n.findtext('scroll') == 'true' for n in labels))
+            self.assertEqual(labels[1].findtext('visible'), 'String.IsEqual(ListItem.Property(bm.toggle),true)')
+            self.assertEqual(labels[2].findtext('visible'), '!String.IsEqual(ListItem.Property(bm.toggle),true)')
+            self.assertGreaterEqual(int(layout.get('width')), 840)
 
-    def test_scrollbar_visibility_and_action_navigation_are_native_xml_conditions(self):
-        # These XML controls are supported by Kodi's GUI engine, but cannot
-        # be obtained as xbmcgui controls. Cover both resource variants.
+    def test_scrollbars_and_horizontal_navigation_stay_in_xml(self):
         for path in self.resources():
-            controls = {int(c.get('id')): c for c in ET.parse(path).findall('.//control[@id]')}
-            self.assertEqual(controls[120].findtext('visible'), 'Control.IsVisible(100)')
-            self.assertEqual(controls[121].findtext('visible'), 'Control.IsVisible(110)')
-            for ident in range(201, 205):
+            root = ET.parse(path)
+            if path.parent.parent.name == 'skin.arctic.fuse.3':
+                bars = root.findall('.//include[@content="Part_Scrollbar_Max"]')
+            else:
+                bars = [root.find('.//control[@id="%s"]' % i) for i in (120, 121)]
+            self.assertEqual([n.findtext('visible') for n in bars],
+                             ['Control.IsVisible(100)', 'Control.IsVisible(110)'])
+            self.assertEqual(bars[1].findtext('onleft'), '201')
+            self.assertEqual(bars[1].findtext('onright'), '201')
+            self.assertTrue(all(n.findtext('showonepage') == 'true' or
+                n.findtext('param[@name="showonepage"]') == 'true' for n in bars))
+            if path.parent.parent.name == 'skin.estuary':
+                actions = [root.find('.//control[@id="9000"]')]
+            elif path.parent.parent.name == 'skin.arctic.fuse.3':
+                actions = root.findall('.//include[@content="Button_Dialog"]')
+            else:
+                actions = [root.find('.//control[@id="%s"]' % i) for i in range(201, 205)]
+            for action in actions:
                 for direction in ('onleft', 'onright'):
-                    links = controls[ident].findall(direction)
-                    self.assertEqual([(n.get('condition'), n.text) for n in links],
+                    self.assertEqual([(n.get('condition'), n.text) for n in action.findall(direction)],
                         [('Control.IsVisible(110)', '121'), ('!Control.IsVisible(110)', '100')])
-            # The review scrollbar always links back to a wrapped button.
-            self.assertEqual(controls[121].findtext('onleft'), '201')
-            self.assertEqual(controls[121].findtext('onright'), '201')
 
-    def test_all_new_strings_localized(self):
+    def test_native_buttons_keep_declared_order_and_af3_dynamic_icon_bindings(self):
+        for skin, include in (('skin.arctic.fuse.3', 'Button_Dialog'), ('skin.estuary', 'DefaultDialogButton')):
+            root = ET.parse(ROOT / 'resources/skins' / skin / '1080i/script-build-manager-create.xml')
+            buttons = root.findall('.//include[@content="%s"]' % include)
+            self.assertEqual([n.findtext('param[@name="id"]') for n in buttons], ['201', '202', '203', '204'])
+            if skin == 'skin.arctic.fuse.3':
+                self.assertEqual([n.findtext('param[@name="icon"]') for n in buttons],
+                    ['$INFO[Window.Property(bm.action.%s.icon)]' % i for i in range(201, 205)])
+
+    def test_fallback_is_self_contained_and_toggle_states_are_distinct(self):
+        import struct
+        path = ROOT / 'resources/skins/Default/1080i/script-build-manager-create.xml'
+        root = ET.parse(path)
+        self.assertFalse(root.findall('.//include'))
+        text = path.read_text()
+        self.assertNotIn('$VAR[', text)
+        self.assertNotIn('special://skin/', text)
+        for node in root.findall('.//texture') + root.findall('.//texturefocus') + root.findall('.//texturenofocus'):
+            asset = path.parent.parent / 'media' / node.text
+            content = asset.read_bytes()
+            self.assertTrue(content.startswith(b'\x89PNG\r\n\x1a\n'), asset)
+            width, height = struct.unpack('>II', content[16:24])
+            self.assertGreater(width, 0); self.assertGreater(height, 0)
+        media = path.parent.parent / 'media'
+        self.assertNotEqual((media/'bm-check-on.png').read_bytes(), (media/'bm-check-off.png').read_bytes())
+        self.assertTrue(root.findall('.//texturesliderbarfocus'))
+        self.assertTrue(root.findall('.//texturefocus'))
+
+    def test_all_strings_remain_localized(self):
         for identifier in range(32740, 32749): self.assertIn(identifier, Addon.strings)
         self.assertEqual(Addon.strings[32441], 'Close')

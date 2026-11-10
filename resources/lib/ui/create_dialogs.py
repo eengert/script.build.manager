@@ -1,15 +1,17 @@
 """Create-only settings dialogs; no capture, storage or workflow authority.
 
 The small page model is also the offline interaction seam. Kodi loads the
-matching skin resource, falling back to Default (Estuary conventions).
+matching skin resource; Default supplies self-contained styling for other skins.
 """
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class SettingsRow:
     label: str
     value: str
+    toggle: Optional[bool] = None
 
 
 class CreatePage:
@@ -70,8 +72,8 @@ class CreateDialogs:
             SettingsRow(t(32701), session.version),
             SettingsRow(t(32702), session.device_label),
             SettingsRow(t(32740), t(32741) % (len(session.selected), len(session.components))),
-            SettingsRow(t(32705), t(32706 if session.include_private else 32707)),
-        ), (('apply', t(32742)), ('help', t(32112)), ('cancel', t(32743))),
+            SettingsRow(t(32705), '', toggle=session.include_private),
+        ), (('apply', t(32742)), ('cancel', t(32743)), ('help', t(32112))),
             focus=self.edit_focus, position=self.edit_position)
         result = self.show(page)
         self.edit_focus, self.edit_position = page.focus, page.position
@@ -134,15 +136,23 @@ def create_window_type(base, list_item):
                 button.setVisible(i < len(p.actions))
                 if i < len(p.actions):
                     button.setLabel(p.actions[i][1])
+                    # AF3's native Button_Dialog draws its icon and label over
+                    # this supported button, using window/control infolabels.
+                    icon = {'help': 'circle-question', 'cancel': 'circle-xmark',
+                            'all': 'square-check', 'none': 'square-xmark'}.get(p.actions[i][0], 'circle-check')
+                    self.setProperty('bm.action.%s.icon' % (201 + i),
+                                     'special://skin/extras/icons/' + icon + '.png')
                     button.controlUp(self.getControl(201 + (i - 1) % len(p.actions)))
                     button.controlDown(self.getControl(201 + (i + 1) % len(p.actions)))
             self.setFocusId(p.focus)
 
         def refresh_toggles(self):
-            if self.page.selected is not None:
-                for i, item in enumerate(self.items):
-                    selected = i in self.page.selected
-                    item.setLabel2(self.text(32706 if selected else 32707))
+            if self.page.body is not None:
+                return
+            for i, item in enumerate(self.items):
+                selected = i in self.page.selected if self.page.selected is not None else self.page.rows[i].toggle
+                item.setProperty('bm.toggle', 'true' if selected is not None else 'false')
+                if selected is not None:
                     item.select(selected)
 
         def remember_focus(self):

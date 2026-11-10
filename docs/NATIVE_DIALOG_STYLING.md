@@ -1,0 +1,61 @@
+# Native dialog styling
+
+Build Manager's main menu, Create fields, add-on selections and Create review use one small WindowXMLDialog presenter. Kodi selects the matching add-on resource directory using the active skin ID. The common filename is `script-build-manager-create.xml` at 1080i resolution:
+
+| Active skin | Resource directory | Styling |
+|---|---|---|
+| Arctic Fuse 3 | `resources/skins/skin.arctic.fuse.3/1080i` | Active AF3 dialog includes, textures, fonts, constants and theme variables |
+| Estuary | `resources/skins/skin.estuary/1080i` | Active Estuary dialog includes and native row/toggle resources |
+| Other skins | `resources/skins/Default/1080i` | Self-contained neutral fallback; no claim of native styling for every skin |
+
+Kodi 21.3 first checks the active skin's own XML, then the add-on's directory named after the skin ID, then the specified Default resource. Its window loader resolves includes through the active skin. The presenter therefore needs no custom skin detector, file loader, theme parser or installed-skin modification. It passes the supported add-on path / Default / 1080i constructor arguments.
+
+## Arctic Fuse 3
+
+The AF3 resource composes the actual settings-dialog parts rather than drawing a similar black panel:
+
+- `Dimension_DialogHugeMenu`, `Size_Dialog_Pad`, `Size_LeftGroup_Main`, `Size_Group_Head`, `Size_Group_Body` and `Size_Grouplist_Pad` provide native frame geometry and spacing.
+- `Part_Dim_Overlay`, `Part_Background_Panel`, `Part_Panel` and `Part_Line` provide AF3's texture-backed background, borders, corners, transparency and action-column treatment. Background/theme expressions and variables are evaluated by AF3 itself.
+- `Part_HeadText`, `font_main`, `font_main_plot` and the dialog foreground colors provide native typography. Action labels/icons use the skin's `Button_Dialog` definition and `font_mini_bold`.
+- `Part_List_Highlight` provides AF3's actual focused-row appearance, including its configured focus style. Focused text and checkbox colors use the skin's corresponding selected-color variables.
+- `Part_List_Checkmark` provides AF3's circular checked/unchecked resources. `Part_Scrollbar_Max` supplies the native scrollbar.
+
+AF3's composite action button reads its visible label through Control.GetLabel and its icon through a window property. Python sets the supported button label/visibility and the semantic icon property; the native skin definition draws the icon, label and focus state. The icon assets are AF3's own circle-check, circle-xmark, circle-question, square-check and square-xmark resources.
+
+The include/asset contracts were inspected at AF3 **v3.3.12**, commit `660a05c35546718e90a88be7798bb0a92632abce`, matching the retained qualification target. The current upstream v3.4.20 definitions were also inspected for the directly used names, but do not replace the pinned 3.3.12 evidence. No current installed-skin version was probed in this offline task. These are skin-specific resource contracts, not a guarantee that every future AF3 release preserves the same include names.
+
+## Estuary
+
+Estuary has an explicit variant so the other-skin fallback never needs to borrow Estuary resources. `DialogBackgroundCommons`, `DefaultDialogButton` and the native popup animations supply the same background/header/window chrome and action-button treatment used by Kodi 21.3's Estuary dialogs. The list uses `lists/focus.png`, and toggles use `buttons/radio-button-on.png` / `buttons/radio-button-off.png`. Fonts, theme colors and scrollbar defaults belong to Estuary.
+
+The standard Estuary header close affordance closes the dialog with its default cancellation result. The right-side action column still contains only the page's declared actions. Horizontal navigation is on the native action grouplist because DefaultDialogButton does not accept nested navigation elements. AF3's Button_Dialog does support forwarding nested elements.
+
+## Shared behavior and compatibility
+
+A settings row carries an optional boolean toggle state. Native XML displays a visual checkbox when ListItem.Property(bm.toggle) is true and uses ListItem.IsSelected for its checked state. Other rows retain separate text label/value areas. Add-on choices remain dialog-local until OK; Select All, Deselect All, individual changes and Cancel/Back rollback use the existing page model. An empty selection remains empty and existing workflow validation prevents Create.
+
+The private-settings row uses the same visual state without displaying an On/Off value. Choosing that row still returns its existing field index, and NativeDialogs changes the session boolean as before. The review continues to report private status as informational text. Create, Review, Add-ons and Main actions retain their behavior; Create's order is now Apply / Cancel / Help. Review is Create / Cancel / Help. Add-ons and Main keep their existing requested ordering.
+
+**Kodi 21.3 scrollbar restriction:** no Python getControl call may target XML scrollbars 120 or 121. Visibility and horizontal navigation remain XML-owned. Native include contracts produce the same supported label/list/textbox/button IDs used by Python; the strict offline stub rejects scrollbar lookups. Focus restoration uses setFocusId with an integer ID.
+
+Other Build Manager screens use standard Dialog.select, input, textviewer, yesno, ok, progress dialogs, or the standard add-on Settings window. They already belong to the active skin and are not replaced. No workflow, capture, library, lifecycle or backend styling dependency is introduced.
+
+## Other-skin fallback
+
+Default provides explicit text colors, button/focus textures, checkbox images and scrollbar textures, using four small owned PNG primitives in its media directory. It does not reference AF3/Estuary includes, colors, constants, variables or skin asset paths. It uses the common Kodi font13 alias and a neutral readable layout. This is functional fallback styling, not universal native inheritance. Font availability and the actual rendered result still require manual verification on any additional skin to be supported.
+
+## Maintenance and validation
+
+`tests/fixtures/native_skin_contracts.json` records the upstream repositories/revisions, include names, producing control parameters and source-file SHA-256 values checked for this implementation. It contains metadata only, not vendored skin definitions. Tests validate resource routing, these include contracts, required IDs, visual toggle state, action order, XML-owned navigation, fallback assets and the prior initialization-crash restriction. No test emulates Kodi's complete XML renderer or proves native appearance.
+
+When adding support for another skin, add a matching resource directory using that skin's documented XML facilities and actual resources; retain the independent Default fallback. When upgrading the target AF3 or Kodi version, recheck the small set of native include/asset contracts and manually inspect the result.
+
+Native checks after independent review and separately authorized staging: AF3 first, including its configured background/focus theme; circular toggles in both private settings and add-on rows; native action icons/text; long labels/values and scrolling; keyboard/remote/mouse focus; bulk selection/Cancel rollback; Help return and final confirmation. Then inspect Estuary's native header/buttons/toggles and an additional skin's fallback. Offline checks do not supply a rendered-appearance PASS.
+
+Source references:
+
+- [Kodi 21.3 WindowXML resource selection](https://github.com/xbmc/xbmc/blob/21.3-Omega/xbmc/interfaces/legacy/WindowXML.cpp)
+- [Kodi 21.3 active-skin include resolution](https://github.com/xbmc/xbmc/blob/21.3-Omega/xbmc/guilib/GUIWindow.cpp)
+- [Kodi 21.3 include parameters and nested forwarding](https://github.com/xbmc/xbmc/blob/21.3-Omega/xbmc/guilib/GUIIncludes.cpp)
+- [AF3 3.3.12 settings layout](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Dialog_DialogSettings.xml), [dialog parts](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Dialog_Parts.xml), [buttons](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Includes_Buttons.xml)
+- [Estuary settings layout](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/DialogSettings.xml), [dialog background](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes.xml), [dialog buttons](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes_Buttons.xml)

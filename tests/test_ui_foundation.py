@@ -93,7 +93,7 @@ class NativeFoundationTests(unittest.TestCase):
                    'resources.lib.ui.models', 'resources.lib.ui.plan_view',
                    'resources.lib.ui.status_view', 'resources.lib.status_model',
                    'resources.lib.plan_model', 'resources.lib.create_workflow'}
-        if filename == 'plan_view.py': allowed.add('typing')
+        if filename in ('plan_view.py', 'create_dialogs.py'): allowed.add('typing')
         if filename == 'create_dialogs.py': allowed.add('xbmcgui')
         for n in ast.walk(ast.parse(source)):
             if isinstance(n, (ast.Import, ast.ImportFrom)):
@@ -101,6 +101,8 @@ class NativeFoundationTests(unittest.TestCase):
                 self.assertEqual(n.level, 0, filename)
                 self.assertIn(n.module, allowed, filename)
                 self.assertNotIn('*', {a.name for a in n.names}, filename)
+                if n.module == 'typing' and filename == 'create_dialogs.py':
+                    self.assertLessEqual({a.name for a in n.names}, {'Optional'})
                 if n.module == 'xbmcgui':
                     self.assertEqual(filename, 'create_dialogs.py')
                     self.assertLessEqual({a.name for a in n.names}, {'WindowXMLDialog', 'ListItem'})
@@ -140,7 +142,7 @@ class NativeFoundationTests(unittest.TestCase):
             if isinstance(n,ast.Import): self.assertTrue(all(a.name.split('.')[0] in allowed for a in n.names))
     def test_custom_dialog_is_limited_to_create(self):
         self.assertEqual(sorted(p.name for p in (ROOT/'resources/skins').rglob('*.xml')),
-                         ['script-build-manager-create.xml'] * 2)
+                         ['script-build-manager-create.xml'] * 3)
         self.assertFalse((ROOT/'resources/lib/ui/main_window.py').exists())
         self.assertNotIn('WindowXML',(ROOT/'default.py').read_text())
         self.assertFalse(any('color' in vars(v) for v in SEMANTIC_LABELS.values() if hasattr(v,'__dict__')))

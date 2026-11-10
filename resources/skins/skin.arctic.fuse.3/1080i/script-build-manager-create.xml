@@ -1,206 +1,231 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <window>
     <defaultcontrol always="true">100</defaultcontrol>
+    <description>Build Manager: active-skin presentation; scrollbar interaction stays in XML.</description>
     <coordinates>
         <system>1</system>
         <left>0</left>
         <top>0</top>
     </coordinates>
     <controls>
-        <control type="image">
-            <left>0</left>
-            <top>0</top>
-            <width>1920</width>
-            <height>1080</height>
-            <texture colordiffuse="99000000">common/white.png</texture>
-        </control>
-        <control type="image">
-            <left>180</left>
-            <top>100</top>
-            <width>1560</width>
-            <height>880</height>
-            <texture colordiffuse="dialog_bg_100">common/white.png</texture>
-        </control>
-        <control type="label" id="10">
-            <left>220</left>
-            <top>130</top>
-            <width>1460</width>
-            <height>60</height>
-            <font>font_midi_bold</font>
-            <textcolor>dialog_fg_90</textcolor>
-            <label />
-        </control>
-        <control type="list" id="100">
-            <left>220</left>
-            <top>230</top>
-            <width>1100</width>
-            <height>660</height>
-            <orientation>vertical</orientation>
-            <pagecontrol>120</pagecontrol>
-            <onleft>201</onleft>
-            <onright>201</onright>
-            <onup>100</onup>
-            <ondown>100</ondown>
-            <scrolltime>200</scrolltime>
-            <itemlayout width="1100" height="66">
-                <control type="label">
-                    <left>20</left>
-                    <top>0</top>
-                    <width>650</width>
-                    <height>66</height>
-                    <font>font13</font>
-                    <textcolor>dialog_fg_90</textcolor>
-                    <selectedcolor>dialog_fg_90</selectedcolor>
-                    <align>left</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[ListItem.Label]</label>
-                    <scroll>false</scroll>
+        <include content="Part_Dim_Overlay" />
+        <control type="group">
+            <include>Dimension_DialogHugeMenu</include>
+            <include>Animation_BounceIn_Dialog</include>
+            <include content="Part_Background_Panel">
+                <param name="dialog_size">Dimension_DialogHugeMenu</param>
+                <param name="transparency">false</param>
+            </include>
+            <control type="group">
+                <include>Size_Dialog_Pad</include>
+                <control type="group">
+                    <include>Size_LeftGroup_Main</include>
+                    <control type="group">
+                        <include>Size_Group_Head</include>
+                        <include content="Part_HeadText">
+                            <param name="id">10</param>
+                            <param name="label" />
+                        </include>
+                        <include>Part_Line</include>
+                    </control>
+                    <control type="group">
+                        <include>Size_Group_Body</include>
+                        <control type="list" id="100">
+                            <orientation>vertical</orientation>
+                            <pagecontrol>120</pagecontrol>
+                            <onleft>201</onleft>
+                            <onright>201</onright>
+                            <onup>100</onup>
+                            <ondown>100</ondown>
+                            <scrolltime>200</scrolltime>
+                            <itemlayout width="840" height="80">
+                                <control type="label">
+                                    <left>40</left>
+                                    <top>0</top>
+                                    <right>52%</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>dialog_fg_70</textcolor>
+                                    <selectedcolor>dialog_fg_70</selectedcolor>
+                                    <align>left</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label]</label>
+                                    <visible>!String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>false</scroll>
+                                </control>
+                                <control type="label">
+                                    <left>40</left>
+                                    <top>0</top>
+                                    <right>100</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>dialog_fg_70</textcolor>
+                                    <selectedcolor>dialog_fg_70</selectedcolor>
+                                    <align>left</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label]</label>
+                                    <visible>String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>false</scroll>
+                                </control>
+                                <control type="label">
+                                    <left>52%</left>
+                                    <top>0</top>
+                                    <right>40</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>dialog_fg_70</textcolor>
+                                    <selectedcolor>dialog_fg_70</selectedcolor>
+                                    <align>right</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label2]</label>
+                                    <visible>!String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>false</scroll>
+                                </control>
+                                <control type="group">
+                                    <right>40</right>
+                                    <top>0</top>
+                                    <width>28</width>
+                                    <height>80</height>
+                                    <visible>String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <include content="Part_List_Checkmark">
+                                        <param name="colordiffuse_on">dialog_fg_70</param>
+                                        <param name="colordiffuse_off">dialog_fg_30</param>
+                                    </include>
+                                </control>
+                            </itemlayout>
+                            <focusedlayout width="840" height="80">
+                                <include>Part_List_Highlight</include>
+                                <control type="label">
+                                    <left>40</left>
+                                    <top>0</top>
+                                    <right>52%</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>$VAR[ColorSelected]</textcolor>
+                                    <selectedcolor>$VAR[ColorSelected]</selectedcolor>
+                                    <align>left</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label]</label>
+                                    <visible>!String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>true</scroll>
+                                </control>
+                                <control type="label">
+                                    <left>40</left>
+                                    <top>0</top>
+                                    <right>100</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>$VAR[ColorSelected]</textcolor>
+                                    <selectedcolor>$VAR[ColorSelected]</selectedcolor>
+                                    <align>left</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label]</label>
+                                    <visible>String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>true</scroll>
+                                </control>
+                                <control type="label">
+                                    <left>52%</left>
+                                    <top>0</top>
+                                    <right>40</right>
+                                    <height>80</height>
+                                    <font>font_main</font>
+                                    <textcolor>$VAR[ColorSelected]</textcolor>
+                                    <selectedcolor>$VAR[ColorSelected]</selectedcolor>
+                                    <align>right</align>
+                                    <aligny>center</aligny>
+                                    <label>$INFO[ListItem.Label2]</label>
+                                    <visible>!String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <scroll>true</scroll>
+                                </control>
+                                <control type="group">
+                                    <right>40</right>
+                                    <top>0</top>
+                                    <width>28</width>
+                                    <height>80</height>
+                                    <visible>String.IsEqual(ListItem.Property(bm.toggle),true)</visible>
+                                    <include content="Part_List_Checkmark">
+                                        <param name="colordiffuse_on">$VAR[ColorSelected]</param>
+                                        <param name="colordiffuse_off">$VAR[ColorSelected_30]</param>
+                                    </include>
+                                </control>
+                            </focusedlayout>
+                            <include>Size_Grouplist_Pad</include>
+                        </control>
+                        <control type="textbox" id="110">
+                            <font>font_main_plot</font>
+                            <textcolor>dialog_fg_70</textcolor>
+                            <pagecontrol>121</pagecontrol>
+                            <autoscroll>false</autoscroll>
+                            <include>Size_Group_PlotText</include>
+                        </control>
+                        <include content="Part_Scrollbar_Max">
+                            <param name="id">120</param>
+                            <param name="showonepage">true</param>
+                            <param name="inset">false</param>
+                            <visible>Control.IsVisible(100)</visible>
+                            <onleft>100</onleft>
+                            <onright>201</onright>
+                        </include>
+                        <include content="Part_Scrollbar_Max">
+                            <param name="id">121</param>
+                            <param name="showonepage">true</param>
+                            <param name="inset">false</param>
+                            <visible>Control.IsVisible(110)</visible>
+                            <onleft>201</onleft>
+                            <onright>201</onright>
+                        </include>
+                    </control>
                 </control>
-                <control type="label">
-                    <left>700</left>
-                    <top>0</top>
-                    <width>380</width>
-                    <height>66</height>
-                    <font>font13</font>
-                    <textcolor>dialog_fg_90</textcolor>
-                    <selectedcolor>dialog_fg_90</selectedcolor>
-                    <align>right</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[ListItem.Label2]</label>
-                    <scroll>false</scroll>
+                <control type="group">
+                    <include>Size_Group_Panel_Right</include>
+                    <include>Part_Panel</include>
+                    <control type="grouplist" id="9000">
+                        <orientation>vertical</orientation>
+                        <itemgap>20</itemgap>
+                        <include>Size_Grouplist_Pad</include>
+                        <include content="Button_Dialog">
+                            <param name="id">201</param>
+                            <param name="groupid">1201</param>
+                            <param name="font">font_mini_bold</param>
+                            <param name="icon">$INFO[Window.Property(bm.action.201.icon)]</param>
+                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="!Control.IsVisible(110)">100</onleft>
+                            <onright condition="Control.IsVisible(110)">121</onright>
+                            <onright condition="!Control.IsVisible(110)">100</onright>
+                        </include>
+                        <include content="Button_Dialog">
+                            <param name="id">202</param>
+                            <param name="groupid">1202</param>
+                            <param name="font">font_mini_bold</param>
+                            <param name="icon">$INFO[Window.Property(bm.action.202.icon)]</param>
+                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="!Control.IsVisible(110)">100</onleft>
+                            <onright condition="Control.IsVisible(110)">121</onright>
+                            <onright condition="!Control.IsVisible(110)">100</onright>
+                        </include>
+                        <include content="Button_Dialog">
+                            <param name="id">203</param>
+                            <param name="groupid">1203</param>
+                            <param name="font">font_mini_bold</param>
+                            <param name="icon">$INFO[Window.Property(bm.action.203.icon)]</param>
+                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="!Control.IsVisible(110)">100</onleft>
+                            <onright condition="Control.IsVisible(110)">121</onright>
+                            <onright condition="!Control.IsVisible(110)">100</onright>
+                        </include>
+                        <include content="Button_Dialog">
+                            <param name="id">204</param>
+                            <param name="groupid">1204</param>
+                            <param name="font">font_mini_bold</param>
+                            <param name="icon">$INFO[Window.Property(bm.action.204.icon)]</param>
+                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="!Control.IsVisible(110)">100</onleft>
+                            <onright condition="Control.IsVisible(110)">121</onright>
+                            <onright condition="!Control.IsVisible(110)">100</onright>
+                        </include>
+                    </control>
                 </control>
-            </itemlayout>
-            <focusedlayout width="1100" height="66">
-                <control type="image">
-                    <left>0</left>
-                    <top>0</top>
-                    <width>1100</width>
-                    <height>66</height>
-                    <texture colordiffuse="dialog_fg_12">common/white.png</texture>
-                </control>
-                <control type="label">
-                    <left>20</left>
-                    <top>0</top>
-                    <width>650</width>
-                    <height>66</height>
-                    <font>font13</font>
-                    <textcolor>dialog_fg_90</textcolor>
-                    <selectedcolor>dialog_fg_90</selectedcolor>
-                    <align>left</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[ListItem.Label]</label>
-                    <scroll>true</scroll>
-                </control>
-                <control type="label">
-                    <left>700</left>
-                    <top>0</top>
-                    <width>380</width>
-                    <height>66</height>
-                    <font>font13</font>
-                    <textcolor>dialog_fg_90</textcolor>
-                    <selectedcolor>dialog_fg_90</selectedcolor>
-                    <align>right</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[ListItem.Label2]</label>
-                    <scroll>true</scroll>
-                </control>
-            </focusedlayout>
-        </control>
-        <control type="textbox" id="110">
-            <left>220</left>
-            <top>230</top>
-            <width>1100</width>
-            <height>660</height>
-            <font>font13</font>
-            <textcolor>dialog_fg_90</textcolor>
-            <pagecontrol>121</pagecontrol>
-            <autoscroll>false</autoscroll>
-        </control>
-        <control type="scrollbar" id="120">
-            <visible>Control.IsVisible(100)</visible>
-            <left>1335</left>
-            <top>230</top>
-            <width>20</width>
-            <height>660</height>
-            <orientation>vertical</orientation>
-            <onleft>100</onleft>
-            <onright>201</onright>
-            <showonepage>true</showonepage>
-        </control>
-        <control type="scrollbar" id="121">
-            <visible>Control.IsVisible(110)</visible>
-            <left>1335</left>
-            <top>230</top>
-            <width>20</width>
-            <height>660</height>
-            <orientation>vertical</orientation>
-            <onleft>201</onleft>
-            <onright>201</onright>
-            <showonepage>true</showonepage>
-        </control>
-        <control type="button" id="201">
-            <left>1390</left>
-            <top>230</top>
-            <width>300</width>
-            <height>70</height>
-            <font>font13</font>
-            <label />
-            <align>center</align>
-            <aligny>center</aligny>
-            <onleft condition="Control.IsVisible(110)">121</onleft>
-            <onleft condition="!Control.IsVisible(110)">100</onleft>
-            <onright condition="Control.IsVisible(110)">121</onright>
-            <onright condition="!Control.IsVisible(110)">100</onright>
-            <onup>204</onup>
-            <ondown>202</ondown>
-        </control>
-        <control type="button" id="202">
-            <left>1390</left>
-            <top>320</top>
-            <width>300</width>
-            <height>70</height>
-            <font>font13</font>
-            <label />
-            <align>center</align>
-            <aligny>center</aligny>
-            <onleft condition="Control.IsVisible(110)">121</onleft>
-            <onleft condition="!Control.IsVisible(110)">100</onleft>
-            <onright condition="Control.IsVisible(110)">121</onright>
-            <onright condition="!Control.IsVisible(110)">100</onright>
-            <onup>201</onup>
-            <ondown>203</ondown>
-        </control>
-        <control type="button" id="203">
-            <left>1390</left>
-            <top>410</top>
-            <width>300</width>
-            <height>70</height>
-            <font>font13</font>
-            <label />
-            <align>center</align>
-            <aligny>center</aligny>
-            <onleft condition="Control.IsVisible(110)">121</onleft>
-            <onleft condition="!Control.IsVisible(110)">100</onleft>
-            <onright condition="Control.IsVisible(110)">121</onright>
-            <onright condition="!Control.IsVisible(110)">100</onright>
-            <onup>202</onup>
-            <ondown>204</ondown>
-        </control>
-        <control type="button" id="204">
-            <left>1390</left>
-            <top>500</top>
-            <width>300</width>
-            <height>70</height>
-            <font>font13</font>
-            <label />
-            <align>center</align>
-            <aligny>center</aligny>
-            <onleft condition="Control.IsVisible(110)">121</onleft>
-            <onleft condition="!Control.IsVisible(110)">100</onleft>
-            <onright condition="Control.IsVisible(110)">121</onright>
-            <onright condition="!Control.IsVisible(110)">100</onright>
-            <onup>203</onup>
-            <ondown>201</ondown>
+            </control>
         </control>
     </controls>
 </window>
