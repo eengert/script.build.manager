@@ -518,7 +518,9 @@ class Entry(unittest.TestCase):
         self.assertEqual(pending.overall, OverallStatus.RESTART_REQUIRED)
         self.assertEqual(snapshot_tree(profile), pending_before)
         self.assertEqual(h.logs, ["Build Status check: incomplete",
-                                  "Build Status check: restart_required"])
+                                  "[script.build.manager] diagnostic phase=status.presentation",
+                                  "Build Status check: restart_required",
+                                  "[script.build.manager] diagnostic phase=status.presentation"])
 
 
 class AppliedAndSelected(unittest.TestCase):

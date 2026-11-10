@@ -9,6 +9,7 @@ from resources.lib.ui import repair_view as repair
 from resources.lib.ui.status_view import (
     S_CHECKED_AT, S_ROW, StatusViewModel,
 )
+from resources.lib.failure_diagnostics import call, emit
 
 class NativeDialogs:
     def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None, repair_provider=None, create_dialogs=None, main_select=None):
@@ -102,7 +103,11 @@ class NativeDialogs:
     def check_status(self):
         """One fresh read-only check; any failure becomes the not-checked view."""
         try:
-            return StatusViewModel.from_status(self.status_provider())
+            status = call('status.provider', self.status_provider)
+        except Exception:
+            return StatusViewModel.unavailable()
+        try:
+            return call('status.view_model', lambda: StatusViewModel.from_status(status))
         except Exception:
             return StatusViewModel.unavailable()
 
@@ -415,7 +420,8 @@ class NativeDialogs:
     def install(self):
         try:
             self.install_provider().run(self)
-        except Exception:
+        except Exception as exc:
+            emit('install.workflow', exc)
             self.install_message(32814)
 
     def run(self):

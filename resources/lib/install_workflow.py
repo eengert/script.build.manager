@@ -1,5 +1,6 @@
 """Confirmed library Install orchestration; lifecycle remains with frozen owners."""
 from dataclasses import replace
+from resources.lib.failure_diagnostics import call, emit
 
 from resources.lib.build_library import LibraryInstallTarget
 from resources.lib.frozen_resolution import ResolutionChoice
@@ -19,9 +20,10 @@ def settle_library_plan(ui, service, preparation, target):
     anything, and the caller must review the resulting fresh plan.
     """
     while True:
-        plan = service.preview(target)
-        model = ReviewViewModel.from_plan(plan, fully_listed=True, repository_current=tuple(
-            aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT))
+        plan = call('install.preview', lambda: service.preview(target))
+        model = call('install.plan_conversion', lambda: ReviewViewModel.from_plan(
+            plan, fully_listed=True, repository_current=tuple(
+                aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT)))
         if plan.state is PlanState.DECISION_REQUIRED:
             if not model.decisions:
                 ui.install_message(32814)
@@ -31,7 +33,7 @@ def settle_library_plan(ui, service, preparation, target):
                 if prompt.addon_id in dict(target.choices):
                     ui.install_message(32814)
                     return None
-                choice = ui.choose_install_decision(prompt)
+                choice = call('install.decision', lambda: ui.choose_install_decision(prompt))
                 if choice is None or choice is DecisionChoice.CANCEL:
                     return None
                 if choice not in prompt.choices:
@@ -40,11 +42,12 @@ def settle_library_plan(ui, service, preparation, target):
                 target = target.with_choice(prompt.addon_id, choice)
             continue
         if plan.state is PlanState.RESOLUTION_REQUIRED:
+            emit('install.resolution_required')
             if target.prepared_resolution is not None or not any(
                     c is DecisionChoice.INSTALL_CURRENT for _, c in target.choices):
                 ui.install_message(32804)
                 return None
-            result = ui.prepare_install(lambda: preparation.prepare(target))
+            result = call('install.preparation', lambda: ui.prepare_install(lambda: preparation.prepare(target)))
             if result.code is not PreparationCode.READY:
                 ui.install_message(32804)
                 return None
@@ -62,22 +65,22 @@ class InstallWorkflow:
         self.operation_provider = operation_provider
 
     def run(self, ui):
-        operation = self.operation_provider()
+        operation = call('install.operation_gate', self.operation_provider)
         if operation.kind is not OperationKind.NONE:
             ui.install_message({OperationKind.RESTART_REQUIRED: 32810,
                                 OperationKind.NEEDS_ATTENTION: 32812}.get(operation.kind, 32811))
             return
-        entries = self.library.list_builds()
+        entries = call('install.library', self.library.list_builds)
         if not entries:
             ui.install_message(32802)
             return
-        entry = ui.choose_install_build(entries)
+        entry = call('install.build_selection', lambda: ui.choose_install_build(entries))
         if entry is None:
             return
-        profile = ui.choose_install_profile(entry.device_profiles)
+        profile = call('install.profile_selection', lambda: ui.choose_install_profile(entry.device_profiles))
         if profile is None:
             return
-        target = self.library.plan_target(entry.entry_id, profile)
+        target = call('install.target', lambda: self.library.plan_target(entry.entry_id, profile))
         while True:
             settled = settle_library_plan(ui, self.plan, self.preparation, target)
             if settled is None:
@@ -89,24 +92,33 @@ class InstallWorkflow:
             if plan.review is None:
                 ui.install_message(32814)
                 return
-            if not ui.confirm_install(entry, profile, model):
+            if not call('install.confirmation', lambda: ui.confirm_install(entry, profile, model)):
                 return
-            check = self.plan.validate(target, plan.review)
+            check = call('install.validation', lambda: self.plan.validate(target, plan.review))
             if not check.is_current:
                 ui.install_message(32808)
                 continue  # fresh preview and a new explicit confirmation, never silent approval
-            install_target = LibraryInstallTarget.from_plan_target(target)
-            result = ui.execute_install(lambda: self.coordinator_provider().install_target(
-                install_target, prepared_resolution=target.prepared_resolution,
-                resolution_choices={aid: ResolutionChoice(c.value) for aid, c in target.choices},
-                interactive=False))
-            ui.install_message(result_message(result, target))
+            install_target = call('install.execution_target', lambda: LibraryInstallTarget.from_plan_target(target))
+            def execute():
+                coordinator = call('install.coordinator_factory', self.coordinator_provider)
+                # Resolve method and arguments before marking the invocation boundary.
+                method = coordinator.install_target
+                choices = {aid: ResolutionChoice(c.value) for aid, c in target.choices}
+                result = call('install.coordinator_invoke', lambda: method(
+                    install_target, prepared_resolution=target.prepared_resolution,
+                    resolution_choices=choices, interactive=False))
+                emit('install.coordinator_result')
+                return result
+            result = call('install.execution_wrapper', lambda: ui.execute_install(execute))
+            call('install.result_presentation', lambda: ui.install_message(result_message(result, target)))
             return
 
 
 def result_message(result, target):
     if result.outcome == 'complete':
         return 32816 if target.choices else 32809
+    if result.outcome == 'user_resolution_required':
+        emit('install.resolution_required')
     return {'awaiting_restart': 32810, 'active': 32811,
             'needs_attention': 32817, 'cancelled': 32813,
             'user_resolution_required': 32814}.get(result.outcome, 32814)

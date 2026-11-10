@@ -1160,7 +1160,7 @@ def build_presentation(library, target: Optional[StatusTarget]) -> BuildPresenta
     return BuildPresentation(applied, applied_unreadable, selected, selection_unreadable)
 
 
-def default_build_presentation(target: Optional[StatusTarget]) -> BuildPresentation:
+def default_build_presentation(target: Optional[StatusTarget], *, log=None) -> BuildPresentation:
     """Production presentation. If an applied build exists but cannot be named, say so.
 
     Without a verified applied association the page says nothing was applied,
@@ -1170,7 +1170,9 @@ def default_build_presentation(target: Optional[StatusTarget]) -> BuildPresentat
     from resources.lib.build_library import default_build_library
     try:
         return build_presentation(default_build_library(), target)
-    except Exception:
+    except Exception as exc:
+        from resources.lib.failure_diagnostics import emit
+        emit('status.presentation', exc, log=log)
         return BuildPresentation(applied_unreadable=target is not None)
 
 
@@ -1182,4 +1184,6 @@ def check_build_status(*, log: Optional[Callable[[str], None]] = None) -> BuildS
     """
     target = default_status_target()
     status = BuildStatusService(default_status_owners(log=log)).check(target)
-    return replace(status, presentation=default_build_presentation(target))
+    from resources.lib.failure_diagnostics import call
+    return call('status.presentation', lambda: replace(
+        status, presentation=default_build_presentation(target, log=log)), log=log)
