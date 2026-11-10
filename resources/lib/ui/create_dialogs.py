@@ -119,8 +119,8 @@ def create_window_type(base, list_item):
             review = p.body is not None
             self.getControl(100).setVisible(not review)
             self.getControl(110).setVisible(review)
-            self.getControl(120).setVisible(not review)
-            self.getControl(121).setVisible(review)
+            # Kodi 21.3 has no Python wrapper for XML scrollbars. Their
+            # visibility and horizontal navigation stay in the skin XML.
             if review:
                 self.getControl(110).setText(p.body)
             else:
@@ -129,14 +129,11 @@ def create_window_type(base, list_item):
                 self.getControl(100).addItems(self.items)
                 self.refresh_toggles()
                 self.getControl(100).selectItem(p.position)
-            left = 121 if review else 100
             for i in range(4):
                 button = self.getControl(201 + i)
                 button.setVisible(i < len(p.actions))
                 if i < len(p.actions):
                     button.setLabel(p.actions[i][1])
-                    button.controlLeft(self.getControl(left))
-                    button.controlRight(self.getControl(left))
                     button.controlUp(self.getControl(201 + (i - 1) % len(p.actions)))
                     button.controlDown(self.getControl(201 + (i + 1) % len(p.actions)))
             self.setFocusId(p.focus)

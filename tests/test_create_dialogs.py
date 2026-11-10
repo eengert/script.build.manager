@@ -271,7 +271,11 @@ class WindowBase:
         w.controls = {i: Control() for i in (10, 100, 110, 120, 121, 201, 202, 203, 204)}
         w.closed = 0
         return w
-    def getControl(self, ident): return self.controls[ident]
+    def getControl(self, ident):
+        # Kodi 21.3 Window::GetControlById has no scrollbar wrapper.
+        if ident in (120, 121):
+            raise RuntimeError('Unknown control type for python')
+        return self.controls[ident]
     def setFocusId(self, ident): self.focus = ident
     def getFocusId(self): return self.focus
     def close(self): self.closed += 1
@@ -286,6 +290,19 @@ class KodiBindingTests(unittest.TestCase):
     def toggle_page(self):
         return CreatePage('Add-ons', [SettingsRow('one', ''), SettingsRow('skin', '')],
             [('ok', 'OK'), ('all', 'Select All'), ('none', 'Deselect All'), ('cancel', 'Cancel')], selected={0})
+
+    def test_kodi21_main_initializes_all_routes_and_only_close_without_scrollbar_wrappers(self):
+        labels = [Addon.strings[i] for i in range(32100, 32106)]
+        p = CreatePage('Build Manager', [SettingsRow(label, '') for label in labels],
+                       [('cancel', 'Close')])
+        w = self.window(p)
+        self.assertEqual(w.getControl(10).label, 'Build Manager')
+        self.assertEqual([item.label for item in w.getControl(100).items], labels)
+        visible = [w.getControl(i) for i in range(201, 205) if w.getControl(i).visible]
+        self.assertEqual([button.label for button in visible], ['Close'])
+        self.assertEqual(w.getFocusId(), 100)
+        w.onClick(201)
+        self.assertEqual((p.result, w.closed), ('cancel', 1))
 
     def test_individual_and_bulk_actions_immediately_refresh_visible_items(self):
         w = self.window(self.toggle_page())
@@ -317,15 +334,12 @@ class KodiBindingTests(unittest.TestCase):
             w.onAction(SimpleNamespace(getId=lambda: action))
             self.assertEqual((w.page.result, w.closed), ('cancel', 1))
 
-    def test_review_text_and_scrollbar_are_visible_with_focusable_navigation(self):
+    def test_review_text_is_visible_with_wrapped_action_navigation(self):
         p = CreatePage('Review', actions=[('create', 'Create'), ('cancel', 'Cancel'), ('help', 'Help')], body='all details', focus=201)
         w = self.window(p)
         self.assertFalse(w.getControl(100).visible)
-        self.assertFalse(w.getControl(120).visible)
         self.assertTrue(w.getControl(110).visible)
-        self.assertTrue(w.getControl(121).visible)
         self.assertEqual(w.getControl(110).text, 'all details')
-        self.assertIs(w.getControl(201).left, w.getControl(121))
         self.assertFalse(w.getControl(204).visible)
         self.assertIs(w.getControl(201).up, w.getControl(203))
         self.assertIs(w.getControl(203).down, w.getControl(201))
@@ -336,9 +350,31 @@ class KodiBindingTests(unittest.TestCase):
         self.assertEqual(w.getFocusId(), 100)
         self.assertTrue(w.getControl(100).visible)
         self.assertFalse(w.getControl(110).visible)
-        self.assertIs(w.getControl(201).left, w.getControl(100))
         w.onClick(100)
         self.assertEqual((p.result, p.focus, p.position), (0, 100, 0))
+
+    def test_review_can_restore_scrollbar_focus_without_a_python_wrapper(self):
+        p = CreatePage('Review', actions=[('create', 'Create'), ('cancel', 'Cancel'), ('help', 'Help')],
+                       body='details', focus=121)
+        w = self.window(p)
+        self.assertEqual(w.getFocusId(), 121)
+        w.onAction(SimpleNamespace(getId=lambda: 92))
+        self.assertEqual((p.result, p.focus, w.closed), ('cancel', 121, 1))
+
+    def test_main_row_selection_and_back_with_kodi21_control_types(self):
+        for back in (10, 92):
+            p = CreatePage('Build Manager', [SettingsRow(str(i), '') for i in range(6)],
+                           [('cancel', 'Close')], position=4)
+            w = self.window(p)
+            self.assertEqual(w.getControl(100).getSelectedPosition(), 4)
+            w.onAction(SimpleNamespace(getId=lambda: back))
+            self.assertEqual((p.result, w.closed), ('cancel', 1))
+        p = CreatePage('Build Manager', [SettingsRow(str(i), '') for i in range(6)],
+                       [('cancel', 'Close')])
+        w = self.window(p)
+        w.getControl(100).selectItem(5)
+        w.onClick(100)
+        self.assertEqual((p.result, w.closed), (5, 1))
 
     def test_default_main_close_exits_without_dispatching_a_workflow(self):
         windows = []
@@ -417,6 +453,22 @@ class XmlTests(unittest.TestCase):
             self.assertEqual(controls[121].findtext('onright'), '201')
             self.assertEqual(controls[121].findtext('showonepage'), 'true')
             self.assertEqual(controls[100].findtext('onright'), '201')
+
+    def test_scrollbar_visibility_and_action_navigation_are_native_xml_conditions(self):
+        # These XML controls are supported by Kodi's GUI engine, but cannot
+        # be obtained as xbmcgui controls. Cover both resource variants.
+        for path in self.resources():
+            controls = {int(c.get('id')): c for c in ET.parse(path).findall('.//control[@id]')}
+            self.assertEqual(controls[120].findtext('visible'), 'Control.IsVisible(100)')
+            self.assertEqual(controls[121].findtext('visible'), 'Control.IsVisible(110)')
+            for ident in range(201, 205):
+                for direction in ('onleft', 'onright'):
+                    links = controls[ident].findall(direction)
+                    self.assertEqual([(n.get('condition'), n.text) for n in links],
+                        [('Control.IsVisible(110)', '121'), ('!Control.IsVisible(110)', '100')])
+            # The review scrollbar always links back to a wrapped button.
+            self.assertEqual(controls[121].findtext('onleft'), '201')
+            self.assertEqual(controls[121].findtext('onright'), '201')
 
     def test_all_new_strings_localized(self):
         for identifier in range(32740, 32749): self.assertIn(identifier, Addon.strings)
