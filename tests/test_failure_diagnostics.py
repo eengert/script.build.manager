@@ -9,6 +9,7 @@ from resources.lib import status as status_service
 from resources.lib.status_model import BuildPresentation, OverallStatus
 from resources.lib.ui.native_dialogs import NativeDialogs
 from resources.lib.ui.status_view import StatusViewModel
+from resources.lib.ui import status_view
 from tests import test_install_workflow as fixture
 from tests import test_status_ui as status_fixture
 
@@ -198,3 +199,84 @@ class DiagnosticsTests(unittest.TestCase):
         ui.install_message.assert_called_once_with(32814)
         provider.assert_called_once_with()
         self.assert_failure('install.workflow')
+
+    def status_with_presentation(self):
+        from dataclasses import replace
+        from resources.lib.status_model import BuildIdentity
+        return replace(status_fixture.status(), presentation=BuildPresentation(
+            applied=BuildIdentity('Synthetic build', '1.0.0', 'Desk')))
+
+    def assert_subphase(self, expected):
+        failures = [line for line in self.logs
+                    if 'phase=status.view_model.' in line and ' exception=' in line]
+        self.assertEqual(failures, ['[script.build.manager] diagnostic phase=' + expected + ' exception=TypeError'])
+        self.assert_failure(expected, 'TypeError')
+        for forbidden in ('Synthetic build', 'Desk', 'script.keymap', 'Traceback', SECRET):
+            self.assertNotIn(forbidden, '\n'.join(self.logs))
+
+    def test_each_conversion_helper_has_unique_attribution_and_original_fallback(self):
+        for helper, suffix in (('_overall_detail', 'overall_detail'), ('_build_rows', 'build_rows'),
+                               ('_addons_row', 'addons_row'), ('_skin_row', 'skin_row'),
+                               ('_settings_row', 'settings_row'), ('_private_row', 'private_row')):
+            with self.subTest(helper=helper):
+                self.logs.clear()
+                provider = Mock(return_value=self.status_with_presentation())
+                ui = NativeDialogs(status_fixture.Addon(), None, lambda _: None, status_provider=provider)
+                with patch.object(status_view, helper, side_effect=TypeError(SECRET)):
+                    self.assertEqual(ui.check_status(), StatusViewModel.unavailable())
+                provider.assert_called_once_with()
+                self.assert_subphase('status.view_model.' + suffix)
+
+    def test_both_timestamp_calls_are_attributed_without_parent_failure_duplication(self):
+        from resources.lib.status_model import BuildStatus
+        for first, suffix in ((True, 'overall_timestamp'), (False, 'timestamp')):
+            with self.subTest(first=first):
+                self.logs.clear()
+                provider = Mock(return_value=self.status_with_presentation())
+                ui = NativeDialogs(status_fixture.Addon(), None, lambda _: None, status_provider=provider)
+                error = TypeError(SECRET)
+                effects = [error] if first else ['15:06', error]
+                with patch.object(BuildStatus, 'checked_time_label', side_effect=effects) as clock:
+                    self.assertEqual(ui.check_status(), StatusViewModel.unavailable())
+                self.assertEqual(clock.call_count, 1 if first else 2)
+                provider.assert_called_once_with()
+                self.assert_subphase('status.view_model.' + suffix)
+
+    def test_strptime_typeerror_is_attributed_and_not_fixed(self):
+        from resources.lib import status_model
+        source = self.status_with_presentation()
+        parser = Mock(side_effect=TypeError(SECRET))
+        with patch.object(status_model, 'datetime', SimpleNamespace(strptime=parser)):
+            with self.assertRaises(TypeError):
+                StatusViewModel.from_status(source, diagnostic=diag.emit)
+        parser.assert_called_once_with(source.checked_at, '%Y-%m-%dT%H:%M:%SZ')
+        self.assert_subphase('status.view_model.overall_timestamp')
+
+    def test_instrumented_current_and_changed_models_and_text_are_unchanged(self):
+        from resources.lib.status_model import BuildStatus
+        for source in (self.status_with_presentation(), status_fixture.changes_needed()):
+            with self.subTest(overall=source.overall):
+                self.logs.clear()
+                # Fix the label so comparisons do not depend on the wall clock or timezone.
+                with patch.object(BuildStatus, 'checked_time_label', return_value='15:06') as clock:
+                    expected = StatusViewModel.from_status(source)
+                    provider = Mock(return_value=source)
+                    ui = NativeDialogs(status_fixture.Addon(), None, lambda _: None, status_provider=provider)
+                    actual = ui.check_status()
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(ui.status_body(actual), ui.status_body(expected))
+                    self.assertEqual(clock.call_count, 4)  # two calls per conversion, unchanged
+                provider.assert_called_once_with()
+                self.assertFalse(any('exception=' in line for line in self.logs))
+
+    def test_subphase_observer_failure_changes_neither_result_nor_exception(self):
+        source = self.status_with_presentation()
+        observer = Mock(side_effect=RuntimeError(SECRET))
+        self.assertEqual(StatusViewModel.from_status(source, diagnostic=observer),
+                         StatusViewModel.from_status(source))
+        error = TypeError(SECRET)
+        with patch.object(status_view, '_addons_row', side_effect=error):
+            with self.assertRaises(TypeError) as caught:
+                StatusViewModel.from_status(source, diagnostic=observer)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(self.logs, [])

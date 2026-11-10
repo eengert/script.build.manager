@@ -107,7 +107,7 @@ class NativeDialogs:
         except Exception:
             return StatusViewModel.unavailable()
         try:
-            return call('status.view_model', lambda: StatusViewModel.from_status(status))
+            return call('status.view_model', lambda: StatusViewModel.from_status(status, diagnostic=emit))
         except Exception:
             return StatusViewModel.unavailable()
 

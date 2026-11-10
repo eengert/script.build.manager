@@ -3,6 +3,10 @@ import re
 
 PHASES = frozenset({
     'status.provider', 'status.presentation', 'status.view_model',
+    'status.view_model.overall_detail', 'status.view_model.build_rows',
+    'status.view_model.addons_row', 'status.view_model.skin_row',
+    'status.view_model.settings_row', 'status.view_model.private_row',
+    'status.view_model.overall_timestamp', 'status.view_model.timestamp',
     'install.workflow', 'install.operation_gate', 'install.library',
     'install.build_selection', 'install.profile_selection', 'install.target',
     'install.preview', 'install.plan_conversion', 'install.resolution_required',

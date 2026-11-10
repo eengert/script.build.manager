@@ -167,18 +167,50 @@ class StatusViewModel:
         return cls(overall, OVERALL_SEMANTIC[overall], rows, '')
 
     @classmethod
-    def from_status(cls, status):
+    def from_status(cls, status, *, diagnostic=None):
         if not isinstance(status, BuildStatus):
             raise ValueError('unsupported status')
+        convert = _conversion_observer(diagnostic)
         overall = StatusRow(Text(S_OVERALL), Text(OVERALL_LABEL[status.overall]),
-                            _overall_detail(status))
+                            convert('status.view_model.overall_detail',
+                                    lambda: _overall_detail(status, convert=convert)))
         rows = (overall,)
         if status.presentation is not None:
-            rows += _build_rows(status.presentation)
-        rows += (_addons_row(status), _skin_row(status),
-                 _settings_row(status), _private_row(status))
+            rows += convert('status.view_model.build_rows', lambda: _build_rows(status.presentation))
+        rows += (convert('status.view_model.addons_row', lambda: _addons_row(status)),
+                 convert('status.view_model.skin_row', lambda: _skin_row(status)),
+                 convert('status.view_model.settings_row', lambda: _settings_row(status)),
+                 convert('status.view_model.private_row', lambda: _private_row(status)))
         return cls(status.overall, OVERALL_SEMANTIC[status.overall], rows,
-                   status.checked_time_label())
+                   convert('status.view_model.timestamp', status.checked_time_label))
+
+
+def _conversion_observer(diagnostic):
+    """Inject observation without importing a runtime logger into presentation.
+
+    Attribute nested failures to the innermost boundary only. Re-raise the same
+    exception; the caller retains sole authority over the unavailable fallback.
+    """
+    reported = False
+
+    def notify(phase, exception=None):
+        if diagnostic is not None:
+            try:
+                diagnostic(phase, exception)
+            except Exception:
+                pass
+
+    def convert(phase, operation):
+        nonlocal reported
+        notify(phase)
+        try:
+            return operation()
+        except Exception as exc:
+            if not reported:
+                reported = True
+                notify(phase, exc)
+            raise
+    return convert
 
 
 def _build_label(build):
@@ -292,7 +324,7 @@ def _private_row(status):
     return StatusRow(Text(S_PRIVATE), state, tuple(lines))
 
 
-def _overall_detail(status):
+def _overall_detail(status, *, convert=None):
     lines = [Text(OVERALL_SENTENCE[status.overall])]
     operation = status.operation
     if operation.kind is not OperationKind.NONE and operation.code in OPERATION_TEXT:
@@ -316,7 +348,8 @@ def _overall_detail(status):
             if level is not AreaLevel.NOT_APPLICABLE:
                 lines.append(_bullet(area, level, drift))
     lines.extend(Text(GAP_TEXT[gap]) for gap in status.gaps)
-    checked = status.checked_time_label()
+    checked = (status.checked_time_label() if convert is None else
+               convert('status.view_model.overall_timestamp', status.checked_time_label))
     if checked:
         lines.append(Text(S_CHECKED_AT, name=checked))
     return tuple(lines)
