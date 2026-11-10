@@ -212,6 +212,21 @@ class HelpCopyTests(unittest.TestCase):
             self.assertLess(len(b),900 if i==8 else 650,i)
             for para in b.split('\n\n'):
                 self.assertLessEqual(len(para.split('. ')),3,(i,para))
+    def test_current_create_status_and_menu_controls_are_documented(self):
+        create = self.s[32301]
+        for phrase in ('Select All / Deselect All', 'OK keeps', 'Cancel or Back discards',
+                       'Apply opens the review details', 'Create then asks for final confirmation',
+                       'without saving', 'current skin'):
+            self.assertIn(phrase, create)
+        for phrase in ('read-only', 'Scroll', 'Check Again', 'applied build', 'saved selection',
+                       'window close'):
+            self.assertIn(phrase, self.s[32304])
+        self.assertIn('Close leaves the Build Manager menu', self.s[32300])
+        self.assertIn('Choose Apply Changes and confirm', self.s[32303])
+        for body in self.bodies().values():
+            self.assertNotIn('select Overall', body)
+            self.assertNotIn('Use Review Changes to try again', body)
+
     def test_safety_facts(self):
         self.assertIn('Your Kodi is not changed',self.s[32301])
         self.assertIn('never shown',self.s[32301])
@@ -229,27 +244,27 @@ class HelpCopyTests(unittest.TestCase):
     def test_safety_interruption_guidance_requires_inspection_without_promising_recovery(self):
         safety=self.s[32306]
         self.assertNotIn('helps you finish safely',safety)
-        self.assertIn('If interrupted, open Build Status and select Overall',safety)
+        self.assertIn('If interrupted, open Build Status and read the problem details',safety)
         self.assertIn('Recovery may need manual help',safety)
     def test_restart_help_names_existing_needs_attention_route(self):
         restart=self.s[32307]
         self.assertNotIn('problem page',restart)
-        self.assertIn('If it says Needs Attention, open Build Status and select Overall',restart)
+        self.assertIn('If it says Needs Attention, open Build Status and read the problem details',restart)
         self.assertNotIn('It remembers where it stopped and carries on',restart)
         self.assertIn('Supported installs and repairs keep their progress for checks after restart',restart)
     def test_needs_attention_help_names_only_the_real_build_status_route(self):
-        # Build Status -> Overall is the real route; no View Problem control exists.
+        # Build Status displays problem details inline; no View Problem control exists.
         problems=self.s[32308]
         self.assertNotIn('View Problem',problems)
         block=next(p for p in problems.split('\n\n') if p.startswith('Needs Attention'))
-        self.assertIn('Build Status',block); self.assertIn('select Overall',block)
+        self.assertIn('Build Status',block); self.assertNotIn('select Overall',block)
         self.assertIn('Read the problem details',block)
         self.assertIn('If it still needs attention, close Build Manager and try again later',block)
         for t in BANNED_HELP_TERMS: self.assertNotIn(t,block.lower(),t)
-        # The rest of the page is unchanged; only the Needs Attention subsection differs.
+        # Other accurate guidance stays intact; obsolete control references are removed.
         self.assertEqual(problems,
             'If something goes wrong, start here.\n\n'
-            'Needs Attention\n• Open Build Status and select Overall\n'
+            'Needs Attention\n• Open Build Status\n'
             '• Read the problem details\n'
             '• If it still needs attention, close Build Manager and try again later\n\n'
             "Can't find an add-on\n• Add the saved version yourself, or check again\n"
@@ -257,7 +272,7 @@ class HelpCopyTests(unittest.TestCase):
             "Something wasn't saved\n• See what is missing\n"
             '• Create a new version after you fix it\n\n'
             "Couldn't confirm the result\n• See what failed\n"
-            '• Use Review Changes to try again\n\n'
+            '• Read Build Status before trying again\n\n'
             'Restart Required\n• Fully close Kodi and open it again\n\n'
             'Good to know\n• Don\'t delete saved progress\n'
             "• Don't turn add-ons on by hand to get past a problem\n"

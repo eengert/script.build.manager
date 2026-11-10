@@ -2307,7 +2307,7 @@ class CreateStatusIntegrationTests(StatusBase):
 class MissingCreateObserverCorrectionTests(StatusBase):
     def test_missing_observer_on_healthy_build_fails_closed_and_is_safe(self):
         from resources.lib.status_model import CreateObservation as C
-        from tests.test_status_ui import open_status
+        from tests.test_status_ui import open_status, section
         h = self.current()
         before = {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                   for p in h.profile.rglob('*')}
@@ -2337,10 +2337,10 @@ class MissingCreateObserverCorrectionTests(StatusBase):
         self.assertNotIn('recovery_eligible', safe)
         self.assertNotIn(str(h.profile), safe_text(result))
         self.assertSecretFree(result, h.logs)
-        _, dialog, _ = open_status(lambda: result, 0)
-        self.assertIn('Create Build progress could not be verified', dialog.details[0][1])
-        self.assertIn('Some protection state could not be verified', dialog.details[0][1])
-        self.assertIn('Recovery readiness has not been checked', dialog.details[0][1])
+        _, dialog, _ = open_status(lambda: result)
+        self.assertIn('Create Build progress could not be verified', section(dialog, "Overall"))
+        self.assertIn('Some protection state could not be verified', section(dialog, "Overall"))
+        self.assertIn('Recovery readiness has not been checked', section(dialog, "Overall"))
 
     def test_missing_observer_preserves_restart_frozen_and_verified_hold(self):
         from resources.lib.status_model import CreateObservation as C

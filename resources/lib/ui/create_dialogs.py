@@ -1,4 +1,4 @@
-"""Create-only settings dialogs; no capture, storage or workflow authority.
+"""Skin-aware UI pages; no capture, storage or workflow authority.
 
 The small page model is also the offline interaction seam. Kodi loads the
 matching skin resource; Default supplies self-contained styling for other skins.
@@ -15,11 +15,12 @@ class SettingsRow:
 
 
 class CreatePage:
-    def __init__(self, title, rows=(), actions=(), body=None, selected=None, focus=100, position=0):
+    def __init__(self, title, rows=(), actions=(), body=None, selected=None, focus=100, position=0, native_close=False):
         self.title, self.rows, self.actions, self.body = title, tuple(rows), tuple(actions), body
         # None means ordinary settings; a set (including empty) means toggles.
         self.selected = None if selected is None else set(selected)
         self.focus, self.position = focus, position
+        self.native_close = native_close
         self.result = 'cancel'
 
     def activate(self, control_id, position=0):
@@ -95,6 +96,11 @@ class CreateDialogs:
         self.review_focus = page.focus
         return result
 
+    def status(self, body):
+        page = CreatePage(self.text(32103), actions=(('check_again', self.text(32440)),),
+                          body=body, focus=201, native_close=True)
+        return self.show(page)
+
     def _show(self, page):
         # Lazy import keeps both the page model and other UI routes Kodi-free.
         from xbmcgui import WindowXMLDialog, ListItem
@@ -117,6 +123,7 @@ def create_window_type(base, list_item):
 
         def onInit(self):
             p = self.page
+            self.setProperty('bm.native_close', 'true' if p.native_close else 'false')
             self.getControl(10).setLabel(p.title)
             review = p.body is not None
             self.getControl(100).setVisible(not review)

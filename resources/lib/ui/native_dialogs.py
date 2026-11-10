@@ -7,7 +7,7 @@ from resources.lib.ui.plan_view import CHOICE_LABEL, ReviewViewModel, S_CONFIRMA
 from resources.lib.ui.plan_view import Text as PlanText
 from resources.lib.ui import repair_view as repair
 from resources.lib.ui.status_view import (
-    S_CHECK_AGAIN, S_CHECKED_AT, S_CLOSE, S_ROW, StatusViewModel,
+    S_CHECKED_AT, S_ROW, StatusViewModel,
 )
 
 class NativeDialogs:
@@ -44,9 +44,18 @@ class NativeDialogs:
         model = PageModel(item.title_id, item.body_id)
         self.viewer(self.text(model.title_id), self.text(model.body_id))
 
+    def navigation(self, heading, labels, preselect):
+        """Ordinary action rows shared by Main and Help; no selection marks."""
+        if self.main_select is None:
+            from resources.lib.ui.create_dialogs import CreateDialogs
+            self.main_select = CreateDialogs(self.addon).main
+        selected = self.main_select(heading, labels, preselect=preselect)
+        self.settle(200)
+        return selected
+
     def help(self):
         while True:
-            selected = self.select(self.text(32105),
+            selected = self.navigation(self.text(32105),
                 [self.text(s.title_id) for s in SECTIONS], preselect=self.help_selection)
             if not 0 <= selected < len(SECTIONS):
                 return
@@ -97,25 +106,22 @@ class NativeDialogs:
         except Exception:
             return StatusViewModel.unavailable()
 
+    def status_body(self, model):
+        """Render the existing safe summaries and every available detail inline."""
+        return '\n\n'.join('\n'.join([self.row_text(row)] +
+            [self.render(line) for line in row.detail]) for row in model.rows)
+
     def status(self):
+        if self.create_dialogs is None:
+            from resources.lib.ui.create_dialogs import CreateDialogs
+            self.create_dialogs = CreateDialogs(self.addon)
         model = self.check_status()
-        count = len(model.rows)
-        selection = 0
         while True:
-            rows = [self.row_text(r) for r in model.rows]
-            selected = self.select(self.text(TITLE_IDS[3]),
-                rows + [self.text(S_CHECK_AGAIN), self.text(32112), self.text(S_CLOSE)],
-                preselect=selection)
-            if 0 <= selected < count:
-                row = model.rows[selected]
-                self.viewer(self.render(row.label), '\n'.join(self.render(t) for t in row.detail))
-            elif selected == count:
-                model = self.check_status()
-            elif selected == count + 1:
-                self.detail(CONTEXT_HELP[Route.STATUS])
-            else:
+            action = self.create_dialogs.status(self.status_body(model))
+            self.settle(200)
+            if action != 'check_again':
                 return
-            selection = selected
+            model = self.check_status()
 
     # -- Review Changes (read-only) -------------------------------------------------------
 
@@ -414,12 +420,8 @@ class NativeDialogs:
 
     def run(self):
         while True:
-            if self.main_select is None:
-                from resources.lib.ui.create_dialogs import CreateDialogs
-                self.main_select = CreateDialogs(self.addon).main
-            selected = self.main_select(self.text(32000),
+            selected = self.navigation(self.text(32000),
                 [self.text(i) for i in TITLE_IDS], preselect=self.main_selection)
-            self.settle(200)
             if not 0 <= selected < len(ROUTES):
                 return
             self.main_selection = selected

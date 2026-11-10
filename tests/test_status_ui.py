@@ -21,6 +21,7 @@ from resources.lib.ui import status_view
 from resources.lib.ui.controller import ROUTES, Route
 from resources.lib.ui.models import Semantic
 from resources.lib.ui.native_dialogs import NativeDialogs
+from resources.lib.ui.create_dialogs import CreateDialogs
 from resources.lib.ui.status_view import StatusViewModel, STATUS_TEXT_IDS, Text
 from tests.test_status import (
     DB_SECRET, DEMO, MODULE, NOW, SECRET, SESSION_A, Harness, snapshot_tree,
@@ -57,6 +58,7 @@ class Addon:
 class Dialog:
     def __init__(self, choices):
         self.choices, self.selects, self.details = iter(choices), [], []
+        self.pages = []
 
     def select(self, heading, labels, preselect=0):
         self.selects.append((heading, labels, preselect))
@@ -65,9 +67,18 @@ class Dialog:
     def textviewer(self, heading, text):
         self.details.append((heading, text))
 
+    def show_page(self, page):
+        self.pages.append(page)
+        action = next(self.choices)
+        if action == 'check_again':
+            assert page.activate(201)
+            return page.result
+        assert action == 'cancel' or action == -1
+        return 'cancel'
+
     @property
     def everything(self):
-        return json.dumps([self.selects, self.details])
+        return json.dumps([self.selects, self.details, [p.body for p in self.pages]])
 
 
 def status(**overrides):
@@ -104,17 +115,24 @@ def not_checked():
 
 def run(provider, choices):
     addon, dialog, waits = Addon(), Dialog(choices), []
-    ui = NativeDialogs(addon, dialog, waits.append, provider, main_select=dialog.select)
+    ui = NativeDialogs(addon, dialog, waits.append, provider, main_select=dialog.select,
+                       create_dialogs=CreateDialogs(addon, show=dialog.show_page))
     ui.run()
     return addon, dialog, waits
 
 
 def open_status(provider, *then):
-    return run(provider, [STATUS, *then, -1, -1])
+    return run(provider, [STATUS, *then, 'cancel', -1])
 
 
 def rows(dialog, index=0):
-    return dialog.selects[1 + index][1]
+    return [block.splitlines()[0] for block in dialog.pages[index].body.split('\n\n')]
+
+
+def section(dialog, label, index=0):
+    block = next(b for b in dialog.pages[index].body.split('\n\n')
+                 if b.splitlines()[0].startswith(label + ': '))
+    return '\n'.join(block.splitlines()[1:])
 
 
 class FirstScreen(unittest.TestCase):
@@ -123,10 +141,10 @@ class FirstScreen(unittest.TestCase):
         h.desired = replace(h.desired, config=ConfigDeclarations())
         h.effective = EffectiveConfiguration()
         actual = h.check()
-        _, dialog, _ = open_status(lambda: actual, 3, 0)
+        _, dialog, _ = open_status(lambda: actual)
         self.assertIn('Settings: Not part of this build', rows(dialog))
-        self.assertEqual(dialog.details[0], ('Settings', 'This build does not manage any settings.'))
-        self.assertNotIn('Settings are current', dialog.details[1][1])
+        self.assertEqual(section(dialog, 'Settings'), 'This build does not manage any settings.')
+        self.assertNotIn('Settings are current', section(dialog, 'Overall'))
         self.assertNotIn('Settings and files checked: 0', dialog.everything)
         self.assertEqual(actual.overall, OverallStatus.CURRENT)
 
@@ -142,29 +160,32 @@ class FirstScreen(unittest.TestCase):
         self.assertEqual(config.level, AreaLevel.UNAVAILABLE)
         actual = replace(actual, configuration=config, overall=OverallStatus.INCOMPLETE,
                          gaps=tuple(gaps))
-        _, dialog, _ = open_status(lambda: actual, 3)
+        _, dialog, _ = open_status(lambda: actual)
         self.assertIn('Settings: Not checked', rows(dialog))
-        self.assertNotIn('Not part of this build', dialog.details[0][1])
+        self.assertNotIn('Not part of this build', section(dialog, "Settings"))
         self.assertNotIn('This build does not manage any settings.', dialog.everything)
         self.assertIn('Overall: Not Fully Checked', rows(dialog))
 
     def test_current_status_matches_the_suggested_layout(self):
         calls = []
         _, dialog, _ = open_status(lambda: calls.append(1) or status())
-        heading, labels, preselect = dialog.selects[1]
-        self.assertEqual(heading, "Build Status")
-        self.assertEqual(labels, [
+        page = dialog.pages[0]
+        self.assertEqual(page.title, "Build Status")
+        self.assertEqual(rows(dialog), [
             "Overall: Healthy", "Add-ons: Current", "Skin: Current", "Settings: Current",
-            "Private settings: Current", "Check Again", "Help", "Close"])
-        self.assertEqual((preselect, len(calls)), (0, 1))
+            "Private settings: Current"])
+        self.assertEqual((page.rows, page.selected, page.focus), ((), None, 201))
+        self.assertEqual(page.actions, (('check_again', 'Check Again'),))
+        self.assertTrue(page.native_close)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(dialog.details)
 
     def test_changes_needed_gives_a_short_plain_summary(self):
-        _, dialog, _ = open_status(changes_needed, 0)
+        _, dialog, _ = open_status(changes_needed)
         self.assertEqual(rows(dialog)[:5], [
             "Overall: Changes Needed", "Add-ons: 2 need attention", "Skin: Current",
             "Settings: Needs updating", "Private settings: Current"])
-        heading, text = dialog.details[0]
-        self.assertEqual(heading, "Overall")
+        text = section(dialog, "Overall")
         self.assertEqual(text.splitlines()[:5], [
             "Some parts of this device don't match your build.",
             "• 2 add-ons need attention", "• Skin is current",
@@ -179,42 +200,42 @@ class FirstScreen(unittest.TestCase):
         self.assertEqual(rows(dialog)[1], "Add-ons: 1 needs attention")
 
     def test_not_checked_is_never_presented_as_healthy(self):
-        _, dialog, _ = open_status(not_checked, 0)
+        _, dialog, _ = open_status(not_checked)
         self.assertEqual(rows(dialog)[:5], [
             "Overall: Not Fully Checked", "Add-ons: Not checked", "Skin: Not checked",
             "Settings: Not checked", "Private settings: Not checked"])
-        self.assertIn("No build has been applied on this device yet", dialog.details[0][1])
-        self.assertIn("not a healthy result", dialog.details[0][1])
+        self.assertIn("No build has been applied on this device yet", section(dialog, "Overall"))
+        self.assertIn("not a healthy result", section(dialog, "Overall"))
 
     def test_a_build_that_lists_nothing_says_so_and_is_not_healthy(self):
         empty = status(
             overall=OverallStatus.INCOMPLETE, gaps=(CheckGap.NOTHING_TO_COMPARE,),
             skin=SkinStatus(AreaLevel.NOT_APPLICABLE), configuration=ConfigurationStatus(AreaLevel.NOT_APPLICABLE),
             private=PrivateStatus(AreaLevel.NOT_APPLICABLE), software=SoftwareStatus(AreaLevel.NOT_APPLICABLE))
-        _, dialog, _ = open_status(lambda: empty, 0)
+        _, dialog, _ = open_status(lambda: empty)
         self.assertEqual(rows(dialog)[0], "Overall: Not Fully Checked")
-        self.assertIn("This build does not list anything to compare.", dialog.details[0][1])
+        self.assertIn("This build does not list anything to compare.", section(dialog, "Overall"))
 
     def test_unreadable_progress_is_explained_once(self):
         unreadable = status(
             overall=OverallStatus.INCOMPLETE, gaps=(CheckGap.OPERATION_STATE_UNAVAILABLE,),
             operation=OperationStatus(OperationKind.UNAVAILABLE, OperationCode.TRANSACTION_UNREADABLE))
-        _, dialog, _ = open_status(lambda: unreadable, 0)
-        self.assertEqual(dialog.details[0][1].count("could not read its saved progress"), 1)
+        _, dialog, _ = open_status(lambda: unreadable)
+        self.assertEqual(section(dialog, "Overall").count("could not read its saved progress"), 1)
 
     def test_restart_and_attention_are_stated_plainly(self):
         restart = status(overall=OverallStatus.RESTART_REQUIRED, operation=OperationStatus(
             OperationKind.RESTART_REQUIRED, OperationCode.AWAITING_RESTART, protection_active=True))
-        _, dialog, _ = open_status(lambda: restart, 0)
+        _, dialog, _ = open_status(lambda: restart)
         self.assertEqual(rows(dialog)[0], "Overall: Restart Required")
-        self.assertIn("Fully close Kodi and open it again", dialog.details[0][1])
-        self.assertIn("protection stays on", dialog.details[0][1])
+        self.assertIn("Fully close Kodi and open it again", section(dialog, "Overall"))
+        self.assertIn("protection stays on", section(dialog, "Overall"))
         attention = status(overall=OverallStatus.NEEDS_ATTENTION, operation=OperationStatus(
             OperationKind.NEEDS_ATTENTION, OperationCode.RESUME_PENDING))
-        _, dialog, _ = open_status(lambda: attention, 0)
+        _, dialog, _ = open_status(lambda: attention)
         self.assertEqual(rows(dialog)[0], "Overall: Needs Attention")
         self.assertIn("Kodi was restarted, but Build Manager has not finished",
-                      dialog.details[0][1])
+                      section(dialog, "Overall"))
 
     def test_every_overall_state_has_the_label_help_documents(self):
         help_text = STRINGS[32304]
@@ -231,9 +252,8 @@ class FirstScreen(unittest.TestCase):
 
 class Details(unittest.TestCase):
     def test_addon_details_list_names_then_ids_with_plain_states(self):
-        _, dialog, _ = open_status(changes_needed, 1)
-        heading, text = dialog.details[0]
-        self.assertEqual(heading, "Add-ons")
+        _, dialog, _ = open_status(changes_needed)
+        text = section(dialog, "Add-ons")
         self.assertEqual(text.splitlines(), [
             "• Alpha Videos — Not installed",
             "• script.module.beta — Different version"])
@@ -243,15 +263,15 @@ class Details(unittest.TestCase):
                      for i in range(40))
         _, dialog, _ = open_status(lambda: status(
             overall=OverallStatus.CHANGES_NEEDED,
-            software=SoftwareStatus(AreaLevel.CHANGES_NEEDED, many)), 1)
-        lines = dialog.details[0][1].splitlines()
+            software=SoftwareStatus(AreaLevel.CHANGES_NEEDED, many)))
+        lines = section(dialog, "Add-ons").splitlines()
         self.assertEqual(len(lines), status_view.MAX_LISTED_ADDONS + 1)
         self.assertEqual(lines[-1], "…and 25 more")
         self.assertEqual(rows(dialog)[1], "Add-ons: 40 need attention")
 
     def test_skin_settings_and_private_details(self):
-        _, dialog, _ = open_status(changes_needed, 2, 3, 4)
-        skin, settings, private = (d[1] for d in dialog.details)
+        _, dialog, _ = open_status(changes_needed)
+        skin, settings, private = (section(dialog, label) for label in ("Skin", "Settings", "Private settings"))
         self.assertEqual(skin.splitlines(), ["Your build uses the skin: skin.demo",
                                              "The skin in use now: skin.demo"])
         self.assertEqual(settings.splitlines(), [
@@ -265,8 +285,8 @@ class Details(unittest.TestCase):
             skin=SkinStatus(AreaLevel.NOT_APPLICABLE, "", "skin.demo", None),
             configuration=ConfigurationStatus(AreaLevel.NOT_APPLICABLE),
             private=PrivateStatus(AreaLevel.NOT_APPLICABLE),
-            software=SoftwareStatus(AreaLevel.NOT_APPLICABLE)), 1, 2, 3, 4)
-        self.assertEqual([d[1] for d in dialog.details], [
+            software=SoftwareStatus(AreaLevel.NOT_APPLICABLE)))
+        self.assertEqual([section(dialog, label) for label in ("Add-ons", "Skin", "Settings", "Private settings")], [
             "This build does not manage add-ons.", "This build does not set a skin.",
             "This build does not manage any settings.",
             "This build does not use private settings."])
@@ -274,42 +294,45 @@ class Details(unittest.TestCase):
             "Skin: Not part of this build", "Settings: Not part of this build",
             "Private settings: Not part of this build"])
 
-    def test_details_return_to_the_row_that_opened_them(self):
-        _, dialog, _ = open_status(changes_needed, 2)
-        self.assertEqual([s[2] for s in dialog.selects[1:-1]], [0, 2])
+    def test_diagnostics_are_immediately_available_without_selecting_rows(self):
+        _, dialog, _ = open_status(changes_needed)
+        self.assertIn('skin.demo', section(dialog, 'Skin'))
+        self.assertIn('Settings and files checked: 4', section(dialog, 'Settings'))
+        self.assertIn('Alpha Videos', section(dialog, 'Add-ons'))
+        self.assertFalse(dialog.details)
+        self.assertEqual([s[0] for s in dialog.selects], [STRINGS[32000]] * 2)
 
 
 class Navigation(unittest.TestCase):
     def test_check_again_performs_exactly_one_new_read(self):
         calls = []
-        _, dialog, _ = open_status(lambda: calls.append(1) or status(), 5, 5)
-        self.assertEqual(len(calls), 3)               # one on entry, one per Check Again
-        self.assertEqual([s[2] for s in dialog.selects[1:-1]], [0, 5, 5])
+        _, dialog, _ = open_status(lambda: calls.append(1) or status(), 'check_again', 'check_again')
+        self.assertEqual(len(calls), 3)  # entry and one per Check Again
+        self.assertEqual(len(dialog.pages), 3)
+        self.assertTrue(all(p.focus == 201 for p in dialog.pages))
         self.assertFalse(dialog.details)
 
     def test_check_again_shows_the_new_result(self):
         results = iter([changes_needed(), status()])
-        _, dialog, _ = open_status(lambda: next(results), 5)
+        _, dialog, _ = open_status(lambda: next(results), 'check_again')
         self.assertEqual(rows(dialog, 0)[0], "Overall: Changes Needed")
         self.assertEqual(rows(dialog, 1)[0], "Overall: Healthy")
 
-    def test_help_opens_the_build_status_section_and_returns(self):
-        _, dialog, waits = open_status(status, 6)
-        self.assertEqual(dialog.details, [(STRINGS[32204], STRINGS[32304])])
-        self.assertEqual([s[2] for s in dialog.selects[1:-1]], [0, 6])
+    def test_status_has_only_check_again_and_closing_never_rechecks(self):
+        calls = []
+        _, dialog, waits = open_status(lambda: calls.append(1) or status())
+        self.assertEqual(dialog.pages[0].actions, (('check_again', 'Check Again'),))
+        self.assertEqual(len(calls), 1)
         self.assertEqual(set(waits), {200})
 
-    def test_help_does_not_check_again(self):
-        calls = []
-        open_status(lambda: calls.append(1) or status(), 6, 6)
-        self.assertEqual(len(calls), 1)
-
     def test_close_back_and_cancel_return_to_the_menu_with_status_selected(self):
-        for leave in (7, -1, 99):
+        for leave in ('cancel', -1):
             with self.subTest(leave):
-                _, dialog, _ = run(status, [STATUS, leave, -1])
+                calls = []
+                _, dialog, _ = run(lambda: calls.append(1) or status(), [STATUS, leave, -1])
                 self.assertEqual(dialog.selects[-1][0], STRINGS[32000])
                 self.assertEqual(dialog.selects[-1][2], STATUS)
+                self.assertEqual(len(calls), 1)
 
     def test_settings_and_help_routes_are_unchanged(self):
         addon, dialog, _ = run(status, [4, -1])
@@ -321,12 +344,12 @@ class Navigation(unittest.TestCase):
         for provider in (None, lambda: (_ for _ in ()).throw(RuntimeError(SECRET)),
                          lambda: "not a status", lambda: None):
             with self.subTest(provider):
-                _, dialog, _ = open_status(provider, 0)
+                _, dialog, _ = open_status(provider)
                 self.assertEqual(rows(dialog)[0], "Overall: Not Fully Checked")
                 self.assertEqual(rows(dialog)[1:5], ["Add-ons: Not checked", "Skin: Not checked",
                                                      "Settings: Not checked",
                                                      "Private settings: Not checked"])
-                self.assertIn("The check could not finish.", dialog.details[0][1])
+                self.assertIn("The check could not finish.", section(dialog, "Overall"))
                 self.assertNotIn(SECRET, dialog.everything)
                 self.assertNotIn("RuntimeError", dialog.everything)
 
@@ -338,7 +361,7 @@ class Navigation(unittest.TestCase):
             if isinstance(value, Exception):
                 raise value
             return value
-        _, dialog, _ = open_status(provider, 5)
+        _, dialog, _ = open_status(provider, 'check_again')
         self.assertEqual(rows(dialog, 0)[0], "Overall: Healthy")
         self.assertEqual(rows(dialog, 1)[0], "Overall: Not Fully Checked")
 
@@ -406,9 +429,10 @@ class Language(unittest.TestCase):
         class Bare(Addon):
             def getLocalizedString(self, identifier):
                 return "plain %d text" if identifier == status_view.S_CFG_TOTAL else "x"
-        dialog = Dialog([STATUS, 3, -1, -1])
-        NativeDialogs(Bare(), dialog, lambda ms: None, changes_needed, main_select=dialog.select).run()
-        self.assertEqual(dialog.selects[1][1][0], "x: x")
+        dialog = Dialog([STATUS, 'cancel', -1])
+        NativeDialogs(Bare(), dialog, lambda ms: None, changes_needed, main_select=dialog.select,
+                      create_dialogs=CreateDialogs(Bare(), show=dialog.show_page)).run()
+        self.assertEqual(rows(dialog)[0], "x: x")
 
 
 class SecretBlind(unittest.TestCase):
@@ -421,8 +445,9 @@ class SecretBlind(unittest.TestCase):
             h.save_overlay()
             arrange(h)
             provider = lambda: h.service().check(h.target())
-            _, dialog, _ = run(provider, [STATUS, 0, 1, 2, 3, 4, 5, 6, -1, -1])
-            self.assertEqual(len(dialog.details), 6)
+            _, dialog, _ = run(provider, [STATUS, 'check_again', 'cancel', -1])
+            self.assertFalse(dialog.details)
+            self.assertEqual(len(dialog.pages), 2)
             for secret in (SECRET, DB_SECRET, "SENTINEL_BACKEND_ERROR_TEXT", "/Users", "Traceback"):
                 self.assertNotIn(secret, dialog.everything)
             self.assertNotIn(SECRET, "\n".join(h.logs))
@@ -444,7 +469,7 @@ class SecretBlind(unittest.TestCase):
         service = h.service()
         before = snapshot_tree(h.profile)
         with h.instrumented():
-            _, dialog, _ = run(lambda: service.check(h.target()), [STATUS, 5, 5, -1, -1])
+            _, dialog, _ = run(lambda: service.check(h.target()), [STATUS, 'check_again', 'check_again', 'cancel', -1])
         self.assertEqual(h.kodi.calls, 3)             # entry + two Check Again presses
         self.assertEqual(h.touched, [])
         self.assertEqual(h.config_backend.mutations, [])
@@ -612,8 +637,8 @@ class AppliedAndSelected(unittest.TestCase):
         labels = rows(dialog)
         self.assertEqual(labels[1], "Applied build: Movies Pack 1.2.0")
         self.assertEqual(labels[2], "Selected build: Saved selection, not applied")
-        _, detail_dialog, _ = open_status(provider, 2)
-        self.assertEqual(detail_dialog.details[0][1],
+        _, detail_dialog, _ = open_status(provider)
+        self.assertEqual(section(detail_dialog, "Selected build"),
                          "Movies Pack 2.0.0\nDevice profile: other\n"
                          "Selecting a build does not apply it. Only the applied build is checked.")
         status_rows = rows(dialog)
@@ -679,8 +704,8 @@ class CreateObservationPresentation(unittest.TestCase):
                 protection_unknown=value is C.UNVERIFIABLE)
             result = status(overall=OverallStatus.NEEDS_ATTENTION if unresolved
                             else OverallStatus.CURRENT, operation=operation)
-            _, dialog, _ = open_status(lambda: result, 0)
-            detail = dialog.details[0][1]
+            _, dialog, _ = open_status(lambda: result)
+            detail = section(dialog, "Overall")
             self.assertIn(text, detail)
             if value is C.UNVERIFIABLE:
                 self.assertIn('Some protection state could not be verified', detail)
@@ -694,6 +719,6 @@ class CreateObservationPresentation(unittest.TestCase):
             OperationKind.NEEDS_ATTENTION, OperationCode.OPERATION_NOT_FINISHED,
             protection_active=True, create_observation=C.HELD,
             other_codes=(OperationCode.AWAITING_RESTART,)))
-        _, dialog, _ = open_status(lambda: result, 0)
-        self.assertIn('unfinished work', dialog.details[0][1])
-        self.assertIn('Fully close Kodi and open it again', dialog.details[0][1])
+        _, dialog, _ = open_status(lambda: result)
+        self.assertIn('unfinished work', section(dialog, "Overall"))
+        self.assertIn('Fully close Kodi and open it again', section(dialog, "Overall"))

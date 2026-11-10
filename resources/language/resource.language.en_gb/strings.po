@@ -230,11 +230,11 @@ msgid "About"
 msgstr ""
 
 msgctxt "#32300"
-msgid "Build Manager saves the Kodi setup you like, and helps put it on your devices.\n\nWhat it does\n• Create Build saves your current setup\n• Install Build puts a saved build on a device\n• Update / Repair fixes what doesn't match\n• Build Status shows how things look\n\nGood to know\n• Your other add-ons are left alone\n• It is not a full backup of Kodi\n• Help explains each menu item"
+msgid "Build Manager saves the Kodi setup you like, and helps put it on your devices.\n\nWhat it does\n• Create Build saves your current setup\n• Install Build puts a saved build on a device\n• Update / Repair fixes what doesn't match\n• Build Status shows how things look\n\nGood to know\n• Your other add-ons are left alone\n• It is not a full backup of Kodi\n• Help explains each menu item\n• Close leaves the Build Manager menu"
 msgstr ""
 
 msgctxt "#32301"
-msgid "• Everything eligible is included by default. Uncheck add-ons you do not want. Dependencies needed by kept add-ons are handled automatically.\n\n• The current skin is included unless you exclude it. Private settings are included by default and can be turned off. Private values are never shown; only supported configuration is captured.\n\n• Enter a build name, version and device label, then review and confirm Create Build. Your Kodi is not changed: Create only reads installed software and settings. Nothing is saved as a build unless capture succeeds."
+msgid "Create Build saves a new version from this Kodi.\n\n• Enter a build name, version and device profile.\n• Add-ons opens the toggles. Eligible add-ons start included, including the current skin. Dependencies are handled automatically.\n\n• Select All / Deselect All changes the toggles. OK keeps them; Cancel or Back discards them.\n• Private settings start included. Only supported settings are saved; private values are never shown.\n\n• Apply opens the review details. Create then asks for final confirmation.\n• Cancel or Back leaves settings or review without saving.\n• Your Kodi is not changed. A build is saved only if capture succeeds."
 msgstr ""
 
 msgctxt "#32302"
@@ -242,11 +242,11 @@ msgid "Install Build applies a registered local build.\n\nWhat you will do\n• 
 msgstr ""
 
 msgctxt "#32303"
-msgid "Update / Repair checks a device against the build applied to it.\n\nWhat it does\n• Checks what is different\n• Fixes only the parts that need it\n• Does not reinstall everything\n\nWhat you'll do\n• Choose Check for Changes\n• Look at the list\n• Apply the changes you want\n\nGood to know\n• Your other add-ons are left alone\n• If nothing is different, nothing changes\n• Changing an installed add-on to another version is not supported yet\n• Repairing a broken add-on is not supported yet\n• Some settings may need a restart before they are finished"
+msgid "Update / Repair checks a device against the build applied to it.\n\nWhat it does\n• Checks what is different\n• Fixes only the parts that need it\n• Does not reinstall everything\n\nWhat you'll do\n• Choose Check for Changes\n• Review the list\n• Choose Apply Changes and confirm\n\nGood to know\n• Your other add-ons are left alone\n• If nothing is different, nothing changes\n• Changing an installed add-on to another version is not supported yet\n• Repairing a broken add-on is not supported yet\n• Some settings may need a restart before they are finished"
 msgstr ""
 
 msgctxt "#32304"
-msgid "Build Status tells you how your build is doing.\n\nWhat the labels mean\n• Healthy: everything matches\n• Changes Needed: some parts don't match\n• Restart Required: close and reopen Kodi to continue\n• Needs Attention: Build Manager needs your help\n• Not Fully Checked: some checks haven't run yet\n\nGood to know\n• An older result is not the same as a fresh check\n• Use Check Again to look again\n• Checking changes nothing"
+msgid "Build Status is read-only. Scroll to read summaries and problem details. Checks describe the applied build; a saved selection is shown separately.\n\nWhat the labels mean\n• Healthy: everything matches\n• Changes Needed: some parts don't match\n• Restart Required: close and reopen Kodi to continue\n• Needs Attention: Build Manager needs your help\n• Not Fully Checked: some checks haven't run yet\n\nGood to know\n• An older result is not the same as a fresh check\n• Use Check Again to look again\n• Checking changes nothing\n• Back or the window close control returns to the menu"
 msgstr ""
 
 msgctxt "#32305"
@@ -254,15 +254,15 @@ msgid "A build is the setup you want. A device profile adjusts it for one device
 msgstr ""
 
 msgctxt "#32306"
-msgid "Build Manager only changes what a build tells it to.\n\nIt does not\n• Uninstall your other add-ons\n• Change Kodi when you Create Build\n\nInstall and Repair can\n• Install add-ons that belong to the build\n• Turn those add-ons on or off\n• Change your skin\n• Restore supported settings\n\nGood to know\n• You see the changes before they happen\n• Some add-ons may stay off until their settings are restored and checked\n• Closing a window does not undo changes already made\n• If interrupted, open Build Status and select Overall. Recovery may need manual help"
+msgid "Build Manager only changes what a build tells it to.\n\nIt does not\n• Uninstall your other add-ons\n• Change Kodi when you Create Build\n\nInstall and Repair can\n• Install add-ons that belong to the build\n• Turn those add-ons on or off\n• Change your skin\n• Restore supported settings\n\nGood to know\n• You see the changes before they happen\n• Some add-ons may stay off until their settings are restored and checked\n• Closing a window does not undo changes already made\n• If interrupted, open Build Status and read the problem details. Recovery may need manual help"
 msgstr ""
 
 msgctxt "#32307"
-msgid "Some changes only finish after Kodi starts again.\n\nWhat you'll do\n• Fully close Kodi\n• Open it again\n• Open Build Manager\n\nGood to know\n• Closing just the Build Manager window is not enough\n• Build Manager does not reopen Kodi for you\n• Supported installs and repairs keep their progress for checks after restart\n• You may need to restart more than once\n• If it says Needs Attention, open Build Status and select Overall"
+msgid "Some changes only finish after Kodi starts again.\n\nWhat you'll do\n• Fully close Kodi\n• Open it again\n• Open Build Manager\n\nGood to know\n• Closing just the Build Manager window is not enough\n• Build Manager does not reopen Kodi for you\n• Supported installs and repairs keep their progress for checks after restart\n• You may need to restart more than once\n• If it says Needs Attention, open Build Status and read the problem details"
 msgstr ""
 
 msgctxt "#32308"
-msgid "If something goes wrong, start here.\n\nNeeds Attention\n• Open Build Status and select Overall\n• Read the problem details\n• If it still needs attention, close Build Manager and try again later\n\nCan't find an add-on\n• Add the saved version yourself, or check again\n• Only use another version if the build allows it\n\nSomething wasn't saved\n• See what is missing\n• Create a new version after you fix it\n\nCouldn't confirm the result\n• See what failed\n• Use Review Changes to try again\n\nRestart Required\n• Fully close Kodi and open it again\n\nGood to know\n• Don't delete saved progress\n• Don't turn add-ons on by hand to get past a problem\n• Private settings are never shown"
+msgid "If something goes wrong, start here.\n\nNeeds Attention\n• Open Build Status\n• Read the problem details\n• If it still needs attention, close Build Manager and try again later\n\nCan't find an add-on\n• Add the saved version yourself, or check again\n• Only use another version if the build allows it\n\nSomething wasn't saved\n• See what is missing\n• Create a new version after you fix it\n\nCouldn't confirm the result\n• See what failed\n• Read Build Status before trying again\n\nRestart Required\n• Fully close Kodi and open it again\n\nGood to know\n• Don't delete saved progress\n• Don't turn add-ons on by hand to get past a problem\n• Private settings are never shown"
 msgstr ""
 
 msgctxt "#32309"

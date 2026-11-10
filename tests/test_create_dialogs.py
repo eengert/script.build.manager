@@ -314,6 +314,61 @@ class KodiBindingTests(unittest.TestCase):
         w.onClick(201)
         self.assertEqual((p.result, w.closed), ('cancel', 1))
 
+    def test_status_initialization_text_is_inert_and_only_check_again_is_visible(self):
+        pages = []
+        CreateDialogs(Addon(), show=lambda p: pages.append(p) or 'cancel').status('all diagnostics')
+        p = pages[0]
+        w = self.window(p)
+        self.assertEqual(w.getControl(110).text, 'all diagnostics')
+        self.assertFalse(w.getControl(100).visible)
+        self.assertEqual([w.getControl(i).label for i in range(201, 205)
+                          if w.getControl(i).visible], ['Check Again'])
+        self.assertEqual(w.properties['bm.native_close'], 'true')
+        self.assertEqual(w.getFocusId(), 201)
+        for ident in (100, 110, 121, 202, 203, 204, 205):
+            w.onClick(ident)
+            self.assertEqual((p.result, w.closed), ('cancel', 0))
+        w.onClick(201)
+        w.onClick(201)  # a queued duplicate cannot produce a second refresh
+        self.assertEqual((p.result, w.closed), ('check_again', 1))
+
+    def test_status_back_escape_and_native_close_keep_cancellation_result(self):
+        for action in (10, 92, None):
+            pages = []
+            CreateDialogs(Addon(), show=lambda p: pages.append(p) or 'cancel').status('details')
+            w = self.window(pages[0])
+            if action is None:
+                w.onClick(205)  # native builtin Close then closes the window
+                w.close()
+            else:
+                w.onAction(SimpleNamespace(getId=lambda: action))
+            self.assertEqual((w.page.result, w.closed), ('cancel', 1))
+
+    def test_help_uses_all_ten_ordinary_rows_and_restores_topic_position(self):
+        from resources.lib.ui.help_content import SECTIONS
+        topics = [Addon.strings[s.title_id] for s in SECTIONS]
+        seen = []
+        def show(page):
+            w = self.window(page)
+            seen.append(w)
+            self.assertEqual([i.label for i in w.items], topics)
+            self.assertTrue(all(i.properties['bm.toggle'] == 'false' and not i.selected
+                                for i in w.items))
+            if len(seen) == 1:
+                w.getControl(100).selectItem(7)
+                w.onClick(100)
+            else:
+                self.assertEqual(w.getControl(100).getSelectedPosition(), 7)
+                w.onAction(SimpleNamespace(getId=lambda: 92))
+            return page.result
+        dialog = Mock()
+        ui = NativeDialogs(Addon(), dialog, lambda ms: None,
+                           main_select=CreateDialogs(Addon(), show=show).main)
+        ui.help()
+        dialog.textviewer.assert_called_once_with(Addon.strings[SECTIONS[7].title_id],
+                                                  Addon.strings[SECTIONS[7].body_id])
+        self.assertEqual(len(seen), 2)
+
     def test_individual_and_bulk_actions_immediately_refresh_visible_items(self):
         w = self.window(self.toggle_page())
         def values(): return [(i.label2, i.selected) for i in w.items]
@@ -494,6 +549,22 @@ class XmlTests(unittest.TestCase):
             self.assertEqual(root.findtext('.//control[@id="110"]/pagecontrol'), '121')
             self.assertEqual(root.findtext('.//control[@id="110"]/autoscroll'), 'false')
             self.assertFalse(root.findall('.//onload'))
+
+    def test_status_header_close_contracts_preserve_the_single_action_column(self):
+        condition = 'String.IsEqual(Window.Property(bm.native_close),true)'
+        af3 = ET.parse(ROOT / 'resources/skins/skin.arctic.fuse.3/1080i/script-build-manager-create.xml')
+        group = next(g for g in af3.findall('.//control[@type="group"]')
+                     if g.findtext('visible') == condition)
+        close = group.find('include[@content="Part_CloseButton"]')
+        self.assertEqual(close.findtext('param[@name="id"]'), '205')
+        self.assertEqual(close.findtext('param[@name="onmove"]'), '201')
+        fallback = ET.parse(ROOT / 'resources/skins/Default/1080i/script-build-manager-create.xml')
+        close = fallback.find('.//control[@id="205"]')
+        self.assertEqual(close.findtext('visible'), condition)
+        self.assertEqual(close.findtext('onclick'), 'Close')
+        self.assertEqual(close.findtext('label'), '$ADDON[script.build.manager 32441]')
+        estuary = ET.parse(ROOT / 'resources/skins/skin.estuary/1080i/script-build-manager-create.xml')
+        self.assertIsNotNone(estuary.find('.//include[@content="DialogBackgroundCommons"]'))
 
     def test_native_mappings_use_the_skin_definitions(self):
         contracts = self.contracts()

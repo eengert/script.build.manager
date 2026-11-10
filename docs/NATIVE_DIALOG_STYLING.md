@@ -1,6 +1,6 @@
 # Native dialog styling
 
-Build Manager's main menu, Create fields, add-on selections and Create review use one small WindowXMLDialog presenter. Kodi selects the matching add-on resource directory using the active skin ID. The common filename is `script-build-manager-create.xml` at 1080i resolution:
+Build Manager's main menu, Help topics, Build Status, Create fields, add-on selections and Create review use one small WindowXMLDialog presenter. Kodi selects the matching add-on resource directory using the active skin ID. The common filename is `script-build-manager-create.xml` at 1080i resolution:
 
 | Active skin | Resource directory | Styling |
 |---|---|---|
@@ -38,6 +38,10 @@ The private-settings row uses the same visual state without displaying an On/Off
 
 **Kodi 21.3 scrollbar restriction:** no Python getControl call may target XML scrollbars 120 or 121. Visibility and horizontal navigation remain XML-owned. Native include contracts produce the same supported label/list/textbox/button IDs used by Python; the strict offline stub rejects scrollbar lookups. Focus restoration uses setFocusId with an integer ID.
 
+Build Status uses the existing read-only textbox and XML-owned scrollbar, with one Check Again action. All safe summaries and diagnostic lines from the status view model appear inline; no status list items are created. Each refresh requests one new status model. Back/Escape and window close return without another check. AF3 uses its native Part_CloseButton in the header for this page; Estuary retains its native header close control. Default provides a conditional header Close button with the same fallback assets. These header controls leave the default cancellation result and are separate from the one-action column.
+
+Help topics use the same ordinary navigation rows as Main, with toggle indicators disabled. Topic content remains in the native text viewer; returning restores the topic position. Boolean settings and add-on selection keep their existing visual checkboxes.
+
 Other Build Manager screens use standard Dialog.select, input, textviewer, yesno, ok, progress dialogs, or the standard add-on Settings window. They already belong to the active skin and are not replaced. No workflow, capture, library, lifecycle or backend styling dependency is introduced.
 
 ## Other-skin fallback
@@ -59,3 +63,5 @@ Source references:
 - [Kodi 21.3 include parameters and nested forwarding](https://github.com/xbmc/xbmc/blob/21.3-Omega/xbmc/guilib/GUIIncludes.cpp)
 - [AF3 3.3.12 settings layout](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Dialog_DialogSettings.xml), [dialog parts](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Dialog_Parts.xml), [buttons](https://github.com/jurialmunkey/skin.arctic.fuse.3/blob/660a05c35546718e90a88be7798bb0a92632abce/1080i/Includes_Buttons.xml)
 - [Estuary settings layout](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/DialogSettings.xml), [dialog background](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes.xml), [dialog buttons](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes_Buttons.xml)
+
+The fallback header label uses Kodi [add-on label parsing](https://kodi.wiki/view/Label_Parsing).

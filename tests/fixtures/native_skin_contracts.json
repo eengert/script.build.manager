@@ -26,6 +26,14 @@
         "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
         "produces": {}
       },
+      "Part_CloseButton": {
+        "source": "Dialog_Parts.xml",
+        "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
+        "produces": {
+          "id": "button",
+          "groupid": "group"
+        }
+      },
       "Part_Dim_Overlay": {
         "source": "Dialog_Parts.xml",
         "source_sha256": "ddaa3ca1b99a099a07341151d56ea8f1c17bcc6b8f02358fe089ef248605b6fd",
