@@ -418,14 +418,15 @@ class RepairNativeTests(unittest.TestCase):
     def test_repair_route_invokes_the_real_provider_once(self):
         workflow = Mock()
         provider = Mock(return_value=workflow)
-        NativeDialogs(Addon(), self.dialog([2, -1]), lambda ms: None, repair_provider=provider).run()
+        dialog = self.dialog([2, -1])
+        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=provider, main_select=dialog.select).run()
         provider.assert_called_once_with()
         workflow.run.assert_called_once()
 
     def test_composition_failure_is_safe_and_redacted(self):
         dialog = self.dialog([2, -1])
         NativeDialogs(Addon(), dialog, lambda ms: None,
-                      repair_provider=Mock(side_effect=RuntimeError('/private/path token=secret'))).run()
+                      repair_provider=Mock(side_effect=RuntimeError('/private/path token=secret')), main_select=dialog.select).run()
         self.assertEqual(dialog.oks, [(STRINGS[32102], STRINGS[repair.S_NOT_APPLIED])])
         self.assertNotIn('private', dialog.everything())
 

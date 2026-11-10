@@ -104,7 +104,7 @@ def not_checked():
 
 def run(provider, choices):
     addon, dialog, waits = Addon(), Dialog(choices), []
-    ui = NativeDialogs(addon, dialog, waits.append, provider)
+    ui = NativeDialogs(addon, dialog, waits.append, provider, main_select=dialog.select)
     ui.run()
     return addon, dialog, waits
 
@@ -407,7 +407,7 @@ class Language(unittest.TestCase):
             def getLocalizedString(self, identifier):
                 return "plain %d text" if identifier == status_view.S_CFG_TOTAL else "x"
         dialog = Dialog([STATUS, 3, -1, -1])
-        NativeDialogs(Bare(), dialog, lambda ms: None, changes_needed).run()
+        NativeDialogs(Bare(), dialog, lambda ms: None, changes_needed, main_select=dialog.select).run()
         self.assertEqual(dialog.selects[1][1][0], "x: x")
 
 

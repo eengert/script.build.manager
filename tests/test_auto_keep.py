@@ -416,6 +416,7 @@ class TestBackgroundProgress(unittest.TestCase):
 
     def test_create_workflow_wrapper_cleans_failed_start_then_accepts_fresh_handle(self):
         from tests.test_create_workflow import WorkflowTests, NativeDialog, CreateAddon
+        from resources.lib.ui.create_dialogs import CreateDialogs
         fixture = WorkflowTests(methodName='runTest')
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
@@ -430,9 +431,10 @@ class TestBackgroundProgress(unittest.TestCase):
             # Create renders a sanitized failure and returns to its menu; Back
             # exits that existing UI path. Unlike execute_install it doesn't
             # propagate an execution exception to its caller.
-            dialog = NativeDialog([0, 5, 1, 0, 7], inputs=['B1 synthetic build'], confirms=[True])
+            dialog = NativeDialog([0, 'apply', 'create', 'cancel'], inputs=['B1 synthetic build'], confirms=[True])
             return NativeDialogs(CreateAddon(), dialog, lambda ms: None,
-                                 create_provider=lambda: workflow, busy=busy)
+                                 create_provider=lambda: workflow, busy=busy,
+                                 create_dialogs=CreateDialogs(CreateAddon(), show=dialog.show_page))
         first_ui = ui()
         first_ui.create()
         self.assertIn('32732', first_ui.dialog.results[0][1])

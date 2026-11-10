@@ -244,7 +244,7 @@ class SelectionTests(unittest.TestCase):
 
 class NativeTests(unittest.TestCase):
     def ui(self, dialog, provider=None):
-        return NativeDialogs(Addon(), dialog, lambda _: None, install_provider=provider)
+        return NativeDialogs(Addon(), dialog, lambda _: None, install_provider=provider, main_select=dialog.select)
 
     def test_install_route_and_update_unavailable(self):
         workflow = Mock()

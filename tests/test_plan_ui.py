@@ -384,7 +384,7 @@ class ViewModel(unittest.TestCase):
     def test_the_menu_routes_still_start_nothing_and_do_not_open_the_review(self):
         from resources.lib.ui.controller import ROUTES, Route
         addon, dialog, waits = Addon(), Dialog([ROUTES.index(Route.INSTALL), -1, -1]), []
-        ui = NativeDialogs(addon, dialog, waits.append)
+        ui = NativeDialogs(addon, dialog, waits.append, main_select=dialog.select)
         with patch.object(NativeDialogs, "review", side_effect=AssertionError("review opened")):
             ui.run()
         self.assertEqual(dialog.details, [])

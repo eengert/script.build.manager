@@ -23,10 +23,10 @@ class Dialog:
 
 class NativeFoundationTests(unittest.TestCase):
     def flow(self, choices):
-        a=Addon(); d=Dialog(choices); ui=NativeDialogs(a,d,lambda milliseconds: None); ui.run(); return a,d,ui
+        a=Addon(); d=Dialog(choices); ui=NativeDialogs(a,d,lambda milliseconds: None, main_select=d.select); ui.run(); return a,d,ui
     def test_native_boundaries_settle_input(self):
         a=Addon(); d=Dialog([0,0,1,-1,-1]); waits=[]
-        NativeDialogs(a,d,waits.append).run()
+        NativeDialogs(a,d,waits.append, main_select=d.select).run()
         self.assertEqual(waits,[200]*7)
 
     def test_main_menu_order(self):
@@ -89,17 +89,21 @@ class NativeFoundationTests(unittest.TestCase):
         # stdlib dependency; the three existing Create helpers only validate
         # public labels/versions and never construct or execute a workflow.
         allowed = {'dataclasses', 'enum', 'resources.lib.ui',
-                   'resources.lib.ui.controller', 'resources.lib.ui.help_content',
+                   'resources.lib.ui.controller', 'resources.lib.ui.create_dialogs', 'resources.lib.ui.help_content',
                    'resources.lib.ui.models', 'resources.lib.ui.plan_view',
                    'resources.lib.ui.status_view', 'resources.lib.status_model',
                    'resources.lib.plan_model', 'resources.lib.create_workflow'}
         if filename == 'plan_view.py': allowed.add('typing')
+        if filename == 'create_dialogs.py': allowed.add('xbmcgui')
         for n in ast.walk(ast.parse(source)):
             if isinstance(n, (ast.Import, ast.ImportFrom)):
                 self.assertIsInstance(n, ast.ImportFrom, filename)
                 self.assertEqual(n.level, 0, filename)
                 self.assertIn(n.module, allowed, filename)
                 self.assertNotIn('*', {a.name for a in n.names}, filename)
+                if n.module == 'xbmcgui':
+                    self.assertEqual(filename, 'create_dialogs.py')
+                    self.assertLessEqual({a.name for a in n.names}, {'WindowXMLDialog', 'ListItem'})
                 if n.module == 'resources.lib.create_workflow':
                     self.assertEqual(filename, 'native_dialogs.py')
                     self.assertLessEqual({a.name for a in n.names},
@@ -123,7 +127,9 @@ class NativeFoundationTests(unittest.TestCase):
                 ('plan_view.py', 'from . import backend'),
                 ('plan_view.py', 'from resources.lib.plan_model import *'),
                 ('native_dialogs.py', 'from resources.lib.create_workflow import runtime_create_workflow'),
-                ('status_view.py', 'from resources.lib.create_workflow import identity')):
+                ('status_view.py', 'from resources.lib.create_workflow import identity'),
+                ('create_dialogs.py', 'from xbmcgui import Window'),
+                ('status_view.py', 'from xbmcgui import ListItem')):
             with self.subTest(source=source), self.assertRaises(AssertionError):
                 self.assert_presentation_imports(source, filename)
     def test_status_model_is_standard_library_only(self):
@@ -132,8 +138,9 @@ class NativeFoundationTests(unittest.TestCase):
         for n in ast.walk(tree):
             if isinstance(n,ast.ImportFrom): self.assertIn((n.module or '').split('.')[0],allowed)
             if isinstance(n,ast.Import): self.assertTrue(all(a.name.split('.')[0] in allowed for a in n.names))
-    def test_no_custom_shell_or_palette(self):
-        self.assertFalse((ROOT/'resources/skins').exists())
+    def test_custom_dialog_is_limited_to_create(self):
+        self.assertEqual(sorted(p.name for p in (ROOT/'resources/skins').rglob('*.xml')),
+                         ['script-build-manager-create.xml'] * 2)
         self.assertFalse((ROOT/'resources/lib/ui/main_window.py').exists())
         self.assertNotIn('WindowXML',(ROOT/'default.py').read_text())
         self.assertFalse(any('color' in vars(v) for v in SEMANTIC_LABELS.values() if hasattr(v,'__dict__')))

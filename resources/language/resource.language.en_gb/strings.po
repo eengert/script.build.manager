@@ -1176,3 +1176,40 @@ msgstr ""
 msgctxt "#33007"
 msgid "Create Build progress or its supporting checks could not be verified. Review the problem and check again later. Recovery is not ready to use."
 msgstr ""
+
+
+msgctxt "#32740"
+msgid "Add-ons"
+msgstr ""
+
+msgctxt "#32741"
+msgid "%s of %s included"
+msgstr ""
+
+msgctxt "#32742"
+msgid "Apply"
+msgstr ""
+
+msgctxt "#32743"
+msgid "Cancel"
+msgstr ""
+
+msgctxt "#32744"
+msgid "OK"
+msgstr ""
+
+msgctxt "#32745"
+msgid "Select All"
+msgstr ""
+
+msgctxt "#32746"
+msgid "Deselect All"
+msgstr ""
+
+msgctxt "#32747"
+msgid "Create"
+msgstr ""
+
+msgctxt "#32748"
+msgid "None"
+msgstr ""

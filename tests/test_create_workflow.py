@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from resources.lib.ui.create_dialogs import CreateDialogs
 from resources.lib.create_workflow import (CreateBuildWorkflow, CreateValidationError,
     TrustedCaptureCatalog, identity, version_tuple)
 from resources.lib.create_capture import CreateBuildCaptureEngine, CreateCaptureStatus, PublicCaptureSpecification, PublicSettingTarget
@@ -48,7 +49,7 @@ class Catalog(TrustedCaptureCatalog):
 
 class CreateAddon(Addon):
     def getLocalizedString(self, identifier):
-        counts = {32704:2,32711:2,32714:2,32715:2,32737:1}
+        counts = {32741:2,32704:2,32711:2,32714:2,32715:2,32737:1}
         return str(identifier) + (': ' + ' '.join(['%s'] * counts[identifier]) if identifier in counts else '')
 
 
@@ -59,6 +60,23 @@ class NativeDialog:
         self.calls, self.multi_calls, self.details, self.results, self.questions = [], [], [], [], []
     def select(self, heading, labels, preselect=0):
         self.calls.append((heading, labels, preselect)); return next(self.choices)
+    def show_page(self, page):
+        if page.selected is not None:
+            indices = self.multiselect(page.title, [r.label for r in page.rows], sorted(page.selected))
+            if indices is None:
+                return 'cancel'
+            page.selected = set(indices)
+            return 'ok'
+        self.calls.append((page.title, [r.label for r in page.rows], page.position))
+        if page.body is not None:
+            self.details.append((page.title, page.body))
+        choice = next(self.choices)
+        if type(choice) is int:
+            page.position = choice
+            page.focus = 100
+        else:
+            page.focus = 201 + next(i for i, (key, _) in enumerate(page.actions) if key == choice)
+        return choice
     def input(self, heading, defaultt=''):
         return next(self.inputs)
     def multiselect(self, heading, labels, preselect):
@@ -102,7 +120,7 @@ class WorkflowTests(unittest.TestCase):
             (PrivateOverlayEntry(ROOT,'privateid',ConfigSettingType.STRING,value),))
     def ui(self, dialog):
         busy=[]
-        ui=NativeDialogs(CreateAddon(), dialog, lambda ms:None, create_provider=lambda:self.workflow, busy=busy.append)
+        ui=NativeDialogs(CreateAddon(), dialog, lambda ms:None, create_provider=lambda:self.workflow, busy=busy.append, create_dialogs=CreateDialogs(CreateAddon(), show=dialog.show_page))
         ui.create(); return ui,busy
 
     def test_all_eligible_selected_and_private_on(self):
@@ -662,41 +680,41 @@ class WorkflowTests(unittest.TestCase):
         for path in (self.base/'library').rglob('*'):
             if path.is_file():self.assertNotIn(SECRET.encode(),path.read_bytes())
         self.assertEqual(self.config.mutations,[])
-    def test_native_multiselect_reopen_cancel_preserves_choices(self):
-        d=NativeDialog([3,3,3,7],multiselects=[[0],None,[0]])
+    def test_native_addon_selection_reopen_cancel_preserves_choices(self):
+        d=NativeDialog([3,3,3,'cancel'],multiselects=[[0],None,[0]])
         self.ui(d)
         self.assertEqual([c[2] for c in d.multi_calls],[[0,1],[0],[0]])
         self.factory.assert_not_called();self.assertIn('32709',d.multi_calls[0][1][1])
     def test_native_back_before_preview_no_capture(self):
-        d=NativeDialog([7]);self.ui(d);self.factory.assert_not_called()
+        d=NativeDialog(['cancel']);self.ui(d);self.factory.assert_not_called()
     def test_native_preview_back_no_capture(self):
         before = sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*'))
         with patch('resources.lib.capture_lifecycle.CaptureLifecycleCoordinator.begin') as begin:
-            d=NativeDialog([0,5,3,7],inputs=['My Build']);self.ui(d)
+            d=NativeDialog([0,'apply','cancel','cancel'],inputs=['My Build']);self.ui(d)
         begin.assert_not_called()
         self.assertEqual(before, sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*')))
         self.factory.assert_not_called();self.private_factory.assert_not_called()
     def test_native_final_no_confirmation_no_capture(self):
         before = sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*'))
         with patch('resources.lib.capture_lifecycle.CaptureLifecycleCoordinator.begin') as begin:
-            d=NativeDialog([0,5,0,7],inputs=['My Build'],confirms=[False]);self.ui(d)
+            d=NativeDialog([0,'apply','create','cancel'],inputs=['My Build'],confirms=[False]);self.ui(d)
         begin.assert_not_called()
         self.assertEqual(before, sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*')))
         self.factory.assert_not_called();self.assertEqual(len(d.questions),1)
     def test_native_success_persistent_and_busy(self):
-        d=NativeDialog([0,5,1,0],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
+        d=NativeDialog([0,'apply','create'],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
         self.assertEqual(busy,[True,False]);self.assertEqual(len(d.results),1)
         self.assertIn('32736',d.results[0][1]);self.assertNotIn(SECRET,str(vars(d)))
         self.assertNotIn(str(self.base),str(vars(d)));self.assertEqual(self.config.mutations,[])
     def test_native_private_toggle_off(self):
-        d=NativeDialog([0,4,5,0],inputs=['My Build'],confirms=[True]);self.ui(d)
+        d=NativeDialog([0,4,'apply','create'],inputs=['My Build'],confirms=[True]);self.ui(d)
         self.private_factory.assert_not_called();self.assertEqual(len(self.entries()),1)
     def test_native_failure_persistent(self):
         self.factory.side_effect=RuntimeError(SECRET)
-        d=NativeDialog([0,5,0],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
+        d=NativeDialog([0,'apply','create'],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
         self.assertEqual(busy,[True,False]);self.assertIn('32732',d.results[0][1]);self.assertNotIn(SECRET,str(vars(d)))
     def test_native_focus_return(self):
-        d=NativeDialog([3,7],multiselects=[None]);self.ui(d)
+        d=NativeDialog([3,'cancel'],multiselects=[None]);self.ui(d)
         self.assertEqual(d.calls[1][2],3)
     def test_deterministic_order_and_name_fallback(self):
         self.inventory.addons=tuple(reversed(self.inventory.addons))
@@ -932,8 +950,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(self.private_store.path_for(overlay.overlay_id).exists())
 
     def test_native_main_create_route_and_help(self):
-        d=NativeDialog([0,6,7,-1])
-        ui=NativeDialogs(CreateAddon(),d,lambda ms:None,create_provider=lambda:self.workflow)
+        d=NativeDialog([0,'help','cancel',-1])
+        ui=NativeDialogs(CreateAddon(),d,lambda ms:None,main_select=d.select,create_provider=lambda:self.workflow, create_dialogs=CreateDialogs(CreateAddon(), show=d.show_page))
         ui.run()
         self.assertEqual(d.details,[('32201','32301')])
         self.assertEqual(d.calls[-1][2],0);self.factory.assert_not_called()

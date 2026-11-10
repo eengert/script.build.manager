@@ -11,7 +11,7 @@ from resources.lib.ui.status_view import (
 )
 
 class NativeDialogs:
-    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None, repair_provider=None):
+    def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None, repair_provider=None, create_dialogs=None, main_select=None):
         self.addon = addon
         self.dialog = dialog
         self.settle = settle
@@ -20,6 +20,8 @@ class NativeDialogs:
         self.busy = busy
         self.install_provider = install_provider
         self.repair_provider = repair_provider
+        self.main_select = main_select
+        self.create_dialogs = create_dialogs
         self.main_selection = 0
         self.help_selection = 0
 
@@ -160,18 +162,14 @@ class NativeDialogs:
         except Exception as exc:
             self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32722))
             return
-        focus = 0
+        if self.create_dialogs is None:
+            from resources.lib.ui.create_dialogs import CreateDialogs
+            self.create_dialogs = CreateDialogs(self.addon)
         while True:
-            labels = [self.text(32700) + ': ' + session.name,
-                      self.text(32701) + ': ' + session.version,
-                      self.text(32702) + ': ' + session.device_label,
-                      self.text(32704) % (len(session.selected), len(session.components)),
-                      self.text(32705) + ': ' + self.text(32706 if session.include_private else 32707),
-                      self.text(32708), self.text(32112), self.text(32113)]
-            choice = self.select(self.text(32100), labels, focus)
-            if not 0 <= choice < 7:
+            choice = self.create_dialogs.edit(session)
+            self.settle(200)
+            if choice == 'cancel':
                 return
-            focus = choice
             try:
                 if choice in (0, 1, 2):
                     prior = (session.name, session.version, session.device_label)[choice]
@@ -191,16 +189,14 @@ class NativeDialogs:
                         identity(value)
                         session.device_label = value
                 elif choice == 3:
-                    rows = [c.label + (' — ' + self.text(32709) if c.current_skin else '') for c in session.components]
-                    indices = self.dialog.multiselect(self.text(32710), rows,
-                        preselect=[i for i,c in enumerate(session.components) if c.addon_id in session.selected])
+                    indices = self.create_dialogs.addons(session)
                     self.settle(200)
                     session.choose(indices)
                 elif choice == 4:
                     session.include_private = not session.include_private
-                elif choice == 6:
+                elif choice == 'help':
                     self.detail(CONTEXT_HELP[Route.CREATE])
-                else:
+                elif choice == 'apply':
                     preview = workflow.preview(session)
                     request = preview.request
                     roots, excluded, public_settings, public_files, private_settings, private_resources = preview.counts
@@ -211,15 +207,17 @@ class NativeDialogs:
                         self.text(32712 if request.include_active_skin else 32713),
                         self.text(32714) % (public_settings, public_files),
                         self.text(32715) % (private_settings, private_resources) if preview.private_enabled else self.text(32716)])
-                    preview_focus = 0
+                    confirmation_body = body
+                    body += '\n' + self.text(32705) + ': ' + self.text(32706 if preview.private_enabled else 32707)
+                    body += '\n\n' + self.text(32719) + '\n' + (
+                        '\n'.join(preview.excluded_labels) if preview.excluded_labels else self.text(32748))
                     while True:
-                        action = self.select(self.text(32708), [self.text(32717), self.text(32718), self.text(32112), self.text(32113)], preview_focus)
-                        if action == 1:
-                            self.viewer(self.text(32718), body + ('\n\n' + self.text(32719) + '\n' + '\n'.join(preview.excluded_labels) if preview.excluded_labels else ''))
-                        elif action == 2:
+                        action = self.create_dialogs.review(body)
+                        self.settle(200)
+                        if action == 'help':
                             self.detail(CONTEXT_HELP[Route.CREATE])
-                        elif action == 0:
-                            confirmed = self.dialog.yesno(self.text(32100), body,
+                        elif action == 'create':
+                            confirmed = self.dialog.yesno(self.text(32100), confirmation_body,
                                 nolabel=self.text(32113), yeslabel=self.text(32717))
                             self.settle(200)
                             if not confirmed:
@@ -242,7 +240,6 @@ class NativeDialogs:
                             return
                         else:
                             break
-                        preview_focus = action
             except Exception as exc:
                 self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32732))
                 self.settle(200)
@@ -417,8 +414,12 @@ class NativeDialogs:
 
     def run(self):
         while True:
-            selected = self.select(self.text(32000),
+            if self.main_select is None:
+                from resources.lib.ui.create_dialogs import CreateDialogs
+                self.main_select = CreateDialogs(self.addon).main
+            selected = self.main_select(self.text(32000),
                 [self.text(i) for i in TITLE_IDS], preselect=self.main_selection)
+            self.settle(200)
             if not 0 <= selected < len(ROUTES):
                 return
             self.main_selection = selected
