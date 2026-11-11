@@ -132,6 +132,26 @@ class PageTests(unittest.TestCase):
         show = ScriptedShow([(100, 4)])
         self.assertEqual(CreateDialogs(Addon(), show).main('Build Manager', ['a'] * 6, 4), 4)
 
+    def test_global_help_order_in_owned_panes_preserves_semantics_and_focus(self):
+        from resources.lib.build_library import LibraryEntry
+        from resources.lib.ui.plan_view import ReviewViewModel
+        from tests.test_install_workflow import plan
+        from tests.test_update_repair_workflow import _summary, _changes_model
+        pages = []
+        adapter = CreateDialogs(Addon(), lambda p: pages.append(p) or 'cancel')
+        adapter.edit(session())
+        adapter.review('Create review')
+        native = NativeDialogs(Addon(), Mock(), lambda ms: None, create_dialogs=adapter)
+        native.confirm_install(LibraryEntry('a'*64, 'demo', '1.0.0', 'Friendly', ('desk',)),
+                               'desk', ReviewViewModel.from_plan(plan()))
+        native.repair_choose_action(_summary())
+        native.repair_approve(_summary(), _changes_model())
+        self.assertEqual([tuple(key for key, _ in p.actions) for p in pages], [
+            ('apply', 'cancel', 'help'), ('create', 'cancel', 'help'),
+            ('apply', 'cancel', 'help'), ('check', 'revision', 'cancel', 'help'),
+            ('apply', 'cancel', 'help')])
+        self.assertEqual([p.focus for p in pages], [100, 201, 202, 201, 202])
+
     def test_invalid_control_or_row_does_not_accept(self):
         p = CreatePage('title', [SettingsRow('field', 'value')], [('cancel', 'Cancel')])
         for control, index in ((0, 0), (204, 0), (100, -1), (100, 1)):
@@ -391,6 +411,36 @@ class KodiBindingTests(unittest.TestCase):
                                  leave == 'confirm')
                 self.assertEqual(order, ['review', 'confirmation'])
                 self.assertEqual(waits, [200, 200])
+
+    def test_repair_review_and_readonly_dismissal_fence_queued_apply(self):
+        from tests.test_update_repair_workflow import _summary, _changes_model, _blocked_model
+        for kind in ('review', 'blocked', 'healthy'):
+            for leave in ('back', 'x', 'escape', 'remote'):
+                with self.subTest(kind=kind, leave=leave):
+                    def show(page):
+                        w = self.window(page)
+                        self.assertTrue(page.native_close)
+                        self.assertFalse(w.getControl(100).visible)
+                        self.assertTrue(w.getControl(110).visible)
+                        if leave == 'back':
+                            w.onClick(202 if kind == 'review' else 201)
+                        elif leave == 'x':
+                            w.onClick(205)
+                        else:
+                            w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
+                        w.onClick(201)
+                        self.assertEqual((page.result, w.closed), ('cancel', 1))
+                        return page.result
+                    dialog = Mock()
+                    ui = NativeDialogs(Addon(), dialog, lambda ms: None,
+                                       create_dialogs=CreateDialogs(Addon(), show))
+                    if kind == 'review':
+                        self.assertFalse(ui.repair_approve(_summary(), _changes_model()))
+                    elif kind == 'blocked':
+                        ui.repair_show(_blocked_model())
+                    else:
+                        ui.repair_show_healthy(_changes_model())
+                    dialog.yesno.assert_not_called()
 
     def test_confirmation_only_accepts_its_own_result_and_retains_long_content(self):
         body = 'WARNING\n' + 'Long build and change information ' * 500

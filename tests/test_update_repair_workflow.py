@@ -397,10 +397,11 @@ class RepairWorkflowTests(unittest.TestCase):
 
     def test_healthy_check_of_the_applied_revision_uses_revision_neutral_wording(self):
         self.service.preview.return_value = plan(PlanState.NO_CHANGES)
-        dialog = Dialog(['check', 'cancel'])
+        dialog = Dialog(['check', 'cancel', 'cancel'])
         NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: self.workflow).repair()
         self.assertEqual(self.service.preview.call_args.args[0], self.applied)
-        title, body = dialog.views[0]
+        healthy = next(p for p in dialog.pages if p.title == STRINGS[repair.S_HEALTHY_TITLE])
+        title, body = healthy.title, healthy.body
         self.assertEqual(title, STRINGS[repair.S_HEALTHY_TITLE])
         self.assertTrue(body.startswith(HEALTHY_BODY), body)
         self.assertNotIn('applied build', body)
@@ -413,11 +414,12 @@ class RepairWorkflowTests(unittest.TestCase):
         self.library.plan_target.return_value = desired
         self.service.preview.return_value = plan(PlanState.NO_CHANGES)
         # Choose Different Revision, pick the alternate, Check for Changes, then Back.
-        dialog = Dialog(['revision', 1, 'check', 'cancel'])
+        dialog = Dialog(['revision', 1, 'check', 'cancel', 'cancel'])
         NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: self.workflow).repair()
         self.library.plan_target.assert_called_once_with(other.entry_id, 'other')
         self.assertEqual(self.service.preview.call_args.args[0], desired)
-        title, body = dialog.views[0]
+        healthy = next(p for p in dialog.pages if p.title == STRINGS[repair.S_HEALTHY_TITLE])
+        title, body = healthy.title, healthy.body
         self.assertEqual(title, STRINGS[repair.S_HEALTHY_TITLE])
         self.assertTrue(body.startswith(HEALTHY_BODY), body)
         self.assertNotIn('applied build', body)
@@ -458,7 +460,7 @@ class RepairNativeTests(unittest.TestCase):
         page = dialog.pages[0]
         self.assertEqual(page.rows, ())
         self.assertEqual(page.actions, (('check', 'Check Changes'), ('revision', 'Choose Revision'),
-                                       ('help', 'Help'), ('cancel', 'Back')))
+                                       ('cancel', 'Back'), ('help', 'Help')))
         self.assertEqual(page.body, STRINGS[repair.S_APPLIED_DETAIL] % ('Friendly Build', '1.0.0', 'desk'))
 
     def test_overview_full_names_desired_revision_and_help_focus(self):
@@ -469,7 +471,7 @@ class RepairNativeTests(unittest.TestCase):
         ui = NativeDialogs(Addon(), dialog, lambda ms: None,
                            create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
         self.assertIsNone(ui.repair_choose_action(summary))
-        self.assertEqual(dialog.page_focuses, [201, 203])
+        self.assertEqual(dialog.page_focuses, [201, 204])
         body = dialog.pages[0].body
         for value in (summary.applied_name, summary.applied_version, summary.profile,
                       summary.desired_name, summary.desired_version):
@@ -478,23 +480,91 @@ class RepairNativeTests(unittest.TestCase):
         self.assertTrue(all(page.rows == () and page.native_close for page in dialog.pages))
         self.assertFalse(dialog.questions)
 
+    def ui(self, dialog):
+        return NativeDialogs(Addon(), dialog, lambda ms: None,
+                             create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
+
     def test_apply_requires_choosing_apply_and_explicit_confirmation(self):
-        ui = NativeDialogs(Addon(), self.dialog([0], [True]), lambda ms: None)
+        dialog = self.dialog(['apply'], [True])
+        ui = self.ui(dialog)
         self.assertTrue(ui.repair_approve(_summary(), _changes_model()))
-        self.assertEqual(ui.dialog.questions[0][0], STRINGS[repair.S_CONFIRM_APPLY])
-        for selects, answers in (([1], []), ([0], [False]), ([-1], [])):
-            with self.subTest(selects=selects, answers=answers):
-                ui = NativeDialogs(Addon(), self.dialog(selects, answers), lambda ms: None)
-                self.assertFalse(ui.repair_approve(_summary(), _changes_model()))
+        self.assertEqual(dialog.questions[0][0], STRINGS[repair.S_CONFIRM_APPLY])
+        self.assertEqual(dialog.questions[0][1], ui.repair_confirmation_body(_summary(), _changes_model()))
+        self.assertFalse(dialog.views)  # no intermediate viewer or selection menu
+        self.assertFalse(dialog.labels)
+        self.assertEqual(dialog.page_focuses, [202])
+        self.assertEqual(dialog.pages[0].actions,
+                         (('apply', 'Apply Changes'), ('cancel', 'Back'), ('help', 'Help')))
+        for choices, answers in ((['cancel'], []), (['apply'], [False]), ([-1], [])):
+            with self.subTest(choices=choices, answers=answers):
+                self.assertFalse(self.ui(self.dialog(choices, answers)).repair_approve(
+                    _summary(), _changes_model()))
 
     def test_blocked_and_no_op_presentation_never_offers_apply(self):
-        dialog = self.dialog()
-        ui = NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
+        dialog = self.dialog(['cancel', 'cancel'])
+        ui = self.ui(dialog)
         ui.repair_show(_blocked_model(), (repair.S_NOTE_DIFFERENT_VERSION,))
         ui.repair_show_healthy(_changes_model())
-        self.assertEqual(dialog.labels, [])
-        self.assertIn(STRINGS[repair.S_NOTE_DIFFERENT_VERSION], dialog.views[0][1])
-        self.assertEqual(dialog.views[1][0], STRINGS[repair.S_HEALTHY_TITLE])
+        self.assertFalse(dialog.labels)
+        self.assertFalse(dialog.views)
+        self.assertEqual(dialog.pages[0].body, '\n\n'.join((
+            ui.review_body(_blocked_model()), STRINGS[repair.S_NOTE_DIFFERENT_VERSION])))
+        self.assertEqual(dialog.pages[1].title, STRINGS[repair.S_HEALTHY_TITLE])
+        self.assertEqual(dialog.pages[1].body, '\n\n'.join((HEALTHY_BODY, ui.review_body(_changes_model()))))
+        for page in dialog.pages:
+            self.assertEqual(page.actions, (('cancel', 'Back'),))
+            self.assertEqual((page.rows, page.selected, page.focus), ((), None, 201))
+            self.assertTrue(page.native_close)
+
+    def test_help_round_trip_keeps_review_body_and_focus_without_recheck(self):
+        dialog = self.dialog(['help', 'help', 'cancel'])
+        ui = self.ui(dialog)
+        model = _changes_model()
+        with patch.object(ui, 'review_body', wraps=ui.review_body) as render:
+            self.assertFalse(ui.repair_approve(_summary(), model))
+        render.assert_called_once_with(model)
+        self.assertEqual(dialog.page_focuses, [202, 203, 203])
+        self.assertTrue(all(p.body == dialog.pages[0].body for p in dialog.pages))
+        self.assertEqual(dialog.views, [(STRINGS[32203], STRINGS[32303])] * 2)
+        self.assertFalse(dialog.questions)
+
+    def test_real_navigation_help_and_two_approval_gates_preserve_execution_rules(self):
+        for actions, answers, approved in ((['cancel'], [], False),
+                                           (['help', 'cancel'], [], False),
+                                           (['help', 'apply'], [False], False),
+                                           (['help', 'apply'], [True], True)):
+            with self.subTest(actions=actions, answers=answers):
+                f = RepairWorkflowTests(); f.setUp()
+                dialog = self.dialog(['check', *actions, 'cancel'], answers)
+                f.ui = self.ui(dialog)
+                f.run_flow()
+                f.service.preview.assert_called_once_with(f.applied)
+                if not approved:
+                    self.assertFalse(dialog.oks)
+                if approved:
+                    f.service.validate.assert_called_once()
+                    f.factory.assert_called_once()
+                    f.coordinator.install_target.assert_called_once()
+                else:
+                    f.service.validate.assert_not_called()
+                    f.factory.assert_not_called()
+                    self.assertFalse(f.coordinator.mock_calls)
+                self.assertEqual(len(dialog.questions), int('apply' in actions))
+
+    def test_every_non_actionable_state_has_back_and_never_reaches_confirmation(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        for state in PlanState:
+            if state is PlanState.CHANGES_READY:
+                continue
+            with self.subTest(state=state):
+                kwargs = {'blockers': (PlanBlocker(BlockerCode.BUILD_DEFINITION_INVALID),)} if state is PlanState.BLOCKED else {}
+                if state is PlanState.INCOMPLETE:
+                    kwargs['gaps'] = (CheckGap.INSPECTION_FAILED,)
+                model = ReviewViewModel.from_plan(plan(state, **kwargs))
+                dialog = self.dialog(['cancel'])
+                self.assertFalse(self.ui(dialog).repair_approve(_summary(), model))
+                self.assertEqual(dialog.pages[0].actions, (('cancel', 'Back'),))
+                self.assertFalse(dialog.questions)
 
     def test_presentation_never_shows_entry_ids_paths_or_private_values(self):
         applied = LibraryEntry('a' * 64, 'demo', '1.0.0', 'Friendly Build', ('desk',))
@@ -508,11 +578,11 @@ class RepairNativeTests(unittest.TestCase):
         service.preview.return_value = plan(PlanState.NO_CHANGES)
         factory = Mock()
         workflow = UpdateRepairWorkflow(library, service, Mock(), factory)
-        dialog = self.dialog(['check', 'cancel'])
+        dialog = self.dialog(['check', 'cancel', 'cancel'])
         NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: workflow).repair()
         service.preview.assert_called_once()
         self.assertFalse(dialog.oks)
-        self.assertEqual(len(dialog.pages), 2)
+        self.assertEqual(len(dialog.pages), 3)
         visible = dialog.everything()
         self.assertIn('Friendly Build', visible)
         for leaked in ('a' * 64, '/private', 'manifest', 'frozen', 'library'):

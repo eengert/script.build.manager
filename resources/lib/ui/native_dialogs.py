@@ -379,7 +379,7 @@ class NativeDialogs:
                 summary.desired_name, summary.desired_version))
         actions = (('check', self.text(repair.S_CHECK_FOR_CHANGES)),
                    ('revision', self.text(repair.S_CHOOSE_REVISION)),
-                   ('help', self.text(repair.S_HELP)), ('cancel', self.text(repair.S_BACK)))
+                   ('cancel', self.text(repair.S_BACK)), ('help', self.text(repair.S_HELP)))
         focus = 201
         while True:
             action, focus = self.information(self.text(repair.S_TITLE), '\n\n'.join(details),
@@ -401,19 +401,30 @@ class NativeDialogs:
     def repair_show(self, model, notes=()):
         """A review with no Apply: blocked, incomplete, or a limit that stops Apply."""
         parts = [self.review_body(model)] + [self.text(string_id) for string_id in notes]
-        self.viewer(self.render(model.title), '\n\n'.join(part for part in parts if part))
+        self.information(self.render(model.title), '\n\n'.join(part for part in parts if part),
+                         (('cancel', self.text(repair.S_BACK)),))
 
     def repair_show_healthy(self, model):
         parts = (self.text(repair.S_HEALTHY_BODY), self.review_body(model))
-        self.viewer(self.text(repair.S_HEALTHY_TITLE), '\n\n'.join(part for part in parts if part))
+        self.information(self.text(repair.S_HEALTHY_TITLE), '\n\n'.join(part for part in parts if part),
+                         (('cancel', self.text(repair.S_BACK)),))
 
     def repair_approve(self, summary, model):
         """Reviewed changes only. Apply Changes must be chosen, then explicitly confirmed."""
-        self.viewer(self.render(model.title), self.review_body(model))
-        selected = self.select(self.render(model.title),
-            [self.text(repair.S_APPLY_CHANGES), self.text(repair.S_BACK)], preselect=1)
-        if selected != 0:
+        if model.state is not PlanState.CHANGES_READY:
+            self.repair_show(model)
             return False
+        body, focus = self.review_body(model), 202
+        while True:
+            action, focus = self.information(self.render(model.title), body,
+                (('apply', self.text(repair.S_APPLY_CHANGES)), ('cancel', self.text(repair.S_BACK)),
+                 ('help', self.text(repair.S_HELP))), focus=focus)
+            if action == 'help':
+                self.detail(CONTEXT_HELP[Route.REPAIR])
+            elif action == 'apply':
+                break
+            else:
+                return False
         confirmed = self.dialog.yesno(self.text(repair.S_CONFIRM_APPLY),
             self.repair_confirmation_body(summary, model),
             nolabel=self.text(repair.S_BACK), yeslabel=self.text(repair.S_APPLY_CHANGES))
