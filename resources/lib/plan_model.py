@@ -499,7 +499,7 @@ class BuildPlan:
         try:
             moment = datetime.strptime(self.checked_at, "%Y-%m-%dT%H:%M:%SZ")
             return moment.replace(tzinfo=timezone.utc).astimezone().strftime("%H:%M")
-        except (ValueError, OverflowError, OSError):
+        except (TypeError, ValueError, OverflowError, OSError):
             return ""
 
     def identity_material(self) -> dict:

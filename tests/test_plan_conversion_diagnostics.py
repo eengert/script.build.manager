@@ -81,8 +81,9 @@ class PlanConversionDiagnostics(unittest.TestCase):
                     repair_provider=lambda: SimpleNamespace(run=lambda _: f.workflow.run(f.ui)))
                 ui.repair_message = Mock()
                 if suffix == 'timestamp':
+                    # Whole-method fault remains outside the formatter's narrow fallback.
                     parser = Mock(side_effect=TypeError(SECRET))
-                    injection = patch.object(plan_model, 'datetime', SimpleNamespace(strptime=parser))
+                    injection = patch.object(plan_model.BuildPlan, 'checked_time_label', parser)
                 else:
                     injection = patch.object(plan_view.ReviewViewModel, '__init__', side_effect=TypeError(SECRET))
                 with injection: ui.repair()

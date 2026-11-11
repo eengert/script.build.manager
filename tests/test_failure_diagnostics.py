@@ -242,15 +242,17 @@ class DiagnosticsTests(unittest.TestCase):
                 provider.assert_called_once_with()
                 self.assert_subphase('status.view_model.' + suffix)
 
-    def test_strptime_typeerror_is_attributed_and_not_fixed(self):
+    def test_strptime_typeerror_uses_optional_empty_label(self):
         from resources.lib import status_model
         source = self.status_with_presentation()
         parser = Mock(side_effect=TypeError(SECRET))
         with patch.object(status_model, 'datetime', SimpleNamespace(strptime=parser)):
-            with self.assertRaises(TypeError):
-                StatusViewModel.from_status(source, diagnostic=diag.emit)
-        parser.assert_called_once_with(source.checked_at, '%Y-%m-%dT%H:%M:%SZ')
-        self.assert_subphase('status.view_model.overall_timestamp')
+            model = StatusViewModel.from_status(source, diagnostic=diag.emit)
+        self.assertEqual(model.overall, source.overall)
+        self.assertEqual(model.check_time, '')
+        self.assertEqual(parser.call_count, 2)
+        parser.assert_called_with(source.checked_at, '%Y-%m-%dT%H:%M:%SZ')
+        self.assertFalse(any('exception=' in line for line in self.logs))
 
     def test_instrumented_current_and_changed_models_and_text_are_unchanged(self):
         from resources.lib.status_model import BuildStatus
