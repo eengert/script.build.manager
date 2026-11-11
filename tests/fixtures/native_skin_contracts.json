@@ -8,6 +8,13 @@
         "source_sha256": "6c4b85f5e53cbc49f67f67df3b6155dd12f0a8351fc9d0cc91fb4a48fcceb898",
         "produces": {}
       },
+      "Button_Control": {
+        "source": "Includes_Buttons.xml",
+        "source_sha256": "661d4ba8601a6f30fad43211e22d4eee6d8014e856bfb58e3d8ba0a38d7f70d5",
+        "produces": {
+          "id": "button"
+        }
+      },
       "Button_Dialog": {
         "source": "Includes_Buttons.xml",
         "source_sha256": "661d4ba8601a6f30fad43211e22d4eee6d8014e856bfb58e3d8ba0a38d7f70d5",
@@ -108,6 +115,19 @@
         "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
         "produces": {}
       }
+    },
+    "confirmation_geometry": {
+      "source": "Dialog_Sizes.xml",
+      "source_sha256": "4670792417fea476eb8e93acbb852ffc12f705287bdb21ecf15b1f7f4a8fd9a2",
+      "frame_height_1080i": 880,
+      "frame_width": 1280,
+      "textbox_width": 800,
+      "textbox_height": 618,
+      "native_confirm_frame_height": 600,
+      "font_source": "Includes_Font.xml",
+      "font_source_sha256": "9eefb633eca622214a9e7a1625e8729b4856aef8ede1314b16371023956285a1",
+      "font_main_plot_size": 28,
+      "font_main_plot_linespacing": 1.16
     }
   },
   "skin.estuary": {
@@ -138,6 +158,11 @@
           "header_id": "label"
         }
       }
+    },
+    "button_defaults": {
+      "source": "Defaults.xml",
+      "source_sha256": "493dd9b8833211c05f2ef2d686acc68ba211a03a28a0933164bafc24cb745bb4",
+      "aligny": "center"
     }
   }
 }

@@ -292,16 +292,15 @@ class NativeTests(unittest.TestCase):
     def test_safe_default_confirmation_and_help_return(self):
         e = LibraryEntry('a'*64, 'internal', '1.2.0', 'Friendly', ('desk',))
         from resources.lib.ui.plan_view import ReviewViewModel
-        d = NativeDialog(['help','apply'], confirms=[False])
+        d = NativeDialog(['help','apply','cancel'])
         ui = self.ui(d)
         self.assertFalse(ui.confirm_install(e, 'desk', ReviewViewModel.from_plan(plan())))
-        self.assertEqual(d.page_focuses, [202, 203])
-        args, kwargs = d.questions[0]
-        body = args[1]
-        # Build Manager leaves Kodi's documented safe No-button default intact.
-        self.assertNotIn('defaultbutton', kwargs)
-        self.assertEqual(kwargs['nolabel'], Addon().getLocalizedString(32113))
-        self.assertEqual(kwargs['yeslabel'], Addon().getLocalizedString(32807))
+        self.assertEqual(d.page_focuses, [202, 203, 202])
+        self.assertFalse(d.questions)
+        final = d.pages[-1]
+        body = final.body
+        self.assertEqual(final.actions, (('confirm', 'Apply Build'), ('cancel', 'Back')))
+        self.assertEqual(final.focus, 202)
         self.assertEqual(body.splitlines(), [
             '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'Friendly 1.2.0',
@@ -312,7 +311,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(d.pages[0].actions, (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help')))
         self.assertEqual(d.pages[0].rows, ())
         self.assertIn('Install Demo 2.0.0', d.pages[0].body)
-        self.assertNotIn('a'*64, json.dumps(d.questions))
+        self.assertNotIn('a'*64, json.dumps([p.body for p in d.pages]))
 
     def test_confirmation_warning_precedes_build_and_single_friendly_change(self):
         from resources.lib.ui.plan_view import ReviewViewModel
@@ -320,12 +319,12 @@ class NativeTests(unittest.TestCase):
                              'BM-UI-003C-20261007', ('current-device-8794224972c6',))
         rows = (SoftwareRow('repository.eengert', SoftwareAction.ENABLE, 'Eengert Repository'),)
         model = ReviewViewModel.from_plan(plan(rows=rows))
-        dialog = NativeDialog(['apply'], confirms=[False])
+        dialog = NativeDialog(['apply','cancel'])
         self.assertFalse(self.ui(dialog).confirm_install(
             entry, 'current-device-8794224972c6', model))
 
-        args, kwargs = dialog.questions[0]
-        body = args[1]
+        final = dialog.pages[-1]
+        body = final.body
         self.assertEqual(body.splitlines(), [
             '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'BM-UI-003C-20261007 1.0.0',
@@ -342,9 +341,9 @@ class NativeTests(unittest.TestCase):
         for sensitive in ('repository.eengert', 'internal-build-id', 'a'*64,
                           '/private/', 'https://', 'SENTINEL_PRIVATE_VALUE'):
             self.assertNotIn(sensitive, body)
-        self.assertNotIn('defaultbutton', kwargs)
-        self.assertEqual(kwargs['nolabel'], 'Back')
-        self.assertEqual(kwargs['yeslabel'], 'Apply Build')
+        self.assertFalse(dialog.questions)
+        self.assertEqual(final.actions, (('confirm', 'Apply Build'), ('cancel', 'Back')))
+        self.assertTrue(final.native_close)
 
     def test_multiple_changes_use_a_compact_count_and_accepted_skips_are_counted(self):
         from resources.lib.ui.plan_view import ReviewViewModel
@@ -354,9 +353,9 @@ class NativeTests(unittest.TestCase):
             SoftwareRow('plugin.module', SoftwareAction.INSTALL_EXACT, 'Demo Module', '2.0.0'),
         )
         model = ReviewViewModel.from_plan(plan(rows=rows))
-        dialog = NativeDialog(['apply'], confirms=[False])
+        dialog = NativeDialog(['apply','cancel'])
         self.assertFalse(self.ui(dialog).confirm_install(entry, 'desk', model))
-        body = dialog.questions[0][0][1]
+        body = dialog.pages[-1].body
         self.assertEqual(body.splitlines(), [
             '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'Friendly Build 1.2.0',
@@ -373,9 +372,9 @@ class NativeTests(unittest.TestCase):
             SoftwareRow('plugin.skip.two', SoftwareAction.ACCEPTED_SKIP, 'Skipped Beta'),
         )
         exception_model = ReviewViewModel.from_plan(plan(rows=exception_rows))
-        exception_dialog = NativeDialog(['apply'], confirms=[False])
+        exception_dialog = NativeDialog(['apply','cancel'])
         self.assertFalse(self.ui(exception_dialog).confirm_install(entry, 'desk', exception_model))
-        exception_body = exception_dialog.questions[0][0][1]
+        exception_body = exception_dialog.pages[-1].body
         self.assertIn('This build — changes: 1; accepted skips: 2', exception_body)
         self.assertNotIn('Skipped Alpha', exception_body)
         self.assertNotIn('Skipped Beta', exception_body)
@@ -389,24 +388,28 @@ class NativeTests(unittest.TestCase):
             if state is PlanState.CHANGES_READY:
                 continue
             with self.subTest(state=state):
-                d = NativeDialog([])
+                d = NativeDialog(['cancel'] if state is PlanState.NO_CHANGES else [])
                 from tests.test_update_repair_workflow import plan as valid_plan
                 model = ReviewViewModel.from_plan(
                     valid_plan(state) if state in (PlanState.DECISION_REQUIRED, PlanState.RESOLUTION_REQUIRED)
                     else plan(state))
                 self.assertFalse(self.ui(d).confirm_install(entry, 'desk', model))
-                self.assertFalse(d.pages)
                 self.assertFalse(d.questions)
-                self.assertEqual(d.details, [(self.ui(d).render(model.title), self.ui(d).review_body(model))])
+                if state is PlanState.NO_CHANGES:
+                    self.assertEqual(d.pages[0].actions, (('cancel', 'Back'),))
+                    self.assertEqual(d.pages[0].body, self.ui(d).review_body(model))
+                    self.assertEqual(d.pages[0].focus, 201)
+                    self.assertTrue(d.pages[0].native_close)
+                else:
+                    self.assertFalse(d.pages)
+                    self.assertEqual(d.details, [(self.ui(d).render(model.title), self.ui(d).review_body(model))])
 
     def test_real_review_buttons_keep_final_confirmation_and_fresh_validation_gates(self):
-        for actions, answers, expected in ((['cancel'], [], False),
-                                            (['help', 'cancel'], [], False),
-                                            (['apply'], [False], False),
-                                            (['apply'], [True], True)):
-            with self.subTest(actions=actions, answers=answers):
+        for actions, expected in ((['cancel'], False), (['help', 'cancel'], False),
+                                  (['apply', 'cancel'], False), (['apply', 'confirm'], True)):
+            with self.subTest(actions=actions):
                 f = WorkflowTests(); f.setUp()
-                dialog = NativeDialog([0, 1, *actions], confirms=answers)
+                dialog = NativeDialog([0, 1, *actions])
                 ui = self.ui(dialog)
                 f.ui = ui
                 f.run_flow()
@@ -418,10 +421,56 @@ class NativeTests(unittest.TestCase):
                 else:
                     f.service.validate.assert_not_called()
                     f.assert_no_execution()
-                self.assertEqual(len(dialog.questions), int('apply' in actions))
+                self.assertFalse(dialog.questions)
+                self.assertEqual(sum(dict(p.actions).get('confirm') == 'Apply Build' for p in dialog.pages),
+                                 int('apply' in actions))
                 for page in dialog.pages:
                     self.assertEqual(page.rows, ())
                     self.assertIn('Install Demo 2.0.0', page.body)
+
+    def test_no_changes_back_uses_one_preview_and_never_validates_or_executes(self):
+        f = WorkflowTests(); f.setUp()
+        f.service.preview.return_value = plan(PlanState.NO_CHANGES)
+        dialog = NativeDialog([0, 1, 'cancel'])
+        f.ui = self.ui(dialog)
+        f.run_flow()
+        f.service.preview.assert_called_once_with(f.target)
+        f.service.validate.assert_not_called()
+        f.assert_no_execution()
+        self.assertEqual(len(dialog.pages), 1)
+        page = dialog.pages[0]
+        self.assertEqual(page.actions, (('cancel', 'Back'),))
+        self.assertIn('Checked at ', page.body)
+        from resources.lib.ui.plan_view import ReviewViewModel
+        self.assertEqual(page.body, f.ui.review_body(ReviewViewModel.from_plan(f.service.preview.return_value)))
+
+    def test_no_changes_preserves_missing_timestamp_without_inventing_one(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        model = replace(ReviewViewModel.from_plan(plan(PlanState.NO_CHANGES)), check_time='')
+        dialog = NativeDialog(['cancel'])
+        ui = self.ui(dialog)
+        ui.show_install_review(model)
+        self.assertEqual(dialog.pages[0].body, ui.review_body(model))
+        self.assertNotIn('Checked at', dialog.pages[0].body)
+        self.assertEqual(dialog.pages[0].actions, (('cancel', 'Back'),))
+
+    def test_failed_confirmation_never_validates_or_executes(self):
+        f = WorkflowTests(); f.setUp()
+        dialog = NativeDialog([0, 1])
+        pages = []
+        def show(page):
+            pages.append(page)
+            if len(pages) == 1:
+                return 'apply'
+            raise RuntimeError('confirmation unavailable')
+        f.ui = self.ui(dialog)
+        f.ui.create_dialogs = CreateDialogs(Addon(), show)
+        with self.assertRaises(RuntimeError):
+            f.run_flow()
+        self.assertEqual(len(pages), 2)
+        f.service.preview.assert_called_once()
+        f.service.validate.assert_not_called()
+        f.assert_no_execution()
 
     def test_prepared_repository_label_actual_version(self):
         from resources.lib.ui.plan_view import ReviewViewModel
@@ -469,7 +518,7 @@ class PreparationFlowTests(unittest.TestCase):
         executor.install_target.side_effect = coordinator.install_target
         workflow = InstallWorkflow(self.library, service, preparation,
             lambda: executor, lambda: OperationStatus())
-        dialog = NativeDialog([0,0,0,'apply'], confirms=[True])
+        dialog = NativeDialog([0,0,0,'apply','confirm'])
         ui = NativeDialogs(Addon(), dialog, lambda _: None,
                            create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
         original_confirm = ui.confirm_install

@@ -191,45 +191,65 @@
                         <orientation>vertical</orientation>
                         <itemgap>20</itemgap>
                         <include>Size_Grouplist_Pad</include>
-                        <include content="Button_Dialog">
+                        <include content="Button_Control">
                             <param name="id">201</param>
-                            <param name="groupid">1201</param>
-                            <param name="font">font_mini_bold</param>
-                            <param name="istext">true</param>
-                            <param name="label">$INFO[Control.GetLabel(201)]</param>
+                            <param name="dialog">true</param>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <font>font_mini_bold</font>
+                            <textoffsetx>0</textoffsetx>
+                            <textoffsety>0</textoffsety>
+                            <textcolor>dialog_fg_70</textcolor>
+                            <focusedcolor>$VAR[ColorSelected]</focusedcolor>
+                            <wrapmultiline>false</wrapmultiline>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
                         </include>
-                        <include content="Button_Dialog">
+                        <include content="Button_Control">
                             <param name="id">202</param>
-                            <param name="groupid">1202</param>
-                            <param name="font">font_mini_bold</param>
-                            <param name="istext">true</param>
-                            <param name="label">$INFO[Control.GetLabel(202)]</param>
+                            <param name="dialog">true</param>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <font>font_mini_bold</font>
+                            <textoffsetx>0</textoffsetx>
+                            <textoffsety>0</textoffsety>
+                            <textcolor>dialog_fg_70</textcolor>
+                            <focusedcolor>$VAR[ColorSelected]</focusedcolor>
+                            <wrapmultiline>false</wrapmultiline>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
                         </include>
-                        <include content="Button_Dialog">
+                        <include content="Button_Control">
                             <param name="id">203</param>
-                            <param name="groupid">1203</param>
-                            <param name="font">font_mini_bold</param>
-                            <param name="istext">true</param>
-                            <param name="label">$INFO[Control.GetLabel(203)]</param>
+                            <param name="dialog">true</param>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <font>font_mini_bold</font>
+                            <textoffsetx>0</textoffsetx>
+                            <textoffsety>0</textoffsety>
+                            <textcolor>dialog_fg_70</textcolor>
+                            <focusedcolor>$VAR[ColorSelected]</focusedcolor>
+                            <wrapmultiline>false</wrapmultiline>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
                         </include>
-                        <include content="Button_Dialog">
+                        <include content="Button_Control">
                             <param name="id">204</param>
-                            <param name="groupid">1204</param>
-                            <param name="font">font_mini_bold</param>
-                            <param name="istext">true</param>
-                            <param name="label">$INFO[Control.GetLabel(204)]</param>
+                            <param name="dialog">true</param>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <font>font_mini_bold</font>
+                            <textoffsetx>0</textoffsetx>
+                            <textoffsety>0</textoffsety>
+                            <textcolor>dialog_fg_70</textcolor>
+                            <focusedcolor>$VAR[ColorSelected]</focusedcolor>
+                            <wrapmultiline>false</wrapmultiline>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>

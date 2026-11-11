@@ -108,6 +108,13 @@ class CreateDialogs:
         result = self.show(page)
         return result, page.focus
 
+    def confirmation(self, body):
+        # A new modal page and distinct result: review's 'apply' is never approval.
+        page = CreatePage(self.text(32805), body=body,
+            actions=(('confirm', self.text(32807)), ('cancel', self.text(32113))),
+            focus=202, native_close=True)
+        return self.show(page) == 'confirm'
+
     def _show(self, page):
         # Lazy import keeps both the page model and other UI routes Kodi-free.
         from xbmcgui import WindowXMLDialog, ListItem
@@ -170,6 +177,11 @@ def create_window_type(base, list_item):
 
         def onClick(self, control_id):
             if self.finished:
+                return
+            if control_id == 205 and self.page.native_close:
+                self.page.result = 'cancel'
+                self.finished = True
+                self.close()
                 return
             self.remember_focus()
             if self.page.activate(control_id, self.page.position):

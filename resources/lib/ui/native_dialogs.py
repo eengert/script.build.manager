@@ -298,7 +298,11 @@ class NativeDialogs:
                 self.busy(False)
 
     def show_install_review(self, model):
-        self.viewer(self.render(model.title), self.review_body(model))
+        if model.state is PlanState.NO_CHANGES:
+            self.information(self.render(model.title), self.review_body(model),
+                             (('cancel', self.text(32113)),))
+        else:
+            self.viewer(self.render(model.title), self.review_body(model))
 
     def information(self, title, body, actions, focus=201):
         if self.create_dialogs is None:
@@ -330,14 +334,15 @@ class NativeDialogs:
             return False
         body = self.install_confirmation_body(entry, profile, model)
         review = self.review_body(model)
-        focus = 202  # Back is safe on entry; final yes/no also retains Kodi's No default.
+        focus = 202  # Both separate pages start on Back.
         while True:
             action, focus = self.information(self.text(32101), review,
                 (('apply', self.text(32807)), ('cancel', self.text(32113)),
                  ('help', self.text(32112))), focus=focus)
             if action == 'apply':
-                confirmed = self.dialog.yesno(self.text(32805), body,
-                    nolabel=self.text(32113), yeslabel=self.text(32807))
+                # information() settled the review's input release before this
+                # separate modal. Its own callbacks reject queued terminal events.
+                confirmed = self.create_dialogs.confirmation(body)
                 self.settle(200)
                 return bool(confirmed)
             elif action == 'help':

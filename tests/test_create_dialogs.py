@@ -325,7 +325,7 @@ class KodiBindingTests(unittest.TestCase):
                           if w.getControl(i).visible], ['Check Again', 'Back'])
         self.assertEqual(w.properties['bm.native_close'], 'true')
         self.assertEqual(w.getFocusId(), 201)
-        for ident in (100, 110, 121, 203, 204, 205):
+        for ident in (100, 110, 121, 203, 204):
             w.onClick(ident)
             self.assertEqual((p.result, w.closed), ('cancel', 0))
         w.onClick(201)
@@ -338,11 +338,71 @@ class KodiBindingTests(unittest.TestCase):
             CreateDialogs(Addon(), show=lambda p: pages.append(p) or 'cancel').status('details')
             w = self.window(pages[0])
             if action is None:
-                w.onClick(205)  # native builtin Close then closes the window
-                w.close()
+                w.onClick(205)  # explicit native header close is terminal too
             else:
                 w.onAction(SimpleNamespace(getId=lambda: action))
             self.assertEqual((w.page.result, w.closed), ('cancel', 1))
+
+    def test_separate_confirmation_requires_fresh_affirmative_and_rejects_queued_events(self):
+        from tests.test_install_workflow import plan
+        from resources.lib.ui.plan_view import ReviewViewModel
+        from resources.lib.build_library import LibraryEntry
+        for leave in ('confirm', 'back', 'x', 'escape', 'remote', 'dismiss'):
+            with self.subTest(leave=leave):
+                windows, waits, order = [], [], []
+                def show(page):
+                    w = self.window(page)
+                    windows.append(w)
+                    if len(windows) == 1:
+                        order.append('review')
+                        self.assertEqual(page.actions[0][0], 'apply')
+                        w.onClick(201)
+                        w.onClick(201)
+                        self.assertEqual(w.closed, 1)
+                    else:
+                        order.append('confirmation')
+                        self.assertEqual(waits, [200])  # review release settled before construction
+                        self.assertEqual(w.getFocusId(), 202)
+                        self.assertEqual(page.actions, (('confirm', 'Apply Build'), ('cancel', 'Back')))
+                        self.assertEqual(page.rows, ())
+                        self.assertTrue(page.native_close)
+                        self.assertEqual(w.getControl(110).text, page.body)
+                        windows[0].onClick(201)  # old queued event stays on old window
+                        self.assertEqual(page.result, 'cancel')
+                        if leave == 'confirm':
+                            w.setFocusId(201)
+                            w.onClick(201)  # independent second affirmative event
+                        elif leave == 'back':
+                            w.onClick(w.getFocusId())  # queued Select at safe default cancels
+                        elif leave == 'x':
+                            w.onClick(205)
+                        elif leave in ('escape', 'remote'):
+                            w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
+                        else:
+                            w.close()  # direct dismissal retains the default cancel result
+                            return page.result
+                        w.onClick(201)  # duplicate or queued Apply after terminal event is ignored
+                        self.assertEqual(w.closed, 1)
+                    return page.result
+                entry = LibraryEntry('a'*64, 'internal', '1.0.0', 'Friendly Build', ('desk',))
+                ui = NativeDialogs(Addon(), Mock(), waits.append,
+                                   create_dialogs=CreateDialogs(Addon(), show))
+                self.assertEqual(ui.confirm_install(entry, 'desk', ReviewViewModel.from_plan(plan())),
+                                 leave == 'confirm')
+                self.assertEqual(order, ['review', 'confirmation'])
+                self.assertEqual(waits, [200, 200])
+
+    def test_confirmation_only_accepts_its_own_result_and_retains_long_content(self):
+        body = 'WARNING\n' + 'Long build and change information ' * 500
+        for result in ('apply', 'cancel', None, False, 0, 'confirm'):
+            pages = []
+            def show(page):
+                pages.append(page)
+                return result
+            self.assertEqual(CreateDialogs(Addon(), show).confirmation(body), result == 'confirm')
+            self.assertEqual(pages[0].body, body)
+            self.assertEqual(pages[0].focus, 202)
+            self.assertTrue(pages[0].native_close)
 
     def test_information_back_help_escape_and_close_never_accept_apply(self):
         actions = (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help'))
@@ -361,9 +421,8 @@ class KodiBindingTests(unittest.TestCase):
             self.assertEqual(w.closed, 0)
             w.onClick(control)
             self.assertEqual(p.result, expected)
-            if control != 205:
-                w.onClick(201)  # a queued Apply after Back/Help is ignored
-                self.assertEqual(p.result, expected)
+            w.onClick(201)  # queued Apply after Back/Help/X is ignored
+            self.assertEqual(p.result, expected)
         for action in (10, 92):
             p = CreatePage('Install Build', body='details', actions=actions, focus=202, native_close=True)
             w = self.window(p)
@@ -606,7 +665,7 @@ class XmlTests(unittest.TestCase):
         af3 = ET.parse(ROOT / 'resources/skins/skin.arctic.fuse.3/1080i/script-build-manager-create.xml')
         names = {n.get('content') or n.text for n in af3.findall('.//include')}
         self.assertLessEqual({'Part_Background_Panel', 'Dimension_DialogHugeMenu', 'Part_List_Highlight',
-            'Part_List_Checkmark', 'Button_Dialog', 'Part_Scrollbar_Max'}, names)
+            'Part_List_Checkmark', 'Button_Control', 'Part_Scrollbar_Max'}, names)
         self.assertEqual(contracts['skin.arctic.fuse.3']['revision'], '660a05c35546718e90a88be7798bb0a92632abce')
         for row in contracts.values():
             for contract in row['includes'].values():
@@ -650,7 +709,7 @@ class XmlTests(unittest.TestCase):
             if path.parent.parent.name == 'skin.estuary':
                 actions = [root.find('.//control[@id="9000"]')]
             elif path.parent.parent.name == 'skin.arctic.fuse.3':
-                actions = root.findall('.//include[@content="Button_Dialog"]')
+                actions = root.findall('.//include[@content="Button_Control"]')
             else:
                 actions = [root.find('.//control[@id="%s"]' % i) for i in range(201, 205)]
             for action in actions:
@@ -658,16 +717,49 @@ class XmlTests(unittest.TestCase):
                     self.assertEqual([(n.get('condition'), n.text) for n in action.findall(direction)],
                         [('Control.IsVisible(110)', '121'), ('!Control.IsVisible(110)', '100')])
 
-    def test_native_buttons_keep_order_and_af3_uses_text_only_native_variant(self):
-        for skin, include in (('skin.arctic.fuse.3', 'Button_Dialog'), ('skin.estuary', 'DefaultDialogButton')):
+    def test_shared_buttons_are_centered_single_line_without_overlay_or_icons(self):
+        for skin, include in (('skin.arctic.fuse.3', 'Button_Control'), ('skin.estuary', 'DefaultDialogButton')):
             root = ET.parse(ROOT / 'resources/skins' / skin / '1080i/script-build-manager-create.xml')
             buttons = root.findall('.//include[@content="%s"]' % include)
             self.assertEqual([n.findtext('param[@name="id"]') for n in buttons], ['201', '202', '203', '204'])
             if skin == 'skin.arctic.fuse.3':
-                self.assertTrue(all(n.findtext('param[@name="istext"]') == 'true' for n in buttons))
-                self.assertTrue(all(n.find('param[@name="icon"]') is None for n in buttons))
-                self.assertEqual([n.findtext('param[@name="label"]') for n in buttons],
-                    ['$INFO[Control.GetLabel(%s)]' % i for i in range(201, 205)])
+                self.assertFalse(root.findall('.//include[@content="Button_Label"]'))
+                self.assertFalse(root.findall('.//include[@content="Button_Dialog"]'))
+                for n in buttons:
+                    self.assertEqual(n.findtext('align'), 'center')
+                    self.assertEqual(n.findtext('aligny'), 'center')
+                    self.assertEqual(n.findtext('font'), 'font_mini_bold')
+                    self.assertEqual(n.findtext('textoffsetx'), '0')
+                    self.assertEqual(n.findtext('textoffsety'), '0')
+                    self.assertEqual(n.findtext('wrapmultiline'), 'false')
+                    self.assertEqual(n.findtext('textcolor'), 'dialog_fg_70')
+                    self.assertEqual(n.findtext('focusedcolor'), '$VAR[ColorSelected]')
+                    self.assertIsNone(n.find('param[@name="icon"]'))
+                    self.assertIsNone(n.find('param[@name="label"]'))
+                self.assertNotIn('$INFO[Control.GetLabel', Path(ROOT / 'resources/skins' / skin / '1080i/script-build-manager-create.xml').read_text())
+            else:
+                self.assertEqual(self.contracts()[skin]['button_defaults']['aligny'], 'center')
+        fallback = ET.parse(ROOT / 'resources/skins/Default/1080i/script-build-manager-create.xml')
+        for ident in range(201, 205):
+            button = fallback.find('.//control[@id="%s"]' % ident)
+            self.assertEqual(button.findtext('align'), 'center')
+            self.assertEqual(button.findtext('aligny'), 'center')
+
+    def test_confirmation_reuses_tall_frame_with_wrapping_and_scrollbar(self):
+        geometry = self.contracts()['skin.arctic.fuse.3']['confirmation_geometry']
+        self.assertEqual((geometry['frame_width'], geometry['frame_height_1080i']), (1280, 880))
+        self.assertGreater(geometry['frame_height_1080i'], geometry['native_confirm_frame_height'])
+        self.assertEqual((geometry['textbox_width'], geometry['textbox_height']), (800, 618))
+        for path in self.resources():
+            tree = ET.parse(path)
+            box = tree.find('.//control[@id="110"]')
+            self.assertEqual(box.findtext('pagecontrol'), '121')
+            self.assertEqual(box.findtext('autoscroll'), 'false')
+            self.assertIsNone(box.find('scroll'))  # normal textbox wrapping, not a scrolling label
+            self.assertIsNone(box.find('singleline'))
+        af3 = ET.parse(ROOT / 'resources/skins/skin.arctic.fuse.3/1080i/script-build-manager-create.xml')
+        self.assertTrue(af3.findall('.//include[.="Dimension_DialogHugeMenu"]'))
+        self.assertEqual(af3.findtext('.//control[@id="110"]/font'), 'font_main_plot')
 
     def test_fallback_is_self_contained_and_toggle_states_are_distinct(self):
         import struct

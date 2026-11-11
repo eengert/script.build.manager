@@ -457,8 +457,8 @@ class RepairNativeTests(unittest.TestCase):
         self.assertFalse(dialog.labels)
         page = dialog.pages[0]
         self.assertEqual(page.rows, ())
-        self.assertEqual(page.actions, (('check', STRINGS[32903]), ('revision', STRINGS[32904]),
-                                       ('help', STRINGS[32112]), ('cancel', STRINGS[32113])))
+        self.assertEqual(page.actions, (('check', 'Check Changes'), ('revision', 'Choose Revision'),
+                                       ('help', 'Help'), ('cancel', 'Back')))
         self.assertEqual(page.body, STRINGS[repair.S_APPLIED_DETAIL] % ('Friendly Build', '1.0.0', 'desk'))
 
     def test_overview_full_names_desired_revision_and_help_focus(self):
