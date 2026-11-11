@@ -477,7 +477,7 @@ class RepairNativeTests(unittest.TestCase):
                       summary.desired_name, summary.desired_version):
             self.assertIn(value, body)
         self.assertEqual(dialog.pages[0].body, dialog.pages[1].body)
-        self.assertTrue(all(page.rows == () and page.native_close for page in dialog.pages))
+        self.assertTrue(all(page.rows == () and not hasattr(page, 'native_close') for page in dialog.pages))
         self.assertFalse(dialog.questions)
 
     def ui(self, dialog):
@@ -516,7 +516,7 @@ class RepairNativeTests(unittest.TestCase):
         for page in dialog.pages:
             self.assertEqual(page.actions, (('cancel', 'Back'),))
             self.assertEqual((page.rows, page.selected, page.focus), ((), None, 201))
-            self.assertTrue(page.native_close)
+            self.assertFalse(hasattr(page, 'native_close'))
 
     def test_help_round_trip_keeps_review_body_and_focus_without_recheck(self):
         dialog = self.dialog(['help', 'help', 'cancel'])

@@ -176,7 +176,7 @@ class FirstScreen(unittest.TestCase):
             "Private settings: Current"])
         self.assertEqual((page.rows, page.selected, page.focus), ((), None, 201))
         self.assertEqual(page.actions, (('check_again', 'Check Again'), ('cancel', 'Back')))
-        self.assertTrue(page.native_close)
+        self.assertFalse(hasattr(page, 'native_close'))
         self.assertEqual(len(calls), 1)
         self.assertFalse(dialog.details)
 

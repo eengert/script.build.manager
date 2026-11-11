@@ -150,19 +150,18 @@
         "produces": {
           "id": "button"
         }
-      },
-      "DialogBackgroundCommons": {
-        "source": "Includes.xml",
-        "source_sha256": "241af02f9c9d8b5308227047967926e2c3c6fffe99ac9c114c12bab5ff7f98a7",
-        "produces": {
-          "header_id": "label"
-        }
       }
     },
     "button_defaults": {
       "source": "Defaults.xml",
       "source_sha256": "493dd9b8833211c05f2ef2d686acc68ba211a03a28a0933164bafc24cb745bb4",
       "aligny": "center"
+    },
+    "headerless_background": {
+      "source": "Includes.xml",
+      "source_sha256": "241af02f9c9d8b5308227047967926e2c3c6fffe99ac9c114c12bab5ff7f98a7",
+      "projection_sha256": "55f68757f12dc377dadf49e8ed6ad18dc891c8e343ffa368515456983fad8011",
+      "omitted_header_controls": 2
     }
   }
 }

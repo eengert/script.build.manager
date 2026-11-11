@@ -36,27 +36,6 @@
                 <textcolor>FFFFFFFF</textcolor>
                 <label />
             </control>
-            <control type="button" id="205">
-                <wrapmultiline>false</wrapmultiline>
-                <right>40</right>
-                <top>25</top>
-                <width>200</width>
-                <height>70</height>
-                <font>font13</font>
-                <label>$ADDON[script.build.manager 32441]</label>
-                <textcolor>FFFFFFFF</textcolor>
-                <focusedcolor>FFFFFFFF</focusedcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <texturefocus border="16" colordiffuse="FF277DA8">bm-panel.png</texturefocus>
-                <texturenofocus border="16" colordiffuse="FF30363D">bm-panel.png</texturenofocus>
-                <visible>String.IsEqual(Window.Property(bm.native_close),true)</visible>
-                <onclick>Close</onclick>
-                <onleft>201</onleft>
-                <onright>201</onright>
-                <onup>201</onup>
-                <ondown>201</ondown>
-            </control>
             <control type="list" id="100">
                 <left>40</left>
                 <top>130</top>

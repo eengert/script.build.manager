@@ -343,7 +343,7 @@ class NativeTests(unittest.TestCase):
             self.assertNotIn(sensitive, body)
         self.assertFalse(dialog.questions)
         self.assertEqual(final.actions, (('confirm', 'Apply Build'), ('cancel', 'Back')))
-        self.assertTrue(final.native_close)
+        self.assertFalse(hasattr(final, 'native_close'))
 
     def test_multiple_changes_use_a_compact_count_and_accepted_skips_are_counted(self):
         from resources.lib.ui.plan_view import ReviewViewModel
@@ -399,7 +399,7 @@ class NativeTests(unittest.TestCase):
                     self.assertEqual(d.pages[0].actions, (('cancel', 'Back'),))
                     self.assertEqual(d.pages[0].body, self.ui(d).review_body(model))
                     self.assertEqual(d.pages[0].focus, 201)
-                    self.assertTrue(d.pages[0].native_close)
+                    self.assertFalse(hasattr(d.pages[0], 'native_close'))
                 else:
                     self.assertFalse(d.pages)
                     self.assertEqual(d.details, [(self.ui(d).render(model.title), self.ui(d).review_body(model))])

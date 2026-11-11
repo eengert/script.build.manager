@@ -129,9 +129,13 @@ confirmation. Follow `docs/NATIVE_DIALOG_STYLING.md` and enforce these rules:
   core to achieve the product design.
 - Order primary actions first, Back/Close/Cancel next, and Help last when
   appropriate. Do not add Help to otherwise complete confirmation panes.
+- Do not add header Close/X controls to any Build Manager-owned window. Keep
+  the main screen's single Close action in its action pane and preserve subpage
+  Back/Cancel/Close actions. Escape and remote Back MUST continue to dismiss
+  safely. Skin background includes MUST NOT introduce implicit header actions.
 - Final mutation confirmations MUST be a separate modal after review, focus
   Back initially, and default to cancellation. Only the final pane's explicit
-  `confirm` action may approve. Back/X/Escape/remote Back or dismissal must
+  `confirm` action may approve. Back/Escape/remote Back or dismissal must
   never approve, and display failures must not execute work.
 - Preserve input-release settling and duplicate/queued-event guards between
   review and confirmation. Do not collapse the two affirmative actions or

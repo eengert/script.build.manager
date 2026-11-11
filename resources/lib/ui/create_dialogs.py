@@ -15,7 +15,7 @@ class SettingsRow:
 
 
 class CreatePage:
-    def __init__(self, title, rows=(), actions=(), body=None, selected=None, focus=100, position=0, native_close=False):
+    def __init__(self, title, rows=(), actions=(), body=None, selected=None, focus=100, position=0):
         self.title, self.rows, self.actions, self.body = title, tuple(rows), tuple(actions), body
         keys = tuple(key for key, _ in self.actions)
         if len(keys) > 4 or len(set(keys)) != len(keys):
@@ -24,12 +24,11 @@ class CreatePage:
             raise ValueError('Help must be the last action')
         if 'cancel' in keys and any(key != 'help' for key in keys[keys.index('cancel') + 1:]):
             raise ValueError('Primary actions must precede navigation')
-        if 'confirm' in keys and (keys != ('confirm', 'cancel') or focus != 202 or not native_close):
+        if 'confirm' in keys and (keys != ('confirm', 'cancel') or focus != 202):
             raise ValueError('Final confirmation requires Back focus and cancellation')
         # None means ordinary settings; a set (including empty) means toggles.
         self.selected = None if selected is None else set(selected)
         self.focus, self.position = focus, position
-        self.native_close = native_close
         self.result = 'cancel'
 
     def activate(self, control_id, position=0):
@@ -108,12 +107,12 @@ class CreateDialogs:
     def status(self, body):
         page = CreatePage(self.text(32103), actions=(('check_again', self.text(32440)),
                           ('cancel', self.text(32113))),
-                          body=body, focus=201, native_close=True)
+                          body=body, focus=201)
         return self.show(page)
 
     def information(self, title, body, actions, focus=201):
         """Read-only text with explicit actions; return focus for Help round trips."""
-        page = CreatePage(title, body=body, actions=actions, focus=focus, native_close=True)
+        page = CreatePage(title, body=body, actions=actions, focus=focus)
         result = self.show(page)
         return result, page.focus
 
@@ -121,7 +120,7 @@ class CreateDialogs:
         # A new modal page and distinct result: review's 'apply' is never approval.
         page = CreatePage(self.text(title_id), body=body,
             actions=(('confirm', self.text(affirmative_id)), ('cancel', self.text(32113))),
-            focus=202, native_close=True)
+            focus=202)
         return self.show(page) == 'confirm'
 
     def _show(self, page):
@@ -146,7 +145,6 @@ def create_window_type(base, list_item):
 
         def onInit(self):
             p = self.page
-            self.setProperty('bm.native_close', 'true' if p.native_close else 'false')
             self.getControl(10).setLabel(p.title)
             review = p.body is not None
             self.getControl(100).setVisible(not review)
@@ -186,11 +184,6 @@ def create_window_type(base, list_item):
 
         def onClick(self, control_id):
             if self.finished:
-                return
-            if control_id == 205 and self.page.native_close:
-                self.page.result = 'cancel'
-                self.finished = True
-                self.close()
                 return
             self.remember_focus()
             if self.page.activate(control_id, self.page.position):

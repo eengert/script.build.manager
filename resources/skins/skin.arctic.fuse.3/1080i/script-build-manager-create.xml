@@ -27,14 +27,6 @@
                             <param name="label" />
                         </include>
                         <include>Part_Line</include>
-                        <control type="group">
-                            <visible>String.IsEqual(Window.Property(bm.native_close),true)</visible>
-                            <include content="Part_CloseButton">
-                                <param name="id">205</param>
-                                <param name="groupid">1205</param>
-                                <param name="onmove">201</param>
-                            </include>
-                        </control>
                     </control>
                     <control type="group">
                         <include>Size_Group_Body</include>

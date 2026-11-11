@@ -157,9 +157,9 @@ class PageTests(unittest.TestCase):
                    dict(actions=(('cancel', 'Back'), ('apply', 'Apply'))),
                    dict(actions=(('help', 'Help'), ('help', 'Help'))),
                    dict(actions=tuple((str(i), str(i)) for i in range(5))),
-                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back')), focus=201, native_close=True),
-                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back')), focus=202),
-                   dict(actions=(('confirm', 'Apply'),), focus=202, native_close=True)]
+                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back')), focus=201),
+                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back'), ('help', 'Help')), focus=202),
+                   dict(actions=(('confirm', 'Apply'),), focus=202)]
         for kwargs in invalid:
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 CreatePage('Invalid', **kwargs)
@@ -175,8 +175,8 @@ class PageTests(unittest.TestCase):
             p = pages[0]
             self.assertEqual((p.title, p.body), (Addon.strings[title], 'original warning/details'))
             self.assertEqual(p.actions, (('confirm', Addon.strings[affirmative]), ('cancel', 'Back')))
-            self.assertEqual((p.focus, p.rows, p.selected, p.result, p.native_close),
-                             (202, (), None, 'cancel', True))
+            self.assertEqual((p.focus, p.rows, p.selected, p.result),
+                             (202, (), None, 'cancel'))
 
     def test_invalid_control_or_row_does_not_accept(self):
         p = CreatePage('title', [SettingsRow('field', 'value')], [('cancel', 'Cancel')])
@@ -287,7 +287,7 @@ class WorkflowDialogTests(unittest.TestCase):
         self.dialog.yesno.assert_not_called()
 
     def test_create_owned_second_confirmation_dismissal_failure_and_input_release(self):
-        for leave in ('back', 'x', 'escape', 'remote', 'dismiss', 'failure', 'confirm'):
+        for leave in ('back', 'removed_header', 'escape', 'remote', 'dismiss', 'failure', 'confirm'):
             with self.subTest(leave=leave):
                 self.setUp()
                 windows, waits = [], []
@@ -310,8 +310,10 @@ class WorkflowDialogTests(unittest.TestCase):
                             raise RuntimeError('private-value-not-for-ui')
                         if leave == 'back':
                             w.onClick(w.getFocusId())
-                        elif leave == 'x':
-                            w.onClick(205)
+                        elif leave == 'removed_header':
+                            w.onClick(205)  # removed header events are inert
+                            self.assertEqual((page.result, w.closed), ('cancel', 0))
+                            w.onAction(SimpleNamespace(getId=lambda: 92))
                         elif leave in ('escape', 'remote'):
                             w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
                         elif leave == 'dismiss':
@@ -419,7 +421,7 @@ class KodiBindingTests(unittest.TestCase):
         self.assertFalse(w.getControl(100).visible)
         self.assertEqual([w.getControl(i).label for i in range(201, 205)
                           if w.getControl(i).visible], ['Check Again', 'Back'])
-        self.assertEqual(w.properties['bm.native_close'], 'true')
+        self.assertNotIn('bm.native_close', w.properties)
         self.assertEqual(w.getFocusId(), 201)
         for ident in (100, 110, 121, 203, 204):
             w.onClick(ident)
@@ -428,13 +430,13 @@ class KodiBindingTests(unittest.TestCase):
         w.onClick(201)  # a queued duplicate cannot produce a second refresh
         self.assertEqual((p.result, w.closed), ('check_again', 1))
 
-    def test_status_back_escape_and_native_close_keep_cancellation_result(self):
+    def test_status_action_back_and_escape_keep_cancellation_result(self):
         for action in (10, 92, None):
             pages = []
             CreateDialogs(Addon(), show=lambda p: pages.append(p) or 'cancel').status('details')
             w = self.window(pages[0])
             if action is None:
-                w.onClick(205)  # explicit native header close is terminal too
+                w.onClick(202)  # explicit action-pane Back
             else:
                 w.onAction(SimpleNamespace(getId=lambda: action))
             self.assertEqual((w.page.result, w.closed), ('cancel', 1))
@@ -443,7 +445,7 @@ class KodiBindingTests(unittest.TestCase):
         from tests.test_install_workflow import plan
         from resources.lib.ui.plan_view import ReviewViewModel
         from resources.lib.build_library import LibraryEntry
-        for leave in ('confirm', 'back', 'x', 'escape', 'remote', 'dismiss'):
+        for leave in ('confirm', 'back', 'removed_header', 'escape', 'remote', 'dismiss'):
             with self.subTest(leave=leave):
                 windows, waits, order = [], [], []
                 def show(page):
@@ -461,7 +463,7 @@ class KodiBindingTests(unittest.TestCase):
                         self.assertEqual(w.getFocusId(), 202)
                         self.assertEqual(page.actions, (('confirm', 'Apply Build'), ('cancel', 'Back')))
                         self.assertEqual(page.rows, ())
-                        self.assertTrue(page.native_close)
+                        self.assertFalse(hasattr(page, 'native_close'))
                         self.assertEqual(w.getControl(110).text, page.body)
                         windows[0].onClick(201)  # old queued event stays on old window
                         self.assertEqual(page.result, 'cancel')
@@ -470,8 +472,10 @@ class KodiBindingTests(unittest.TestCase):
                             w.onClick(201)  # independent second affirmative event
                         elif leave == 'back':
                             w.onClick(w.getFocusId())  # queued Select at safe default cancels
-                        elif leave == 'x':
-                            w.onClick(205)
+                        elif leave == 'removed_header':
+                            w.onClick(205)  # removed header events are inert
+                            self.assertEqual((page.result, w.closed), ('cancel', 0))
+                            w.onAction(SimpleNamespace(getId=lambda: 92))
                         elif leave in ('escape', 'remote'):
                             w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
                         else:
@@ -491,17 +495,19 @@ class KodiBindingTests(unittest.TestCase):
     def test_repair_review_and_readonly_dismissal_fence_queued_apply(self):
         from tests.test_update_repair_workflow import _summary, _changes_model, _blocked_model
         for kind in ('review', 'blocked', 'healthy'):
-            for leave in ('back', 'x', 'escape', 'remote'):
+            for leave in ('back', 'removed_header', 'escape', 'remote'):
                 with self.subTest(kind=kind, leave=leave):
                     def show(page):
                         w = self.window(page)
-                        self.assertTrue(page.native_close)
+                        self.assertFalse(hasattr(page, 'native_close'))
                         self.assertFalse(w.getControl(100).visible)
                         self.assertTrue(w.getControl(110).visible)
                         if leave == 'back':
                             w.onClick(202 if kind == 'review' else 201)
-                        elif leave == 'x':
-                            w.onClick(205)
+                        elif leave == 'removed_header':
+                            w.onClick(205)  # removed header events are inert
+                            self.assertEqual((page.result, w.closed), ('cancel', 0))
+                            w.onAction(SimpleNamespace(getId=lambda: 92))
                         else:
                             w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
                         w.onClick(201)
@@ -528,11 +534,11 @@ class KodiBindingTests(unittest.TestCase):
             self.assertEqual(CreateDialogs(Addon(), show).confirmation(body), result == 'confirm')
             self.assertEqual(pages[0].body, body)
             self.assertEqual(pages[0].focus, 202)
-            self.assertTrue(pages[0].native_close)
+            self.assertFalse(hasattr(pages[0], 'native_close'))
 
     def test_each_confirmation_variant_cancels_and_fences_queued_events(self):
         for title, affirmative in ((32805, 32807), (32100, 32717), (32906, 32905)):
-            for leave in ('back', 'x', 'escape', 'remote', 'confirm'):
+            for leave in ('back', 'removed_header', 'escape', 'remote', 'confirm'):
                 with self.subTest(title=title, leave=leave):
                     def show(page):
                         w = self.window(page)
@@ -541,8 +547,10 @@ class KodiBindingTests(unittest.TestCase):
                         self.assertEqual(w.getControl(110).text, 'original warning/details')
                         if leave == 'back':
                             w.onClick(202)
-                        elif leave == 'x':
-                            w.onClick(205)
+                        elif leave == 'removed_header':
+                            w.onClick(205)  # removed header events are inert
+                            self.assertEqual((page.result, w.closed), ('cancel', 0))
+                            w.onAction(SimpleNamespace(getId=lambda: 92))
                         elif leave in ('escape', 'remote'):
                             w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
                         else:
@@ -555,9 +563,9 @@ class KodiBindingTests(unittest.TestCase):
                     self.assertEqual(CreateDialogs(Addon(), show).confirmation('original warning/details',
                                      title_id=title, affirmative_id=affirmative), leave == 'confirm')
 
-    def test_information_back_help_escape_and_close_never_accept_apply(self):
+    def test_information_back_help_and_escape_never_accept_apply(self):
         actions = (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help'))
-        for control, expected in ((202, 'cancel'), (203, 'help'), (205, 'cancel')):
+        for control, expected in ((202, 'cancel'), (203, 'help')):
             pages = []
             CreateDialogs(Addon(), lambda p: pages.append(p) or 'cancel').information(
                 'Install Build', 'complete review', actions, focus=202)
@@ -566,16 +574,16 @@ class KodiBindingTests(unittest.TestCase):
             self.assertFalse(w.getControl(100).visible)
             self.assertTrue(w.getControl(110).visible)
             self.assertEqual(w.getFocusId(), 202)
-            self.assertEqual(w.properties['bm.native_close'], 'true')
+            self.assertNotIn('bm.native_close', w.properties)
             w.onClick(110)
             w.onClick(121)
             self.assertEqual(w.closed, 0)
             w.onClick(control)
             self.assertEqual(p.result, expected)
-            w.onClick(201)  # queued Apply after Back/Help/X is ignored
+            w.onClick(201)  # queued Apply after Back/Help is ignored
             self.assertEqual(p.result, expected)
         for action in (10, 92):
-            p = CreatePage('Install Build', body='details', actions=actions, focus=202, native_close=True)
+            p = CreatePage('Install Build', body='details', actions=actions, focus=202)
             w = self.window(p)
             w.onAction(SimpleNamespace(getId=lambda: action))
             w.onClick(201)
@@ -795,21 +803,41 @@ class XmlTests(unittest.TestCase):
             self.assertEqual(root.findtext('.//control[@id="110"]/autoscroll'), 'false')
             self.assertFalse(root.findall('.//onload'))
 
-    def test_status_header_close_contracts_preserve_the_single_action_column(self):
-        condition = 'String.IsEqual(Window.Property(bm.native_close),true)'
-        af3 = ET.parse(ROOT / 'resources/skins/skin.arctic.fuse.3/1080i/script-build-manager-create.xml')
-        group = next(g for g in af3.findall('.//control[@type="group"]')
-                     if g.findtext('visible') == condition)
-        close = group.find('include[@content="Part_CloseButton"]')
-        self.assertEqual(close.findtext('param[@name="id"]'), '205')
-        self.assertEqual(close.findtext('param[@name="onmove"]'), '201')
-        fallback = ET.parse(ROOT / 'resources/skins/Default/1080i/script-build-manager-create.xml')
-        close = fallback.find('.//control[@id="205"]')
-        self.assertEqual(close.findtext('visible'), condition)
-        self.assertEqual(close.findtext('onclick'), 'Close')
-        self.assertEqual(close.findtext('label'), '$ADDON[script.build.manager 32441]')
-        estuary = ET.parse(ROOT / 'resources/skins/skin.estuary/1080i/script-build-manager-create.xml')
-        self.assertIsNotNone(estuary.find('.//include[@content="DialogBackgroundCommons"]'))
+    def test_all_skin_frames_omit_header_close_controls(self):
+        for path in self.resources():
+            with self.subTest(skin=path.parent.parent.name):
+                root = ET.parse(path)
+                self.assertNotIn(205, self.controls(path))
+                self.assertNotIn('bm.native_close', path.read_text())
+                names = {n.get('content') or n.text for n in root.findall('.//include')}
+                self.assertFalse({'Part_CloseButton', 'DialogBackgroundCommons'} & names)
+                self.assertFalse(root.findall('.//control[@type="radiobutton"]'))
+                self.assertFalse(root.findall('.//texturefocus[.="dialogs/close.png"]'))
+                buttons = root.findall('.//control[@type="button"]')
+                for button in buttons:
+                    # Only action-pane buttons and Estuary's invisible outside-click
+                    # dismissal / inside-click shield may remain; no header action.
+                    if button.get('id') not in ('201', '202', '203', '204'):
+                        self.assertEqual(path.parent.parent.name, 'skin.estuary')
+                        self.assertEqual(button.findtext('texturefocus'), '')
+                        self.assertEqual(button.findtext('texturenofocus'), '')
+                        self.assertIn(button.findtext('onclick'), ('Action(close)', 'noop'))
+
+    def test_estuary_retains_pinned_native_frame_without_implicit_close(self):
+        import hashlib
+        import json
+        path = ROOT / 'resources/skins/skin.estuary/1080i/script-build-manager-create.xml'
+        frame = ET.parse(path).find('./controls/control')
+        nodes = frame.findall('control')[:3]
+        def semantic(node):
+            return [node.tag, sorted(node.attrib.items()), (node.text or '').strip(),
+                    [semantic(child) for child in node]]
+        digest = hashlib.sha256(json.dumps([semantic(n) for n in nodes],
+                               separators=(',', ':')).encode()).hexdigest()
+        contract = self.contracts()['skin.estuary']['headerless_background']
+        self.assertEqual(digest, contract['projection_sha256'])
+        self.assertEqual(contract['omitted_header_controls'], 2)
+        self.assertEqual(frame.findtext('.//control[@id="10"]/font'), 'font32_title')
 
     def test_native_mappings_use_the_skin_definitions(self):
         contracts = self.contracts()
@@ -823,7 +851,7 @@ class XmlTests(unittest.TestCase):
                 self.assertRegex(contract['source_sha256'], r'^[0-9a-f]{64}$')
         estuary = ET.parse(ROOT / 'resources/skins/skin.estuary/1080i/script-build-manager-create.xml')
         names = {n.get('content') or n.text for n in estuary.findall('.//include')}
-        self.assertLessEqual({'DialogBackgroundCommons', 'DefaultDialogButton'}, names)
+        self.assertLessEqual({'DefaultDialogButton'}, names)
         self.assertEqual(contracts['skin.estuary']['revision'], '21.3-Omega')
         self.assertTrue(estuary.findall('.//texture[.="lists/focus.png"]'))
         self.assertTrue(estuary.findall('.//texture[.="buttons/radio-button-on.png"]'))

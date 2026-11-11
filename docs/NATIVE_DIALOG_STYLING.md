@@ -16,7 +16,8 @@ Future UI work MUST follow this contract and the matching rules in AGENTS.md. Re
 
 - Center action labels horizontally and vertically, without leading icons or padding spaces. Labels are single-line and rendered once. Keep shared dimensions, spacing, typography, colors and focus/navigation treatment; meaningful checkboxes and status indicators remain.
 - Order primary actions first, navigation/cancellation next, Help last when present. Do not add unnecessary Help. CreatePage rejects duplicate/over-capacity actions, misplaced Help/navigation and unsafe final-confirmation shape/focus.
-- Mutation approval requires review followed by a separate final modal. Back is initially focused; default result is cancellation. Only a new final pane's explicit confirm result can approve. Back/X/Escape/remote Back/dismissal and display failure must not execute work.
+- No Build Manager-owned window may add a header Close/X, including through a skin include. The main screen retains its single action-pane Close; subpages retain their ordered Back/Cancel/Close actions. Escape and remote Back dismiss safely.
+- Mutation approval requires review followed by a separate final modal. Back is initially focused; default result is cancellation. Only a new final pane's explicit confirm result can approve. Back/Escape/remote Back/dismissal and display failure must not execute work.
 - Retain input-release settling and duplicate/queued-event fencing between pages. Preserve warning text and complete details, with wrapping/scrolling. Preserve fresh validation, stale-plan/coordinator/transaction protections and privacy.
 - Add regression coverage for the shared presentation, action order, initial focus and two-step approval/cancellation safety. Check AF3, Estuary and Default contracts. Offline tests do not replace native visual inspection.
 
@@ -36,9 +37,9 @@ The include/asset contracts were inspected at AF3 **v3.3.12**, commit `660a05c35
 
 ## Estuary
 
-Estuary has an explicit variant so the other-skin fallback never needs to borrow Estuary resources. `DialogBackgroundCommons`, `DefaultDialogButton` and the native popup animations supply the same background/header/window chrome and action-button treatment used by Kodi 21.3's Estuary dialogs. The list uses `lists/focus.png`, and toggles use `buttons/radio-button-on.png` / `buttons/radio-button-off.png`. Fonts, theme colors and scrollbar defaults belong to Estuary.
+Estuary has an explicit variant so the other-skin fallback never needs to borrow Estuary resources. The frame preserves the pinned `DialogBackgroundCommons` background, title, outside-click dismissal and inside-click shield, while omitting its two implicit header Close controls. That include has no Close-disable parameter in Kodi 21.3, so the retained frame controls are composed directly using the same native textures, theme colors and typography. `DefaultDialogButton` and the native popup animations retain Estuary's action-button and animation treatment. The list uses `lists/focus.png`, and toggles use `buttons/radio-button-on.png` / `buttons/radio-button-off.png`. Fonts, theme colors and scrollbar defaults belong to Estuary.
 
-The standard Estuary header close affordance closes the dialog with its default cancellation result. The right-side action column still contains only the page's declared actions. Horizontal navigation is on the native action grouplist because DefaultDialogButton does not accept nested navigation elements. AF3's Button_Control forwards nested alignment/style elements. Estuary's DefaultDialogButton supplies horizontal centering; the pinned skin's Defaults.xml supplies vertical centering. Default declares both alignments explicitly.
+There is no header Close control in either touch or non-touch mode. The right-side action column still contains only the page's declared actions. Horizontal navigation is on the native action grouplist because DefaultDialogButton does not accept nested navigation elements. AF3's Button_Control forwards nested alignment/style elements. Estuary's DefaultDialogButton supplies horizontal centering; the pinned skin's Defaults.xml supplies vertical centering. Default declares both alignments explicitly.
 
 ## Shared behavior and compatibility
 
@@ -48,7 +49,7 @@ The private-settings row uses the same visual state without displaying an On/Off
 
 **Kodi 21.3 scrollbar restriction:** no Python getControl call may target XML scrollbars 120 or 121. Visibility and horizontal navigation remain XML-owned. Native include contracts produce the same supported label/list/textbox/button IDs used by Python; the strict offline stub rejects scrollbar lookups. Focus restoration uses setFocusId with an integer ID.
 
-Build Status uses the existing read-only textbox and XML-owned scrollbar, with Check Again / Back actions. All safe summaries and diagnostic lines from the status view model appear inline; no status list items are created. Each refresh requests one new status model. Back/Escape and window close return without another check. AF3 uses its native Part_CloseButton in the header for this page; Estuary retains its native header close control. Default provides a conditional header Close button with the same fallback assets. These header controls leave the default cancellation result and are separate from the declared action column.
+Build Status uses the existing read-only textbox and XML-owned scrollbar, with Check Again / Back actions. All safe summaries and diagnostic lines from the status view model appear inline; no status list items are created. Each refresh requests one new status model. Back/Escape and window close return without another check. All three skins omit header Close controls. The presenter has no bm.native_close property or header-control click route; cancellation remains in the action pane and Back/Escape callbacks.
 
 Help topics use the same ordinary navigation rows as Main, with toggle indicators disabled. Topic content remains in the native text viewer; returning restores the topic position. Boolean settings and add-on selection keep their existing visual checkboxes.
 
@@ -78,7 +79,7 @@ Default provides explicit text colors, button/focus textures, checkbox images an
 
 When adding support for another skin, add a matching resource directory using that skin's documented XML facilities and actual resources; retain the independent Default fallback. When upgrading the target AF3 or Kodi version, recheck the small set of native include/asset contracts and manually inspect the result.
 
-Native checks after independent review and separately authorized staging: AF3 first, including its configured background/focus theme; circular toggles in both private settings and add-on rows; text-only native action labels; long labels/values and scrolling; keyboard/remote/mouse focus; bulk selection/Cancel rollback; Help return and final confirmation. Then inspect Estuary's native header/buttons/toggles and an additional skin's fallback. Offline checks do not supply a rendered-appearance PASS.
+Native checks after independent review and separately authorized staging: AF3 first, including its configured background/focus theme; circular toggles in both private settings and add-on rows; text-only native action labels; long labels/values and scrolling; keyboard/remote/mouse focus; bulk selection/Cancel rollback; Help return and final confirmation. Verify no header Close/X on any owned page, the main action-pane Close, subpage Back/Cancel, and final-confirmation cancellation. Then inspect Estuary's native title/buttons/toggles and an additional skin's fallback. Offline checks do not supply a rendered-appearance PASS.
 
 Source references:
 
