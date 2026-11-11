@@ -16,6 +16,7 @@ from resources.lib.plan_model import (
 from resources.lib.status_model import CheckGap
 from resources.lib.ui.models import Semantic
 from resources.lib.ui.status_view import GAP_TEXT, S_CHECKED_AT, S_CLOSE, S_MORE_ITEMS
+from resources.lib.ui.status_view import _conversion_observer
 
 # -- localized string identifiers (resource.language.en_gb/strings.po) -----------------------
 TITLE = {
@@ -155,16 +156,25 @@ class ReviewViewModel:
                    (), '', ConfirmationSummary(None, 0, 0))
 
     @classmethod
-    def from_plan(cls, plan, repository_current=(), fully_listed=False):
-        if not isinstance(plan, BuildPlan):
-            raise ValueError('unsupported plan')
-        sections, decisions = _sections(plan, repository_current, fully_listed), ()
-        if plan.state is PlanState.DECISION_REQUIRED:
-            decisions = tuple(
-                DecisionPrompt(row.addon_id, Text(S_DECISION_HEADING, name=row.label), row.choices)
-                for row in plan.decisions)
-        return cls(plan.state, SEMANTIC[plan.state], Text(TITLE[plan.state]), sections, decisions,
-                   plan.checked_time_label(), _confirmation_summary(plan, repository_current))
+    def from_plan(cls, plan, repository_current=(), fully_listed=False, *, diagnostic=None):
+        convert = _conversion_observer(diagnostic)
+
+        def build():
+            if not isinstance(plan, BuildPlan):
+                raise ValueError('unsupported plan')
+            sections = convert('install.plan_conversion.sections',
+                               lambda: _sections(plan, repository_current, fully_listed))
+            decisions = ()
+            if plan.state is PlanState.DECISION_REQUIRED:
+                decisions = convert('install.plan_conversion.decisions', lambda: tuple(
+                    DecisionPrompt(row.addon_id, Text(S_DECISION_HEADING, name=row.label), row.choices)
+                    for row in plan.decisions))
+            return convert('install.plan_conversion.model', lambda: cls(
+                plan.state, SEMANTIC[plan.state], Text(TITLE[plan.state]), sections, decisions,
+                convert('install.plan_conversion.timestamp', plan.checked_time_label),
+                convert('install.plan_conversion.confirmation_summary',
+                        lambda: _confirmation_summary(plan, repository_current))))
+        return convert('install.plan_conversion.entry', build)
 
 
 def _confirmation_summary(plan, repository_current=()):

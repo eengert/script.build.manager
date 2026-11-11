@@ -21,9 +21,12 @@ def settle_library_plan(ui, service, preparation, target):
     """
     while True:
         plan = call('install.preview', lambda: service.preview(target))
-        model = call('install.plan_conversion', lambda: ReviewViewModel.from_plan(
-            plan, fully_listed=True, repository_current=tuple(
-                aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT)))
+        def convert_plan():
+            repository_current = call('install.plan_conversion.repository_current', lambda: tuple(
+                aid for aid, choice in target.choices if choice is DecisionChoice.INSTALL_CURRENT))
+            return ReviewViewModel.from_plan(plan, fully_listed=True,
+                                             repository_current=repository_current, diagnostic=emit)
+        model = call('install.plan_conversion', convert_plan)
         if plan.state is PlanState.DECISION_REQUIRED:
             if not model.decisions:
                 ui.install_message(32814)
