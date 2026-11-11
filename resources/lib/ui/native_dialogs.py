@@ -72,10 +72,10 @@ class NativeDialogs:
         selection = 0
         while True:
             selected = self.select(heading,
-                [self.text(32150), self.text(32112), self.text(32113)], preselect=selection)
+                [self.text(32150), self.text(32113), self.text(32112)], preselect=selection)
             if selected == 0:
                 self.viewer(self.text(model.title_id), self.text(model.body_id))
-            elif selected == 1:
+            elif selected == 2:
                 self.detail(CONTEXT_HELP[route])
             else:
                 return
@@ -229,8 +229,8 @@ class NativeDialogs:
                         if action == 'help':
                             self.detail(CONTEXT_HELP[Route.CREATE])
                         elif action == 'create':
-                            confirmed = self.dialog.yesno(self.text(32100), confirmation_body,
-                                nolabel=self.text(32113), yeslabel=self.text(32717))
+                            confirmed = self.create_dialogs.confirmation(confirmation_body,
+                                title_id=32100, affirmative_id=32717)
                             self.settle(200)
                             if not confirmed:
                                 break
@@ -425,9 +425,9 @@ class NativeDialogs:
                 break
             else:
                 return False
-        confirmed = self.dialog.yesno(self.text(repair.S_CONFIRM_APPLY),
+        confirmed = self.create_dialogs.confirmation(
             self.repair_confirmation_body(summary, model),
-            nolabel=self.text(repair.S_BACK), yeslabel=self.text(repair.S_APPLY_CHANGES))
+            title_id=repair.S_CONFIRM_APPLY, affirmative_id=repair.S_APPLY_CHANGES)
         self.settle(200)
         return bool(confirmed)
 

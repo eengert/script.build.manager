@@ -152,6 +152,32 @@ class PageTests(unittest.TestCase):
             ('apply', 'cancel', 'help')])
         self.assertEqual([p.focus for p in pages], [100, 201, 202, 201, 202])
 
+    def test_action_contract_rejects_bad_order_duplicates_and_unsafe_confirmation(self):
+        invalid = [dict(actions=(('help', 'Help'), ('cancel', 'Back'))),
+                   dict(actions=(('cancel', 'Back'), ('apply', 'Apply'))),
+                   dict(actions=(('help', 'Help'), ('help', 'Help'))),
+                   dict(actions=tuple((str(i), str(i)) for i in range(5))),
+                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back')), focus=201, native_close=True),
+                   dict(actions=(('confirm', 'Apply'), ('cancel', 'Back')), focus=202),
+                   dict(actions=(('confirm', 'Apply'),), focus=202, native_close=True)]
+        for kwargs in invalid:
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                CreatePage('Invalid', **kwargs)
+
+    def test_all_confirmation_variants_use_identical_owned_contract(self):
+        for title, affirmative in ((32805, 32807), (32100, 32717), (32906, 32905)):
+            pages = []
+            def show(page):
+                pages.append(page)
+                return 'cancel'
+            self.assertFalse(CreateDialogs(Addon(), show).confirmation('original warning/details',
+                             title_id=title, affirmative_id=affirmative))
+            p = pages[0]
+            self.assertEqual((p.title, p.body), (Addon.strings[title], 'original warning/details'))
+            self.assertEqual(p.actions, (('confirm', Addon.strings[affirmative]), ('cancel', 'Back')))
+            self.assertEqual((p.focus, p.rows, p.selected, p.result, p.native_close),
+                             (202, (), None, 'cancel', True))
+
     def test_invalid_control_or_row_does_not_accept(self):
         p = CreatePage('title', [SettingsRow('field', 'value')], [('cancel', 'Cancel')])
         for control, index in ((0, 0), (204, 0), (100, -1), (100, 1)):
@@ -173,6 +199,7 @@ class WorkflowDialogTests(unittest.TestCase):
         self.workflow.execute.return_value = SimpleNamespace(string_id=32736, addon_count=2,
             skin_included=False, private_included=False)
         self.dialog = Mock()
+        self.dialog.yesno.side_effect = AssertionError('native confirmation forbidden')
         self.busy = []
 
     def run_ui(self, *steps):
@@ -231,25 +258,24 @@ class WorkflowDialogTests(unittest.TestCase):
         self.workflow.execute.assert_not_called()
 
     def test_final_confirmation_negative_never_executes(self):
-        self.dialog.yesno.return_value = False
-        self.run_ui([(201, 0)], [(201, 0)], [('cancel', 0)])
-        self.dialog.yesno.assert_called_once()
+        self.run_ui([(201, 0)], [(201, 0)], [('cancel', 0)], [('cancel', 0)])
+        self.dialog.yesno.assert_not_called()
+        self.assertEqual(self.show.pages[2].focus, 202)
         self.workflow.execute.assert_not_called()
         self.assertEqual(self.busy, [])
 
     def test_final_confirmation_executes_exact_preview_once(self):
-        self.dialog.yesno.return_value = True
-        self.run_ui([(201, 0)], [(201, 0)])
+        self.run_ui([(201, 0)], [(201, 0)], [('confirm', 0)])
         self.workflow.execute.assert_called_once_with(self.preview)
-        self.dialog.yesno.assert_called_once()
+        self.dialog.yesno.assert_not_called()
         self.assertEqual(self.busy, [True, False])
         self.assertIn('saved and selected', self.dialog.ok.call_args.args[1])
-        # Long excluded details belong to the scrollable review, not yes/no.
-        self.assertNotIn('Excluded add-ons', self.dialog.yesno.call_args.args[1])
+        # Preserve the original compact final body; long details remain in review.
+        self.assertNotIn('Excluded add-ons', self.show.pages[2].body)
+        self.assertEqual(self.show.pages[2].actions, (('confirm', 'Create Build'), ('cancel', 'Back')))
 
     def test_help_retains_the_same_preview_and_review_body(self):
-        self.dialog.yesno.return_value = True
-        self.run_ui([('help', 0)], [(201, 0)], [('help', 0)], [(201, 0)])
+        self.run_ui([('help', 0)], [(201, 0)], [('help', 0)], [(201, 0)], [('confirm', 0)])
         self.assertEqual(self.dialog.textviewer.call_count, 2)
         self.workflow.preview.assert_called_once()
         self.assertEqual(self.show.pages[2].body, self.show.pages[3].body)
@@ -260,10 +286,60 @@ class WorkflowDialogTests(unittest.TestCase):
         self.workflow.execute.assert_not_called()
         self.dialog.yesno.assert_not_called()
 
+    def test_create_owned_second_confirmation_dismissal_failure_and_input_release(self):
+        for leave in ('back', 'x', 'escape', 'remote', 'dismiss', 'failure', 'confirm'):
+            with self.subTest(leave=leave):
+                self.setUp()
+                windows, waits = [], []
+                def show(page):
+                    w = create_window_type(WindowBase, ListItem)(page=page, text=Addon().getLocalizedString)
+                    w.onInit()
+                    windows.append(w)
+                    if len(windows) <= 2:
+                        w.onClick(201)  # settings Apply, then review Create
+                        w.onClick(201)  # queued old event is fenced
+                    elif len(windows) == 3:
+                        self.assertEqual(waits, [200, 200])
+                        self.workflow.execute.assert_not_called()
+                        self.assertEqual(w.getFocusId(), 202)
+                        self.assertEqual(page.actions, (('confirm', 'Create Build'), ('cancel', 'Back')))
+                        self.assertIn('BM-MANUAL-CREATE-01', page.body)
+                        windows[1].onClick(201)
+                        self.assertEqual(page.result, 'cancel')
+                        if leave == 'failure':
+                            raise RuntimeError('private-value-not-for-ui')
+                        if leave == 'back':
+                            w.onClick(w.getFocusId())
+                        elif leave == 'x':
+                            w.onClick(205)
+                        elif leave in ('escape', 'remote'):
+                            w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
+                        elif leave == 'dismiss':
+                            w.close()
+                            return page.result
+                        else:
+                            w.setFocusId(201)
+                            w.onClick(201)  # independent final affirmative
+                        w.onClick(201)
+                        self.assertEqual(w.closed, 1)
+                    else:
+                        w.onClick(202)  # return to Create settings, then leave
+                    return page.result
+                ui = NativeDialogs(Addon(), self.dialog, waits.append,
+                    create_provider=lambda: self.workflow, busy=self.busy.append,
+                    create_dialogs=CreateDialogs(Addon(), show))
+                ui.create()
+                self.workflow.preview.assert_called_once_with(self.session)
+                if leave == 'confirm':
+                    self.workflow.execute.assert_called_once_with(self.preview)
+                else:
+                    self.workflow.execute.assert_not_called()
+                self.dialog.yesno.assert_not_called()
+                self.assertNotIn('private-value-not-for-ui', str(self.dialog.ok.call_args_list))
+
     def test_error_remains_redacted_and_busy_is_cleared(self):
-        self.dialog.yesno.return_value = True
         self.workflow.execute.side_effect = RuntimeError('private-token')
-        self.run_ui([(201, 0)], [(201, 0)], [('cancel', 0)])
+        self.run_ui([(201, 0)], [(201, 0)], [('confirm', 0)], [('cancel', 0)])
         self.assertEqual(self.busy, [True, False])
         self.dialog.ok.assert_called_once_with('Create Build', Addon.strings[32732])
 
@@ -454,6 +530,31 @@ class KodiBindingTests(unittest.TestCase):
             self.assertEqual(pages[0].focus, 202)
             self.assertTrue(pages[0].native_close)
 
+    def test_each_confirmation_variant_cancels_and_fences_queued_events(self):
+        for title, affirmative in ((32805, 32807), (32100, 32717), (32906, 32905)):
+            for leave in ('back', 'x', 'escape', 'remote', 'confirm'):
+                with self.subTest(title=title, leave=leave):
+                    def show(page):
+                        w = self.window(page)
+                        self.assertEqual(w.getFocusId(), 202)
+                        self.assertFalse(w.getControl(100).visible)
+                        self.assertEqual(w.getControl(110).text, 'original warning/details')
+                        if leave == 'back':
+                            w.onClick(202)
+                        elif leave == 'x':
+                            w.onClick(205)
+                        elif leave in ('escape', 'remote'):
+                            w.onAction(SimpleNamespace(getId=lambda: 10 if leave == 'escape' else 92))
+                        else:
+                            w.setFocusId(201)
+                            w.onClick(201)
+                        w.onClick(201)
+                        w.onClick(201)
+                        self.assertEqual(w.closed, 1)
+                        return page.result
+                    self.assertEqual(CreateDialogs(Addon(), show).confirmation('original warning/details',
+                                     title_id=title, affirmative_id=affirmative), leave == 'confirm')
+
     def test_information_back_help_escape_and_close_never_accept_apply(self):
         actions = (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help'))
         for control, expected in ((202, 'cancel'), (203, 'help'), (205, 'cancel')):
@@ -590,7 +691,7 @@ class KodiBindingTests(unittest.TestCase):
         self.assertIs(w.getControl(203).down, w.getControl(201))
 
     def test_settings_navigation_and_focus_restoration(self):
-        p = CreatePage('Create', [SettingsRow('name', 'entered')], [('apply', 'Apply'), ('help', 'Help'), ('cancel', 'Cancel')], position=0)
+        p = CreatePage('Create', [SettingsRow('name', 'entered')], [('apply', 'Apply'), ('cancel', 'Cancel'), ('help', 'Help')], position=0)
         w = self.window(p)
         self.assertEqual(w.getFocusId(), 100)
         self.assertTrue(w.getControl(100).visible)
@@ -789,11 +890,13 @@ class XmlTests(unittest.TestCase):
                 self.assertNotIn('$INFO[Control.GetLabel', Path(ROOT / 'resources/skins' / skin / '1080i/script-build-manager-create.xml').read_text())
             else:
                 self.assertEqual(self.contracts()[skin]['button_defaults']['aligny'], 'center')
+                self.assertTrue(all(n.findtext('param[@name="wrapmultiline"]') == 'false' for n in buttons))
         fallback = ET.parse(ROOT / 'resources/skins/Default/1080i/script-build-manager-create.xml')
         for ident in range(201, 205):
             button = fallback.find('.//control[@id="%s"]' % ident)
             self.assertEqual(button.findtext('align'), 'center')
             self.assertEqual(button.findtext('aligny'), 'center')
+            self.assertEqual(button.findtext('wrapmultiline'), 'false')
 
     def test_confirmation_reuses_tall_frame_with_wrapping_and_scrollbar(self):
         geometry = self.contracts()['skin.arctic.fuse.3']['confirmation_geometry']

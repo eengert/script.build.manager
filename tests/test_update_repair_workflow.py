@@ -485,17 +485,19 @@ class RepairNativeTests(unittest.TestCase):
                              create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
 
     def test_apply_requires_choosing_apply_and_explicit_confirmation(self):
-        dialog = self.dialog(['apply'], [True])
+        dialog = self.dialog(['apply', 'confirm'])
         ui = self.ui(dialog)
         self.assertTrue(ui.repair_approve(_summary(), _changes_model()))
-        self.assertEqual(dialog.questions[0][0], STRINGS[repair.S_CONFIRM_APPLY])
-        self.assertEqual(dialog.questions[0][1], ui.repair_confirmation_body(_summary(), _changes_model()))
+        self.assertFalse(dialog.questions)
+        self.assertEqual(dialog.pages[-1].title, STRINGS[repair.S_CONFIRM_APPLY])
+        self.assertEqual(dialog.pages[-1].body, ui.repair_confirmation_body(_summary(), _changes_model()))
+        self.assertEqual(dialog.pages[-1].actions, (('confirm', 'Apply Changes'), ('cancel', 'Back')))
         self.assertFalse(dialog.views)  # no intermediate viewer or selection menu
         self.assertFalse(dialog.labels)
-        self.assertEqual(dialog.page_focuses, [202])
+        self.assertEqual(dialog.page_focuses, [202, 202])
         self.assertEqual(dialog.pages[0].actions,
                          (('apply', 'Apply Changes'), ('cancel', 'Back'), ('help', 'Help')))
-        for choices, answers in ((['cancel'], []), (['apply'], [False]), ([-1], [])):
+        for choices, answers in ((['cancel'], []), (['apply', 'cancel'], []), ([-1], [])):
             with self.subTest(choices=choices, answers=answers):
                 self.assertFalse(self.ui(self.dialog(choices, answers)).repair_approve(
                     _summary(), _changes_model()))
@@ -531,8 +533,8 @@ class RepairNativeTests(unittest.TestCase):
     def test_real_navigation_help_and_two_approval_gates_preserve_execution_rules(self):
         for actions, answers, approved in ((['cancel'], [], False),
                                            (['help', 'cancel'], [], False),
-                                           (['help', 'apply'], [False], False),
-                                           (['help', 'apply'], [True], True)):
+                                           (['help', 'apply', 'cancel'], [], False),
+                                           (['help', 'apply', 'confirm'], [], True)):
             with self.subTest(actions=actions, answers=answers):
                 f = RepairWorkflowTests(); f.setUp()
                 dialog = self.dialog(['check', *actions, 'cancel'], answers)
@@ -549,7 +551,22 @@ class RepairNativeTests(unittest.TestCase):
                     f.service.validate.assert_not_called()
                     f.factory.assert_not_called()
                     self.assertFalse(f.coordinator.mock_calls)
-                self.assertEqual(len(dialog.questions), int('apply' in actions))
+                self.assertFalse(dialog.questions)
+                self.assertEqual(sum('confirm' in dict(p.actions) for p in dialog.pages), int('apply' in actions))
+
+    def test_confirmation_display_failure_never_validates_or_executes(self):
+        f = RepairWorkflowTests(); f.setUp()
+        dialog = self.dialog(['check', 'apply'])
+        adapter = CreateDialogs(Addon(), show=dialog.show_page)
+        adapter.confirmation = Mock(side_effect=RuntimeError('confirmation unavailable'))
+        f.ui = NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=adapter)
+        with self.assertRaises(RuntimeError):
+            f.run_flow()
+        f.service.preview.assert_called_once()
+        f.service.validate.assert_not_called()
+        f.factory.assert_not_called()
+        self.assertFalse(f.coordinator.mock_calls)
+        self.assertFalse(dialog.questions)
 
     def test_every_non_actionable_state_has_back_and_never_reaches_confirmation(self):
         from resources.lib.ui.plan_view import ReviewViewModel

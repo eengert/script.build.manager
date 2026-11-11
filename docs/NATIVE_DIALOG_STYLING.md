@@ -10,6 +10,16 @@ Build Manager's main menu, Help topics, Build Status, Create fields, add-on sele
 
 Kodi 21.3 first checks the active skin's own XML, then the add-on's directory named after the skin ID, then the specified Default resource. Its window loader resolves includes through the active skin. The presenter therefore needs no custom skin detector, file loader, theme parser or installed-skin modification. It passes the supported add-on path / Default / 1080i constructor arguments.
 
+## Mandatory action and confirmation contract
+
+Future UI work MUST follow this contract and the matching rules in AGENTS.md. Reuse CreatePage / CreateDialogs and the existing three skin resources; do not add a second button renderer or use Kodi Dialog.yesno for a Build Manager final confirmation.
+
+- Center action labels horizontally and vertically, without leading icons or padding spaces. Labels are single-line and rendered once. Keep shared dimensions, spacing, typography, colors and focus/navigation treatment; meaningful checkboxes and status indicators remain.
+- Order primary actions first, navigation/cancellation next, Help last when present. Do not add unnecessary Help. CreatePage rejects duplicate/over-capacity actions, misplaced Help/navigation and unsafe final-confirmation shape/focus.
+- Mutation approval requires review followed by a separate final modal. Back is initially focused; default result is cancellation. Only a new final pane's explicit confirm result can approve. Back/X/Escape/remote Back/dismissal and display failure must not execute work.
+- Retain input-release settling and duplicate/queued-event fencing between pages. Preserve warning text and complete details, with wrapping/scrolling. Preserve fresh validation, stale-plan/coordinator/transaction protections and privacy.
+- Add regression coverage for the shared presentation, action order, initial focus and two-step approval/cancellation safety. Check AF3, Estuary and Default contracts. Offline tests do not replace native visual inspection.
+
 ## Arctic Fuse 3
 
 The AF3 resource composes the actual settings-dialog parts rather than drawing a similar black panel:
@@ -50,13 +60,13 @@ The final Install confirmation now uses the existing two-pane frame rather than 
 
 Update / Repair retains its complete applied/desired information and actions, with shortened localized labels: Check Changes / Choose Revision / Back / Help. Labels remain single-line and share the centered native button styling. Revision decisions, plan calculations and execution are unchanged.
 
-Update / Repair review now shows the complete cached proposed changes beside Apply Changes / Back / Help, initially focused on Back. Help opens the existing contextual content and returns to the same rendered review and Help focus without another preview. Review Apply Changes still opens the existing separate final confirmation with its unchanged body, labels and safe default. Only an affirmative final result returns approval to the unchanged fresh-validation/execution workflow. Healthy/no-change, blocked, incomplete and other read-only check results use the same wrapping/scrolling textbox with only Back; they never offer Apply. Existing extra limit notes and optional checked timestamps remain inline.
+Update / Repair review now shows the complete cached proposed changes beside Apply Changes / Back / Help, initially focused on Back. Help opens the existing contextual content and returns to the same rendered review and Help focus without another preview. Review Apply Changes opens the shared separate final confirmation with its unchanged body, labels and safe default. Only an affirmative final result returns approval to the unchanged fresh-validation/execution workflow. Healthy/no-change, blocked, incomplete and other read-only check results use the same wrapping/scrolling textbox with only Back; they never offer Apply. Existing extra limit notes and optional checked timestamps remain inline.
 
 Help is last in every owned action pane that already offers it: primary actions first, then Back/Cancel/Close, then Help. Update / Repair main is Check Changes / Choose Revision / Back / Help; its initial Check focus is unchanged. Create fields/review and Install review already follow this order. No Help action is added to confirmation, Status or read-only result panes.
 
-Other Kodi-owned prompts (for example Create and Repair confirmations) retain their existing active-skin presentation. The final Install confirmation is now owned by Build Manager and has centered icon-free buttons; no global native-dialog override was introduced.
+Create, Install and Update / Repair final approvals now call the same confirmation presenter. Its localized heading and affirmative label are parameters; the body is the existing workflow-specific warning/summary, passed unchanged. All use exactly an affirmative action followed by Back, initial Back focus and the same tall wrapping/scrolling frame. Create's review Create action and Repair's review Apply Changes action only open this separate modal; neither is execution approval. Native Dialog.yesno is prohibited for these product confirmations. No installed skin/core changes or global native-dialog override are used.
 
-Other Build Manager screens use standard Dialog.select, input, textviewer, yesno, ok, progress dialogs, or the standard add-on Settings window. They already belong to the active skin and are not replaced. No workflow, capture, library, lifecycle or backend styling dependency is introduced.
+Other Build Manager screens use standard Dialog.select, input, textviewer, ok, progress dialogs, or the standard add-on Settings window. They already belong to the active skin and are not replaced. No workflow, capture, library, lifecycle or backend styling dependency is introduced.
 
 ## Other-skin fallback
 
@@ -79,3 +89,7 @@ Source references:
 - [Estuary settings layout](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/DialogSettings.xml), [dialog background](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes.xml), [dialog buttons](https://github.com/xbmc/xbmc/blob/21.3-Omega/addons/skin.estuary/xml/Includes_Buttons.xml)
 
 The fallback header label uses Kodi [add-on label parsing](https://kodi.wiki/view/Label_Parsing).
+
+## Scoped audit of remaining native surfaces
+
+The unavailable-route fallback still uses a native selection action menu; its View Details / Back / Help order is corrected, but conversion of that dormant fallback to an owned pane is outside this confirmation task. Build/profile/revision and missing-package choosers remain native data selections, including the authoritative frozen-install chooser; their decisions and engine code are untouched. Input, information/error/progress dialogs and Kodi's add-on Settings window retain their native purpose. These are not additional final-approval implementations. Any future task modifying a legacy action menu must apply the mandatory shared contract rather than introducing another native product confirmation.

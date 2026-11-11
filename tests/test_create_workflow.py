@@ -58,9 +58,12 @@ class NativeDialog:
         self.choices, self.inputs = iter(choices), iter(inputs)
         self.multiselects, self.confirms = iter(multiselects), iter(confirms)
         self.calls, self.multi_calls, self.details, self.results, self.questions = [], [], [], [], []
+        self.confirmation_records = []
     def select(self, heading, labels, preselect=0):
         self.calls.append((heading, labels, preselect)); return next(self.choices)
     def show_page(self, page):
+        if 'confirm' in dict(page.actions):
+            self.confirmation_records.append((page.title, page.actions, page.body, page.focus))
         if page.selected is not None:
             indices = self.multiselect(page.title, [r.label for r in page.rows], sorted(page.selected))
             if indices is None:
@@ -697,21 +700,23 @@ class WorkflowTests(unittest.TestCase):
     def test_native_final_no_confirmation_no_capture(self):
         before = sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*'))
         with patch('resources.lib.capture_lifecycle.CaptureLifecycleCoordinator.begin') as begin:
-            d=NativeDialog([0,'apply','create','cancel'],inputs=['My Build'],confirms=[False]);self.ui(d)
+            d=NativeDialog([0,'apply','create','cancel','cancel'],inputs=['My Build']);self.ui(d)
         begin.assert_not_called()
         self.assertEqual(before, sorted(str(p.relative_to(self.base)) for p in self.base.rglob('*')))
-        self.factory.assert_not_called();self.assertEqual(len(d.questions),1)
+        self.factory.assert_not_called();self.assertFalse(d.questions)
+        self.assertEqual(len(d.confirmation_records), 1)
+        self.assertEqual(d.confirmation_records[0][3], 202)
     def test_native_success_persistent_and_busy(self):
-        d=NativeDialog([0,'apply','create'],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
+        d=NativeDialog([0,'apply','create','confirm'],inputs=['My Build']);_,busy=self.ui(d)
         self.assertEqual(busy,[True,False]);self.assertEqual(len(d.results),1)
         self.assertIn('32736',d.results[0][1]);self.assertNotIn(SECRET,str(vars(d)))
         self.assertNotIn(str(self.base),str(vars(d)));self.assertEqual(self.config.mutations,[])
     def test_native_private_toggle_off(self):
-        d=NativeDialog([0,4,'apply','create'],inputs=['My Build'],confirms=[True]);self.ui(d)
+        d=NativeDialog([0,4,'apply','create','confirm'],inputs=['My Build']);self.ui(d)
         self.private_factory.assert_not_called();self.assertEqual(len(self.entries()),1)
     def test_native_failure_persistent(self):
         self.factory.side_effect=RuntimeError(SECRET)
-        d=NativeDialog([0,'apply','create'],inputs=['My Build'],confirms=[True]);_,busy=self.ui(d)
+        d=NativeDialog([0,'apply','create','confirm'],inputs=['My Build']);_,busy=self.ui(d)
         self.assertEqual(busy,[True,False]);self.assertIn('32732',d.results[0][1]);self.assertNotIn(SECRET,str(vars(d)))
     def test_native_focus_return(self):
         d=NativeDialog([3,'cancel'],multiselects=[None]);self.ui(d)

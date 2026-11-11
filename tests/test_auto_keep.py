@@ -431,7 +431,7 @@ class TestBackgroundProgress(unittest.TestCase):
             # Create renders a sanitized failure and returns to its menu; Back
             # exits that existing UI path. Unlike execute_install it doesn't
             # propagate an execution exception to its caller.
-            dialog = NativeDialog([0, 'apply', 'create', 'cancel'], inputs=['B1 synthetic build'], confirms=[True])
+            dialog = NativeDialog([0, 'apply', 'create', 'confirm', 'cancel'], inputs=['B1 synthetic build'])
             return NativeDialogs(CreateAddon(), dialog, lambda ms: None,
                                  create_provider=lambda: workflow, busy=busy,
                                  create_dialogs=CreateDialogs(CreateAddon(), show=dialog.show_page))

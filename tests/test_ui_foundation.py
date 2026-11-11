@@ -25,9 +25,22 @@ class NativeFoundationTests(unittest.TestCase):
     def flow(self, choices):
         a=Addon(); d=Dialog(choices); ui=NativeDialogs(a,d,lambda milliseconds: None, main_select=d.select); ui.run(); return a,d,ui
     def test_native_boundaries_settle_input(self):
-        a=Addon(); d=Dialog([0,0,1,-1,-1]); waits=[]
+        a=Addon(); d=Dialog([0,0,2,-1,-1]); waits=[]
         NativeDialogs(a,d,waits.append, main_select=d.select).run()
         self.assertEqual(waits,[200]*7)
+
+    def test_no_owned_confirmation_can_fall_back_to_native_yesno(self):
+        for path in (ROOT / 'resources/lib/ui').glob('*.py'):
+            tree = ast.parse(path.read_text())
+            calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                     and isinstance(n.func, ast.Attribute)]
+            self.assertFalse(any(n.func.attr in ('yesno', 'yesnocustom') for n in calls), path)
+            if path.name == 'native_dialogs.py':
+                self.assertEqual(sum(n.func.attr == 'confirmation' for n in calls), 3)
+
+    def test_fallback_action_menu_has_navigation_before_help(self):
+        _, dialog, _ = self.flow([0, -1, -1])
+        self.assertEqual(dialog.calls[1][1], ['32150', '32113', '32112'])
 
     def test_main_menu_order(self):
         _,d,_=self.flow([-1]); self.assertEqual(d.calls[0],('32000',list(map(str,TITLE_IDS)),0))
@@ -41,12 +54,12 @@ class NativeFoundationTests(unittest.TestCase):
     def test_every_foundation_context_help(self):
         for i in range(3):  # Build Status Help is covered in test_status_ui
             with self.subTest(route=i):
-                _,d,_=self.flow([i,1,-1,-1]); self.assertEqual(d.details,[(str(32201+i),str(32301+i))])
+                _,d,_=self.flow([i,2,-1,-1]); self.assertEqual(d.details,[(str(32201+i),str(32301+i))])
     def test_foundation_back_restores_main_selection(self):
         for i in range(3):
-            _,d,_=self.flow([i,2,-1]); self.assertEqual(d.calls[-1][2],i)
+            _,d,_=self.flow([i,1,-1]); self.assertEqual(d.calls[-1][2],i)
     def test_context_help_returns_to_invoking_choice(self):
-        _,d,_=self.flow([0,1,-1,-1]); self.assertEqual(d.calls[2][2],1)
+        _,d,_=self.flow([0,2,-1,-1]); self.assertEqual(d.calls[2][2],2)
     def test_unavailable_detail_returns_to_choice(self):
         _,d,_=self.flow([0,0,-1,-1]); self.assertEqual(d.calls[2][2],0)
     def test_all_ten_help_sections(self):

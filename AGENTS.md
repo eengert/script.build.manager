@@ -113,6 +113,39 @@ weaken sandbox restrictions, or invent replacement interaction methods.
   path, Dropbox token), ensure they are redacted in all log output.
 - Do not read or write `NSUserDefaults` or platform-level keychain entries.
 
+## Build Manager UI contract
+
+All new or modified Build Manager-owned action panes and final confirmations
+MUST reuse `CreatePage` / `CreateDialogs` and the shared skin-aware resources.
+Do not add another button renderer or use Kodi `Dialog.yesno()` for a product
+confirmation. Follow `docs/NATIVE_DIALOG_STYLING.md` and enforce these rules:
+
+- Center action labels horizontally and vertically. Use one visible label
+  renderer per button, no leading action icons, no padding spaces, and
+  single-line labels. Preserve meaningful checkboxes and status indicators.
+- Keep consistent skin-native sizing, spacing, typography, colors, focus
+  indication and keyboard/remote/mouse navigation. Validate AF3, Estuary and
+  the self-contained Default fallback; never edit the installed skin or Kodi
+  core to achieve the product design.
+- Order primary actions first, Back/Close/Cancel next, and Help last when
+  appropriate. Do not add Help to otherwise complete confirmation panes.
+- Final mutation confirmations MUST be a separate modal after review, focus
+  Back initially, and default to cancellation. Only the final pane's explicit
+  `confirm` action may approve. Back/X/Escape/remote Back or dismissal must
+  never approve, and display failures must not execute work.
+- Preserve input-release settling and duplicate/queued-event guards between
+  review and confirmation. Do not collapse the two affirmative actions or
+  weaken fresh validation, stale-plan checks or coordinator safeguards.
+- Keep complete warning/details available with wrapping and scrolling. Never
+  expose private values or internal paths. Non-actionable results have Back
+  and no Apply action. Native input/data choosers and text viewers may remain
+  for their existing purposes; report legacy action-menu violations outside
+  the assigned scope instead of silently expanding the task.
+
+Tests must enforce action order/initial focus, one label/no icons, all three
+skin resource contracts, separate approval, cancellation/failure and queued
+events. Offline contracts do not replace native visual inspection.
+
 ## Tests
 
 - Add or update tests for every behavior change.

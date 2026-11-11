@@ -213,18 +213,22 @@
                 <onright condition="!Control.IsVisible(110)">100</onright>
                 <include content="DefaultDialogButton">
                     <param name="id">201</param>
+                    <param name="wrapmultiline">false</param>
                     <param name="label" />
                 </include>
                 <include content="DefaultDialogButton">
                     <param name="id">202</param>
+                    <param name="wrapmultiline">false</param>
                     <param name="label" />
                 </include>
                 <include content="DefaultDialogButton">
                     <param name="id">203</param>
+                    <param name="wrapmultiline">false</param>
                     <param name="label" />
                 </include>
                 <include content="DefaultDialogButton">
                     <param name="id">204</param>
+                    <param name="wrapmultiline">false</param>
                     <param name="label" />
                 </include>
             </control>

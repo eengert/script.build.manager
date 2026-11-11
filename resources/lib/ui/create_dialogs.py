@@ -17,6 +17,15 @@ class SettingsRow:
 class CreatePage:
     def __init__(self, title, rows=(), actions=(), body=None, selected=None, focus=100, position=0, native_close=False):
         self.title, self.rows, self.actions, self.body = title, tuple(rows), tuple(actions), body
+        keys = tuple(key for key, _ in self.actions)
+        if len(keys) > 4 or len(set(keys)) != len(keys):
+            raise ValueError('Action panes require at most four distinct actions')
+        if 'help' in keys and keys[-1] != 'help':
+            raise ValueError('Help must be the last action')
+        if 'cancel' in keys and any(key != 'help' for key in keys[keys.index('cancel') + 1:]):
+            raise ValueError('Primary actions must precede navigation')
+        if 'confirm' in keys and (keys != ('confirm', 'cancel') or focus != 202 or not native_close):
+            raise ValueError('Final confirmation requires Back focus and cancellation')
         # None means ordinary settings; a set (including empty) means toggles.
         self.selected = None if selected is None else set(selected)
         self.focus, self.position = focus, position
@@ -108,10 +117,10 @@ class CreateDialogs:
         result = self.show(page)
         return result, page.focus
 
-    def confirmation(self, body):
+    def confirmation(self, body, title_id=32805, affirmative_id=32807):
         # A new modal page and distinct result: review's 'apply' is never approval.
-        page = CreatePage(self.text(32805), body=body,
-            actions=(('confirm', self.text(32807)), ('cancel', self.text(32113))),
+        page = CreatePage(self.text(title_id), body=body,
+            actions=(('confirm', self.text(affirmative_id)), ('cancel', self.text(32113))),
             focus=202, native_close=True)
         return self.show(page) == 'confirm'
 
