@@ -10,6 +10,7 @@ from resources.lib.ui.status_view import (
     S_CHECKED_AT, S_ROW, StatusViewModel,
 )
 from resources.lib.failure_diagnostics import call, emit
+from resources.lib.plan_model import PlanState
 
 class NativeDialogs:
     def __init__(self, addon, dialog, settle, status_provider=None, create_provider=None, busy=None, install_provider=None, repair_provider=None, create_dialogs=None, main_select=None):
@@ -299,6 +300,14 @@ class NativeDialogs:
     def show_install_review(self, model):
         self.viewer(self.render(model.title), self.review_body(model))
 
+    def information(self, title, body, actions, focus=201):
+        if self.create_dialogs is None:
+            from resources.lib.ui.create_dialogs import CreateDialogs
+            self.create_dialogs = CreateDialogs(self.addon)
+        result = self.create_dialogs.information(title, body, actions, focus=focus)
+        self.settle(200)
+        return result
+
     def install_confirmation_body(self, entry, profile, model):
         summary = model.confirmation_summary
         if summary.single_change is not None:
@@ -307,6 +316,8 @@ class NativeDialogs:
             change_line = self.text(S_CONFIRMATION_SUMMARY) % (
                 summary.change_count, summary.accepted_skip_count)
         return '\n'.join((
+            '[B]' + self.text(32818) + '[/B]',
+            '',
             self.install_label(entry.display_name) + ' ' + self.install_label(entry.build_version),
             self.text(32801) + ': ' + self.install_label(profile),
             change_line,
@@ -314,23 +325,25 @@ class NativeDialogs:
         ))
 
     def confirm_install(self, entry, profile, model):
+        if model.state is not PlanState.CHANGES_READY:
+            self.show_install_review(model)
+            return False
         body = self.install_confirmation_body(entry, profile, model)
-        focus = 0
+        review = self.review_body(model)
+        focus = 202  # Back is safe on entry; final yes/no also retains Kodi's No default.
         while True:
-            action = self.select(self.text(32101),
-                [self.text(32806), self.text(32807), self.text(32112), self.text(32113)], focus)
-            if action == 0:
-                self.viewer(self.render(model.title), self.review_body(model))
-            elif action == 1:
+            action, focus = self.information(self.text(32101), review,
+                (('apply', self.text(32807)), ('cancel', self.text(32113)),
+                 ('help', self.text(32112))), focus=focus)
+            if action == 'apply':
                 confirmed = self.dialog.yesno(self.text(32805), body,
                     nolabel=self.text(32113), yeslabel=self.text(32807))
                 self.settle(200)
                 return bool(confirmed)
-            elif action == 2:
+            elif action == 'help':
                 self.detail(CONTEXT_HELP[Route.INSTALL])
             else:
                 return False
-            focus = action
 
     # Update / Repair presentation. The workflow owns every decision and transition.
 
@@ -354,30 +367,24 @@ class NativeDialogs:
 
         Returns 'check' or 'revision'; None means the user went back.
         """
-        details = [(self.text(repair.S_APPLIED_ROW) % (summary.applied_name, summary.applied_version, summary.profile),
-                    self.text(repair.S_APPLIED_DETAIL) % (summary.applied_name, summary.applied_version, summary.profile))]
+        details = [self.text(repair.S_APPLIED_DETAIL) % (
+            summary.applied_name, summary.applied_version, summary.profile)]
         if summary.changed:
-            details.append((self.text(repair.S_DESIRED_ROW) % (summary.desired_name, summary.desired_version),
-                            self.text(repair.S_DESIRED_DETAIL) % (summary.desired_name, summary.desired_version)))
-        actions = ((repair.S_CHECK_FOR_CHANGES, 'check'), (repair.S_CHOOSE_REVISION, 'revision'),
-                   (repair.S_HELP, 'help'), (repair.S_BACK, 'back'))
-        count, focus = len(details), 0
+            details.append(self.text(repair.S_DESIRED_DETAIL) % (
+                summary.desired_name, summary.desired_version))
+        actions = (('check', self.text(repair.S_CHECK_FOR_CHANGES)),
+                   ('revision', self.text(repair.S_CHOOSE_REVISION)),
+                   ('help', self.text(repair.S_HELP)), ('cancel', self.text(repair.S_BACK)))
+        focus = 201
         while True:
-            rows = [label for label, _ in details] + [self.text(string_id) for string_id, _ in actions]
-            selected = self.select(self.text(repair.S_TITLE), rows, preselect=focus)
-            if 0 <= selected < count:
-                self.viewer(self.text(repair.S_TITLE), details[selected][1])
-            elif count <= selected < count + len(actions):
-                action = actions[selected - count][1]
-                if action in ('check', 'revision'):
-                    return action
-                if action == 'help':
-                    self.detail(CONTEXT_HELP[Route.REPAIR])
-                else:
-                    return None
+            action, focus = self.information(self.text(repair.S_TITLE), '\n\n'.join(details),
+                                              actions, focus=focus)
+            if action in ('check', 'revision'):
+                return action
+            if action == 'help':
+                self.detail(CONTEXT_HELP[Route.REPAIR])
             else:
                 return None
-            focus = selected
 
     def choose_repair_revision(self, entries, applied_entry_id):
         labels = [self.install_label(e.display_name) + ' ' + self.install_label(e.build_version)

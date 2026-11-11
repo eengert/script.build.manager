@@ -19,6 +19,7 @@ from resources.lib.status_model import CheckGap, OperationKind
 from resources.lib.ui import repair_view as repair
 from resources.lib.ui.controller import Route
 from resources.lib.ui.native_dialogs import NativeDialogs
+from resources.lib.ui.create_dialogs import CreateDialogs
 from resources.lib.update_repair_workflow import UpdateRepairWorkflow
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,10 +79,21 @@ class Dialog:
     def __init__(self, selects=(), answers=()):
         self.selects, self.answers = iter(selects), iter(answers)
         self.labels, self.views, self.oks, self.questions = [], [], [], []
+        self.pages, self.page_focuses = [], []
 
     def select(self, heading, labels, preselect=0):
         self.labels.append((heading, list(labels)))
         return next(self.selects)
+
+    def show_page(self, page):
+        self.pages.append(page)
+        self.page_focuses.append(page.focus)
+        choice = next(self.selects)
+        assert choice in dict(page.actions) or choice == -1
+        if choice == -1:
+            return 'cancel'
+        page.focus = 201 + next(i for i, (key, _) in enumerate(page.actions) if key == choice)
+        return choice
 
     def textviewer(self, heading, body):
         self.views.append((heading, body))
@@ -97,6 +109,7 @@ class Dialog:
         """Every visible string, for presentation checks."""
         visible = [h for h, _ in self.labels] + [text for _, labels in self.labels for text in labels]
         visible += [part for pair in self.views + self.oks + self.questions for part in pair]
+        visible += [p.body for p in self.pages] + [label for p in self.pages for _, label in p.actions]
         return '\n'.join(str(item) for item in visible)
 
 
@@ -384,8 +397,8 @@ class RepairWorkflowTests(unittest.TestCase):
 
     def test_healthy_check_of_the_applied_revision_uses_revision_neutral_wording(self):
         self.service.preview.return_value = plan(PlanState.NO_CHANGES)
-        dialog = Dialog([1, 4])
-        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=lambda: self.workflow).repair()
+        dialog = Dialog(['check', 'cancel'])
+        NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: self.workflow).repair()
         self.assertEqual(self.service.preview.call_args.args[0], self.applied)
         title, body = dialog.views[0]
         self.assertEqual(title, STRINGS[repair.S_HEALTHY_TITLE])
@@ -400,8 +413,8 @@ class RepairWorkflowTests(unittest.TestCase):
         self.library.plan_target.return_value = desired
         self.service.preview.return_value = plan(PlanState.NO_CHANGES)
         # Choose Different Revision, pick the alternate, Check for Changes, then Back.
-        dialog = Dialog([2, 1, 2, 5])
-        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=lambda: self.workflow).repair()
+        dialog = Dialog(['revision', 1, 'check', 'cancel'])
+        NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: self.workflow).repair()
         self.library.plan_target.assert_called_once_with(other.entry_id, 'other')
         self.assertEqual(self.service.preview.call_args.args[0], desired)
         title, body = dialog.views[0]
@@ -419,30 +432,51 @@ class RepairNativeTests(unittest.TestCase):
         workflow = Mock()
         provider = Mock(return_value=workflow)
         dialog = self.dialog([2, -1])
-        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=provider, main_select=dialog.select).run()
+        NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=provider, main_select=dialog.select).run()
         provider.assert_called_once_with()
         workflow.run.assert_called_once()
 
     def test_composition_failure_is_safe_and_redacted(self):
         dialog = self.dialog([2, -1])
-        NativeDialogs(Addon(), dialog, lambda ms: None,
+        NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page),
                       repair_provider=Mock(side_effect=RuntimeError('/private/path token=secret')), main_select=dialog.select).run()
         self.assertEqual(dialog.oks, [(STRINGS[32102], STRINGS[repair.S_NOT_APPLIED])])
         self.assertNotIn('private', dialog.everything())
 
     def test_help_from_the_overview_opens_the_update_repair_help(self):
-        dialog = self.dialog([3, 4])
-        action = NativeDialogs(Addon(), dialog, lambda ms: None).repair_choose_action(_summary())
+        dialog = self.dialog(['help', 'cancel'])
+        action = NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page)).repair_choose_action(_summary())
         self.assertIsNone(action)
         self.assertEqual(dialog.views[-1][0], STRINGS[32203])
         self.assertIn('not supported yet', dialog.views[-1][1])
 
     def test_overview_offers_check_revision_help_and_back_only(self):
-        dialog = self.dialog([1])
-        action = NativeDialogs(Addon(), dialog, lambda ms: None).repair_choose_action(_summary())
+        dialog = self.dialog(['check'])
+        action = NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page)).repair_choose_action(_summary())
         self.assertEqual(action, 'check')
-        self.assertEqual(dialog.labels[0][1], [STRINGS[repair.S_APPLIED_ROW] % ('Friendly Build', '1.0.0', 'desk'),
-                                              STRINGS[32903], STRINGS[32904], STRINGS[32112], STRINGS[32113]])
+        self.assertFalse(dialog.labels)
+        page = dialog.pages[0]
+        self.assertEqual(page.rows, ())
+        self.assertEqual(page.actions, (('check', STRINGS[32903]), ('revision', STRINGS[32904]),
+                                       ('help', STRINGS[32112]), ('cancel', STRINGS[32113])))
+        self.assertEqual(page.body, STRINGS[repair.S_APPLIED_DETAIL] % ('Friendly Build', '1.0.0', 'desk'))
+
+    def test_overview_full_names_desired_revision_and_help_focus(self):
+        from dataclasses import replace
+        summary = replace(_summary(), applied_name='A long applied build name ' * 2,
+                          desired_name='A long desired build name ' * 2, changed=True)
+        dialog = self.dialog(['help', 'cancel'])
+        ui = NativeDialogs(Addon(), dialog, lambda ms: None,
+                           create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
+        self.assertIsNone(ui.repair_choose_action(summary))
+        self.assertEqual(dialog.page_focuses, [201, 203])
+        body = dialog.pages[0].body
+        for value in (summary.applied_name, summary.applied_version, summary.profile,
+                      summary.desired_name, summary.desired_version):
+            self.assertIn(value, body)
+        self.assertEqual(dialog.pages[0].body, dialog.pages[1].body)
+        self.assertTrue(all(page.rows == () and page.native_close for page in dialog.pages))
+        self.assertFalse(dialog.questions)
 
     def test_apply_requires_choosing_apply_and_explicit_confirmation(self):
         ui = NativeDialogs(Addon(), self.dialog([0], [True]), lambda ms: None)
@@ -455,7 +489,7 @@ class RepairNativeTests(unittest.TestCase):
 
     def test_blocked_and_no_op_presentation_never_offers_apply(self):
         dialog = self.dialog()
-        ui = NativeDialogs(Addon(), dialog, lambda ms: None)
+        ui = NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
         ui.repair_show(_blocked_model(), (repair.S_NOTE_DIFFERENT_VERSION,))
         ui.repair_show_healthy(_changes_model())
         self.assertEqual(dialog.labels, [])
@@ -474,8 +508,11 @@ class RepairNativeTests(unittest.TestCase):
         service.preview.return_value = plan(PlanState.NO_CHANGES)
         factory = Mock()
         workflow = UpdateRepairWorkflow(library, service, Mock(), factory)
-        dialog = self.dialog([1, 4])
-        NativeDialogs(Addon(), dialog, lambda ms: None, repair_provider=lambda: workflow).repair()
+        dialog = self.dialog(['check', 'cancel'])
+        NativeDialogs(Addon(), dialog, lambda ms: None, create_dialogs=CreateDialogs(Addon(), show=dialog.show_page), repair_provider=lambda: workflow).repair()
+        service.preview.assert_called_once()
+        self.assertFalse(dialog.oks)
+        self.assertEqual(len(dialog.pages), 2)
         visible = dialog.everything()
         self.assertIn('Friendly Build', visible)
         for leaked in ('a' * 64, '/private', 'manifest', 'frozen', 'library'):

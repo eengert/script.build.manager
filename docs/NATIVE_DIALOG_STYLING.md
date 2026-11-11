@@ -16,11 +16,11 @@ The AF3 resource composes the actual settings-dialog parts rather than drawing a
 
 - `Dimension_DialogHugeMenu`, `Size_Dialog_Pad`, `Size_LeftGroup_Main`, `Size_Group_Head`, `Size_Group_Body` and `Size_Grouplist_Pad` provide native frame geometry and spacing.
 - `Part_Dim_Overlay`, `Part_Background_Panel`, `Part_Panel` and `Part_Line` provide AF3's texture-backed background, borders, corners, transparency and action-column treatment. Background/theme expressions and variables are evaluated by AF3 itself.
-- `Part_HeadText`, `font_main`, `font_main_plot` and the dialog foreground colors provide native typography. Action labels/icons use the skin's `Button_Dialog` definition and `font_mini_bold`.
+- `Part_HeadText`, `font_main`, `font_main_plot` and the dialog foreground colors provide native typography. Action labels use the skin's `Button_Dialog` text-only definition and `font_mini_bold`.
 - `Part_List_Highlight` provides AF3's actual focused-row appearance, including its configured focus style. Focused text and checkbox colors use the skin's corresponding selected-color variables.
 - `Part_List_Checkmark` provides AF3's circular checked/unchecked resources. `Part_Scrollbar_Max` supplies the native scrollbar.
 
-AF3's composite action button reads its visible label through Control.GetLabel and its icon through a window property. Python sets the supported button label/visibility and the semantic icon property; the native skin definition draws the icon, label and focus state. The icon assets are AF3's own circle-check, circle-xmark, circle-question, square-check and square-xmark resources.
+AF3's composite action button uses `Button_Dialog` with `istext=true` and a label from `Control.GetLabel`. This chooses the skin's native `Button_Label` rather than `Button_Image`, removing the leading icon while retaining `Button_Control` backgrounds, fonts and focus colors. Python sets only the supported button label/visibility and navigation; no action-icon properties are written. These are add-on-owned XML calls; the installed skin is not modified.
 
 The include/asset contracts were inspected at AF3 **v3.3.12**, commit `660a05c35546718e90a88be7798bb0a92632abce`, matching the retained qualification target. The current upstream v3.4.20 definitions were also inspected for the directly used names, but do not replace the pinned 3.3.12 evidence. No current installed-skin version was probed in this offline task. These are skin-specific resource contracts, not a guarantee that every future AF3 release preserves the same include names.
 
@@ -38,9 +38,15 @@ The private-settings row uses the same visual state without displaying an On/Off
 
 **Kodi 21.3 scrollbar restriction:** no Python getControl call may target XML scrollbars 120 or 121. Visibility and horizontal navigation remain XML-owned. Native include contracts produce the same supported label/list/textbox/button IDs used by Python; the strict offline stub rejects scrollbar lookups. Focus restoration uses setFocusId with an integer ID.
 
-Build Status uses the existing read-only textbox and XML-owned scrollbar, with one Check Again action. All safe summaries and diagnostic lines from the status view model appear inline; no status list items are created. Each refresh requests one new status model. Back/Escape and window close return without another check. AF3 uses its native Part_CloseButton in the header for this page; Estuary retains its native header close control. Default provides a conditional header Close button with the same fallback assets. These header controls leave the default cancellation result and are separate from the one-action column.
+Build Status uses the existing read-only textbox and XML-owned scrollbar, with Check Again / Back actions. All safe summaries and diagnostic lines from the status view model appear inline; no status list items are created. Each refresh requests one new status model. Back/Escape and window close return without another check. AF3 uses its native Part_CloseButton in the header for this page; Estuary retains its native header close control. Default provides a conditional header Close button with the same fallback assets. These header controls leave the default cancellation result and are separate from the declared action column.
 
 Help topics use the same ordinary navigation rows as Main, with toggle indicators disabled. Topic content remains in the native text viewer; returning restores the topic position. Boolean settings and add-on selection keep their existing visual checkboxes.
+
+Actionable Install review uses the same read-only textbox and Apply Build / Back / Help buttons. Entering the review focuses Back. Help returns to its button without another plan/provider request. Apply Build still opens the existing separate native yes/no confirmation, with a bold WARNING above the build, device profile, calculated change summary and existing restart/protection notice. The wording says applying a build *can* overwrite configuration; it does not claim every configuration area is included. Kodi's safe No/Back default remains intact. Non-actionable plans remain in the native read-only viewer and never offer Apply.
+
+Update / Repair's entry page displays the existing full applied-build detail text and, when relevant, the desired revision context in the scrollable textbox. Its actions are Check for Changes / Choose Different Revision... / Help / Back. No association, revision decision, plan calculation, approval or execution logic is changed.
+
+**Native-dialog limitation:** standard Kodi-owned yes/no, selection and other dialogs remain styled by the active skin. The [Kodi Dialog API](https://xbmc.github.io/docs.kodi.tv/master/kodi-dev-kit/group__python___dialog.html) has no per-call action-icon override. Build Manager's own two-pane action buttons are text-only; native confirmation chrome may retain skin-defined icons. Removing those globally would require changing the skin or replacing the existing confirmation dialog, neither of which this presentation change does.
 
 Other Build Manager screens use standard Dialog.select, input, textviewer, yesno, ok, progress dialogs, or the standard add-on Settings window. They already belong to the active skin and are not replaced. No workflow, capture, library, lifecycle or backend styling dependency is introduced.
 
@@ -54,7 +60,7 @@ Default provides explicit text colors, button/focus textures, checkbox images an
 
 When adding support for another skin, add a matching resource directory using that skin's documented XML facilities and actual resources; retain the independent Default fallback. When upgrading the target AF3 or Kodi version, recheck the small set of native include/asset contracts and manually inspect the result.
 
-Native checks after independent review and separately authorized staging: AF3 first, including its configured background/focus theme; circular toggles in both private settings and add-on rows; native action icons/text; long labels/values and scrolling; keyboard/remote/mouse focus; bulk selection/Cancel rollback; Help return and final confirmation. Then inspect Estuary's native header/buttons/toggles and an additional skin's fallback. Offline checks do not supply a rendered-appearance PASS.
+Native checks after independent review and separately authorized staging: AF3 first, including its configured background/focus theme; circular toggles in both private settings and add-on rows; text-only native action labels; long labels/values and scrolling; keyboard/remote/mouse focus; bulk selection/Cancel rollback; Help return and final confirmation. Then inspect Estuary's native header/buttons/toggles and an additional skin's fallback. Offline checks do not supply a rendered-appearance PASS.
 
 Source references:
 

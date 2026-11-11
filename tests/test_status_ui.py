@@ -175,7 +175,7 @@ class FirstScreen(unittest.TestCase):
             "Overall: Healthy", "Add-ons: Current", "Skin: Current", "Settings: Current",
             "Private settings: Current"])
         self.assertEqual((page.rows, page.selected, page.focus), ((), None, 201))
-        self.assertEqual(page.actions, (('check_again', 'Check Again'),))
+        self.assertEqual(page.actions, (('check_again', 'Check Again'), ('cancel', 'Back')))
         self.assertTrue(page.native_close)
         self.assertEqual(len(calls), 1)
         self.assertFalse(dialog.details)
@@ -318,10 +318,10 @@ class Navigation(unittest.TestCase):
         self.assertEqual(rows(dialog, 0)[0], "Overall: Changes Needed")
         self.assertEqual(rows(dialog, 1)[0], "Overall: Healthy")
 
-    def test_status_has_only_check_again_and_closing_never_rechecks(self):
+    def test_status_has_check_again_back_and_closing_never_rechecks(self):
         calls = []
         _, dialog, waits = open_status(lambda: calls.append(1) or status())
-        self.assertEqual(dialog.pages[0].actions, (('check_again', 'Check Again'),))
+        self.assertEqual(dialog.pages[0].actions, (('check_again', 'Check Again'), ('cancel', 'Back')))
         self.assertEqual(len(calls), 1)
         self.assertEqual(set(waits), {200})
 

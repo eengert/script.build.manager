@@ -15,7 +15,8 @@ from resources.lib.frozen_resolution import ResolutionChoice
 from resources.lib.repository_preparation import PreparationCode
 from resources.lib.ui.native_dialogs import NativeDialogs
 from resources.lib.ui.controller import Route
-from tests.test_create_workflow import NativeDialog
+from tests.test_create_workflow import NativeDialog as BaseNativeDialog
+from resources.lib.ui.create_dialogs import CreateDialogs
 from tests.test_status_ui import Addon
 from tests import test_build_library as library_fixture
 
@@ -242,9 +243,21 @@ class SelectionTests(unittest.TestCase):
             self.f.library.plan_target(entry.entry_id, 'invented')
 
 
+class NativeDialog(BaseNativeDialog):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pages, self.page_focuses = [], []
+
+    def show_page(self, page):
+        self.pages.append(page)
+        self.page_focuses.append(page.focus)
+        return super().show_page(page)
+
+
 class NativeTests(unittest.TestCase):
     def ui(self, dialog, provider=None):
-        return NativeDialogs(Addon(), dialog, lambda _: None, install_provider=provider, main_select=dialog.select)
+        return NativeDialogs(Addon(), dialog, lambda _: None, install_provider=provider, main_select=dialog.select,
+                             create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
 
     def test_install_route_and_update_unavailable(self):
         workflow = Mock()
@@ -279,10 +292,10 @@ class NativeTests(unittest.TestCase):
     def test_safe_default_confirmation_and_help_return(self):
         e = LibraryEntry('a'*64, 'internal', '1.2.0', 'Friendly', ('desk',))
         from resources.lib.ui.plan_view import ReviewViewModel
-        d = NativeDialog([2,0,1], confirms=[False])
+        d = NativeDialog(['help','apply'], confirms=[False])
         ui = self.ui(d)
         self.assertFalse(ui.confirm_install(e, 'desk', ReviewViewModel.from_plan(plan())))
-        self.assertEqual(d.calls[0][2], 0)
+        self.assertEqual(d.page_focuses, [202, 203])
         args, kwargs = d.questions[0]
         body = args[1]
         # Build Manager leaves Kodi's documented safe No-button default intact.
@@ -290,34 +303,38 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(kwargs['nolabel'], Addon().getLocalizedString(32113))
         self.assertEqual(kwargs['yeslabel'], Addon().getLocalizedString(32807))
         self.assertEqual(body.splitlines(), [
+            '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'Friendly 1.2.0',
             'Choose a device profile: desk',
             'Install Demo 2.0.0',
             'Temporary protection and a full Kodi restart may be required.',
         ])
-        self.assertEqual(d.calls[1][2], 2)
+        self.assertEqual(d.pages[0].actions, (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help')))
+        self.assertEqual(d.pages[0].rows, ())
+        self.assertIn('Install Demo 2.0.0', d.pages[0].body)
         self.assertNotIn('a'*64, json.dumps(d.questions))
 
-    def test_compact_confirmation_shows_the_single_friendly_change_in_four_lines(self):
+    def test_confirmation_warning_precedes_build_and_single_friendly_change(self):
         from resources.lib.ui.plan_view import ReviewViewModel
         entry = LibraryEntry('a'*64, 'internal-build-id', '1.0.0',
                              'BM-UI-003C-20261007', ('current-device-8794224972c6',))
         rows = (SoftwareRow('repository.eengert', SoftwareAction.ENABLE, 'Eengert Repository'),)
         model = ReviewViewModel.from_plan(plan(rows=rows))
-        dialog = NativeDialog([1], confirms=[False])
+        dialog = NativeDialog(['apply'], confirms=[False])
         self.assertFalse(self.ui(dialog).confirm_install(
             entry, 'current-device-8794224972c6', model))
 
         args, kwargs = dialog.questions[0]
         body = args[1]
         self.assertEqual(body.splitlines(), [
+            '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'BM-UI-003C-20261007 1.0.0',
             'Choose a device profile: current-device-8794224972c6',
             'Enable Eengert Repository',
             'Temporary protection and a full Kodi restart may be required.',
         ])
-        self.assertLessEqual(len(body.splitlines()), 4)
-        self.assertNotIn('\n\n', body)
+        self.assertEqual(len(body.splitlines()), 6)
+        self.assertTrue(body.startswith('[B]WARNING:'))
         self.assertEqual(body.splitlines()[-1],
                          'Temporary protection and a full Kodi restart may be required.')
         for section in ('Add-ons', 'Settings', 'Skin', 'Private', 'Restart'):
@@ -337,10 +354,11 @@ class NativeTests(unittest.TestCase):
             SoftwareRow('plugin.module', SoftwareAction.INSTALL_EXACT, 'Demo Module', '2.0.0'),
         )
         model = ReviewViewModel.from_plan(plan(rows=rows))
-        dialog = NativeDialog([1], confirms=[False])
+        dialog = NativeDialog(['apply'], confirms=[False])
         self.assertFalse(self.ui(dialog).confirm_install(entry, 'desk', model))
         body = dialog.questions[0][0][1]
         self.assertEqual(body.splitlines(), [
+            '[B]' + Addon().getLocalizedString(32818) + '[/B]', '',
             'Friendly Build 1.2.0',
             'Choose a device profile: desk',
             'This build — changes: 2; accepted skips: 0',
@@ -355,7 +373,7 @@ class NativeTests(unittest.TestCase):
             SoftwareRow('plugin.skip.two', SoftwareAction.ACCEPTED_SKIP, 'Skipped Beta'),
         )
         exception_model = ReviewViewModel.from_plan(plan(rows=exception_rows))
-        exception_dialog = NativeDialog([1], confirms=[False])
+        exception_dialog = NativeDialog(['apply'], confirms=[False])
         self.assertFalse(self.ui(exception_dialog).confirm_install(entry, 'desk', exception_model))
         exception_body = exception_dialog.questions[0][0][1]
         self.assertIn('This build — changes: 1; accepted skips: 2', exception_body)
@@ -363,6 +381,47 @@ class NativeTests(unittest.TestCase):
         self.assertNotIn('Skipped Beta', exception_body)
         self.assertEqual(exception_body.splitlines()[-1],
                          'Temporary protection and a full Kodi restart may be required.')
+
+    def test_non_actionable_review_never_offers_apply_or_final_confirmation(self):
+        from resources.lib.ui.plan_view import ReviewViewModel
+        entry = LibraryEntry('a'*64, 'demo', '1.0.0', 'Friendly', ('desk',))
+        for state in PlanState:
+            if state is PlanState.CHANGES_READY:
+                continue
+            with self.subTest(state=state):
+                d = NativeDialog([])
+                from tests.test_update_repair_workflow import plan as valid_plan
+                model = ReviewViewModel.from_plan(
+                    valid_plan(state) if state in (PlanState.DECISION_REQUIRED, PlanState.RESOLUTION_REQUIRED)
+                    else plan(state))
+                self.assertFalse(self.ui(d).confirm_install(entry, 'desk', model))
+                self.assertFalse(d.pages)
+                self.assertFalse(d.questions)
+                self.assertEqual(d.details, [(self.ui(d).render(model.title), self.ui(d).review_body(model))])
+
+    def test_real_review_buttons_keep_final_confirmation_and_fresh_validation_gates(self):
+        for actions, answers, expected in ((['cancel'], [], False),
+                                            (['help', 'cancel'], [], False),
+                                            (['apply'], [False], False),
+                                            (['apply'], [True], True)):
+            with self.subTest(actions=actions, answers=answers):
+                f = WorkflowTests(); f.setUp()
+                dialog = NativeDialog([0, 1, *actions], confirms=answers)
+                ui = self.ui(dialog)
+                f.ui = ui
+                f.run_flow()
+                f.service.preview.assert_called_once_with(f.target)
+                if expected:
+                    f.service.validate.assert_called_once()
+                    f.factory.assert_called_once()
+                    f.coordinator.install_target.assert_called_once()
+                else:
+                    f.service.validate.assert_not_called()
+                    f.assert_no_execution()
+                self.assertEqual(len(dialog.questions), int('apply' in actions))
+                for page in dialog.pages:
+                    self.assertEqual(page.rows, ())
+                    self.assertIn('Install Demo 2.0.0', page.body)
 
     def test_prepared_repository_label_actual_version(self):
         from resources.lib.ui.plan_view import ReviewViewModel
@@ -410,8 +469,9 @@ class PreparationFlowTests(unittest.TestCase):
         executor.install_target.side_effect = coordinator.install_target
         workflow = InstallWorkflow(self.library, service, preparation,
             lambda: executor, lambda: OperationStatus())
-        dialog = NativeDialog([0,0,0,0,1], confirms=[True])
-        ui = NativeDialogs(Addon(), dialog, lambda _: None)
+        dialog = NativeDialog([0,0,0,'apply'], confirms=[True])
+        ui = NativeDialogs(Addon(), dialog, lambda _: None,
+                           create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
         original_confirm = ui.confirm_install
         def confirm(entry, profile, model):
             reviewed.append(model)
@@ -455,7 +515,8 @@ class PreparationFlowTests(unittest.TestCase):
         workflow = InstallWorkflow(self.library, self.service, preparation,
             executor, lambda: OperationStatus())
         dialog = NativeDialog([0,0,0])
-        ui = NativeDialogs(Addon(), dialog, lambda _: None)
+        ui = NativeDialogs(Addon(), dialog, lambda _: None,
+                           create_dialogs=CreateDialogs(Addon(), show=dialog.show_page))
         workflow.run(ui)
         executor.assert_not_called()
         self.assertFalse(dialog.questions)

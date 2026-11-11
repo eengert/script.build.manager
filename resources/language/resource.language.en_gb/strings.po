@@ -1213,3 +1213,8 @@ msgstr ""
 msgctxt "#32748"
 msgid "None"
 msgstr ""
+
+# Install final confirmation warning
+msgctxt "#32818"
+msgid "WARNING: Applying a build can overwrite your current Kodi configuration. Review the proposed changes before continuing."
+msgstr ""

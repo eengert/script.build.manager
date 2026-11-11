@@ -195,7 +195,8 @@
                             <param name="id">201</param>
                             <param name="groupid">1201</param>
                             <param name="font">font_mini_bold</param>
-                            <param name="icon">$INFO[Window.Property(bm.action.201.icon)]</param>
+                            <param name="istext">true</param>
+                            <param name="label">$INFO[Control.GetLabel(201)]</param>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
@@ -205,7 +206,8 @@
                             <param name="id">202</param>
                             <param name="groupid">1202</param>
                             <param name="font">font_mini_bold</param>
-                            <param name="icon">$INFO[Window.Property(bm.action.202.icon)]</param>
+                            <param name="istext">true</param>
+                            <param name="label">$INFO[Control.GetLabel(202)]</param>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
@@ -215,7 +217,8 @@
                             <param name="id">203</param>
                             <param name="groupid">1203</param>
                             <param name="font">font_mini_bold</param>
-                            <param name="icon">$INFO[Window.Property(bm.action.203.icon)]</param>
+                            <param name="istext">true</param>
+                            <param name="label">$INFO[Control.GetLabel(203)]</param>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
@@ -225,7 +228,8 @@
                             <param name="id">204</param>
                             <param name="groupid">1204</param>
                             <param name="font">font_mini_bold</param>
-                            <param name="icon">$INFO[Window.Property(bm.action.204.icon)]</param>
+                            <param name="istext">true</param>
+                            <param name="label">$INFO[Control.GetLabel(204)]</param>
                             <onleft condition="Control.IsVisible(110)">121</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>

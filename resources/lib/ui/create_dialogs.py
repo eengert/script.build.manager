@@ -97,9 +97,16 @@ class CreateDialogs:
         return result
 
     def status(self, body):
-        page = CreatePage(self.text(32103), actions=(('check_again', self.text(32440)),),
+        page = CreatePage(self.text(32103), actions=(('check_again', self.text(32440)),
+                          ('cancel', self.text(32113))),
                           body=body, focus=201, native_close=True)
         return self.show(page)
+
+    def information(self, title, body, actions, focus=201):
+        """Read-only text with explicit actions; return focus for Help round trips."""
+        page = CreatePage(title, body=body, actions=actions, focus=focus, native_close=True)
+        result = self.show(page)
+        return result, page.focus
 
     def _show(self, page):
         # Lazy import keeps both the page model and other UI routes Kodi-free.
@@ -143,12 +150,6 @@ def create_window_type(base, list_item):
                 button.setVisible(i < len(p.actions))
                 if i < len(p.actions):
                     button.setLabel(p.actions[i][1])
-                    # AF3's native Button_Dialog draws its icon and label over
-                    # this supported button, using window/control infolabels.
-                    icon = {'help': 'circle-question', 'cancel': 'circle-xmark',
-                            'all': 'square-check', 'none': 'square-xmark'}.get(p.actions[i][0], 'circle-check')
-                    self.setProperty('bm.action.%s.icon' % (201 + i),
-                                     'special://skin/extras/icons/' + icon + '.png')
                     button.controlUp(self.getControl(201 + (i - 1) % len(p.actions)))
                     button.controlDown(self.getControl(201 + (i + 1) % len(p.actions)))
             self.setFocusId(p.focus)

@@ -95,6 +95,7 @@ class NativeFoundationTests(unittest.TestCase):
                    'resources.lib.plan_model', 'resources.lib.create_workflow'}
         if filename in ('plan_view.py', 'create_dialogs.py'): allowed.add('typing')
         if filename == 'create_dialogs.py': allowed.add('xbmcgui')
+        if filename == 'native_dialogs.py': allowed.add('resources.lib.failure_diagnostics')
         for n in ast.walk(ast.parse(source)):
             if isinstance(n, (ast.Import, ast.ImportFrom)):
                 self.assertIsInstance(n, ast.ImportFrom, filename)
@@ -106,6 +107,9 @@ class NativeFoundationTests(unittest.TestCase):
                 if n.module == 'xbmcgui':
                     self.assertEqual(filename, 'create_dialogs.py')
                     self.assertLessEqual({a.name for a in n.names}, {'WindowXMLDialog', 'ListItem'})
+                if n.module == 'resources.lib.failure_diagnostics':
+                    self.assertEqual(filename, 'native_dialogs.py')
+                    self.assertLessEqual({a.name for a in n.names}, {'call', 'emit'})
                 if n.module == 'resources.lib.create_workflow':
                     self.assertEqual(filename, 'native_dialogs.py')
                     self.assertLessEqual({a.name for a in n.names},
@@ -116,6 +120,8 @@ class NativeFoundationTests(unittest.TestCase):
             self.assert_presentation_imports(p.read_text(), p.name)
     def test_presentation_import_policy_accepts_reviewed_typing_and_create_helpers(self):
         self.assert_presentation_imports('from typing import Optional', 'plan_view.py')
+        self.assert_presentation_imports('from resources.lib.failure_diagnostics import call, emit',
+                                         'native_dialogs.py')
         self.assert_presentation_imports(
             'from resources.lib.create_workflow import identity, version_tuple, CreateValidationError',
             'native_dialogs.py')
@@ -131,7 +137,10 @@ class NativeFoundationTests(unittest.TestCase):
                 ('native_dialogs.py', 'from resources.lib.create_workflow import runtime_create_workflow'),
                 ('status_view.py', 'from resources.lib.create_workflow import identity'),
                 ('create_dialogs.py', 'from xbmcgui import Window'),
-                ('status_view.py', 'from xbmcgui import ListItem')):
+                ('status_view.py', 'from xbmcgui import ListItem'),
+                ('status_view.py', 'from resources.lib.failure_diagnostics import emit'),
+                ('native_dialogs.py', 'from resources.lib.failure_diagnostics import raw_exception'),
+                ('native_dialogs.py', 'from resources.lib.failure_diagnostics.engine import apply')):
             with self.subTest(source=source), self.assertRaises(AssertionError):
                 self.assert_presentation_imports(source, filename)
     def test_status_model_is_standard_library_only(self):

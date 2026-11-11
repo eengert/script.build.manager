@@ -314,7 +314,7 @@ class KodiBindingTests(unittest.TestCase):
         w.onClick(201)
         self.assertEqual((p.result, w.closed), ('cancel', 1))
 
-    def test_status_initialization_text_is_inert_and_only_check_again_is_visible(self):
+    def test_status_initialization_text_is_inert_and_buttons_have_requested_order(self):
         pages = []
         CreateDialogs(Addon(), show=lambda p: pages.append(p) or 'cancel').status('all diagnostics')
         p = pages[0]
@@ -322,10 +322,10 @@ class KodiBindingTests(unittest.TestCase):
         self.assertEqual(w.getControl(110).text, 'all diagnostics')
         self.assertFalse(w.getControl(100).visible)
         self.assertEqual([w.getControl(i).label for i in range(201, 205)
-                          if w.getControl(i).visible], ['Check Again'])
+                          if w.getControl(i).visible], ['Check Again', 'Back'])
         self.assertEqual(w.properties['bm.native_close'], 'true')
         self.assertEqual(w.getFocusId(), 201)
-        for ident in (100, 110, 121, 202, 203, 204, 205):
+        for ident in (100, 110, 121, 203, 204, 205):
             w.onClick(ident)
             self.assertEqual((p.result, w.closed), ('cancel', 0))
         w.onClick(201)
@@ -343,6 +343,42 @@ class KodiBindingTests(unittest.TestCase):
             else:
                 w.onAction(SimpleNamespace(getId=lambda: action))
             self.assertEqual((w.page.result, w.closed), ('cancel', 1))
+
+    def test_information_back_help_escape_and_close_never_accept_apply(self):
+        actions = (('apply', 'Apply Build'), ('cancel', 'Back'), ('help', 'Help'))
+        for control, expected in ((202, 'cancel'), (203, 'help'), (205, 'cancel')):
+            pages = []
+            CreateDialogs(Addon(), lambda p: pages.append(p) or 'cancel').information(
+                'Install Build', 'complete review', actions, focus=202)
+            p = pages[0]
+            w = self.window(p)
+            self.assertFalse(w.getControl(100).visible)
+            self.assertTrue(w.getControl(110).visible)
+            self.assertEqual(w.getFocusId(), 202)
+            self.assertEqual(w.properties['bm.native_close'], 'true')
+            w.onClick(110)
+            w.onClick(121)
+            self.assertEqual(w.closed, 0)
+            w.onClick(control)
+            self.assertEqual(p.result, expected)
+            if control != 205:
+                w.onClick(201)  # a queued Apply after Back/Help is ignored
+                self.assertEqual(p.result, expected)
+        for action in (10, 92):
+            p = CreatePage('Install Build', body='details', actions=actions, focus=202, native_close=True)
+            w = self.window(p)
+            w.onAction(SimpleNamespace(getId=lambda: action))
+            w.onClick(201)
+            self.assertEqual((p.result, w.closed), ('cancel', 1))
+
+    def test_status_explicit_back_closes_without_accepting_refresh(self):
+        show = ScriptedShow([(202, 0)])
+        self.assertEqual(CreateDialogs(Addon(), show).status('all details'), 'cancel')
+        p = show.pages[0]
+        w = self.window(p)
+        w.onClick(202)
+        w.onClick(201)
+        self.assertEqual((p.result, w.closed), ('cancel', 1))
 
     def test_help_uses_all_ten_ordinary_rows_and_restores_topic_position(self):
         from resources.lib.ui.help_content import SECTIONS
@@ -406,12 +442,11 @@ class KodiBindingTests(unittest.TestCase):
         self.assertEqual(p.result, 'cancel')
         self.assertEqual(original, {0})
 
-    def test_native_action_icons_follow_semantics_after_button_reordering(self):
+    def test_action_buttons_have_no_python_icon_properties(self):
         p = CreatePage('Create', [], [('apply', 'Apply'), ('cancel', 'Cancel'), ('help', 'Help')])
         w = self.window(p)
-        self.assertEqual([w.properties['bm.action.%s.icon' % i] for i in (201, 202, 203)],
-            ['special://skin/extras/icons/circle-check.png', 'special://skin/extras/icons/circle-xmark.png',
-             'special://skin/extras/icons/circle-question.png'])
+        self.assertFalse(any('icon' in key for key in w.properties))
+        self.assertEqual([w.getControl(i).label for i in (201, 202, 203)], ['Apply', 'Cancel', 'Help'])
 
     def test_review_scrollbar_click_does_not_require_list_items(self):
         p = CreatePage('Review', actions=[('create', 'Create'), ('cancel', 'Cancel'), ('help', 'Help')],
@@ -623,14 +658,16 @@ class XmlTests(unittest.TestCase):
                     self.assertEqual([(n.get('condition'), n.text) for n in action.findall(direction)],
                         [('Control.IsVisible(110)', '121'), ('!Control.IsVisible(110)', '100')])
 
-    def test_native_buttons_keep_declared_order_and_af3_dynamic_icon_bindings(self):
+    def test_native_buttons_keep_order_and_af3_uses_text_only_native_variant(self):
         for skin, include in (('skin.arctic.fuse.3', 'Button_Dialog'), ('skin.estuary', 'DefaultDialogButton')):
             root = ET.parse(ROOT / 'resources/skins' / skin / '1080i/script-build-manager-create.xml')
             buttons = root.findall('.//include[@content="%s"]' % include)
             self.assertEqual([n.findtext('param[@name="id"]') for n in buttons], ['201', '202', '203', '204'])
             if skin == 'skin.arctic.fuse.3':
-                self.assertEqual([n.findtext('param[@name="icon"]') for n in buttons],
-                    ['$INFO[Window.Property(bm.action.%s.icon)]' % i for i in range(201, 205)])
+                self.assertTrue(all(n.findtext('param[@name="istext"]') == 'true' for n in buttons))
+                self.assertTrue(all(n.find('param[@name="icon"]') is None for n in buttons))
+                self.assertEqual([n.findtext('param[@name="label"]') for n in buttons],
+                    ['$INFO[Control.GetLabel(%s)]' % i for i in range(201, 205)])
 
     def test_fallback_is_self_contained_and_toggle_states_are_distinct(self):
         import struct
