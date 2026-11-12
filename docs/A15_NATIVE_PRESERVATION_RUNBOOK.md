@@ -446,12 +446,110 @@ Do not retry, switch quit transports, or infer shutdown from CANCEL.
    rechecks host source, stopped/public state, invokes `finish()` at most once,
    compares all five projections and separate public witnesses, and disposes
    the session. Record exit status and durable result.json, not just DONE.
-6. Seal ready/result/quit artifacts, external run ledger, bounded native UI
+6. After the session is disposed, perform only the separately authorized bounded
+   capture-marker assessment below; never reopen a session or retry Create for
+   missing diagnostics. Seal ready/result/quit artifacts, external run ledger, bounded native UI
    evidence, source authority and the sanitized assessment together. A copied
    receipt with refreshed mtime or zero-native-activity window can satisfy the
    driver's structural checks, so receipt syntax/mtime alone cannot establish
    launch, UI execution or graceful exit. External trusted correlation remains
    mandatory; do not claim nonce-bound or machine-authenticated UI provenance.
+
+## Capture-refusal log observability (staging prerequisite)
+
+This procedure is for a separately authorized native run, not permission to read
+logs during documentation review or staging. The native task must explicitly
+include the bounded prelaunch/post-run log reads below. Staging may proceed after
+review of this procedure and the diagnostic candidate; actual native emission
+remains **UNVERIFIED** until observed in that future run.
+
+**Select only the portable log.** For the admitted fixed target the source is:
+
+```text
+/Applications/Kodi Build Manager Test.app/Contents/Resources/Kodi/portable_data/temp/kodi.log
+```
+
+`docs/BM023A_MACOS_TEST_RUNTIME.md` distinguishes the original portable
+`temp/kodi.log` from the replacement isolated-HOME runtime's
+`<HOME>/Library/Logs/kodi.log`; `docs/TESTING.md` describes the latter harness
+mapping too. Those HOME-based harness paths are not this portable `-p` target.
+Do not search other log directories, use normal Kodi logs, or fall back to
+`kodi.old.log` or an archived log when this source cannot be proved.
+
+Use the existing `tools.bm_test_app` Python interfaces with the unchanged approved
+configuration: `Services.production().target`, `target.portable_data / "temp" /
+"kodi.log"`, `target.require_chain(path)`, then
+`read_regular_file(path, 64 * 1024 * 1024)`. Require the constructed path to equal
+the fixed source above, and check the chain again after reading. The reader is
+bounded, read-only, final-component no-follow and verifies file identity, size
+and modification-time stability. Refuse symlinks, non-regular files, oversized,
+unreadable or changing inputs; do not truncate or retry a refused read. This is
+an explicitly scoped log read, not a new five-file bridge projection or an
+expansion/bypass of `ReadGuard`'s public-state allowlist. Never feed logs to the
+preservation comparator.
+
+**Bind source and freshness to the run.** After successful stopped/source
+admission and before READY/launch, take one bounded read using those interfaces.
+Keep raw bytes only in memory. Record file identity/size/mtime internally and
+retain only the fixed marker/timestamp pairs needed to reject historical entries;
+discard the raw bytes immediately. If the initial read is unavailable, refuse
+this diagnostic run before launch rather than guessing the baseline. Correlate
+with the external ledger's exact installed diagnostic commit, manifest, fixed
+bundle, independently identified portable `-p` launch PID, confirmation and
+shutdown interval. Path location alone is not proof of an authenticated writer.
+
+After the native sequence has stopped Test.app, verified source and disposed the
+original driver session with its prescribed FINISH or CANCEL, perform one bounded
+read of the same fixed log. Do not delay quit/FINISH or consume the 900-second
+budget to inspect logs. If shutdown or admission failed, do not read while the
+target remains uncertain; use the existing recovery stop rule. Rotation,
+replacement or truncation must not be treated as appended bytes: accept fresh
+markers only if their full dated log timestamps unambiguously fall between this
+run's recorded Create confirmation and shutdown, using the recorded host timezone
+and UTC ledger, and were absent from the prelaunch marker set. Reject ambiguous
+dates, clock discontinuities, historical matches or uncertain rotation as
+INCONCLUSIVE; never substitute modification time alone for event freshness.
+
+**Filter in memory; never print log lines.** Accept only a complete diagnostic
+message of the form `[script.build.manager] diagnostic phase=create.capture.X`
+after the ordinary Kodi timestamp/thread/log-level envelope, with no extra
+message suffix. Match X against this exact allowlist, also checked against the
+staged candidate's `failure_diagnostics.PHASES`:
+
+```text
+incomplete
+capture_errors
+incomplete_artifact
+incomplete_provenance
+invalid_package
+unsupported
+missing
+dependency_cycle
+builtin_closure_unavailable
+metadata_unavailable
+metadata_invalid
+application_root_refused
+builtin_requirement_incompatible
+platform_requirement_unsatisfied
+```
+
+Discard all other messages and surrounding content without output. Retain only
+the distinct allowlisted phase names, fixed source/freshness verification outcomes
+and their correlation to the external run ledger. Do not retain raw bytes, raw
+lines, headers, thread identifiers, private-value hashes or unrelated content.
+The future run confirms emission only when it actually observes fresh allowlisted
+markers; successful staging, offline tests or a missing marker cannot prove it.
+
+**Outcome limits (32730 versus 32732).** The diagnostic covers incomplete capture
+mapped to 32730. Preserve that user-facing result and the safe abandonment/CANCEL
+flow if the intended 32733 conflict was not reached; diagnostic evidence cannot
+rescue A15 qualification. Exceptions/FAILED outcomes mapped to 32732 may produce
+no `create.capture.*` markers, including failures before the incomplete-result
+boundary. A 32732 outcome, absent/inaccessible markers, or uncertain source or
+freshness is INCONCLUSIVE for the intended capture diagnosis and requires separate
+investigation, not a retry. Markers identify fixed categories, not necessarily a
+particular node or builtin subcheck. Never infer a missing artifact, zero capture
+side effects or successful preservation from either UI outcome or from markers.
 
 ## Minimal external run ledger
 
