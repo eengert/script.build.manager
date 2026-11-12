@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from resources.lib.manifest import (

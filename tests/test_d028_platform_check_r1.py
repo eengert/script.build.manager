@@ -240,6 +240,10 @@ import importlib.machinery
 import json
 
 CONVENTIONAL_BASE = 'ce488ac743c65bbe3ce1e97f0e7f45549fcf5b42'
+# Independently accepted adapter installed by the retained November 4 stage.
+# Includes fixture/auto-keep dispatch and library status/recovery additions.
+# Pin the entire main AST, rather than stripping those accepted branches away.
+CONVENTIONAL_MAIN_BASE = 'a5a4a23b026ee5004f7f62ccf6387a7689d6c4c2'
 
 
 def conventional_template():
@@ -438,32 +442,52 @@ class ConventionalImportPathTests(unittest.TestCase):
                     spec.loader.get_code(spec.name)
                 compiler.assert_not_called()
 
+    def assert_reviewed_main(self, tree):
+        reviewed = ast.parse(subprocess.check_output(
+            ['git', 'show', CONVENTIONAL_MAIN_BASE + ':tools/bm023a_adapter/default.py.in'],
+            cwd=PROJECT, text=True))
+        main = lambda source: next(node for node in ast.walk(source)
+                                   if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        self.assertEqual(ast.dump(main(reviewed)), ast.dump(main(tree)))
+
     def test_legacy_main_ast_is_identical_after_removing_only_platform_changes(self):
-        baseline = ast.parse(subprocess.check_output(['git', 'show', CONVENTIONAL_BASE + ':tools/bm023a_adapter/default.py.in'],
-                                                    cwd=PROJECT, text=True))
-        current = conventional_template()
-        main = next(node for node in ast.walk(current) if isinstance(node, ast.FunctionDef) and node.name == 'main')
-        for node in ast.walk(main):
-            if isinstance(node, ast.Try):
-                node.body = [child.body[0] if isinstance(child, ast.If)
-                             and ast.unparse(child.test) == "mode != 'platform_check'" else child for child in node.body]
-            if isinstance(node, ast.If) and ast.unparse(node.test) == "mode == 'platform_check'":
-                node.body = [child for child in node.body if not
-                    (isinstance(child, ast.Assign) and any(isinstance(target, ast.Name)
-                     and target.id == '_platform_product_stat' for target in child.targets)) and not
-                    (isinstance(child, ast.Expr) and isinstance(child.value, ast.Call)
-                     and ast.unparse(child.value.func) == '_platform_isolated_roots.add') and not
-                    (isinstance(child, ast.Assign) and any(isinstance(target, ast.Subscript)
-                     and ast.unparse(target.value) == 'sys.path' for target in child.targets))]
-        old_main = next(node for node in ast.walk(baseline) if isinstance(node, ast.FunctionDef) and node.name == 'main')
-        self.assertEqual(ast.dump(old_main), ast.dump(main))
+        """Keep the historical test identity; now guard the full accepted main.
+
+        The older baseline predates accepted fixture dispatch and library
+        status/recovery. No current main statements are filtered or ignored.
+        The original finder/loader comparisons still use the older baseline.
+        """
+        self.assert_reviewed_main(conventional_template())
+        baseline = ast.parse(subprocess.check_output(
+            ['git', 'show', CONVENTIONAL_BASE + ':tools/bm023a_adapter/default.py.in'],
+            cwd=PROJECT, text=True))
         _, before = conventional_branch(baseline)
         _, after = conventional_branch(conventional_template())
         for name in ('_PlatformSourceFinder', '_PlatformSourceLoader'):
             old = next(node for node in before.body if isinstance(node, ast.ClassDef) and node.name == name)
             new = next(node for node in after.body if isinstance(node, ast.ClassDef) and node.name == name)
             self.assertEqual(ast.dump(old), ast.dump(new))
-        self.assertEqual(ast.dump(before.body[0]), ast.dump(after.body[0]))  # B2 refusal unchanged.
+
+    def test_reviewed_main_guard_rejects_unauthorized_behavior_mutations(self):
+        for mutation in ('fixture_modes', 'result_identity', 'execution', 'verification'):
+            with self.subTest(mutation=mutation):
+                tree = conventional_template()
+                main = next(node for node in ast.walk(tree)
+                            if isinstance(node, ast.FunctionDef) and node.name == 'main')
+                if mutation == 'fixture_modes':
+                    assignment = next(node for node in ast.walk(main) if isinstance(node, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == 'fixture_mode' for t in node.targets)
+                        and isinstance(node.value, ast.IfExp))
+                    assignment.value.test.comparators[0].elts.append(ast.Constant('install'))
+                else:
+                    expected = {'result_identity': 'identify_adapter_result',
+                                'execution': 'coordinator.install',
+                                'verification': 'verify_production_module_sources'}[mutation]
+                    call = next(node for node in ast.walk(main)
+                                if isinstance(node, ast.Call) and ast.unparse(node.func) == expected)
+                    call.func = ast.Name(id='unauthorized_call', ctx=ast.Load())
+                with self.assertRaises(AssertionError):
+                    self.assert_reviewed_main(tree)
 
 
 class ConventionalProductWitnessTests(unittest.TestCase):

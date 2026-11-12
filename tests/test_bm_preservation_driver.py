@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -415,6 +416,23 @@ class DriverTests(fixtures.TripwireTestCase):
                 driver.trusted_invocation()
             with mock.patch.object(driver,'__file__',str(self.tmp/'bm_preservation_driver.py')), \
                  self.assertRaises(driver.Refused): driver.trusted_invocation()
+
+    def test_discovery_preserves_strict_checkout_and_import_origin_checks(self):
+        self.invocation_patch.stop()
+        # Import every test module, but never execute the complete suite here.
+        suite = unittest.defaultTestLoader.discover(str(fixtures.PROJECT / 'tests'),
+                                                   top_level_dir=str(fixtures.PROJECT))
+        self.assertGreater(suite.countTestCases(), 0)
+        with mock.patch.object(driver, 'REPO', fixtures.PROJECT):
+            driver.trusted_invocation()
+
+    def test_noncanonical_test_import_path_is_still_refused(self):
+        self.invocation_patch.stop()
+        alias = str(fixtures.PROJECT / 'tests' / '..')
+        with mock.patch.object(driver, 'REPO', fixtures.PROJECT):
+            with mock.patch.object(sys, 'path', [alias, *sys.path]), self.assertRaises(driver.Refused):
+                driver.trusted_invocation()
+            driver.trusted_invocation()
 
     def test_public_witness_composition_never_uses_creating_transaction_inspect(self):
         self.public_patch.stop()

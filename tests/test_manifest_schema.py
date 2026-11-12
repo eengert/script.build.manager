@@ -16,7 +16,7 @@ import sys
 import unittest
 
 # Add repo root to path so resources/ is importable as a package if needed
-REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 SCHEMA_PATH = os.path.join(REPO_ROOT, "resources", "builds", "schema-v1.json")

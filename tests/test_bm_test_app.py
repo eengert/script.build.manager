@@ -4228,7 +4228,7 @@ class RunWorld:
         self.tc = testcase
         self.pid = pid
         self.target = make_fake_app(base)
-        self.manifest = install_good(self.target)
+        self.manifest = copy.deepcopy(install_good(self.target))
         self.lister = FakeProcessLister()
         self.lister.run_test_app(self.target, pid=pid)
         self.clock = FakeClock()
@@ -7578,6 +7578,14 @@ class TestGuardedTcpTransport(TripwireTestCase):
             self.assertEqual(code,bm.EXIT_OK);self.assertTrue(payload['transition']['enabled'])
         self.assertEqual(methods.count('Addons.SetAddonEnabled'),1)
 
+
+    def test_world_manifest_mutation_does_not_change_cached_stage_expectation(self):
+        original = copy.deepcopy(good_plan()[2])
+        world = RunWorld(self)
+        self.assertIsNot(world.manifest, good_plan()[2])
+        self.assertIsNot(world.manifest['tool'], good_plan()[2]['tool'])
+        world.manifest['tool']['sha256'] = 'a' * 64
+        self.assertEqual(good_plan()[2], original)
 
     def b1_control(self, properties, *, command='platform-preflight', name='b1', initial=False):
         world = RunWorld(self, name)

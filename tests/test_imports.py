@@ -4,7 +4,7 @@ import unittest
 
 # Make the repo root importable so resources.lib can be found when running
 # tests from any directory.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 class TestBuildManagerImports(unittest.TestCase):
