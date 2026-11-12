@@ -2,6 +2,20 @@
 import re
 
 PHASES = frozenset({
+    'create.capture.incomplete',
+    'create.capture.dependency_cycle',
+    'create.capture.builtin_closure_unavailable',
+    'create.capture.metadata_unavailable',
+    'create.capture.metadata_invalid',
+    'create.capture.application_root_refused',
+    'create.capture.builtin_requirement_incompatible',
+    'create.capture.platform_requirement_unsatisfied',
+    'create.capture.capture_errors',
+    'create.capture.incomplete_artifact',
+    'create.capture.incomplete_provenance',
+    'create.capture.invalid_package',
+    'create.capture.unsupported',
+    'create.capture.missing',
     'status.provider', 'status.presentation', 'status.view_model',
     'status.view_model.overall_detail', 'status.view_model.build_rows',
     'status.view_model.addons_row', 'status.view_model.skin_row',

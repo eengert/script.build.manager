@@ -312,6 +312,8 @@ class FrozenBuildCaptureResult:
     manifest: FrozenBuildManifest
     errors: Tuple[str, ...] = ()
     recoverability: Optional["FrozenBuildRecoverabilitySummary"] = None
+    # Fixed diagnostic categories only; excluded from manifest/fingerprint truth.
+    diagnostic_categories: Tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -1153,11 +1155,13 @@ def capture_frozen_build(
     visiting = set()
     visited = set()
     errors: List[str] = []
+    diagnostic_categories = set()
 
     def walk(addon_id: str, optional: bool = False) -> None:
         optional_by_id[addon_id] = optional_by_id.get(addon_id, True) and optional
         if addon_id in visiting:
             errors.append(f"dependency cycle at {addon_id}")
+            diagnostic_categories.add("dependency_cycle")
             return
         if addon_id in visited:
             return
@@ -1191,6 +1195,7 @@ def capture_frozen_build(
                 # Never expose native exception details or infer a version from
                 # an incoming requirement when trusted metadata is unavailable.
                 errors.append(f"{addon_id}: trusted builtin closure unavailable")
+                diagnostic_categories.add("builtin_closure_unavailable")
                 metadata_errors.add(addon_id)
             finally:
                 visiting.remove(addon_id)
@@ -1205,6 +1210,7 @@ def capture_frozen_build(
             # Required metadata absence blocks exactly like malformed metadata.
             # Dependency edges are never inferred from inventory RPC data.
             errors.append(f"{addon_id}: addon.xml unavailable")
+            diagnostic_categories.add("metadata_unavailable")
             metadata_errors.add(addon_id)
         else:
             try:
@@ -1222,6 +1228,7 @@ def capture_frozen_build(
                     walk(edge.addon_id, optional or edge.optional)
             except CaptureError as exc:
                 errors.append(str(exc))
+                diagnostic_categories.add("metadata_invalid")
                 metadata_errors.add(addon_id)
         visiting.remove(addon_id)
 
@@ -1231,6 +1238,7 @@ def capture_frozen_build(
         if root in platform_ids:
             # Trusted application add-ons are dependencies, never ordinary managed roots (D-028).
             errors.append(f"{root}: platform-provided add-on cannot be an ordinary managed root")
+            diagnostic_categories.add("application_root_refused")
 
     incoming_minima: Dict[str, List[str]] = {}
     for parent_edges in edges_by_id.values():
@@ -1243,6 +1251,7 @@ def capture_frozen_build(
                or not _builtin_version_satisfies(minimum, abi)
                for minimum in incoming_minima.get(addon_id, ())):
             errors.append(f"{addon_id}: incompatible builtin requirement")
+            diagnostic_categories.add("builtin_requirement_incompatible")
 
     nodes: List[AddonCaptureNode] = []
     for addon_id in sorted(visited):
@@ -1287,6 +1296,7 @@ def capture_frozen_build(
             nodes.append(platform_node)
             if platform_node.status is not CaptureStatus.PLATFORM_PROVIDED:
                 errors.append(f"{addon_id}: {platform_node.error}")
+                diagnostic_categories.add("platform_requirement_unsatisfied")
             continue
         if addon_id in metadata_errors:
             nodes.append(
@@ -1379,4 +1389,5 @@ def capture_frozen_build(
         manifest,
         tuple(sorted(set(errors))),
         recoverability,
+        tuple(sorted(diagnostic_categories)),
     )

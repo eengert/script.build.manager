@@ -218,6 +218,66 @@ class CreateCaptureTests(unittest.TestCase):
         self.assertEqual(manifest.config.packages, frozen.configuration_packages)
         self.assertEqual(resolve_manifest(manifest, 'desk').device_profile_id, 'desk')
 
+    def diagnostic_capture(self):
+        logs = []
+        with patch.dict('sys.modules', xbmc=SimpleNamespace(
+                LOGINFO=1, log=lambda message, level: logs.append(message))):
+            result = self.capture()
+        for message in logs:
+            self.assertRegex(message, r'^\[script.build.manager\] diagnostic phase=create\.capture\.[a-z_]+$')
+            for private in (SECRET, ROOT, DEP, str(self.base), 'exception='):
+                self.assertNotIn(private, message)
+        return result, {message.split('phase=')[1] for message in logs}
+
+    def test_capture_diagnostic_artifact_unavailable(self):
+        self.inventory.package_cache = {}
+        result, phases = self.diagnostic_capture()
+        self.assertEqual(result.status, S.INCOMPLETE)
+        self.assertIsNone(result.public_bundle)
+        self.assertEqual(phases, {'create.capture.incomplete', 'create.capture.incomplete_artifact',
+                                  'create.capture.capture_errors'})
+
+    def test_capture_diagnostic_metadata_unavailable_and_invalid(self):
+        for xml, category in ((None, 'metadata_unavailable'),
+                              (('<invalid>' + SECRET).encode(), 'metadata_invalid')):
+            with self.subTest(category=category):
+                self.inventory.addon_xml[ROOT] = xml
+                result, phases = self.diagnostic_capture()
+                self.assertEqual(result.status, S.INCOMPLETE)
+                self.assertIsNone(result.public_bundle)
+                self.assertIn('create.capture.' + category, phases)
+                self.assertNotIn('create.capture.incomplete_artifact', phases)
+
+    def test_capture_diagnostic_builtin_closure_not_artifact_gap(self):
+        self.inventory.addon_xml[ROOT] = _xml(ROOT, imports=(('xbmc.python', '3.0.0', False),))
+        self.inventory.read_verified_builtin_metadata = Mock(side_effect=ValueError(SECRET))
+        result, phases = self.diagnostic_capture()
+        self.assertEqual(result.status, S.INCOMPLETE)
+        self.assertIsNone(result.public_bundle)
+        self.assertEqual(result.artifact_gaps, ())
+        self.assertEqual(phases, {'create.capture.incomplete', 'create.capture.builtin_closure_unavailable',
+                                  'create.capture.capture_errors'})
+
+    def test_capture_diagnostic_rejects_unallowlisted_output(self):
+        from resources.lib.failure_diagnostics import emit
+        logs = []
+        emit('create.capture.' + SECRET, log=logs.append)
+        emit('create.capture.' + ROOT, log=logs.append)
+        self.assertEqual(logs, [])
+
+    def test_capture_diagnostic_success_silent_and_unchanged(self):
+        before = self.capture()
+        result, phases = self.diagnostic_capture()
+        self.assertEqual(result, before)
+        self.assertEqual(phases, set())
+
+    def test_capture_diagnostic_logger_failure_preserves_refusal(self):
+        self.inventory.package_cache = {}
+        before = self.capture()
+        with patch.dict('sys.modules', xbmc=SimpleNamespace(
+                LOGINFO=1, log=Mock(side_effect=RuntimeError(SECRET)))):
+            self.assertEqual(self.capture(), before)
+
     def test_missing_artifact_incomplete_no_substitute(self):
         self.inventory.package_cache = {}
         result = self.capture()

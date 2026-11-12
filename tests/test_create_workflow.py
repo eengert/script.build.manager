@@ -270,6 +270,16 @@ class WorkflowTests(unittest.TestCase):
         engine=Mock();engine.capture.return_value=SimpleNamespace(status=CreateCaptureStatus.FAILED,gaps=())
         self.factory.return_value=engine;p=self.preview();self.workflow.execute(p)
         engine.capture.assert_called_once_with(p.request,created_at=STAMP);self.clock.assert_called_once()
+    def test_real_incomplete_capture_diagnostics_still_refuse_registration(self):
+        self.inventory.package_cache = {}
+        with patch.object(self.library, 'register', wraps=self.library.register) as register:
+            with patch.dict(sys.modules, xbmc=SimpleNamespace(LOGINFO=1, log=Mock())):
+                self.assertEqual(self.execute().string_id, 32730)
+            register.assert_not_called()
+        self.factory.assert_called_once_with()
+        self.private_factory.assert_not_called()
+        self.assertEqual(self.entries(), ())
+
     def test_incomplete_no_commit(self):
         self.engine.capture=Mock(return_value=SimpleNamespace(status=CreateCaptureStatus.INCOMPLETE,gaps=('SOFTWARE_INCOMPLETE',)))
         self.assertEqual(self.execute().string_id,32730);self.private_factory.assert_not_called();self.assertEqual(self.entries(),())

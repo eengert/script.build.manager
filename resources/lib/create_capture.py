@@ -17,6 +17,7 @@ from typing import Callable
 
 from resources.lib.build_library import _validate_bundle, _validate_bundle_structure, FILE_LIMIT, BUNDLE_LIMIT
 from resources.lib.config import ConfigSettingType, ConfigTargetKind, ConfigAddonUnavailableError, validate_package_id
+from resources.lib.failure_diagnostics import emit
 from resources.lib.frozen import capture_frozen_build, FrozenBuildManifest, CaptureStatus
 from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind, validate_manifest
 from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayEntry, validate_private_overlay
@@ -333,6 +334,14 @@ class CreateBuildCaptureEngine:
             result = replace(result, addon_count=len(raw.addons), exact_artifact_count=exact,
                              missing_artifact_count=len(gaps))
             if not captured.complete or captured.errors:
+                # Fixed allowlisted phases only: never forward IDs or error text.
+                emit("create.capture.incomplete")
+                for category in captured.diagnostic_categories:
+                    emit("create.capture." + category)
+                for status in sorted({status for _, status in gaps}):
+                    emit("create.capture." + status)
+                if captured.errors:
+                    emit("create.capture.capture_errors")
                 return replace(result, status=CreateCaptureStatus.INCOMPLETE, gaps=("SOFTWARE_INCOMPLETE",), artifact_gaps=gaps)
             # Strip diagnostic maps, not software/acquisition truth; recompute canonical identity.
             frozen = replace(raw, source_metadata={}, addons=tuple(replace(n, provenance_detail={}, error="") for n in raw.addons))
