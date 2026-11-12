@@ -1,0 +1,55 @@
+{
+  "scope": "Exact structural exceptions to ce488ac; not review or native qualification evidence.",
+  "additions": [
+    {
+      "historical": "    mode = 'platform_check' if _PLATFORM_REQUESTED else 'unselected'\n    try:\n",
+      "addition": "    mode = 'platform_check' if _PLATFORM_REQUESTED else 'unselected'\n    fixture_mode = None\n    try:\n",
+      "label": "fixture_mode_initialization"
+    },
+    {
+      "historical": "        mode = parse_adapter_mode(sys.argv[1:])\n        sys.path.insert(0, str(addon_root))\n",
+      "addition": "        mode = parse_adapter_mode(sys.argv[1:])\n        fixture_mode = mode if mode in ('af3_fixture', 'af3_fixture_verify', 'auto_keep') else None\n        if fixture_mode is not None:\n            mode = 'platform_check'\n        sys.path.insert(0, str(addon_root))\n",
+      "label": "fixture_mode_selection"
+    },
+    {
+      "historical": "        elif mode == 'status':\n            production_module_names = ['resources.lib.frozen_install', 'resources.lib.transaction']\n        else:\n",
+      "addition": "        elif mode == 'status':\n            production_module_names = ['resources.lib.frozen_install', 'resources.lib.transaction', 'resources.lib.build_library']\n        else:\n",
+      "label": "status_library_source_list"
+    },
+    {
+      "historical": "            production_module_names.append('resources.lib.frozen')\n        if mode == 'retry':\n",
+      "addition": "            production_module_names.append('resources.lib.frozen')\n        if mode == 'recover':\n            production_module_names.append('resources.lib.build_library')\n        if mode == 'retry':\n",
+      "label": "recovery_library_source_list"
+    },
+    {
+      "historical": "            import adapter_config\n            payload = read_platform_check(addon_root, Path(__file__).parent, getattr(adapter_config, 'PLATFORM_SOURCE_BINDING', None), MANIFEST_PATH, ARTIFACT_ROOT)\n        elif mode == 'status':\n",
+      "addition": "            import adapter_config\n            if fixture_mode is None:\n                payload = read_platform_check(addon_root, Path(__file__).parent, getattr(adapter_config, 'PLATFORM_SOURCE_BINDING', None), MANIFEST_PATH, ARTIFACT_ROOT)\n            elif fixture_mode == 'auto_keep':\n                STAGE = 'AUTO_KEEP'\n                FAILING_CALLABLE = 'run_auto_keep'\n                payload = run_auto_keep(addon_root, Path(__file__).parent, getattr(adapter_config, 'PLATFORM_SOURCE_BINDING', None), MANIFEST_PATH, ARTIFACT_ROOT)\n            else:\n                STAGE = 'AF3_FIXTURE'\n                FAILING_CALLABLE = 'run_af3_fixture'\n                payload = run_af3_fixture(addon_root, Path(__file__).parent, getattr(adapter_config, 'PLATFORM_SOURCE_BINDING', None), MANIFEST_PATH, ARTIFACT_ROOT, verify=fixture_mode == 'af3_fixture_verify')\n        elif mode == 'status':\n",
+      "label": "fixture_dispatch"
+    },
+    {
+      "historical": "            transaction_module = importlib.import_module('resources.lib.transaction')\n            verify_production_module_sources(addon_root, {'resources.lib.frozen_install': frozen_install_module, 'resources.lib.transaction': transaction_module})\n            STAGE = 'READ_STATUS'\n",
+      "addition": "            transaction_module = importlib.import_module('resources.lib.transaction')\n            library_module = importlib.import_module('resources.lib.build_library')\n            verify_production_module_sources(addon_root, {'resources.lib.frozen_install': frozen_install_module, 'resources.lib.transaction': transaction_module, 'resources.lib.build_library': library_module})\n            STAGE = 'READ_STATUS'\n",
+      "label": "status_library_source_verification"
+    },
+    {
+      "historical": "            payload = {'ok': True, 'status': status}\n        else:\n",
+      "addition": "            payload = {'ok': True, 'status': status}\n            identity = read_native_recovery_identity(frozen_root, restart_store.transaction_path)\n            if identity is not None:\n                payload['recovery_identity'] = identity\n        else:\n",
+      "label": "status_recovery_observation"
+    },
+    {
+      "historical": "            FAILING_CALLABLE = 'FrozenBuildManifest.from_json'\n            manifest = frozen_module.FrozenBuildManifest.from_json(manifest_text)\n            STAGE = 'CHECK_RECOVERY_PRECONDITIONS'\n",
+      "addition": "            FAILING_CALLABLE = 'FrozenBuildManifest.from_json'\n            recovery_document = json.loads(manifest_text)\n            library_recovery = isinstance(recovery_document, dict) and recovery_document.get('schema') == 'bm-library-recovery/1'\n            if library_recovery:\n                recovery_document = json.loads(_platform_read(MANIFEST_PATH, 4 * 1024 * 1024).decode('utf-8'))\n            manifest = None if library_recovery else frozen_module.FrozenBuildManifest.from_json(manifest_text)\n            STAGE = 'CHECK_RECOVERY_PRECONDITIONS'\n",
+      "label": "library_recovery_input_selection"
+    },
+    {
+      "historical": "                raise AdapterBootstrapError(STAGE, FAILING_CALLABLE, 'path_missing_or_unreadable')\n            store = frozen_install_module.FrozenInstallStore(root=frozen_root)\n            policy_backend = update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc)\n            installer = frozen_install_module.KodiRuntimeFrozenArtifactBackend()\n            coordinator = frozen_install_module.FrozenInstallCoordinator(store=store, artifact_store=artifacts_module.ArtifactStore(artifact_root), policy_backend=policy_backend, installer=installer)\n            STAGE = 'CHECK_RECOVERY_PRECONDITIONS'\n            FAILING_CALLABLE = 'FrozenInstallStore.inspect'\n            payload = recover_frozen_install(coordinator, store, policy_backend, installer, Path(restart_module.TransactionStore().transaction_path), manifest=manifest, manifest_path=MANIFEST_PATH, configuration_manifest_path=CONFIGURATION_PATH, device_profile_id=DEVICE_PROFILE_ID, expected_overlay_id=EXPECTED_OVERLAY_ID, needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION, update_policy_type=update_guard_module.AddonUpdatePolicy)\n        elif mode == 'retry':\n",
+      "addition": "                raise AdapterBootstrapError(STAGE, FAILING_CALLABLE, 'path_missing_or_unreadable')\n            store = frozen_install_module.FrozenInstallStore(root=frozen_root, create=False) if library_recovery else frozen_install_module.FrozenInstallStore(root=frozen_root)\n            policy_backend = update_guard_module.KodiJsonRpcUpdatePolicyBackend(_rpc)\n            installer = frozen_install_module.KodiRuntimeFrozenArtifactBackend()\n            STAGE = 'CHECK_RECOVERY_PRECONDITIONS'\n            FAILING_CALLABLE = 'FrozenInstallStore.inspect'\n            if library_recovery:\n                library_module = importlib.import_module('resources.lib.build_library')\n                verify_production_module_sources(addon_root, {'resources.lib.build_library': library_module})\n                payload = recover_library_frozen_install(recovery_document, store=store, policy_backend=policy_backend, installer=installer, restart_transaction_path=Path(restart_module.TransactionStore().transaction_path))\n            else:\n                coordinator = frozen_install_module.FrozenInstallCoordinator(store=store, artifact_store=artifacts_module.ArtifactStore(artifact_root), policy_backend=policy_backend, installer=installer)\n                payload = recover_frozen_install(coordinator, store, policy_backend, installer, Path(restart_module.TransactionStore().transaction_path), manifest=manifest, manifest_path=MANIFEST_PATH, configuration_manifest_path=CONFIGURATION_PATH, device_profile_id=DEVICE_PROFILE_ID, expected_overlay_id=EXPECTED_OVERLAY_ID, needs_attention_phase=frozen_install_module.FrozenInstallPhase.NEEDS_ATTENTION, update_policy_type=update_guard_module.AddonUpdatePolicy)\n        elif mode == 'retry':\n",
+      "label": "library_recovery_dispatch"
+    },
+    {
+      "historical": "        payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)\n    payload = identify_adapter_result(payload, mode)\n    if FROZEN_INSTALL_SOURCE_RECORD is not None:\n",
+      "addition": "        payload = safe_failure_payload(STAGE, FAILING_CALLABLE, exc)\n    payload = identify_adapter_result(payload, fixture_mode or mode)\n    if FROZEN_INSTALL_SOURCE_RECORD is not None:\n",
+      "label": "fixture_result_identity"
+    }
+  ]
+}

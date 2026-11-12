@@ -240,10 +240,47 @@ import importlib.machinery
 import json
 
 CONVENTIONAL_BASE = 'ce488ac743c65bbe3ce1e97f0e7f45549fcf5b42'
-# Independently accepted adapter installed by the retained November 4 stage.
-# Includes fixture/auto-keep dispatch and library status/recovery additions.
-# Pin the entire main AST, rather than stripping those accepted branches away.
-CONVENTIONAL_MAIN_BASE = 'a5a4a23b026ee5004f7f62ccf6387a7689d6c4c2'
+# The historical comparison below remains rooted at ce488ac. Later additions
+# have explicit structural shapes in a test fixture, not a broad qualification
+# or independent-review claim for a5a4a23 or any other whole-main snapshot.
+
+
+# Literal current argument contract (eight exact diagnostic forms). This guards
+# only no-write invocation admission; it is not native qualification evidence.
+B2_REQUEST_PREDICATE = "_PLATFORM_REQUESTED = bool(sys.argv[1:]) and (sys.argv[1].startswith('platform_check') or sys.argv[1].startswith('?mode=platform_check') or sys.argv[1].startswith('auto_keep') or sys.argv[1].startswith('?mode=auto_keep') or sys.argv[1].startswith('af3_fixture') or sys.argv[1].startswith('?mode=af3_fixture'))"
+B2_ARGUMENT_GATE = "if sys.argv[1:] not in (['platform_check'], ['?mode=platform_check'], ['af3_fixture'], ['?mode=af3_fixture'], ['af3_fixture_verify'], ['?mode=af3_fixture_verify'], ['auto_keep'], ['?mode=auto_keep']):\n    raise SystemExit('platform_check arguments refused')"
+
+def legacy_main_projection(tree):
+    """Preserve the old platform-only normalization, then check named additions.
+
+    Every later shape must match exactly once before projection. The final AST
+    must equal ce488ac, so unrelated legacy statements cannot be discarded.
+    Shapes document bounded additions; they do not qualify their native behavior.
+    """
+    main = next(node for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == 'main')
+    for node in ast.walk(main):
+        if isinstance(node, ast.Try):
+            node.body = [child.body[0] if isinstance(child, ast.If)
+                         and ast.unparse(child.test) == "mode != 'platform_check'" else child for child in node.body]
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "mode == 'platform_check'":
+            node.body = [child for child in node.body if not
+                (isinstance(child, ast.Assign) and any(isinstance(target, ast.Name)
+                 and target.id == '_platform_product_stat' for target in child.targets)) and not
+                (isinstance(child, ast.Expr) and isinstance(child.value, ast.Call)
+                 and ast.unparse(child.value.func) == '_platform_isolated_roots.add') and not
+                (isinstance(child, ast.Assign) and any(isinstance(target, ast.Subscript)
+                 and ast.unparse(target.value) == 'sys.path' for target in child.targets))]
+    text = ast.unparse(main) + '\n'
+    document = json.loads((PROJECT / 'tests/fixtures/d028_legacy_main_additions.json').read_text())
+    additions = document['additions']
+    if len(additions) != 10 or len({item['label'] for item in additions}) != 10:
+        raise AssertionError('legacy addition inventory changed')
+    for item in additions:
+        if text.count(item['addition']) != 1:
+            raise AssertionError('legacy addition shape changed: ' + item['label'])
+        text = text.replace(item['addition'], item['historical'], 1)
+    return ast.parse(text).body[0]
 
 
 def conventional_template():
@@ -442,22 +479,39 @@ class ConventionalImportPathTests(unittest.TestCase):
                     spec.loader.get_code(spec.name)
                 compiler.assert_not_called()
 
-    def assert_reviewed_main(self, tree):
-        reviewed = ast.parse(subprocess.check_output(
-            ['git', 'show', CONVENTIONAL_MAIN_BASE + ':tools/bm023a_adapter/default.py.in'],
+    def assert_b2_argument_gate(self, tree):
+        predicate = next(node for node in tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == '_PLATFORM_REQUESTED' for t in node.targets))
+        self.assertEqual(ast.dump(ast.parse(B2_REQUEST_PREDICATE).body[0]), ast.dump(predicate))
+        _, branch = conventional_branch(tree)
+        self.assertEqual(ast.dump(ast.parse(B2_ARGUMENT_GATE).body[0]), ast.dump(branch.body[0]))
+
+    def test_module_level_b2_argument_gate_matches_exact_current_contract(self):
+        self.assert_b2_argument_gate(conventional_template())
+
+    def test_module_level_b2_guard_rejects_unauthorized_allowlist_expansion(self):
+        tree = conventional_template()
+        _, branch = conventional_branch(tree)
+        branch.body[0].test.comparators[0].elts.append(
+            ast.List(elts=[ast.Constant('platform_checkx')], ctx=ast.Load()))
+        with self.assertRaises(AssertionError):
+            self.assert_b2_argument_gate(tree)
+
+    def assert_legacy_main(self, tree):
+        baseline = ast.parse(subprocess.check_output(
+            ['git', 'show', CONVENTIONAL_BASE + ':tools/bm023a_adapter/default.py.in'],
             cwd=PROJECT, text=True))
-        main = lambda source: next(node for node in ast.walk(source)
-                                   if isinstance(node, ast.FunctionDef) and node.name == 'main')
-        self.assertEqual(ast.dump(main(reviewed)), ast.dump(main(tree)))
+        main = next(node for node in ast.walk(baseline)
+                    if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        self.assertEqual(ast.dump(main), ast.dump(legacy_main_projection(tree)))
 
     def test_legacy_main_ast_is_identical_after_removing_only_platform_changes(self):
-        """Keep the historical test identity; now guard the full accepted main.
+        """Compare legacy behavior to ce488ac, with explicit checked additions.
 
-        The older baseline predates accepted fixture dispatch and library
-        status/recovery. No current main statements are filtered or ignored.
-        The original finder/loader comparisons still use the older baseline.
+        This is a structural compatibility guard, not qualification of additions.
+        Original finder/loader assertions also retain their ce488ac reference.
         """
-        self.assert_reviewed_main(conventional_template())
+        self.assert_legacy_main(conventional_template())
         baseline = ast.parse(subprocess.check_output(
             ['git', 'show', CONVENTIONAL_BASE + ':tools/bm023a_adapter/default.py.in'],
             cwd=PROJECT, text=True))
@@ -468,7 +522,7 @@ class ConventionalImportPathTests(unittest.TestCase):
             new = next(node for node in after.body if isinstance(node, ast.ClassDef) and node.name == name)
             self.assertEqual(ast.dump(old), ast.dump(new))
 
-    def test_reviewed_main_guard_rejects_unauthorized_behavior_mutations(self):
+    def test_legacy_projection_rejects_unauthorized_behavior_mutations(self):
         for mutation in ('fixture_modes', 'result_identity', 'execution', 'verification'):
             with self.subTest(mutation=mutation):
                 tree = conventional_template()
@@ -487,7 +541,7 @@ class ConventionalImportPathTests(unittest.TestCase):
                                 if isinstance(node, ast.Call) and ast.unparse(node.func) == expected)
                     call.func = ast.Name(id='unauthorized_call', ctx=ast.Load())
                 with self.assertRaises(AssertionError):
-                    self.assert_reviewed_main(tree)
+                    self.assert_legacy_main(tree)
 
 
 class ConventionalProductWitnessTests(unittest.TestCase):

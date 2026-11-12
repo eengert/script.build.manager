@@ -281,26 +281,64 @@ class MalformedBoundaryTests(unittest.TestCase):
             self.assertEqual(0,f.factory_calls)
 
 
+# Exact current gate condition; a missing/changed anchor is a setup error.
+B2_CONDITION = 'sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],\n                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"], ["auto_keep"], ["?mode=auto_keep"])'
+
+
 class CorrectionMutationTests(unittest.TestCase):
-    def detected(self,before,after,case,label):
+    def detected(self,before,after,case,label,expected_failure):
         original=Fixture.__init__
+        # Check outside case.run(): an anchor assertion must not masquerade as
+        # the behavioral failure that this detector is intended to observe.
+        probe=Fixture(self)
+        if (probe.driver/'default.py').read_text().count(before)!=1:
+            raise ValueError('mutation anchor missing or ambiguous')
+        applied=[]
         def mutated(f,owner,*args,**kwargs):
             original(f,owner,*args,**kwargs)
             path=f.driver/'default.py';source=path.read_text()
-            self.assertEqual(1,source.count(before))
-            path.write_text(source.replace(before,after));rebind_driver(f)
+            if source.count(before)!=1:
+                raise ValueError('mutation anchor missing or ambiguous')
+            path.write_text(source.replace(before,after,1));rebind_driver(f)
+            applied.append(True)
         with patch.object(Fixture,'__init__',mutated):
             result=unittest.TestResult();case.run(result)
+        self.assertTrue(applied,'mutation was never applied')
+        self.assertEqual(1,result.testsRun)
         self.assertEqual([],result.errors,str(result.errors));self.assertEqual([],result.skipped)
         self.assertGreater(len(result.failures),0,'removed correction escaped behavioral assertions')
+        self.assertTrue(all(expected_failure in failure for _,failure in result.failures),
+                        'intended behavioral security assertion did not detect mutation')
         print('PLATFORM_B1_B2_MUTATION_ASSERTION_PASS '+label,flush=True)
 
     def test_bytecode_cache_fallback_removal_of_source_boundary_is_detected(self):
         self.detected('return self.source_to_code(data, self.path)',
             'return super().get_code(fullname)',
-            SourceBoundaryTests('test_matching_driver_cache_cannot_substitute_executed_support'),'B1_source_only_loader')
+            SourceBoundaryTests('test_matching_driver_cache_cannot_substitute_executed_support'),'B1_source_only_loader',
+            "self.assertTrue(seen);self.assertEqual({'0.0.16'},set(seen))")
 
     def test_early_argument_refusal_removal_is_detected(self):
-        self.detected('if sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"]):',
-            'if False:',MalformedBoundaryTests('test_malformed_prefix_preserves_existing_result_and_never_enters_writer'),
-            'B2_no_write_argument_boundary')
+        self.detected(B2_CONDITION,'False',
+            MalformedBoundaryTests('test_malformed_prefix_preserves_existing_result_and_never_enters_writer'),
+            'B2_no_write_argument_boundary','AssertionError: SystemExit not raised')
+
+    def test_missing_anchor_is_setup_failure_not_detection(self):
+        case=unittest.FunctionTestCase(lambda: self.fail('behavior must not run'))
+        with patch.object(case,'run',wraps=case.run) as run:
+            with self.assertRaisesRegex(ValueError,'mutation anchor'):
+                self.detected('OBSOLETE_MISSING_ANCHOR','False',case,'missing','legacy writer reached')
+            run.assert_not_called()
+
+    def test_unrelated_assertion_is_not_behavioral_detection(self):
+        def unrelated():
+            Fixture(self)
+            self.fail('unrelated assertion')
+        with self.assertRaisesRegex(AssertionError,'intended behavioral'):
+            self.detected(B2_CONDITION,'False',unittest.FunctionTestCase(unrelated),
+                          'unrelated','AssertionError: SystemExit not raised')
+
+    def test_noop_mutation_is_not_behavioral_detection(self):
+        with self.assertRaisesRegex(AssertionError,'removed correction escaped'):
+            self.detected(B2_CONDITION,B2_CONDITION,
+                MalformedBoundaryTests('test_malformed_prefix_preserves_existing_result_and_never_enters_writer'),
+                'unchanged','AssertionError: SystemExit not raised')
