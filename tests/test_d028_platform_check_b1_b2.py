@@ -282,7 +282,7 @@ class MalformedBoundaryTests(unittest.TestCase):
 
 
 # Exact current gate condition; a missing/changed anchor is a setup error.
-B2_CONDITION = 'sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],\n                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"], ["auto_keep"], ["?mode=auto_keep"])'
+B2_CONDITION = 'sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],\n                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"], ["auto_keep"], ["?mode=auto_keep"],\n                                  ["xbmc_metadata_observe"], ["?mode=xbmc_metadata_observe"])'
 
 
 class CorrectionMutationTests(unittest.TestCase):

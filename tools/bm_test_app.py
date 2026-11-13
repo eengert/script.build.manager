@@ -97,7 +97,7 @@ _DATA_VOLUME_ALIAS = "/System/Volumes/Data"
 
 BUILD_MANAGER_ID = _adapter.ADDON_ID
 DRIVER_ID = _adapter.DRIVER_ADDON_ID
-ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep")
+ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", "xbmc_metadata_observe")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
@@ -2989,6 +2989,7 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
     "auto_keep": {"platform_check": _adapter.project_platform_check, "auto_keep": _adapter.project_auto_keep},
     "af3_fixture": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
     "af3_fixture_verify": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
+    "xbmc_metadata_observe": {"xbmc_metadata_observation": _adapter.project_xbmc_metadata_observation},
 }
 
 
@@ -3045,6 +3046,11 @@ def project_adapter_result(mode: str, raw: Any) -> Tuple[Dict[str, Any], Dict[st
             raise HelperError("result_malformed", reason="auto_keep")
         if "auto_keep" in invalid:
             raise HelperError("result_malformed", reason="auto_keep")
+    if mode == _adapter.XBMC_METADATA_MODE:
+        observation = projected.get("xbmc_metadata_observation")
+        observed = observation is not None and observation["status"] == "observed"
+        if "xbmc_metadata_observation" in invalid or ok != observed:
+            raise HelperError("result_malformed", reason="xbmc_metadata_observation")
     return projected, withheld
 
 
@@ -3441,7 +3447,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
             "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
 
 
-DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300, "auto_keep": 120}
+DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300, "auto_keep": 120, "xbmc_metadata_observe": 120}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
 # A graceful Kodi shutdown (settings save, add-on teardown) is short; an
@@ -3661,6 +3667,8 @@ def run_adapter(
         raise HelperError("argument_invalid")
     if mode == "platform_check" and git_repo is None:
         raise HelperError("argument_invalid")
+    if mode == _adapter.XBMC_METADATA_MODE and git_repo is None:
+        raise HelperError("argument_invalid")
     if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
         raise HelperError("argument_invalid")
     if mode in ("af3_fixture", "af3_fixture_verify", "auto_keep") and git_repo is None:
@@ -3688,7 +3696,7 @@ def run_adapter(
     if identity.pid is None:
         raise HelperError("test_app_not_running")
     platform_binding = None
-    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep"):
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", _adapter.XBMC_METADATA_MODE):
         config_path = target.addon_dir(DRIVER_ID) / "adapter_config.py"
         target.require_chain(config_path.parent)
         try:
@@ -3721,7 +3729,8 @@ def run_adapter(
     before = observe_result(target)
     invoked_ns = services.clock.time_ns()
     invoked_utc = iso_utc_from_ns(invoked_ns)
-    platform_witness = _platform_invocation_snapshot(target, manifest) if mode in ("platform_check", "auto_keep") else None
+    platform_witness = (_platform_invocation_snapshot(target, manifest)
+        if mode in ("platform_check", "auto_keep", _adapter.XBMC_METADATA_MODE) else None)
     fixture_witness = _af3_invocation_snapshot(target, manifest) if mode in _adapter.AF3_FIXTURE_MODES else None
     accepted = client.call("Addons.ExecuteAddon", {"addonid": DRIVER_ID, "params": mode, "wait": False})
     if accepted != "OK":
@@ -3765,13 +3774,21 @@ def run_adapter(
             raise HelperError("result_malformed", reason="platform_manifest_identity")
         if diagnostic_source != expected_source:
             raise HelperError("result_malformed", reason="platform_source_identity")
+    if mode == _adapter.XBMC_METADATA_MODE and (projected.get("xbmc_metadata_observation") or {}).get("source") is not None:
+        expected_source = {"candidate_commit": manifest["candidate"]["commit"],
+            "product_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]}),
+            "adapter_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["driver"]["files"]
+                if e["path"] in _adapter._PLATFORM_ADAPTER_FILES}),
+            "binding_sha256": sha256_hex(platform_binding.encode("ascii"))}
+        if projected["xbmc_metadata_observation"]["source"] != expected_source:
+            raise HelperError("result_malformed", reason="xbmc_metadata_source_identity")
     after_identity = identify(services, require="running")
     if after_identity.pid != identity.pid:
         raise HelperError("listener_pid_mismatch", port=port)
     after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
-    if mode in ("platform_check", "auto_keep") and _platform_invocation_snapshot(target, manifest) != platform_witness:
+    if mode in ("platform_check", "auto_keep", _adapter.XBMC_METADATA_MODE) and _platform_invocation_snapshot(target, manifest) != platform_witness:
         raise HelperError("platform_source_changed")
     if mode in _adapter.AF3_FIXTURE_MODES and _af3_invocation_snapshot(target, manifest) != fixture_witness:
         raise HelperError("platform_source_changed")
