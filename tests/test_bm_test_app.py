@@ -258,7 +258,7 @@ class FakeTransport:
         self.username = "kodi"
         self.execute_hook = None
         self.details = {
-            bm.DRIVER_ID: {"enabled": True, "version": "0.0.16"},
+            bm.DRIVER_ID: {"enabled": True, "version": "0.0.17"},
             bm.BUILD_MANAGER_ID: {"enabled": True, "version": "0.1.0"},
         }
         self.execute_result = "OK"
@@ -1450,7 +1450,7 @@ class TestPsAndLsofParsing(TripwireTestCase):
                 with mock.patch.object(bm, "verify_installed") as verify, \
                         mock.patch.object(bm, "TcpRpcClient") as client:
                     with self.assertRaises(bm.HelperError) as raised:
-                        bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.16"}},
+                        bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.17"}},
                                                 git_repo=self.tmp, host="127.0.0.1", port=9090,
                                                 enabled=enabled,
                                                 expected_enabled=None if enabled is None else not enabled)
@@ -1906,7 +1906,7 @@ class TestProcessCensusRace(TripwireTestCase):
         with mock.patch.object(bm, "verify_installed") as verify, \
                 mock.patch.object(bm, "TcpRpcClient") as client:
             with self.assertRaises(bm.HelperError) as raised:
-                bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.16"}},
+                bm.run_platform_control(services, manifest={"driver": {"adapter_version": "0.0.17"}},
                                         git_repo=self.tmp, host="127.0.0.1", port=9090,
                                         enabled=True, expected_enabled=False)
         self.assertEqual(raised.exception.code, "process_listing_failed")
@@ -1935,7 +1935,7 @@ class TestProcessCensusRace(TripwireTestCase):
             with self.subTest(enabled=enabled):
                 lister = self.lister(mac_reader({8: failed(errno.ESRCH)}), 8)
                 services = make_services(self.target, process_lister=lister)
-                manifest = {"driver": {"adapter_version": "0.0.16"}}
+                manifest = {"driver": {"adapter_version": "0.0.17"}}
                 with mock.patch.object(bm, "verify_installed") as verify, \
                         mock.patch.object(bm, "TcpRpcClient") as client:
                     with self.assertRaises(bm.HelperError) as raised:
@@ -2304,7 +2304,7 @@ class TestGitSource(TripwireTestCase):
 
     def test_adapter_version_must_be_a_literal(self):
         support = (PROJECT / "tools/bm023a_adapter_support.py").read_bytes()
-        dynamic = support.replace(b'ADAPTER_VERSION = "0.0.16"', b'ADAPTER_VERSION = "0.0." + str(16)')
+        dynamic = support.replace(b'ADAPTER_VERSION = "0.0.17"', b'ADAPTER_VERSION = "0.0." + str(17)')
         commit = variant("dynamic-version", [("100644", "tools/bm023a_adapter_support.py", dynamic)])
         with self.assertRaises(bm.HelperError) as raised:
             bm.load_candidate(candidate_source(), commit)
@@ -2641,7 +2641,7 @@ class TestDriverBuild(TripwireTestCase):
         with self.assertRaises(bm.HelperError) as raised:
             build_plan(self, commit)
         self.assertEqual(raised.exception.code, "driver_config_mismatch")
-        xml = (PROJECT / "tools/bm023a_adapter/addon.xml.in").read_bytes().replace(b'version="0.0.16"', b'version="0.0.99"')
+        xml = (PROJECT / "tools/bm023a_adapter/addon.xml.in").read_bytes().replace(b'version="0.0.17"', b'version="0.0.99"')
         commit = variant("driver-version", [("100644", "tools/bm023a_adapter/addon.xml.in", xml)])
         with self.assertRaises(bm.HelperError) as raised:
             build_plan(self, commit)
@@ -2841,7 +2841,7 @@ class TestManifest(TripwireTestCase):
         paths = [entry["path"] for entry in manifest["build_manager"]["files"]]
         self.assertEqual(paths, sorted(item.path for item in candidate.product))
         self.assertEqual(manifest["build_manager"]["addon_version"], "0.1.0")
-        self.assertEqual(manifest["driver"]["adapter_version"], "0.0.16")
+        self.assertEqual(manifest["driver"]["adapter_version"], "0.0.17")
         self.assertEqual(manifest["driver"]["default_py_sha256"], hashlib.sha256(driver.data("default.py")).hexdigest())
         self.assertEqual(manifest["driver"]["frozen_install_sha256"], driver.frozen_install_sha256)
         self.assertEqual(manifest["build_manager"]["file_count"], len(paths))
@@ -4166,7 +4166,7 @@ class TestStageHelpers(TripwireTestCase):
 
 STATUS_VALUES = {key: None for key in adapter_support.STATUS_KEYS}
 STATUS_VALUES.update({
-    "adapter_version": "0.0.16", "frozen_transaction_state": "present", "restart_transaction_state": "absent",
+    "adapter_version": "0.0.17", "frozen_transaction_state": "present", "restart_transaction_state": "absent",
     "frozen_phase": "needs_attention", "frozen_lifecycle_stage": "quiescence_awaiting_restart",
     "frozen_lifecycle_restart_count": 1, "frozen_status_code": "FROZEN_MANIFEST_INVALID",
     "activation_hold_count": 1, "redlight_hold_present": True, "activation_hold_released": False,
@@ -4308,7 +4308,7 @@ class TestRun(TripwireTestCase):
                 )
                 self.assertEqual(world.executed, [{"addonid": bm.DRIVER_ID, "params": mode, "wait": False}])
                 self.assertEqual(payload["kodi_addon_view"], {
-                    bm.DRIVER_ID: {"enabled": True, "version": "0.0.16"},
+                    bm.DRIVER_ID: {"enabled": True, "version": "0.0.17"},
                     bm.BUILD_MANAGER_ID: {"enabled": True, "version": "0.1.0"},
                 })
                 self.assertTrue(payload["stage_verification"]["installed_equals_manifest"])
@@ -4778,11 +4778,11 @@ class TestRun(TripwireTestCase):
 
     def test_kodi_addon_view_must_match_the_staged_versions(self):
         cases = {
-            "driver disabled": ({bm.DRIVER_ID: {"enabled": False, "version": "0.0.16"}}, "addon_view_mismatch"),
+            "driver disabled": ({bm.DRIVER_ID: {"enabled": False, "version": "0.0.17"}}, "addon_view_mismatch"),
             "driver version": ({bm.DRIVER_ID: {"enabled": True, "version": "0.0.14"}}, "addon_view_mismatch"),
             "bm disabled": ({bm.BUILD_MANAGER_ID: {"enabled": False, "version": "0.1.0"}}, "addon_view_mismatch"),
             "bm version": ({bm.BUILD_MANAGER_ID: {"enabled": True, "version": "9.9.9"}}, "addon_view_mismatch"),
-            "enabled type": ({bm.DRIVER_ID: {"enabled": "yes", "version": "0.0.16"}}, "addon_view_mismatch"),
+            "enabled type": ({bm.DRIVER_ID: {"enabled": "yes", "version": "0.0.17"}}, "addon_view_mismatch"),
             "version type": ({bm.DRIVER_ID: {"enabled": True, "version": "bad version!"}}, "addon_view_mismatch"),
         }
         for label, (details, code) in cases.items():
@@ -4956,7 +4956,7 @@ class KodiHttpFake:
                 if method == "JSONRPC.Ping":
                     result = "pong"
                 elif method == "Addons.GetAddonDetails":
-                    version = {bm.DRIVER_ID: "0.0.16", bm.BUILD_MANAGER_ID: "0.1.0"}[params["addonid"]]
+                    version = {bm.DRIVER_ID: "0.0.17", bm.BUILD_MANAGER_ID: "0.1.0"}[params["addonid"]]
                     result = {"addon": {"addonid": params["addonid"], "enabled": True, "version": version}}
                 elif method == "Addons.ExecuteAddon":
                     result = "OK"
@@ -5537,7 +5537,7 @@ class TestSnapshot(SnapshotTestCase):
         self.assertIs(addons["skin.arctic.fuse.3"]["enabled"], True)
         self.assertEqual(addons["plugin.video.redlight"]["version"], "2.6.8")
         self.assertEqual(payload["build_manager"], {"installed": True, "version": "0.1.0"})
-        self.assertEqual(payload["driver"], {"installed": True, "version": "0.0.16"})
+        self.assertEqual(payload["driver"], {"installed": True, "version": "0.0.17"})
         self.assertEqual(payload["settings"], {
             "active_skin": "skin.arctic.fuse.3", "present": True, "readable": True,
             "source": "guisettings.xml", "updater_policy": "NEVER_CHECK",
@@ -5807,7 +5807,7 @@ class TestSnapshot(SnapshotTestCase):
         self.assertEqual(identity["candidate_commit"], FIXTURE.good)
         self.assertEqual(identity["manifest_sha256"], "e" * 64)
         self.assertEqual(identity["build_manager_version"], "0.1.0")
-        self.assertEqual(identity["driver_adapter_version"], "0.0.16")
+        self.assertEqual(identity["driver_adapter_version"], "0.0.17")
         self.assertEqual(identity["configuration_fingerprint"], bm.config_fingerprint(ADAPTER_VALUES))
         self.assertTrue(payload["stage_verification"]["installed_equals_manifest"])
         (self.target.addon_dir(bm.BUILD_MANAGER_ID) / "service.py").write_text("# drift\n")
@@ -7495,23 +7495,23 @@ class TestGuardedTcpTransport(TripwireTestCase):
             state={'enabled':not enabled}
             def handler(req):
                 if req['method']=='Addons.SetAddonEnabled':state['enabled']=req['params']['enabled'];return 'OK'
-                return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':state['enabled']}}
+                return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.17','enabled':state['enabled']}}
             w=RunWorld(self,str(enabled));wires=[]
             def factory(*_):
                 wire=TcpSocketFake(handler=handler);wires.append(wire);return wire
             client=bm.TcpRpcClient(w.services,w.pid,socket_factory=factory)
-            result=client.set_adapter_enabled(expected_enabled=not enabled,enabled=enabled,expected_version='0.0.16')
+            result=client.set_adapter_enabled(expected_enabled=not enabled,enabled=enabled,expected_version='0.0.17')
             self.assertEqual(result['enabled'],enabled)
             self.assertEqual([s.sent[0]['id'] for s in wires],[1,2,3])
             self.assertEqual(wires[1].sent[0]['params'],{'addonid':bm.DRIVER_ID,'enabled':enabled})
 
     def test_enable_refuses_wrong_prior_version_or_addon_before_mutation(self):
-        for index,addon in enumerate(({'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':True},
+        for index,addon in enumerate(({'addonid':bm.DRIVER_ID,'version':'0.0.17','enabled':True},
                                      {'addonid':bm.DRIVER_ID,'version':'0.0.15','enabled':False},
-                                     {'addonid':bm.BUILD_MANAGER_ID,'version':'0.0.16','enabled':False})):
+                                     {'addonid':bm.BUILD_MANAGER_ID,'version':'0.0.17','enabled':False})):
             _,client,wire,_=self.client(handler=lambda r:{'addon':addon},world=RunWorld(self,'prior'+str(index)))
             with self.assertRaisesRegex(bm.HelperError,'adapter_state_mismatch'):
-                client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.16')
+                client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.17')
             self.assertEqual([r['method'] for r in wire.sent],['Addons.GetAddonDetails'])
 
     def test_enable_readback_failure_is_not_retried_or_rolled_back(self):
@@ -7519,11 +7519,11 @@ class TestGuardedTcpTransport(TripwireTestCase):
         def handler(req):
             calls.append(req['method'])
             if req['method']=='Addons.SetAddonEnabled':return 'OK'
-            return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.16','enabled':False}}
+            return {'addon':{'addonid':bm.DRIVER_ID,'version':'0.0.17','enabled':False}}
         w=RunWorld(self)
         client=bm.TcpRpcClient(w.services,w.pid,socket_factory=lambda *_:TcpSocketFake(handler=handler))
         with self.assertRaisesRegex(bm.HelperError,'adapter_state_mismatch'):
-            client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.16')
+            client.set_adapter_enabled(expected_enabled=False,enabled=True,expected_version='0.0.17')
         self.assertEqual(calls.count('Addons.SetAddonEnabled'),1)
 
     def test_tcp_run_is_platform_only_and_never_unbound(self):
@@ -7686,7 +7686,7 @@ class TestGuardedTcpTransport(TripwireTestCase):
                 command='platform-adapter-state', name='b1-state-' + str(initial), initial=initial)
             self.assertEqual(code, bm.EXIT_OK)
             self.assertTrue(payload['build_verified'])
-            self.assertEqual(payload['transition'], {'before': initial, 'enabled': not initial, 'version': '0.0.16'})
+            self.assertEqual(payload['transition'], {'before': initial, 'enabled': not initial, 'version': '0.0.17'})
             self.assertEqual(state['enabled'], not initial)
             self.assertEqual(methods.count('Addons.SetAddonEnabled'), 1)
             self.assertNotIn('Addons.ExecuteAddon', methods)

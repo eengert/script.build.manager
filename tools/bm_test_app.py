@@ -1837,7 +1837,7 @@ def build_driver(
         "--output-dir", os.fspath(output_dir),
         "--reuse-config-from", os.fspath(config_file),
     ]
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         command += ["--candidate-commit", candidate.identity.commit]
         if "PLATFORM_MANIFEST_SHA256" in adapter_values:
             command += ["--platform-manifest-sha256", adapter_values["PLATFORM_MANIFEST_SHA256"]]
@@ -1875,13 +1875,13 @@ def build_driver(
     except (SyntaxError, ValueError):
         raise HelperError("driver_config_mismatch") from None
     expected_keys = set(ADAPTER_CONFIG_KEYS) | {"EXPECTED_FROZEN_INSTALL_SHA256"}
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         expected_keys.add("PLATFORM_SOURCE_BINDING")
     if set(generated) != expected_keys or any(
         generated[key] != adapter_values[key] for key in ADAPTER_CONFIG_KEYS
     ) or generated["EXPECTED_FROZEN_INSTALL_SHA256"] != frozen_digest:
         raise HelperError("driver_config_mismatch")
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         expected_binding = _adapter.platform_source_binding(
             {item.path: item.sha256 for item in candidate.product},
             {name: sha256_hex(data) for name, data in files.items()
@@ -3281,7 +3281,7 @@ class TcpRpcClient(RpcClient):
 
     def set_adapter_enabled(self, *, expected_enabled, enabled, expected_version):
         if (type(expected_enabled) is not bool or type(enabled) is not bool
-                or expected_enabled == enabled or expected_version != "0.0.16"):
+                or expected_enabled == enabled or expected_version != "0.0.17"):
             raise HelperError("adapter_state_mismatch")
         params = {"addonid": DRIVER_ID, "properties": ["enabled", "version"]}
         before = self.call("Addons.GetAddonDetails", params)
@@ -3417,7 +3417,7 @@ def _require_platform_build(properties):
 
 def run_platform_control(services, *, manifest, git_repo, host, port, enabled=None, expected_enabled=None):
     """Git-bound read-only preflight or one explicitly checked driver transition."""
-    if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.16":
+    if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.17":
         raise HelperError("argument_invalid")
     identity = identify(services, require="running")
     verification = verify_installed(services, manifest, git_repo=git_repo)
@@ -3428,7 +3428,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
         raise HelperError("rpc_response_invalid")
     version = _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
     view = {}
-    for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.16")):
+    for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.17")):
         value = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["enabled", "version"]})
         addon = value.get("addon") if isinstance(value, dict) else None
         if (not isinstance(addon, dict) or addon.get("addonid") != aid or addon.get("version") != wanted
@@ -3437,7 +3437,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
         view[aid] = {"enabled": addon["enabled"], "version": addon["version"]}
     transition = None
     if enabled is not None:
-        transition = client.set_adapter_enabled(expected_enabled=expected_enabled, enabled=enabled, expected_version="0.0.16")
+        transition = client.set_adapter_enabled(expected_enabled=expected_enabled, enabled=enabled, expected_version="0.0.17")
     return {"ok": True, "command": "platform-preflight" if enabled is None else "platform-adapter-state",
             "candidate_commit": manifest["candidate"]["commit"], "git_binding": verification["git_binding"],
             "transport": "tcp", "authentication": "local_pid_bound_no_http_basic", "authenticated": False,

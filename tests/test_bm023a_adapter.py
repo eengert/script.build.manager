@@ -469,7 +469,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = build_adapter(Path(tmp), values)
-            self.assertEqual(ADAPTER_VERSION, "0.0.16")
+            self.assertEqual(ADAPTER_VERSION, "0.0.17")
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
@@ -514,7 +514,7 @@ class TestBm023aAdapterDiagnosticsAndPackaging(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(bundled_bytes).hexdigest(), expected_digest
             )
-            self.assertIn('version="0.0.16"', addon_xml)
+            self.assertIn('version="0.0.17"', addon_xml)
             compile(default, "generated-default.py", "exec")
 
 
