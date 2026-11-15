@@ -1,6 +1,7 @@
 """Pinned passive compatibility, using only synthetic registries and disposable roots.
 
-Descriptor fixtures are exact upstream bytes. Synthetic Info.plist has a test-only
+Descriptor fixtures are exact Kodi 21.3 bundled bytes (see fixtures/d028_passive/README.md).
+Synthetic Info.plist has a test-only
 anchor: production's supplied real-bundle SHA is separately checked and must
 reject that synthetic plist. No test calls native proc_pidpath or a Kodi runtime.
 """
@@ -29,6 +30,7 @@ PINS = {
     'xbmc.core': ('0.1.0', '0.1', 'e38ace50afe6e15b918fa51038504fc11888038671bdacac2521af931b538a6f'),
     'xbmc.gui': ('5.17.0', '5.17.0', '7d8602ff6510bbb5ae8098d60c563c4e82c5f0b682220aad297982c9e116e6bb'),
     'kodi.resource': ('1.0.0', '1.0', 'dd54ff32f0920d4fe68bff14c1a51311ac8f31e639fbbe7123a16905901b06f3'),
+    'xbmc.metadata': ('2.1.0', '1.0', '95082198599c695a91d2aefb072f0457e9ffd5eb3f2dc1587fa58159750db1b6'),
 }
 NATIVE_EXECUTABLE_QUERY = fi._native_process_executable
 PLIST_PIN = '9f37ef7b63021ef2ab01b98a44f2f62c8eb68c3f61c014510cc3b7166450bcac'
@@ -91,7 +93,7 @@ class PassiveNativeTests(unittest.TestCase):
     def setUp(self):
         self.f = PassiveFixture(self)
 
-    def test_all_three_pins_and_original_bytes_are_accepted(self):
+    def test_all_pins_and_original_bytes_are_accepted(self):
         self.assertEqual(PINS, dict(fi._PASSIVE_BUILTINS))
         for aid in PINS:
             with self.subTest(aid=aid):

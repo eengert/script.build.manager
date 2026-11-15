@@ -1,4 +1,7 @@
-"""Offline focused tests for the fixed xbmc.metadata diagnostic (not production support).
+"""Offline focused tests for the fixed xbmc.metadata diagnostic (not its production pin).
+
+Production passive pinning of xbmc.metadata (D-032) is tested separately in
+tests/test_xbmc_metadata_passive.py.
 
 Uses the exact-source platform fixture and synthetic native Kodi authorities.
 Nothing here stages, launches or contacts Test.app, normal Kodi or a device.
@@ -28,7 +31,9 @@ def make_fixture(case, *, xml=DESCRIPTOR, version='1.0.0', registered=True, enab
     """Exact-source adapter plus one synthetic application-bundled xbmc.metadata."""
     f = Fixture(case)
     descriptor = f.native.app / XBMC / 'addon.xml'
-    descriptor.parent.mkdir()
+    # PassiveFixture now installs the pinned xbmc.metadata bytes (D-032); this
+    # disposable tree replaces them with the diagnostic's synthetic descriptor.
+    descriptor.parent.mkdir(exist_ok=True)
     descriptor.write_bytes(xml)
     f.native.info[XBMC] = dict(id=XBMC, version=version, path=str(descriptor.parent), type='unknown')
     f.native.conditions['System.HasAddon(' + XBMC + ')'] = registered
@@ -72,10 +77,11 @@ class XbmcMetadataObservationTests(unittest.TestCase):
         self.assertNotIn(SECRET, json.dumps(result))
         self.assertNotIn(str(f.native.root), json.dumps(result))
 
-    def test_xbmc_metadata_is_not_a_platform_or_passive_trust_identity(self):
+    def test_diagnostic_adapter_identity_is_not_platform_authority(self):
+        # D-032 adds the narrow production passive pin; the adapter's own platform
+        # identities and version stay frozen (D-031).
         self.assertNotIn(XBMC, support.PLATFORM_IDS)
-        self.assertNotIn(XBMC, fi._PASSIVE_BUILTINS)
-        self.assertEqual(('xbmc.core', 'xbmc.gui', 'kodi.resource'), tuple(fi._PASSIVE_BUILTINS))
+        self.assertEqual(('xbmc.core', 'xbmc.gui', 'kodi.resource', XBMC), tuple(fi._PASSIVE_BUILTINS))
 
     def test_missing_provider_refuses_without_reading_descriptor(self):
         f = make_fixture(self, registered=False, enabled=False)
