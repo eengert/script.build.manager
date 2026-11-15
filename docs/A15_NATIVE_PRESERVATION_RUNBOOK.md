@@ -43,14 +43,124 @@ Synthetic controls cover strict uptime/view/setting-level and texture-counter
 changes, and indistinguishable lifecycle-shaped versus overwrite outcomes.
 They prove detection and the attribution limit, not native writer causality.
 
-For the single proposed test, use the existing strict result. Any difference
-stays `CHANGED_OR_MISSING`; absent independently supported causality, overall
-preservation qualification is INCONCLUSIVE. Even proven maintenance does not
-turn this strict result into `PRESERVED` or authorize A15 acceptance. A future
-policy accepting explained changes, or a separately reviewed way to compare
-private field deltas in memory, needs its own explicit decision. Neither is
-implemented here. No monitoring service or private baseline persistence is
-needed or authorized by this contract.
+For the strict comparison, any difference stays `CHANGED_OR_MISSING`, and proven
+maintenance never turns it into `PRESERVED`. D-032 (2026-11-15) adds a separate
+practical verdict, defined in "Practical beta preservation contract (D-032)" below.
+It may classify only the closed maintenance classes M1 and M2, and only through a
+reviewed in-memory comparator that is not implemented here. The strict result is
+unchanged by that decision. No monitoring service or private baseline persistence
+is needed or authorized by this contract.
+
+## Practical beta preservation contract (D-032)
+
+Approved by Eric on 2026-11-15 for personal beta readiness. This section defines
+an additional practical verdict. It does not run, authorize or accept any native
+task, does not change the N6 strict comparison, and does not add a comparison
+subsystem.
+
+### Relationship to the strict comparison
+
+- The N6 strict results (`PRESERVED`, `CHANGED_OR_MISSING`, the five projections,
+  the public witnesses and the driver's `state` and `reason`) are always reported
+  exactly as produced. They are never rewritten, normalized or relabelled.
+- Practical beta acceptance is judged by the practical verdict below. Byte-for-byte
+  equality of an entire Kodi session is not required for that verdict. Every
+  strict difference must still be classified. None may be ignored or waived.
+
+### Protected scopes and current witnesses
+
+| Scope | Protected meaningful content | Current witness | Stated limitation |
+| --- | --- | --- | --- |
+| S1 Saved builds and library | Build Library registry, saved entries, selection | Public snapshot equality (library root, registry, selection) and the `build-library` tree digest | Digest equality only; no semantic read of build contents |
+| S2 Artifacts and associations | Frozen artifacts, applied association, install resolutions | `frozen-artifacts` and `install_resolutions` tree digests; applied association equality | Digest equality only |
+| S3 Configuration and meaningful settings | `guisettings.xml` leaves outside M1, keyboard peripheral strings, Estuary settings, active skin, updater policy | The five projections (texture rows are S5) and the public `settings` fields | Only the five listed files are compared |
+| S4 Supported add-on resources and private settings | Managed add-on data and structured private resources | None in the A15 driver | UNVERIFIED unless the scenario can touch it; must be stated |
+| S5 Relevant databases | Addons33 installed identity and enabled state; Textures13 (cache, see M2) | Addons33 `installed.addonID,enabled` only; Textures13 exact schema and typed rows | Other Addons33 content is UNVERIFIED; Textures13 is cache, not user data |
+| S6 Unmanaged add-ons and unrelated configuration | Unmanaged add-on directories and their settings; unrelated files | Addons33 identity and enabled state only | No unmanaged directory census and no unrelated-file witness; an open gap |
+| S7 Transaction and recovery safety | No BM frozen-install, restart, capture or hold record; no pending publication; verified quit and stopped state | Owner-absence checks, `pending_publication`, quit receipt, fresh stopped and source verification | Does not prove the absence of unrelated external writers |
+| S8 Source installation during capture | Kodi application add-ons and BM product trees | Stage verification (`installed_equals_candidate`, Git binding) before and after | No separate native source-tree census in the A15 driver |
+| S9 Receiving installation during application | Receiving-profile data in S1 to S6 during an install, update or repair attempt | The same witnesses before and after the attempt | Scenario-specific; a rejected conflict is expected to change nothing |
+
+A scope with a stated limitation is reported in the verdict. It may be left out of
+the PASS basis only when the authorized operation cannot touch it by design, and the
+ledger records that reasoning. Otherwise it is INCONCLUSIVE until witnessed.
+
+### Ordinary maintenance classes (closed list)
+
+- **M1, uptime counter:** `general/systemtotaluptime` in `guisettings.xml`. Shutdown
+  adds frame-clock minutes (`CApplication::Stop`), and `CSysInfo::Save` writes the
+  value (N6). Only the value of this leaf may differ. A structural change to that
+  element is MEANINGFUL.
+- **M2, texture cache metadata:** `Textures13` `sizes.usecount`, `sizes.lastusetime`
+  and `texture.lasthashcheck` values, plus cache row creation and eviction. Allowed
+  only when the schema is exact and every pre-existing texture row that remains
+  keeps identical `url`, `cachedurl` and `imagehash`. Row counts are reported.
+
+Everything else is MEANINGFUL: all other leaves, view-state and event-log state
+(user configuration), skin, peripheral and Addons33 changes within their witnessed
+fields, every public-witness difference, and any change to a pre-existing texture
+row's identity fields. A class is never extended by inference from names,
+timestamps, a writer's presence in Kodi source, or a matching control run.
+
+### Minimal verification mechanism (defined, not implemented)
+
+The current driver exports per-file equality and `maintenance_attribution=UNKNOWN`,
+and it cannot classify a difference without exporting field deltas, which N6
+forbids. Until the mechanism below is implemented and independently reviewed, every
+strict five-file difference is MEANINGFUL-unclassified, and the practical verdict
+cannot be PASS.
+
+- An in-memory comparator run only on the existing private before and after
+  projections of the five files. For each file it returns `EXACT`,
+  `MAINTENANCE_ONLY` with the class names and counts, or `MEANINGFUL` with a count.
+  It returns no paths, values, row identifiers or value digests.
+- Positive controls: an M1-only change; M2 `usecount`, `lastusetime` or
+  `lasthashcheck` changes; M2 row creation and eviction with identities kept. Each
+  must yield `MAINTENANCE_ONLY` with the correct class.
+- Negative controls, each of which must yield `MEANINGFUL`: any other guisettings
+  leaf; a structural change to the M1 element; an M1 change combined with another
+  leaf change in the same file; a Textures13 schema change; a changed `url`,
+  `cachedurl` or `imagehash` on a pre-existing row.
+- Output tests: the comparator output must contain no paths, values or digests.
+- Independent review of the comparator and its tests before any native use.
+
+### Practical verdict
+
+**PASS (practical)** requires all of the following:
+
+1. The authorized operation's expected result and its fresh ledger correlation are
+   verified, as in the N6 narrow-scenario PASS.
+2. S7 holds after stop: no BM transaction, hold, restart or capture record, no
+   pending publication, and no residual unsafe state.
+3. S1, S2 and the S5 Addons33 identity and enabled state match exactly under the
+   public witnesses. Each of the five projections is `EXACT` or `MAINTENANCE_ONLY`
+   from the reviewed comparator, and none is `MEANINGFUL`.
+4. Each stated limitation for S4, S5, S6 and S8 is reported. The PASS basis explains
+   why an unwitnessed scope cannot be touched by the authorized operation.
+
+**FAIL (practical)** requires independently established evidence, correlated to the
+operation, of any of the following: a wrong operation result (for example an
+overwrite or a success where rejection is expected); BM-caused loss, overwrite,
+truncation or deletion of meaningful content in S1 to S6; BM-caused unsafe
+transaction, hold or publication residue; an unrelated mutation, including of an
+unmanaged add-on; or exposure of secret or private values. A strict difference alone
+is never FAIL. Preserve the evidence and do not retry.
+
+**INCONCLUSIVE (practical)** is the result when any of the following holds: a
+MEANINGFUL or unclassified difference; a scope the operation could touch has no
+witness; acquisition is unstable or unsupported; correlation is missing or broken;
+the process was lost, timed out or cleaned up incompletely; or the comparator is not
+yet reviewed. A matching control run is not causal proof and cannot upgrade or
+downgrade a result.
+
+### Limits and acceptance
+
+This contract does not establish whole-profile preservation, global writer
+exclusion, complete Addons33 or unmanaged add-on verification, the D-030 deferred
+lifecycles, publication, public-product qualification or macOS beta acceptance. A
+practical PASS for A15 requires the reviewed comparator, a separate task naming the
+one scenario, sealed native evidence, and independent review of that evidence. Until
+then A15 is not accepted.
 
 ## Audio root placement (N2)
 
@@ -573,29 +683,36 @@ observations in order; a successful form/mtime check is not native attribution.
 
 ## Predetermined outcome and stop rules
 
-- **PASS (narrow A15 scenario):** complete correlated native conflict evidence,
+These bullets define the strict results only. The practical verdict is defined in
+the D-032 section above and is reported separately. A strict difference does not by
+itself decide the practical verdict; any part left unclassified is INCONCLUSIVE, and
+a practical PASS never rewrites a strict result.
+
+- **Strict PASS (narrow A15 scenario):** complete correlated native conflict evidence,
   expected rejection, verified UI exit before quit, fresh stopped/source
   verification, all five strict scopes
   and separate public witnesses PRESERVED, no unsafe transaction/hold/publication
   or unrelated mutation. Report the Addons33 and full-profile limitations.
-- **FAIL (native behavior):** a demonstrably wrong conflict result (for example
+- **Strict FAIL (native behavior):** a demonstrably wrong conflict result (for example
   unexpected success/overwrite), or independently established harmful/unexpected
   mutation caused by the operation. Preserve evidence; no corrective retry.
 - **Strict difference mapping:** the unchanged driver reports `state=INCONCLUSIVE`,
   `reason=changed`, nonzero exit when either semantic/public equality differs.
   The underlying `CHANGED_OR_MISSING` stays authoritative, but is not by itself
   a native-behavior FAIL or proof of BM-caused damage. Do not report it as PASS.
-- **INCONCLUSIVE:** any unsupported/unstable acquisition, missing correlation,
+- **Strict INCONCLUSIVE:** any unsupported/unstable acquisition, missing correlation,
   process/source uncertainty, process loss, timeout, incomplete cleanup or any
   semantic/public difference whose qualification/causal meaning is unresolved.
   Known or plausible maintenance remains a strict difference and cannot satisfy
   this procedure's exact-preservation PASS. A prelaunch refusal means no native
   scenario occurred; report the reached gate without guessing.
 
-Normal Kodi shutdown can increase uptime; UI work may also change texture or
-view state. Thus a useful honest result may be INCONCLUSIVE. Do not shorten,
-repeat, alter settings or omit fields merely to obtain equality. The procedure
-may advance failure-path evidence without closing A15.
+Normal Kodi shutdown can increase uptime, and UI work may change texture or view
+state. Under the strict comparison, such differences remain differences. Under the
+practical contract, only M1 and M2 may be classified as ordinary maintenance, and
+view-state or other settings changes remain MEANINGFUL. Do not shorten, repeat,
+alter settings or omit fields merely to obtain equality. The procedure may advance
+failure-path evidence without closing A15.
 
 CANCEL/EOF/timeout/host-process loss consumes or loses the private session and
 never controls Kodi or authorizes retry. An unverified UI exit remains subject

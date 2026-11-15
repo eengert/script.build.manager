@@ -1,4 +1,13 @@
-# Current Handoff — Build Manager Manual Mode (refreshed 2026-10-16)
+# Current Handoff — Build Manager Manual Mode (refreshed 2026-11-15)
+
+## November 15 checkpoint — D-032 practical beta readiness
+
+- Lane: Claude, `agent/claude`, local and unpushed. The production change is commit `7f83134` (pinned `xbmc.metadata` 2.1.0 passive support, D-028 pin updates and offline tests). The policy and documentation commit follows it on the same branch (see `git log`).
+- `xbmc.metadata` support is passive registration only, per D-032. It proves no functional usability. The accepted 2026-11-14 native observation still binds to candidate `b71b408`, so it does not cover `7f83134`. A native Create to Install to Verify run on the exact reviewed candidate is required before the support is relied on in a qualification claim.
+- A15 practical preservation contract is defined in `docs/A15_NATIVE_PRESERVATION_RUNBOOK.md` (D-032). It keeps the strict N6 comparison unchanged. Its comparator for the closed M1/M2 maintenance classes is defined but not implemented. No native run occurred and A15 is not accepted.
+- Item 8 remains OPEN. The D-030 deferrals, the publication block and the matrix block are unchanged. No push, merge or release was performed.
+- Next, one of: independent review of `7f83134` and the documentation commit; an authorized native run that names its target and actions; or implementation and offline review of the M1/M2 comparator before any A15 native task.
+- Out of scope, noticed and not changed: `BUILD_MANAGER_PROJECT_PLAN.md` line 79 still names adapter `0.0.15` and says "do not create 0.0.16+". That conflicts with D-031 (0.0.17).
 
 ## October 16 checkpoint — D-030 beta restart deferral
 
