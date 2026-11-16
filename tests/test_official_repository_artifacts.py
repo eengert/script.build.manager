@@ -5,16 +5,19 @@ route table and never opens a socket. Nothing here reads a real Kodi profile,
 application bundle, package cache or artifact store.
 """
 
+import copy
 import gzip
 import hashlib
 import http.client
 import io
+import json
 import os
 import socket
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from resources.lib.artifacts import ArtifactStore
 from resources.lib.frozen import (
@@ -23,8 +26,11 @@ from resources.lib.frozen import (
     KodiInventoryBackend,
     capture_frozen_build,
 )
+from resources.lib import frozen
 from resources.lib.official_repository import (
     MAX_REDIRECTS,
+    _PinnedHttpsConnection,
+    is_public_address,
     BoundedHttpsGetter,
     OfficialRepositoryProvider,
     RepositoryArtifactRefusal,
@@ -41,6 +47,16 @@ VERSION = "2.31.0"
 FILENAME = f"{ADDON}-{VERSION}.zip"
 ARCHIVE_PATH = f"/addons/omega/{ADDON}/{FILENAME}"
 SIDECAR_PATH = ARCHIVE_PATH + ".md5"
+PUBLIC_ADDRESS = "93.184.216.34"
+
+
+# Addon.Fields enum of Kodi 21.3, xbmc/xbmc a3a448d26b8d560a65655dab2cd122994dc4e146,
+# xbmc/interfaces/json-rpc/schema/types.json. "type" is returned in each addon but cannot be requested.
+ADDON_FIELDS = frozenset((
+    "name", "version", "summary", "description", "path", "author", "thumbnail", "disclaimer", "fanart",
+    "dependencies", "broken", "extrainfo", "rating", "enabled", "installed", "deprecated",
+))
+FIXTURE_DIRECTORY = Path(__file__).resolve().parent / "fixtures" / "official_repository"
 
 
 def _md5(data):
@@ -131,6 +147,9 @@ class _FakeConnection:
 
     def request(self, method, path, headers=None):
         self._mirror.requests.append((self._host, path))
+        hook = self._mirror.before_request.get(path)
+        if hook is not None:
+            hook()
         route = self._mirror.routes.get((self._host, path))
         if route is None:
             raise AssertionError(f"unrouted request {self._host}{path}")
@@ -150,6 +169,11 @@ class FakeMirror:
         self.routes = {}
         self.requests = []
         self.connect_errors = {}
+        self.dns = {}
+        self.resolutions = []
+        self.connections = []
+        self.before_request = {}
+        self.bad_addresses = set()
 
     def route(self, host, path, *, status=200, body=b"", headers=None, read_error=None):
         self.routes[(host, path)] = {
@@ -159,9 +183,16 @@ class FakeMirror:
     def redirect(self, host, path, location):
         self.route(host, path, status=302, headers={"Location": location})
 
-    def connect(self, host, port, timeout):
+    def resolve(self, host, port):
+        self.resolutions.append(host)
+        return list(self.dns.get(host, [PUBLIC_ADDRESS]))
+
+    def connect(self, host, address, port, timeout):
         if port != 443:
             raise AssertionError("non-default port requested")
+        self.connections.append((host, address))
+        if address in self.bad_addresses:
+            raise ConnectionRefusedError("refused")
         error = self.connect_errors.get(host)
         if error is not None:
             raise error
@@ -189,7 +220,7 @@ def _provider(mirror, *, compressed=False, **limits):
     config = parse_official_repository_config(
         _config_xml(info=info, compressed="true" if compressed else "false"),
     )
-    return OfficialRepositoryProvider(config, transport=BoundedHttpsGetter(connect=mirror.connect), **limits)
+    return OfficialRepositoryProvider(config, transport=BoundedHttpsGetter(connect=mirror.connect, resolve=mirror.resolve), **limits)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -235,7 +266,6 @@ class ConfigurationTests(unittest.TestCase):
             "checksum other host": _config_xml(checksum="https://other.example.org/addons/omega/addons.xml.md5"),
             "checksum other name": _config_xml(checksum=f"https://{HOST}/addons/omega/other.md5"),
             "datadir not zip": _config_xml(zip_attribute="false"),
-            "datadir without slash": _config_xml(datadir=f"https://{HOST}/addons/omega"),
             "datadir other host": _config_xml(datadir="https://mirror.example.org/addons/omega/"),
             "datadir traversal": _config_xml(datadir=f"https://{HOST}/addons/../omega/"),
             "second directory": _config_xml(extra_dirs="<dir/>"),
@@ -479,7 +509,7 @@ class RedirectPolicyTests(unittest.TestCase):
     TAIL = (ADDON, FILENAME)
 
     def _getter(self, mirror):
-        return BoundedHttpsGetter(connect=mirror.connect)
+        return BoundedHttpsGetter(connect=mirror.connect, resolve=mirror.resolve)
 
     def _url(self):
         return f"https://{HOST}{ARCHIVE_PATH}"
@@ -531,6 +561,335 @@ class RedirectPolicyTests(unittest.TestCase):
         mirror.route(HOST, ARCHIVE_PATH, status=302)
         with self.assertRaisesRegex(RepositoryArtifactRefusal, "redirect is invalid"):
             self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL)
+
+
+def _sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _bundled_descriptor():
+    return (FIXTURE_DIRECTORY / "repository.xbmc.org-3.4.0.addon.xml").read_bytes()
+
+
+GZ_CHECKSUM_PATH = GZ_INDEX_PATH + "?sha256"
+SHA_SIDECAR_PATH = ARCHIVE_PATH + ".sha256"
+
+
+def publish_kodi_21(mirror, *, archive, index_xml, checksum=None, sidecar=None):
+    """Register a repository laid out the way the bundled Kodi 21 descriptor describes it."""
+    gz = _gzip(index_xml)
+    mirror.route(HOST, GZ_INDEX_PATH, body=gz)
+    mirror.route(HOST, GZ_CHECKSUM_PATH,
+                 body=checksum if checksum is not None else f"{_sha256(gz)}\n".encode("ascii"))
+    mirror.route(HOST, SHA_SIDECAR_PATH,
+                 body=sidecar if sidecar is not None else f"{_sha256(archive)}  {FILENAME}\n".encode("ascii"))
+    mirror.route(HOST, ARCHIVE_PATH, body=archive)
+
+
+class ActualKodiDescriptorTests(unittest.TestCase):
+    """The descriptor bytes bundled with Kodi 21 (repository.xbmc.org 3.4.0), not a hand-built layout."""
+
+    def _provider(self, mirror, descriptor=None):
+        config = parse_official_repository_config(descriptor if descriptor is not None else _bundled_descriptor())
+        return OfficialRepositoryProvider(
+            config, transport=BoundedHttpsGetter(connect=mirror.connect, resolve=mirror.resolve),
+        )
+
+    def test_fixture_is_the_bundled_descriptor(self):
+        self.assertEqual("1453e050fb6c9c49bf23af2ab60c3a18c886021364670b5960fa06cf862ba055",
+                         _sha256(_bundled_descriptor()))
+
+    def test_bundled_descriptor_is_parsed_with_its_actual_semantics(self):
+        config = parse_official_repository_config(_bundled_descriptor())
+        self.assertEqual("https://mirrors.kodi.tv/addons/omega/addons.xml.gz", config.index_url)
+        self.assertEqual("addons.xml.gz", config.index_name)
+        self.assertEqual("https://mirrors.kodi.tv/addons/omega/addons.xml.gz?sha256", config.checksum_url)
+        self.assertEqual("https://mirrors.kodi.tv/addons/omega/", config.datadir_url)
+        self.assertEqual("sha256", config.checksum_algorithm)
+        self.assertEqual("sha256", config.sidecar_algorithm)
+
+    def test_exact_archive_is_fetched_and_verified_with_sha256(self):
+        archive = _addon_zip()
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=_standard_index(archive))
+        self.assertEqual((FILENAME, archive), self._provider(mirror).fetch_archive(ADDON, VERSION))
+        self.assertEqual(
+            [GZ_CHECKSUM_PATH, GZ_INDEX_PATH, SHA_SIDECAR_PATH, ARCHIVE_PATH],
+            [path for _, path in mirror.requests],
+        )
+
+    def test_index_checksum_may_cover_the_decompressed_bytes(self):
+        archive = _addon_zip()
+        index_xml = _standard_index(archive)
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=index_xml,
+                        checksum=f"{_sha256(index_xml)}  addons.xml\n".encode("ascii"))
+        self.assertEqual(FILENAME, self._provider(mirror).fetch_archive(ADDON, VERSION)[0])
+
+    def test_sha256_index_mismatch_is_refused_before_any_archive_request(self):
+        archive = _addon_zip()
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=_standard_index(archive),
+                        checksum=(("0" * 64) + "\n").encode("ascii"))
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "does not match its checksum"):
+            self._provider(mirror).fetch_archive(ADDON, VERSION)
+        self.assertNotIn(ARCHIVE_PATH, [path for _, path in mirror.requests])
+
+    def test_md5_digests_are_never_accepted_where_sha256_is_declared(self):
+        archive = _addon_zip()
+        index_xml = _standard_index(archive)
+        gz = _gzip(index_xml)
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=index_xml, checksum=_md5(gz).encode("ascii"))
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "checksum is invalid"):
+            self._provider(mirror).fetch_archive(ADDON, VERSION)
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=index_xml, sidecar=_md5(archive).encode("ascii"))
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "checksum is invalid"):
+            self._provider(mirror).fetch_archive(ADDON, VERSION)
+        self.assertNotIn(".md5", "".join(path for _, path in mirror.requests))
+
+    def test_archive_sha256_mismatch_is_refused(self):
+        archive = _addon_zip()
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=_standard_index(archive),
+                        sidecar=f"{'1' * 64}  {FILENAME}\n".encode("ascii"))
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "does not match the official sidecar"):
+            self._provider(mirror).fetch_archive(ADDON, VERSION)
+
+    def test_checksum_redirect_may_drop_the_declared_query_but_not_add_another(self):
+        archive = _addon_zip()
+        index_xml = _standard_index(archive)
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=index_xml)
+        mirror.redirect(HOST, GZ_CHECKSUM_PATH, f"https://{MIRROR}/kodi/addons.xml.gz")
+        mirror.route(MIRROR, "/kodi/addons.xml.gz", body=f"{_sha256(_gzip(index_xml))}\n".encode("ascii"))
+        self.assertEqual(FILENAME, self._provider(mirror).fetch_archive(ADDON, VERSION)[0])
+        mirror = FakeMirror()
+        publish_kodi_21(mirror, archive=archive, index_xml=index_xml)
+        mirror.redirect(HOST, GZ_CHECKSUM_PATH, f"https://{MIRROR}/kodi/addons.xml.gz?token=1")
+        mirror.route(MIRROR, "/kodi/addons.xml.gz?token=1", body=b"x")
+        with self.assertRaises(RepositoryArtifactRefusal):
+            self._provider(mirror).fetch_archive(ADDON, VERSION)
+
+    def test_descriptor_variations_that_would_weaken_verification_are_refused(self):
+        descriptor = _bundled_descriptor().decode("utf-8")
+        cases = {
+            "unknown verify algorithm": descriptor.replace('verify="sha256"', 'verify="sha1"'),
+            "wrong checksum query": descriptor.replace("?sha256", "?md5"),
+            "checksum other name": descriptor.replace("addons.xml.gz?sha256", "other.gz?sha256"),
+            "unsupported archive hash": descriptor.replace("<hashes>sha256</hashes>", "<hashes>sha1</hashes>"),
+            "compressed contradicts index": descriptor.replace(
+                "<info>", '<info compressed="false">'),
+            "datadir declared not zip": descriptor.replace("<datadir>", '<datadir zip="false">'),
+            "index with query": descriptor.replace("addons.xml.gz</info>", "addons.xml.gz?x=1</info>"),
+            "index over http": descriptor.replace("https://mirrors.kodi.tv/addons/omega/addons.xml.gz</info>",
+                                                  "http://mirrors.kodi.tv/addons/omega/addons.xml.gz</info>"),
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.assertNotEqual(descriptor, text)
+                with self.assertRaises(RepositoryArtifactRefusal):
+                    parse_official_repository_config(text.encode("utf-8"))
+
+    def test_datadir_without_trailing_slash_or_zip_attribute_is_accepted(self):
+        for datadir in (f"https://{HOST}/addons/omega", f"https://{HOST}/addons/omega/"):
+            with self.subTest(datadir):
+                config = parse_official_repository_config(_config_xml(datadir=datadir, zip_attribute="true"))
+                self.assertEqual(f"https://{HOST}/addons/omega/", config.datadir_url)
+
+    def test_legacy_md5_descriptor_still_uses_md5_only_when_it_declares_it(self):
+        config = parse_official_repository_config(_config_xml())
+        self.assertEqual(("md5", "md5"), (config.checksum_algorithm, config.sidecar_algorithm))
+
+
+class NetworkDestinationTests(unittest.TestCase):
+    TAIL = (ADDON, FILENAME)
+
+    def _getter(self, mirror):
+        return BoundedHttpsGetter(connect=mirror.connect, resolve=mirror.resolve)
+
+    def _url(self, host=HOST):
+        return f"https://{host}{ARCHIVE_PATH}"
+
+    def test_public_and_internal_addresses_are_classified(self):
+        public = ("93.184.216.34", "151.101.1.1", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946", "2001:4860:4860::8888")
+        internal = (
+            "127.0.0.1", "127.1.2.3", "10.0.0.5", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254",
+            "100.64.0.1", "0.0.0.0", "255.255.255.255", "224.0.0.1", "240.0.0.1", "192.0.0.8", "192.0.2.1",
+            "198.18.0.1", "198.51.100.1", "203.0.113.5",
+            "::", "::1", "fe80::1", "fe80::1%en0", "fc00::1", "fd12:3456::1", "ff02::1", "fec0::1", "2001:db8::1",
+            "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:8.8.8.8", "::127.0.0.1", "64:ff9b::7f00:1",
+            "64:ff9b::808:808", "64:ff9b:1::1", "2002:7f00:1::", "2002:0808:0808::", "2001:0:4136:e378::1",
+            "not-an-address", "", None, 7,
+        )
+        for address in public:
+            with self.subTest(public=address):
+                self.assertTrue(is_public_address(address))
+        for address in internal:
+            with self.subTest(internal=address):
+                self.assertFalse(is_public_address(address))
+
+    def test_dns_names_resolving_to_internal_addresses_are_refused_on_the_first_request(self):
+        answers = {
+            "loopback": ["127.0.0.1"], "private": ["10.0.0.5"], "metadata": ["169.254.169.254"],
+            "ipv6 loopback": ["::1"], "ipv6 link-local": ["fe80::1"], "mapped loopback": ["::ffff:127.0.0.1"],
+            "mapped public": ["::ffff:8.8.8.8"], "nat64": ["64:ff9b::7f00:1"], "shared": ["100.64.0.1"],
+            "mixed with public": [PUBLIC_ADDRESS, "10.0.0.5"], "mixed ipv6": ["2606:2800:220:1::1", "fd00::1"],
+            "empty": [],
+        }
+        for label, addresses in answers.items():
+            with self.subTest(label):
+                mirror = FakeMirror()
+                mirror.dns[HOST] = addresses
+                mirror.route(HOST, ARCHIVE_PATH, body=b"SHOULD-NOT-BE-READ")
+                with self.assertRaises(RepositoryArtifactRefusal):
+                    self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL)
+                self.assertEqual([], mirror.connections)
+                self.assertEqual([], mirror.requests)
+
+    def test_resolver_failure_is_a_refusal_not_a_leak(self):
+        def resolve(host, port):
+            raise socket.gaierror(8, f"nodename nor servname provided for {host}")
+        getter = BoundedHttpsGetter(connect=FakeMirror().connect, resolve=resolve)
+        with self.assertRaises(RepositoryArtifactRefusal) as context:
+            getter.get(self._url(), max_bytes=100, tail=self.TAIL)
+        self.assertNotIn(HOST, str(context.exception))
+
+    def test_alias_that_resolves_internally_is_refused_at_a_redirect_hop(self):
+        mirror = FakeMirror()
+        mirror.dns["alias.example.org"] = ["192.168.0.10"]
+        mirror.redirect(HOST, ARCHIVE_PATH, f"https://alias.example.org/kodi/{ADDON}/{FILENAME}")
+        mirror.route("alias.example.org", f"/kodi/{ADDON}/{FILENAME}", body=b"INTERNAL-SECRET")
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "unsuitable address"):
+            self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL)
+        self.assertEqual([(HOST, PUBLIC_ADDRESS)], mirror.connections)
+
+    def test_connection_is_bound_to_the_validated_address_despite_rebinding(self):
+        answers = iter([[PUBLIC_ADDRESS], ["127.0.0.1"], ["10.0.0.9"]])
+        mirror = FakeMirror()
+        mirror.route(HOST, ARCHIVE_PATH, body=b"ZIPBYTES")
+        getter = BoundedHttpsGetter(connect=mirror.connect, resolve=lambda host, port: next(answers))
+        self.assertEqual(b"ZIPBYTES", getter.get(self._url(), max_bytes=100, tail=self.TAIL))
+        # One resolution per request, and the connector received exactly the address that was approved.
+        self.assertEqual([(HOST, PUBLIC_ADDRESS)], mirror.connections)
+        self.assertEqual(2, len(list(answers)))  # the later, hostile answers were never requested
+
+    def test_second_connection_attempt_uses_another_approved_address_only(self):
+        mirror = FakeMirror()
+        mirror.dns[HOST] = ["93.184.216.34", "93.184.216.35"]
+        mirror.bad_addresses.add("93.184.216.34")
+        mirror.route(HOST, ARCHIVE_PATH, body=b"ZIPBYTES")
+        self.assertEqual(b"ZIPBYTES", self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL))
+        self.assertEqual([(HOST, "93.184.216.34"), (HOST, "93.184.216.35")], mirror.connections)
+
+    def test_legitimate_public_mirror_redirect_is_followed_and_pinned_to_the_mirror(self):
+        mirror = FakeMirror()
+        mirror.dns[MIRROR] = ["151.101.65.10", "2606:2800:220:1:248:1893:25c8:1946"]
+        mirror.redirect(HOST, ARCHIVE_PATH, f"https://{MIRROR}/kodi/addons/omega/{ADDON}/{FILENAME}")
+        mirror.route(MIRROR, f"/kodi/addons/omega/{ADDON}/{FILENAME}", body=b"ZIPBYTES")
+        self.assertEqual(b"ZIPBYTES", self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL))
+        self.assertEqual([(HOST, PUBLIC_ADDRESS), (MIRROR, "151.101.65.10")], mirror.connections)
+
+    def test_encoded_separators_and_ambiguous_paths_in_redirects_are_refused(self):
+        unsafe = {
+            "encoded traversal in one segment": f"https://{MIRROR}/kodi/..%2f..%2f/{ADDON}/{FILENAME}",
+            "encoded slash": f"https://{MIRROR}/kodi/x%2f..%2f{ADDON}/{FILENAME}",
+            "uppercase encoded slash": f"https://{MIRROR}/kodi%2F{ADDON}/{FILENAME}",
+            "encoded slash before name": f"https://{MIRROR}/kodi/{ADDON}%2f{FILENAME}",
+            "encoded backslash": f"https://{MIRROR}/kodi/..%5c{ADDON}/{FILENAME}",
+            "encoded dots with encoded slash": f"https://{MIRROR}/kodi/%2e%2e%2f{ADDON}/{FILENAME}",
+            "double encoded dots": f"https://{MIRROR}/kodi/%252e%252e/{ADDON}/{FILENAME}",
+            "double encoded slash": f"https://{MIRROR}/kodi/a%252fb/{ADDON}/{FILENAME}",
+            "encoded nul": f"https://{MIRROR}/kodi/a%00b/{ADDON}/{FILENAME}",
+            "encoded newline": f"https://{MIRROR}/kodi/a%0ab/{ADDON}/{FILENAME}",
+            "malformed escape": f"https://{MIRROR}/kodi/a%zz/{ADDON}/{FILENAME}",
+            "literal space": f"https://{MIRROR}/kodi/a b/{ADDON}/{FILENAME}",
+            "relative traversal": f"../outside/{ADDON}/{FILENAME}",
+            "relative dot": f"./{ADDON}/{FILENAME}",
+            "empty segment": f"https://{MIRROR}/kodi//{ADDON}/{FILENAME}",
+            "non-ascii": f"https://{MIRROR}/ködi/{ADDON}/{FILENAME}",
+        }
+        for label, location in unsafe.items():
+            with self.subTest(label):
+                mirror = FakeMirror()
+                mirror.redirect(HOST, ARCHIVE_PATH, location)
+                with self.assertRaises(RepositoryArtifactRefusal):
+                    self._getter(mirror).get(self._url(), max_bytes=100, tail=self.TAIL)
+                self.assertEqual([(HOST, PUBLIC_ADDRESS)], mirror.connections)
+
+    def test_harmless_percent_encoding_in_a_legitimate_redirect_is_accepted(self):
+        name = f"{ADDON}-1.0.0+matrix.1.zip"
+        mirror = FakeMirror()
+        mirror.redirect(HOST, ARCHIVE_PATH, f"https://{MIRROR}/kodi/{ADDON}/{ADDON}-1.0.0%2Bmatrix.1.zip")
+        mirror.route(MIRROR, f"/kodi/{ADDON}/{ADDON}-1.0.0%2Bmatrix.1.zip", body=b"ZIPBYTES")
+        self.assertEqual(b"ZIPBYTES", self._getter(mirror).get(self._url(), max_bytes=100, tail=(ADDON, name)))
+
+    def test_descriptor_paths_with_encoded_separators_are_refused(self):
+        for datadir in (f"https://{HOST}/addons%2f..%2fomega/", f"https://{HOST}/addons/%2e%2e/omega/",
+                        f"https://{HOST}/addons/a%252fb/"):
+            with self.subTest(datadir):
+                with self.assertRaises(RepositoryArtifactRefusal):
+                    parse_official_repository_config(_config_xml(datadir=datadir))
+
+    def test_destination_policy_covers_a_descriptor_host_that_resolves_internally(self):
+        archive = _addon_zip()
+        mirror = FakeMirror()
+        mirror.publish(archive=archive, index_xml=_standard_index(archive))
+        mirror.dns[HOST] = ["10.1.2.3"]
+        with self.assertRaisesRegex(RepositoryArtifactRefusal, "unsuitable address"):
+            _provider(mirror).fetch_archive(ADDON, VERSION)
+        self.assertEqual([], mirror.requests)
+
+
+class _FakeSocket:
+    def __init__(self, peer):
+        self.peer = peer
+        self.closed = False
+
+    def getpeername(self):
+        return (self.peer, 443)
+
+    def close(self):
+        self.closed = True
+
+
+class PinnedConnectionTests(unittest.TestCase):
+    def _connection(self, peer, address="93.184.216.34"):
+        created = []
+        wrapped = []
+
+        def create_socket(destination, timeout):
+            created.append((destination, timeout))
+            self.raw = _FakeSocket(peer)
+            return self.raw
+
+        class Context:
+            def wrap_socket(self, raw, server_hostname=None):
+                wrapped.append((raw, server_hostname))
+                return "tls-socket"
+
+        connection = _PinnedHttpsConnection(HOST, address, 443, 7.0, Context(), create_socket)
+        return connection, created, wrapped
+
+    def test_socket_goes_to_the_approved_address_and_tls_verifies_the_dns_host(self):
+        connection, created, wrapped = self._connection("93.184.216.34")
+        connection.connect()
+        self.assertEqual([(("93.184.216.34", 443), 7.0)], created)
+        self.assertEqual([(self.raw, HOST)], wrapped)
+        self.assertEqual("tls-socket", connection.sock)
+        self.assertEqual(HOST, connection.host)
+
+    def test_peer_that_is_not_the_approved_address_is_refused_and_closed(self):
+        connection, _, wrapped = self._connection("10.0.0.5")
+        with self.assertRaises(RepositoryArtifactRefusal):
+            connection.connect()
+        self.assertTrue(self.raw.closed)
+        self.assertEqual([], wrapped)
+
+    def test_host_header_omits_the_default_port(self):
+        connection, _, _ = self._connection("93.184.216.34")
+        self.assertEqual(443, connection.default_port)
 
 
 class ConfiguredProviderPrivacyTests(unittest.TestCase):
@@ -603,6 +962,9 @@ class OfficialBackendFixture(unittest.TestCase):
             if recorded is not None:
                 recorded.append((method, params))
             if method == "Addons.GetAddons":
+                rejected = [name for name in params.get("properties", []) if name not in ADDON_FIELDS]
+                if rejected:
+                    raise AssertionError(f"Invalid params: {rejected} is not in Addon.Fields")
                 return {"addons": [dict(entry) for entry in entries]}
             if method == "Application.GetProperties":
                 return {"version": {"major": 21, "minor": 3}}
@@ -611,7 +973,7 @@ class OfficialBackendFixture(unittest.TestCase):
         kwargs = {"application_addons_dir": self.application} if application else {}
         return KodiInventoryBackend(
             rpc, addons_dir=self.home, package_cache_dir=self.packages,
-            https_connect=self.mirror.connect, **kwargs,
+            https_connect=self.mirror.connect, https_resolve=self.mirror.resolve, **kwargs,
         )
 
     def acquire(self, backend=None):
@@ -634,11 +996,10 @@ class OfficialBackendAcquisitionTests(OfficialBackendFixture):
         self.assertEqual("repository", result.metadata.source)
         self.assertEqual(4, len(self.mirror.requests))
 
-    def test_installed_bytecode_caches_do_not_block_acquisition(self):
+    def test_generated_cache_next_to_its_source_does_not_block_acquisition(self):
         self.install(ADDON, {
             "__pycache__/lib.cpython-311.pyc": b"\x00bytecode",
-            "lib.pyo": b"\x00optimized",
-            "resources/cache.pyc": b"\x00bytecode",
+            "__pycache__/lib.cpython-311.opt-2.pyc": b"\x00optimized",
         })
         self.assertEqual(CaptureStatus.COMPLETE, self.acquire().status)
 
@@ -769,12 +1130,191 @@ class OfficialBackendAcquisitionTests(OfficialBackendFixture):
             backend.get_repository_artifact("script.module.pil", "5.1.0")
         self.assertEqual([], self.mirror.requests)
 
-    def test_installed_listing_requests_the_type_property(self):
+
+    def test_installed_listing_never_requests_properties_outside_the_kodi_schema(self):
         recorded = []
-        self.backend(recorded=recorded).get_installed_addons()
-        methods = [params for method, params in recorded if method == "Addons.GetAddons"]
-        self.assertTrue(methods)
-        self.assertIn("type", methods[0]["properties"])
+        listing = self.backend(recorded=recorded).get_installed_addons()
+        requested = [params for method, params in recorded if method == "Addons.GetAddons"]
+        self.assertTrue(requested)
+        self.assertTrue(set(requested[0]["properties"]) <= ADDON_FIELDS)
+        self.assertNotIn("type", requested[0]["properties"])
+        # "type" is not requested, but Kodi returns it, and the installed type is still used.
+        self.assertEqual("xbmc.python.module", listing[0]["type"])
+
+    def test_schema_enforcing_fake_rejects_the_rejected_request_shape(self):
+        def rpc(method, params):
+            rejected = [name for name in params["properties"] if name not in ADDON_FIELDS]
+            if rejected:
+                raise AssertionError("Invalid params")
+            return {"addons": []}
+        with self.assertRaises(AssertionError):
+            rpc("Addons.GetAddons", {"properties": ["name", "dependencies", "type"]})
+        rpc("Addons.GetAddons", {"properties": ["name", "version", "path", "enabled", "installed", "broken",
+                                                 "dependencies"]})
+
+    # ---- bytecode ---------------------------------------------------------------------------
+
+    def _publish_archive(self, files):
+        self.archive = _addon_zip(files=files)
+        self.mirror.publish(archive=self.archive, index_xml=_standard_index(self.archive))
+
+    def _replace_installed(self, files):
+        import shutil
+        shutil.rmtree(self.home / ADDON)
+        self.install(ADDON, files)
+
+    def _base_files(self, **extra):
+        files = {"addon.xml": _addon_xml(), "lib.py": b"VALUE = 1\n"}
+        files.update(extra)
+        return files
+
+    def test_sourceless_bytecode_that_differs_from_the_archive_is_refused(self):
+        # Reviewer reproduction: a sourceless helper.pyc is importable code and must not be skipped.
+        self._publish_archive(self._base_files(**{"helper.pyc": b"\x00archive-bytecode"}))
+        self._replace_installed(self._base_files(**{"helper.pyc": b"\x00tampered-bytecode"}))
+        result = self.acquire()
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("differs from the official archive", result.error)
+        self.assertNoRegistration()
+
+    def test_installed_only_loose_bytecode_is_refused(self):
+        for name in ("helper.pyc", "helper.pyo", "resources/cache.pyc", "__pycache__/helper.pyc"):
+            with self.subTest(name):
+                self.install(ADDON, {name: b"\x00code"})
+                self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, self.acquire().status)
+                self.assertNoRegistration()
+                (self.home / ADDON / name).unlink()
+
+    def test_archive_bytecode_missing_from_the_installed_add_on_is_refused(self):
+        self._publish_archive(self._base_files(**{"helper.pyc": b"\x00archive-bytecode"}))
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, self.acquire().status)
+        self.assertNoRegistration()
+
+    def test_cache_without_a_source_or_with_an_unrecognised_name_is_refused(self):
+        for name in ("__pycache__/orphan.cpython-311.pyc", "__pycache__/lib.cpython-311.txt",
+                     "__pycache__/lib.pyc", "__pycache__/lib.cpython-311.pyc.bak",
+                     "sub/__pycache__/lib.cpython-311.pyc"):
+            with self.subTest(name):
+                self.install(ADDON, {name: b"\x00code"})
+                self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, self.acquire().status)
+                self.assertNoRegistration()
+                (self.home / ADDON / name).unlink()
+
+    def test_archive_shipped_cache_is_compared_not_skipped(self):
+        files = self._base_files(**{"__pycache__/lib.cpython-311.pyc": b"\x00archive-cache"})
+        self._publish_archive(files)
+        self._replace_installed(files)
+        (self.home / ADDON / "__pycache__" / "lib.cpython-311.pyc").write_bytes(b"\x00tampered-cache")
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, self.acquire().status)
+        self.assertNoRegistration()
+
+    def test_identical_archive_shipped_cache_is_accepted(self):
+        files = self._base_files(**{"__pycache__/lib.cpython-311.pyc": b"\x00archive-cache"})
+        self._publish_archive(files)
+        self._replace_installed(files)
+        self.assertEqual(CaptureStatus.COMPLETE, self.acquire().status)
+
+    def test_cache_beside_a_source_that_is_in_both_trees_is_tolerated(self):
+        files = self._base_files(**{"resources/mod.py": b"X = 1\n"})
+        self._publish_archive(files)
+        self._replace_installed(files)
+        self.install(ADDON, {
+            "__pycache__/lib.cpython-311.pyc": b"\x00a",
+            "resources/__pycache__/mod.cpython-310.opt-1.pyc": b"\x00b",
+        })
+        self.assertEqual(CaptureStatus.COMPLETE, self.acquire().status)
+
+    # ---- freshness --------------------------------------------------------------------------
+
+    def _during_archive_fetch(self, action):
+        self.mirror.before_request[ARCHIVE_PATH] = action
+
+    def assertRefusedAsChanged(self):
+        result = self.acquire()
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("changed during acquisition", result.error)
+        self.assertNoRegistration()
+
+    def test_file_modified_while_the_archive_is_fetched_is_refused(self):
+        # Reviewer reproduction: installed content matched the archive when it was first hashed.
+        target = self.home / ADDON / "lib.py"
+        self._during_archive_fetch(lambda: target.write_bytes(b"VALUE = 666\n"))
+        self.assertRefusedAsChanged()
+
+    def test_file_modified_and_restored_while_fetching_is_refused(self):
+        target = self.home / ADDON / "lib.py"
+        original = target.read_bytes()
+
+        def tamper_and_restore():
+            target.write_bytes(b"VALUE = 666\n")
+            target.write_bytes(original)
+        self._during_archive_fetch(tamper_and_restore)
+        self.assertRefusedAsChanged()
+
+    def test_file_replaced_by_another_inode_while_fetching_is_refused(self):
+        target = self.home / ADDON / "lib.py"
+
+        def replace():
+            replacement = target.with_name("lib.py.new")
+            replacement.write_bytes(target.read_bytes())
+            os.replace(replacement, target)
+        self._during_archive_fetch(replace)
+        self.assertRefusedAsChanged()
+
+    def test_file_added_and_removed_while_fetching_is_refused(self):
+        def add_and_remove():
+            extra = self.home / ADDON / "transient.txt"
+            extra.write_bytes(b"x")
+            extra.unlink()
+        self._during_archive_fetch(add_and_remove)
+        self.assertRefusedAsChanged()
+
+    def test_installed_directory_swapped_for_an_identical_copy_while_fetching_is_refused(self):
+        import shutil
+
+        def swap():
+            installed = self.home / ADDON
+            copy = self.home / "copy"
+            shutil.copytree(installed, copy)
+            shutil.rmtree(installed)
+            os.rename(copy, installed)
+        self._during_archive_fetch(swap)
+        self.assertRefusedAsChanged()
+
+    def test_trusted_root_replaced_while_fetching_is_refused(self):
+        def replace_root():
+            os.rename(self.home, self.base / "home" / "addons.old")
+            self.install(ADDON, self.installed_files)
+        self._during_archive_fetch(replace_root)
+        result = self.acquire()
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("location changed during inspection", result.error)
+        self.assertNoRegistration()
+
+    def test_file_modified_during_an_individual_read_is_refused(self):
+        target = self.home / ADDON / "lib.py"
+        real_read = os.read
+        state = {"reads": 0}
+
+        def racing_read(fd, size):
+            data = real_read(fd, size)
+            if data and state["reads"] == 0 and os.fstat(fd).st_ino == target.stat().st_ino:
+                state["reads"] += 1
+                with open(target, "ab") as handle:
+                    handle.write(b"# appended mid-read\n")
+            return data
+
+        with mock.patch.object(frozen, "_TREE_READ_CHUNK", 4), mock.patch.object(frozen.os, "read", racing_read):
+            result = self.acquire()
+        self.assertEqual(1, state["reads"])
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("changed during inspection", result.error)
+        self.assertNoRegistration()
+
+    def test_unchanged_installed_content_across_the_fetch_is_accepted(self):
+        self._during_archive_fetch(lambda: None)
+        self.assertEqual(CaptureStatus.COMPLETE, self.acquire().status)
+        self.assertNotEqual([], self.stored_artifacts())
 
     def test_capture_acquires_the_managed_root_and_keeps_pil_platform_provided(self):
         pil_directory = self.application / "script.module.pil"

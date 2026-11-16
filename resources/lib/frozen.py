@@ -570,7 +570,9 @@ _HOME_ADDONS_PREFIX = "special://home/addons/"
 _APPLICATION_ADDONS_PREFIX = "special://xbmc/addons/"
 _SAFE_ADDON_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+~-]{0,63}")
 _CACHE_DIRECTORY = "__pycache__"
-_CACHE_SUFFIXES = (".pyc", ".pyo")
+# CPython's own cache file names: <module>.<tag>[.opt-N].pyc. A cache file is only ever written
+# next to the module source it was compiled from, so a cache entry with no source is not a cache.
+_CACHE_FILE = re.compile(r"(?P<module>[^.]+)\.[A-Za-z0-9_-]+(?:\.opt-[12])?\.pyc")
 _TREE_MAX_ENTRIES = 20000
 _TREE_MAX_DEPTH = 32
 _TREE_MAX_FILE_BYTES = 128 * 1024 * 1024
@@ -648,9 +650,24 @@ class _TrustedRoot:
         self._finalizer()
 
 
-def _is_generated_cache(parts: Sequence[str]) -> bool:
-    """Only explicitly generated Python bytecode is left out of the installed-content comparison."""
-    return _CACHE_DIRECTORY in parts or parts[-1].endswith(_CACHE_SUFFIXES)
+def _is_tolerated_cache(
+    parts: Tuple[str, ...],
+    installed: Mapping[Tuple[str, ...], object],
+    archive: Mapping[Tuple[str, ...], object],
+) -> bool:
+    """True only for an installed-only CPython cache file whose source is in both trees.
+
+    Bytecode is executable. The archive side is never filtered, and a loose or sourceless
+    .pyc/.pyo, an unrecognised name inside __pycache__, or a cache whose source is missing
+    or differs is compared like any other file and so fails closed.
+    """
+    if len(parts) < 2 or parts[-2] != _CACHE_DIRECTORY:
+        return False
+    match = _CACHE_FILE.fullmatch(parts[-1])
+    if match is None:
+        return False
+    source = parts[:-2] + (match.group("module") + ".py",)
+    return source in installed and source in archive
 
 
 def _is_safe_entry_name(name: str) -> bool:
@@ -671,6 +688,10 @@ def _normalized_digests(
     return normalized
 
 
+def _entry_stamp(info: os.stat_result) -> Tuple[int, int, int, int]:
+    return (info.st_ino, info.st_size if stat.S_ISREG(info.st_mode) else 0, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def _open_identical(directory_fd: int, name: str, info: os.stat_result, *, directory: bool) -> int:
     """Open one entry without following links, then prove it is still the object that was inspected."""
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -687,7 +708,10 @@ def _open_identical(directory_fd: int, name: str, info: os.stat_result, *, direc
         raise
 
 
-def _digest_bounded(file_fd: int, totals: Dict[str, int]) -> Tuple[int, str]:
+def _digest_bounded(file_fd: int, info: os.stat_result, totals: Dict[str, int]) -> Tuple[int, str]:
+    """Hash one open file, refusing if the file changes while it is being read."""
+    if _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
     digest = hashlib.sha256()
     size = 0
     while True:
@@ -699,19 +723,36 @@ def _digest_bounded(file_fd: int, totals: Dict[str, int]) -> Tuple[int, str]:
         if size > _TREE_MAX_FILE_BYTES or totals["bytes"] > _TREE_MAX_BYTES:
             raise RepositoryArtifactRefusal("installed add-on content exceeds its safe size limit")
         digest.update(chunk)
+    if size != info.st_size or _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
     return size, digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class _InstalledSnapshot:
+    """Content digests plus the identity stamps of every entry that was read.
+
+    Two snapshots are equal only if every file has the same bytes, inode, size and
+    modification/change times and every directory has the same inode, entry list stamp
+    and times. Restoring original bytes after a write therefore does not hide the write.
+    """
+
+    digests: Mapping[Tuple[str, ...], Tuple[int, str]]
+    stamps: Mapping[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]]
 
 
 def _walk_installed_directory(
     directory_fd: int,
     parts: Tuple[str, ...],
     digests: Dict[Tuple[str, ...], Tuple[int, str]],
+    stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]],
     totals: Dict[str, int],
     depth: int,
 ) -> None:
     if depth > _TREE_MAX_DEPTH:
         raise RepositoryArtifactRefusal("installed add-on content is too deeply nested")
     folded: Dict[str, str] = {}
+    listing_before = os.fstat(directory_fd)
     for name in sorted(os.listdir(directory_fd)):
         if not _is_safe_entry_name(name):
             raise RepositoryArtifactRefusal("installed add-on content has an unsafe name")
@@ -729,25 +770,35 @@ def _walk_installed_directory(
         if stat.S_ISDIR(info.st_mode):
             child_fd = _open_identical(directory_fd, name, info, directory=True)
             try:
-                _walk_installed_directory(child_fd, child, digests, totals, depth + 1)
+                _walk_installed_directory(child_fd, child, digests, stamps, totals, depth + 1)
             finally:
                 os.close(child_fd)
         elif not stat.S_ISREG(info.st_mode):
             raise RepositoryArtifactRefusal("installed add-on contains an unsupported file type")
-        elif not _is_generated_cache(child):
+        else:
             file_fd = _open_identical(directory_fd, name, info, directory=False)
             try:
-                digests[child] = _digest_bounded(file_fd, totals)
+                digests[child] = _digest_bounded(file_fd, info, totals)
+                stamps[child] = ("f", info.st_dev, _entry_stamp(info))
             finally:
                 os.close(file_fd)
+    listing_after = os.fstat(directory_fd)
+    if _entry_stamp(listing_after) != _entry_stamp(listing_before) or listing_after.st_ino != listing_before.st_ino:
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
+    stamps[parts] = ("d", listing_after.st_dev, _entry_stamp(listing_after))
 
 
-def _installed_addon_digests(root: "_TrustedRoot", addon_id: str) -> Dict[Tuple[str, ...], Tuple[int, str]]:
-    """Digest every non-cache file of one installed add-on without following any link."""
+def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _InstalledSnapshot:
+    """Digest every file of one installed add-on without following any link.
+
+    The trusted root must still be the recorded object, every entry must be the object that
+    was inspected, and no file or directory may change while it is read. Nothing is skipped.
+    """
     root_fd = root.reacquire()
     if root_fd is None:
         raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
     digests: Dict[Tuple[str, ...], Tuple[int, str]] = {}
+    stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]] = {}
     totals = {"entries": 0, "bytes": 0}
     try:
         try:
@@ -757,18 +808,32 @@ def _installed_addon_digests(root: "_TrustedRoot", addon_id: str) -> Dict[Tuple[
         except OSError as exc:
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
         try:
-            _walk_installed_directory(addon_fd, (), digests, totals, 0)
+            _walk_installed_directory(addon_fd, (), digests, stamps, totals, 0)
         except OSError as exc:
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
         finally:
             os.close(addon_fd)
     finally:
         os.close(root_fd)
-    return _normalized_digests(digests, "installed add-on content")
+    return _InstalledSnapshot(
+        digests=_normalized_digests(digests, "installed add-on content"),
+        stamps=dict(stamps),
+    )
+
+
+def _installed_matches_archive(
+    installed: Mapping[Tuple[str, ...], Tuple[int, str]],
+    archive: Mapping[Tuple[str, ...], Tuple[int, str]],
+) -> bool:
+    remaining = {
+        parts: value for parts, value in installed.items()
+        if parts in archive or not _is_tolerated_cache(parts, installed, archive)
+    }
+    return remaining == dict(archive)
 
 
 def _archive_addon_digests(archive_bytes: bytes, addon_id: str) -> Dict[Tuple[str, ...], Tuple[int, str]]:
-    """Digest every non-cache member of an exact official archive, CRC-checked and size-bounded."""
+    """Digest every file member of an exact official archive, CRC-checked and size-bounded. Nothing is skipped."""
     digests: Dict[Tuple[str, ...], Tuple[int, str]] = {}
     totals = {"bytes": 0}
     try:
@@ -782,8 +847,6 @@ def _archive_addon_digests(archive_bytes: bytes, addon_id: str) -> Dict[Tuple[st
                 relative = parts[1:]
                 if not relative or not all(_is_safe_entry_name(part) for part in relative):
                     raise RepositoryArtifactRefusal("official archive has an unsafe path")
-                if _is_generated_cache(relative):
-                    continue
                 if relative in digests:
                     raise RepositoryArtifactRefusal("official archive has duplicate entries")
                 if info.file_size > _TREE_MAX_FILE_BYTES:
@@ -831,10 +894,12 @@ class KodiInventoryBackend(InventoryBackend):
         package_cache_dir: Path,
         origin_reader: Optional[Callable[[str], Tuple[ProvenanceStatus, Mapping[str, str]]]] = None,
         application_addons_dir: Optional[Path] = None,
-        https_connect: Optional[Callable[[str, int, float], object]] = None,
+        https_connect: Optional[Callable[[str, str, int, float], object]] = None,
+        https_resolve: Optional[Callable[[str, int], Sequence[str]]] = None,
     ):
         self.rpc = rpc
         self._https_connect = https_connect
+        self._https_resolve = https_resolve
         self._official_provider: Optional[OfficialRepositoryProvider] = None
         self.addons_dir = Path(addons_dir).resolve()
         self.package_cache_dir = Path(package_cache_dir).resolve()
@@ -856,7 +921,7 @@ class KodiInventoryBackend(InventoryBackend):
             "Addons.GetAddons",
             {
                 "installed": True,
-                "properties": ["name", "version", "path", "enabled", "installed", "broken", "dependencies", "type"],
+                "properties": ["name", "version", "path", "enabled", "installed", "broken", "dependencies"],
             },
         )
         addons = result.get("addons") if isinstance(result, Mapping) else None
@@ -1075,7 +1140,7 @@ class KodiInventoryBackend(InventoryBackend):
                 raise RepositoryArtifactRefusal("bundled official repository configuration is unavailable")
             config = parse_official_repository_config(xml_bytes)
             self._official_provider = OfficialRepositoryProvider(
-                config, transport=BoundedHttpsGetter(connect=self._https_connect),
+                config, transport=BoundedHttpsGetter(connect=self._https_connect, resolve=self._https_resolve),
             )
         return self._official_provider
 
@@ -1097,13 +1162,20 @@ class KodiInventoryBackend(InventoryBackend):
         if root is self._application:
             raise RepositoryArtifactRefusal("platform-provided add-ons are never acquired")
         provider = self._official_repository()
-        installed = _installed_addon_digests(root, addon_id)
+        before = _installed_addon_snapshot(root, addon_id)
         filename, archive = provider.fetch_archive(addon_id, version)
         try:
             validate_addon_zip(archive, expected_addon_id=addon_id, expected_version=version, source="repository")
         except ArtifactValidationError as exc:
             raise RepositoryArtifactRefusal("official archive failed exact validation") from exc
-        if _archive_addon_digests(archive, addon_id) != installed:
+        archive_digests = _archive_addon_digests(archive, addon_id)
+        # Freshness boundary: the installed evidence is read again immediately before acceptance,
+        # through the same trusted root. Anything that changed while the network was in use
+        # (bytes, inode, size, times, directory stamps, trusted root identity) refuses the archive.
+        after = _installed_addon_snapshot(root, addon_id)
+        if after != before:
+            raise RepositoryArtifactRefusal("installed add-on content changed during acquisition")
+        if not _installed_matches_archive(after.digests, archive_digests):
             raise RepositoryArtifactRefusal("installed add-on content differs from the official archive")
         return filename, archive
 
