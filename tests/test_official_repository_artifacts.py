@@ -1291,6 +1291,62 @@ class OfficialBackendAcquisitionTests(OfficialBackendFixture):
         self.assertIn("location changed during inspection", result.error)
         self.assertNoRegistration()
 
+    def _swap_root_during_final_scan(self, recreate):
+        """Detach the trusted root once the final verification scan (the second one) has begun."""
+        real = frozen._digest_bounded
+        state = {"calls": 0, "swapped": False}
+
+        def swapping(file_fd, info, totals):
+            state["calls"] += 1
+            if state["calls"] == 3 and not state["swapped"]:  # two files per scan: first read of scan two
+                os.rename(self.home, self.base / "home" / "addons.old")
+                recreate()
+                state["swapped"] = True
+            return real(file_fd, info, totals)
+
+        with mock.patch.object(frozen, "_digest_bounded", swapping):
+            result = self.acquire()
+        self.assertTrue(state["swapped"])
+        return result
+
+    def test_root_replaced_with_different_content_during_the_final_scan_is_refused(self):
+        # Reviewer reproduction: verification used to finish through descriptors on the detached tree.
+        result = self._swap_root_during_final_scan(
+            lambda: self.install(ADDON, {"addon.xml": _addon_xml(), "lib.py": b"VALUE = 666\n"}))
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("location changed during inspection", result.error)
+        self.assertNoRegistration()
+
+    def test_root_replaced_with_an_identical_copy_during_the_final_scan_is_refused(self):
+        import shutil
+        result = self._swap_root_during_final_scan(
+            lambda: shutil.copytree(self.base / "home" / "addons.old", self.home))
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("location changed during inspection", result.error)
+        self.assertNoRegistration()
+
+    def test_installed_directory_swapped_during_the_final_scan_is_refused(self):
+        import shutil
+
+        def swap_directory():
+            installed = self.home / ADDON
+            os.rename(installed, self.home / "aside")
+            shutil.copytree(self.home / "aside", installed)
+        real = frozen._digest_bounded
+        state = {"calls": 0}
+
+        def swapping(file_fd, info, totals):
+            state["calls"] += 1
+            if state["calls"] == 3:
+                swap_directory()
+            return real(file_fd, info, totals)
+
+        with mock.patch.object(frozen, "_digest_bounded", swapping):
+            result = self.acquire()
+        self.assertEqual(CaptureStatus.INCOMPLETE_ARTIFACT, result.status)
+        self.assertIn("changed during", result.error)
+        self.assertNoRegistration()
+
     def test_file_modified_during_an_individual_read_is_refused(self):
         target = self.home / ADDON / "lib.py"
         real_read = os.read

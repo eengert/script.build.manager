@@ -788,6 +788,34 @@ def _walk_installed_directory(
     stamps[parts] = ("d", listing_after.st_dev, _entry_stamp(listing_after))
 
 
+def _confirm_root_binding(root: "_TrustedRoot", addon_id: str, scanned: os.stat_result) -> None:
+    """After a scan, prove the canonical path still names the trusted root and the scanned add-on.
+
+    The scan reads through descriptors, which stay valid on a tree that was renamed away. The
+    root is therefore reacquired from the canonical path (every ancestor opened without following
+    links, identity compared with the originally trusted object) and the add-on directory is
+    reopened beneath it and compared with the one that was scanned.
+    """
+    fresh_fd = root.reacquire()
+    if fresh_fd is None:
+        raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
+    try:
+        try:
+            again = os.open(
+                addon_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fresh_fd,
+            )
+        except OSError as exc:
+            raise RepositoryArtifactRefusal("installed add-on location changed during inspection") from exc
+        try:
+            current = os.fstat(again)
+        finally:
+            os.close(again)
+    finally:
+        os.close(fresh_fd)
+    if (current.st_dev, current.st_ino) != (scanned.st_dev, scanned.st_ino):
+        raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
+
+
 def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _InstalledSnapshot:
     """Digest every file of one installed add-on without following any link.
 
@@ -808,7 +836,9 @@ def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _Installed
         except OSError as exc:
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
         try:
+            scanned = os.fstat(addon_fd)
             _walk_installed_directory(addon_fd, (), digests, stamps, totals, 0)
+            _confirm_root_binding(root, addon_id, scanned)
         except OSError as exc:
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
         finally:
