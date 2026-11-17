@@ -47,7 +47,9 @@ For the strict comparison, any difference stays `CHANGED_OR_MISSING`, and proven
 maintenance never turns it into `PRESERVED`. D-032 (2026-11-15) adds a separate
 practical verdict, defined in "Practical beta preservation contract (D-032)" below.
 It may classify only the closed maintenance classes M1 and M2, and only through a
-reviewed in-memory comparator that is not implemented here. The strict result is
+reviewed in-memory comparator. An offline comparator (`tools/bm_practical_preservation_comparator.py`)
+is implemented, but it is not integrated into any driver and has not passed independent
+qualification review. The strict result is
 unchanged by that decision. No monitoring service or private baseline persistence
 is needed or authorized by this contract.
 
@@ -55,8 +57,8 @@ is needed or authorized by this contract.
 
 Approved by Eric on 2026-11-15 for personal beta readiness. This section defines
 an additional practical verdict. It does not run, authorize or accept any native
-task, does not change the N6 strict comparison, and does not add a comparison
-subsystem.
+task, does not change the N6 strict comparison, does not integrate the offline
+comparator into any driver, and adds no native comparison subsystem.
 
 ### Relationship to the strict comparison
 
@@ -92,36 +94,59 @@ ledger records that reasoning. Otherwise it is INCONCLUSIVE until witnessed.
   value (N6). Only the value of this leaf may differ. A structural change to that
   element is MEANINGFUL.
 - **M2, texture cache metadata:** `Textures13` `sizes.usecount`, `sizes.lastusetime`
-  and `texture.lasthashcheck` values, plus cache row creation and eviction. Allowed
-  only when the schema is exact and every pre-existing texture row that remains
-  keeps identical `url`, `cachedurl` and `imagehash`. Row counts are reported.
+  and `texture.lasthashcheck` values, plus cache row creation and eviction. The
+  classes are `M2_SIZES_USECOUNT`, `M2_SIZES_LASTUSETIME`, `M2_TEXTURE_LASTHASHCHECK`,
+  `M2_CACHE_ROW_CREATE`, `M2_CACHE_ROW_EVICT`, `M2_CACHE_SIZES_CREATE` and
+  `M2_CACHE_SIZES_EVICT`. A sizes row is maintenance only when its parent texture row
+  is created or evicted in the same comparison (D-032 clarification, 2026-11-17).
+  Allowed only when the schema is exact and every pre-existing texture row that
+  remains keeps identical `url`, `cachedurl` and `imagehash`. Row counts are reported.
 
 Everything else is MEANINGFUL: all other leaves, view-state and event-log state
 (user configuration), skin, peripheral and Addons33 changes within their witnessed
-fields, every public-witness difference, and any change to a pre-existing texture
-row's identity fields. A class is never extended by inference from names,
+fields, every public-witness difference, any change to a pre-existing texture
+row's identity fields, and any sizes row added or removed beneath a retained texture
+row. A class is never extended by inference from names,
 timestamps, a writer's presence in Kodi source, or a matching control run.
 
-### Minimal verification mechanism (defined, not implemented)
+### Offline comparator and practical qualification mechanism
 
 The current driver exports per-file equality and `maintenance_attribution=UNKNOWN`,
 and it cannot classify a difference without exporting field deltas, which N6
-forbids. Until the mechanism below is implemented and independently reviewed, every
-strict five-file difference is MEANINGFUL-unclassified, and the practical verdict
-cannot be PASS.
+forbids. The two parts of the mechanism below have different status:
+
+- **Implemented offline, not reviewed for qualification:** the pure comparator in
+  `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. It is
+  not integrated into the A15 driver or any native task, and its output is not a
+  native practical verdict.
+- **Not integrated and not reviewed:** the practical qualification mechanism that
+  would feed comparator results into the PASS, FAIL and INCONCLUSIVE verdict and
+  the native ledger.
+
+Until the practical qualification mechanism is integrated and independently
+reviewed, every strict five-file difference is MEANINGFUL-unclassified for the
+practical verdict, and the practical verdict cannot be PASS.
+
+Required properties of the comparator:
 
 - An in-memory comparator run only on the existing private before and after
   projections of the five files. For each file it returns `EXACT`,
   `MAINTENANCE_ONLY` with the class names and counts, or `MEANINGFUL` with a count.
   It returns no paths, values, row identifiers or value digests.
 - Positive controls: an M1-only change; M2 `usecount`, `lastusetime` or
-  `lasthashcheck` changes; M2 row creation and eviction with identities kept. Each
-  must yield `MAINTENANCE_ONLY` with the correct class.
+  `lasthashcheck` changes; M2 texture row creation and eviction with identities
+  kept; sizes rows created or evicted together with their parent texture in the same
+  comparison. Each must yield `MAINTENANCE_ONLY` with the correct class.
 - Negative controls, each of which must yield `MEANINGFUL`: any other guisettings
   leaf; a structural change to the M1 element; an M1 change combined with another
   leaf change in the same file; a Textures13 schema change; a changed `url`,
-  `cachedurl` or `imagehash` on a pre-existing row.
+  `cachedurl` or `imagehash` on a pre-existing row; a sizes row added or removed
+  beneath a retained texture row. A non-exact Textures13 schema in the baseline is
+  rejected, never maintenance-only.
 - Output tests: the comparator output must contain no paths, values or digests.
+- Rejection: a caller's Mapping that fails during iteration or lookup yields
+  `ComparatorRejected` with a fixed reason code and no caller text. `BaseException`
+  is deliberately not caught. This does not clear exception context a caller holds.
 - Independent review of the comparator and its tests before any native use.
 
 ### Practical verdict

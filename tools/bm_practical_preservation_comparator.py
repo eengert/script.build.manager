@@ -27,8 +27,10 @@ Reviewer notes:
   difference in the later state is MEANINGFUL. The projection does not carry the
   sqlite_master text, so the existing producer remains the authority for the
   full CREATE statements.
-- A sizes row added or removed under a retained texture row is MEANINGFUL. D-032
-  allows texture row creation and eviction, not an independent sizes lifecycle.
+- Sizes rows are maintenance only when their parent texture row is created or
+  evicted in the same comparison (D-032 clarification, 2026-11-17). A sizes row
+  added or removed under a retained texture row is MEANINGFUL, and no other sizes
+  lifecycle is accepted.
 - Duplicate sizes identity keys (idtexture, size, width, height) are ambiguous and
   rejected, because matching them would require an inference.
 - The uptime value must be canonical non-negative decimal text. D-032 allows any
@@ -422,12 +424,36 @@ def compare_file(key, before, after):
     return summary
 
 
+def _snapshot(mapping):
+    """Read one mapping's five projections once. Returns (values, reason).
+
+    Any Exception raised by the caller's mapping (isinstance, iteration, hashing,
+    equality or lookup) becomes the fixed code 'mapping_error', so caller text never
+    reaches the public API. BaseException (interrupts, exit) is not caught.
+    """
+    try:
+        if not isinstance(mapping, Mapping):
+            return None, 'invalid_input'
+        if set(mapping) != set(PROTECTED_KEYS):
+            return None, 'invalid_input'
+        return tuple(mapping[key] for key in PROTECTED_KEYS), None
+    except Exception:
+        return None, 'mapping_error'
+
+
 def compare_protected_files(before, after):
     """Compare two complete sets of the five in-memory projections.
 
     Both mappings must carry exactly PROTECTED_KEYS. Returns one FileSummary per key.
+    A structural mismatch raises 'invalid_input'; a fault inside a caller's mapping
+    raises 'mapping_error'. Neither chains the caller's exception. The comparator
+    cannot clear exception context that a caller holds in its own frames.
     """
-    for mapping in (before, after):
-        if not isinstance(mapping, Mapping) or set(mapping) != set(PROTECTED_KEYS):
-            raise ComparatorRejected(None, 'invalid_input')
-    return {key: compare_file(key, before[key], after[key]) for key in PROTECTED_KEYS}
+    old, reason = _snapshot(before)
+    if reason is None:
+        new, reason = _snapshot(after)
+    # Raised outside every handler, so no caller exception is chained.
+    if reason is not None:
+        raise ComparatorRejected(None, reason)
+    return {key: compare_file(key, left, right)
+            for key, left, right in zip(PROTECTED_KEYS, old, new)}

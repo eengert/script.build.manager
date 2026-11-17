@@ -3,16 +3,22 @@
 Projections are built in memory. guisettings, Estuary and keyboard come from the
 existing witness producer (xml_projection) applied to synthetic XML bytes.
 Textures13 and Addons33 follow the shapes that texture_projection and
-database_projection return. No file, profile, process, network or native
-access happens here, and nothing is persisted.
+database_projection return. ProducerBackedTextureTests goes further: it builds
+disposable Textures13 SQLite files with the exact witness schema and projects them
+with the real texture_projection, inside a temporary directory removed after each
+test. No profile, process, network or native access happens here.
 """
 import contextlib
 import copy
 import dataclasses
 import io
 import json
+import sqlite3
+import tempfile
 import traceback
 import unittest
+from collections.abc import Mapping
+from pathlib import Path
 from unittest import mock
 
 from tools import bm_practical_preservation_comparator as pc
@@ -20,10 +26,12 @@ from tools import bm_public_preservation_witness as w
 
 # Distinctive synthetic tokens. They sit in base content, so every result and
 # every rejection path is checked for leakage.
+HOSTILE_TEXT = 'SECRET-HOSTILE-7a21'
 SECRETS = (
     'SECRET-ADDON-4b1d', 'SECRET-URL-8e0f', 'SECRET-CACHED-2c9a', 'SECRET-HASH-6d3b',
     'SECRET-CHECK-7f44', 'SECRET-USE-0a8c', 'SECRET-PATH-3e5f', 'SECRET-SETTING-ID-5a7e',
     'SECRET-SETTING-VALUE-91c2', 'SECRET-ESTUARY-9b6d', 'SECRET-UPTIME-BAD-7c3a',
+    HOSTILE_TEXT,
 )
 
 ADDONS_BASE = [('plugin.SECRET-ADDON-4b1d', True), ('script.beta', False)]
@@ -506,6 +514,213 @@ class PrivacyAndPersistenceTests(ComparatorTestCase):
         first = self.compare(before, after)
         self.assertEqual(first, self.compare(before, after))
         self.assertEqual((before, after), snapshot)
+
+
+class ProducerBackedTextureTests(ComparatorTestCase):
+    """Textures13 projections from the real texture_projection over disposable SQLite files.
+
+    Each fixture uses the exact TEXTURE_SQL schema. Changes are made in SQL, so an
+    eviction runs through the schema's own textureDelete trigger, as it does in Kodi.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory = Path(temp.name)
+        self.path = self.build('base.db')
+        self.before = w.texture_projection(self.path)
+
+    def build(self, name, sql=w.TEXTURE_SQL, version=13):
+        path = self.directory / name
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            for statement in sql:
+                db.execute(statement)
+            db.execute('INSERT INTO version VALUES (?,0)', (version,))
+            db.executemany('INSERT INTO texture VALUES (?,?,?,?,?)', TEXTURE_BASE)
+            db.executemany('INSERT INTO sizes VALUES (?,?,?,?,?,?)', SIZES_BASE)
+            db.executemany('INSERT INTO path VALUES (?,?,?,?)', PATH_BASE)
+            db.commit()
+        return path
+
+    def edited(self, *statements):
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            for sql, params in statements:
+                db.execute(sql, params)
+            db.commit()
+        return w.texture_projection(self.path)
+
+    def compare_textures(self, after):
+        return self.compare(baseline(textures13=self.before), baseline(textures13=after))
+
+    def test_unchanged_producer_projection_is_exact(self):
+        self.assert_only(self.compare_textures(w.texture_projection(self.path)), 'textures13', EXACT)
+
+    def test_parent_texture_created_with_its_sizes_rows_is_maintenance(self):
+        after = self.edited(
+            ('INSERT INTO texture VALUES (3,?,?,?,NULL)', ('image://created', 'cache://created', 'created-hash')),
+            ('INSERT INTO sizes VALUES (3,16,16,16,1,?)', ('time-c',)),
+            ('INSERT INTO sizes VALUES (3,48,48,48,1,NULL)', ()))
+        self.assert_only(self.compare_textures(after), 'textures13', maintenance(
+            ('M2_CACHE_ROW_CREATE', 1), ('M2_CACHE_SIZES_CREATE', 2)))
+
+    def test_parent_texture_created_without_sizes_rows_is_row_maintenance_only(self):
+        after = self.edited(
+            ('INSERT INTO texture VALUES (3,?,?,?,NULL)', ('image://created', 'cache://created', 'created-hash')))
+        self.assert_only(self.compare_textures(after), 'textures13', maintenance(('M2_CACHE_ROW_CREATE', 1)))
+
+    def test_parent_texture_evicted_with_its_sizes_rows_is_maintenance(self):
+        # The DELETE fires textureDelete, which removes the sizes rows. If the trigger
+        # did not fire, the leftover rows would be orphans and the input would be rejected.
+        after = self.edited(('DELETE FROM texture WHERE id=?', (2,)))
+        self.assert_only(self.compare_textures(after), 'textures13', maintenance(
+            ('M2_CACHE_ROW_EVICT', 1), ('M2_CACHE_SIZES_EVICT', 1)))
+
+    def test_sizes_rows_added_under_a_retained_texture_are_meaningful(self):
+        after = self.edited(('INSERT INTO sizes VALUES (1,256,256,256,0,NULL)', ()))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_sizes_rows_removed_under_a_retained_texture_are_meaningful(self):
+        after = self.edited(('DELETE FROM sizes WHERE idtexture=? AND size=?', (1, 128)))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_retained_texture_identity_change_is_meaningful(self):
+        after = self.edited(('UPDATE texture SET url=? WHERE id=?', ('image://changed-url', 1)))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_sizes_rows_under_a_retained_texture_stay_meaningful_beside_a_created_parent(self):
+        after = self.edited(
+            ('INSERT INTO texture VALUES (3,?,?,?,NULL)', ('image://created', 'cache://created', 'created-hash')),
+            ('INSERT INTO sizes VALUES (3,16,16,16,1,?)', ('time-c',)),
+            ('INSERT INTO sizes VALUES (1,256,256,256,0,NULL)', ()))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_path_row_change_is_meaningful(self):
+        after = self.edited(('UPDATE path SET url=? WHERE id=?', ('library://changed', 1)))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_version_counter_change_is_meaningful(self):
+        after = self.edited(('UPDATE version SET iCompressCount=?', (5,)))
+        self.assert_only(self.compare_textures(after), 'textures13', meaningful(1))
+
+    def test_unexpected_schema_is_refused_by_the_producer_and_never_becomes_maintenance(self):
+        sizes_as_integer = tuple(
+            'CREATE TABLE sizes (idtexture integer, size integer, width integer, height integer, '
+            'usecount integer, lastusetime integer)' if sql.startswith('CREATE TABLE sizes') else sql
+            for sql in w.TEXTURE_SQL)
+        variants = {
+            'extra index': (w.TEXTURE_SQL + ('CREATE INDEX idxExtra ON texture(imagehash)',), 13),
+            'extra table': (w.TEXTURE_SQL + ('CREATE TABLE extra (x integer)',), 13),
+            'sizes lastusetime integer': (sizes_as_integer, 13),
+            'version 14': (w.TEXTURE_SQL, 14),
+        }
+        for label, (sql, version) in variants.items():
+            with self.subTest(schema=label):
+                path = self.build(label.replace(' ', '_') + '.db', sql=sql, version=version)
+                with self.assertRaises(w.Unverified) as caught:
+                    w.texture_projection(path)
+                self.assertEqual(caught.exception.args, ('unsupported_schema',))
+
+
+class HostileMapping(Mapping):
+    """A caller mapping whose iteration or lookup raises an exception carrying secret text."""
+
+    def __init__(self, fail, error=RuntimeError):
+        self._values = baseline()
+        self._fail = fail
+        self._error = error
+
+    def __iter__(self):
+        if self._fail == 'iter':
+            raise self._error(HOSTILE_TEXT)
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, key):
+        if self._fail == 'lookup':
+            raise self._error(HOSTILE_TEXT)
+        return self._values[key]
+
+
+class HostileClassMapping:
+    """isinstance(..., Mapping) reads __class__, which raises here."""
+
+    @property
+    def __class__(self):
+        raise RuntimeError(HOSTILE_TEXT)
+
+
+class UnhashableKeyMapping(Mapping):
+    def __iter__(self):
+        return iter([[HOSTILE_TEXT]])
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, key):
+        raise KeyError(key)
+
+
+class HostileSequence(list):
+    """Projection content whose iteration raises during comparison, not during the snapshot."""
+
+    def __iter__(self):
+        raise RuntimeError(HOSTILE_TEXT)
+
+
+class HostileMappingTests(ComparatorTestCase):
+    """Caller-supplied objects may raise arbitrary text. Only fixed codes may leave the API."""
+
+    def rejected(self, before, after):
+        with self.assertRaises(pc.ComparatorRejected) as caught:
+            pc.compare_protected_files(before, after)
+        error = caught.exception
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        report = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        for text in (report, repr(error), str(error), repr(error.args)):
+            for token in SECRETS:
+                self.assertNotIn(token, text)
+        return error.reason
+
+    def test_iteration_faults_on_either_side_map_to_mapping_error(self):
+        for side in ('before', 'after'):
+            with self.subTest(side=side):
+                hostile = HostileMapping('iter')
+                pair = (hostile, baseline()) if side == 'before' else (baseline(), hostile)
+                self.assertEqual(self.rejected(*pair), 'mapping_error')
+
+    def test_lookup_faults_on_either_side_map_to_mapping_error(self):
+        for side in ('before', 'after'):
+            with self.subTest(side=side):
+                hostile = HostileMapping('lookup')
+                pair = (hostile, baseline()) if side == 'before' else (baseline(), hostile)
+                self.assertEqual(self.rejected(*pair), 'mapping_error')
+
+    def test_isinstance_probe_and_unhashable_keys_map_to_mapping_error(self):
+        cases = {'class probe': HostileClassMapping(), 'unhashable key': UnhashableKeyMapping()}
+        for label, hostile in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(self.rejected(hostile, baseline()), 'mapping_error')
+
+    def test_hostile_projection_content_maps_to_a_fixed_file_code(self):
+        attrs, rows, sections = gui()
+        bad = baseline(guisettings=(HostileSequence(attrs), rows, sections))
+        with self.assertRaises(pc.ComparatorRejected) as caught:
+            pc.compare_protected_files(bad, baseline())
+        error = caught.exception
+        self.assertEqual((error.scope, error.reason), ('guisettings', 'internal_error'))
+        self.assertEqual(str(error), 'guisettings: internal_error')
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+
+    def test_base_exceptions_are_deliberately_not_swallowed(self):
+        with self.assertRaises(KeyboardInterrupt):
+            pc.compare_protected_files(HostileMapping('iter', KeyboardInterrupt), baseline())
+
+    def test_structural_faults_keep_their_fixed_code(self):
+        self.assertEqual(self.rejected(None, baseline()), 'invalid_input')
 
 
 if __name__ == '__main__':
