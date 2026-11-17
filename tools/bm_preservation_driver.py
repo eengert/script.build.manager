@@ -252,6 +252,20 @@ def announce(stream, text):
 PRACTICAL_KEYS = frozenset({'schema', 'classification', 'files', 'verdict', 'qualification'})
 PRACTICAL_ROW_KEYS = frozenset({'file', 'classification', 'maintenance', 'meaningful_count'})
 PRACTICAL_LABELS = frozenset({'EXACT', 'MAINTENANCE_ONLY', 'MEANINGFUL', 'INCONCLUSIVE'})
+# D-032 closed maintenance vocabulary per protected file, keyed by comparator.PROTECTED_KEYS.
+# A closed class name is valid only for the file it belongs to: M1 for guisettings, the
+# approved M2 classes for Textures13, and no maintenance class for any other file.
+M2_CLASSES = frozenset((comparator.M2_SIZES_USECOUNT, comparator.M2_SIZES_LASTUSETIME,
+                        comparator.M2_TEXTURE_LASTHASHCHECK, comparator.M2_CACHE_ROW_CREATE,
+                        comparator.M2_CACHE_ROW_EVICT, comparator.M2_CACHE_SIZES_CREATE,
+                        comparator.M2_CACHE_SIZES_EVICT))
+MAINTENANCE_BY_FILE = {
+    'addons33': frozenset(),
+    'textures13': M2_CLASSES,
+    'guisettings': frozenset((comparator.M1_UPTIME,)),
+    'estuary': frozenset(),
+    'keyboard': frozenset(),
+}
 
 
 def practical_aggregate(labels):
@@ -268,15 +282,16 @@ def project_practical(value, strict_rows, reason):
          and value['qualification'] == 'not_qualified', reason)
     need(type(value['files']) is list and len(value['files']) == len(witness.FILES), reason)
     rows = []
-    for row, name, strict in zip(value['files'], witness.FILES, strict_rows):
+    for index, (row, name, strict) in enumerate(zip(value['files'], witness.FILES, strict_rows)):
         need(type(row) is dict and set(row) == PRACTICAL_ROW_KEYS and row['file'] == name, reason)
         label = row['classification']
         need(type(label) is str and label in PRACTICAL_LABELS, reason)
         need(type(row['maintenance']) is list, reason)
+        allowed = MAINTENANCE_BY_FILE[comparator.PROTECTED_KEYS[index]]
         classes = []
         for item in row['maintenance']:
             need(type(item) is list and len(item) == 2 and type(item[0]) is str
-                 and item[0] in comparator.ALLOWED_CLASSES and type(item[1]) is int and item[1] > 0, reason)
+                 and item[0] in allowed and type(item[1]) is int and item[1] > 0, reason)
             classes.append([item[0], item[1]])
         names = [item[0] for item in classes]
         need(names == sorted(set(names)), reason)

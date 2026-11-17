@@ -50,19 +50,20 @@ For the strict comparison, any difference stays `CHANGED_OR_MISSING`, and proven
 maintenance never turns it into `PRESERVED`. D-032 (2026-11-15) adds a separate
 practical verdict, defined in "Practical beta preservation contract (D-032)" below.
 It may classify only the closed maintenance classes M1 and M2, and only through a
-reviewed in-memory comparator. The offline comparator
-(`tools/bm_practical_preservation_comparator.py`) is wired, offline only, into the
-in-memory acquisition session and the driver's evidence validator (see "Implementation
-status" below). It has not passed independent qualification review. The strict result
-is unchanged by that wiring. No monitoring service or private baseline persistence
+reviewed in-memory comparator that is not implemented here. The strict result is
+unchanged by that decision. No monitoring service or private baseline persistence
 is needed or authorized by this contract.
+
+Current status (2026-11-17): the offline comparator is wired into offline evidence only, with the scope set out in the current-status clarification under the D-032 section. That wiring is not a practical verdict, not native authorization and not a change to the strict comparison.
 
 ## Practical beta preservation contract (D-032)
 
 Approved by Eric on 2026-11-15 for personal beta readiness. This section defines
 an additional practical verdict. It does not run, authorize or accept any native
-task, does not change the N6 strict comparison, does not integrate the offline
-comparator into any driver, and adds no native comparison subsystem.
+task, does not change the N6 strict comparison, and does not add a comparison
+subsystem.
+
+**Current status (2026-11-17, additive; the paragraph above is the original 2026-11-15 text).** Eric explicitly approved retaining the offline evidence wiring implemented in commit `a4509a5`, subject to the corrections recorded under D-032 in `.orchestrator/DECISIONS.md`. The approved scope is the same-session in-memory comparison in `AcquisitionSession.finish()`, sanitized per-file classifications and integer counts, their validation in A15 evidence, and the practical verdict remaining `NOT_DECIDED`. This explicitly supersedes only the restriction against comparator integration into a driver stated in the 2026-11-17 M2 clarification in `.orchestrator/DECISIONS.md`. It does not authorize native execution, a practical PASS, any weakening of the strict N6 gates, publication, or integration to `matrix`. Native testing is not authorized or accepted by this status.
 
 ### Relationship to the strict comparison
 
@@ -72,6 +73,11 @@ comparator into any driver, and adds no native comparison subsystem.
 - Practical beta acceptance is judged by the practical verdict below. Byte-for-byte
   equality of an entire Kodi session is not required for that verdict. Every
   strict difference must still be classified. None may be ignored or waived.
+- Strict and practical status are separate. `SCOPED_PRESERVED` and exit code 0 describe
+  strict N6 scope preservation only; they are not a practical PASS. A strict
+  `SCOPED_PRESERVED` may coexist with a practical `INCONCLUSIVE` classification, and the
+  practical verdict remains `NOT_DECIDED`. Renaming a state or changing exit semantics is
+  not authorized by this contract.
 
 ### Protected scopes and current witnesses
 
@@ -115,20 +121,27 @@ timestamps, a writer's presence in Kodi source, or a matching control run.
 
 ### Offline comparator and practical qualification mechanism
 
-The current driver exports per-file equality and `maintenance_attribution=UNKNOWN`,
-and it cannot classify a difference without exporting field deltas, which N6
-forbids. The two parts of the mechanism below have different status:
+The driver's strict export remains per-file equality with `maintenance_attribution=UNKNOWN`.
+It exports no field deltas, which N6 forbids. Four statuses apply and must not be merged:
 
-- **Implemented offline, not reviewed for qualification:** the pure comparator in
-  `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. Its
-  output is not a native practical verdict.
-- **Not integrated and not reviewed:** the practical qualification mechanism that
-  would feed comparator results into the PASS, FAIL and INCONCLUSIVE verdict and
-  the native ledger.
+- **Implemented offline comparator, not reviewed for qualification:** the pure comparator
+  in `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. Its output
+  is not a native practical verdict.
+- **Implemented offline evidence wiring, not reviewed for qualification:** the same-session
+  classification in `AcquisitionSession.finish()`, and the driver's validation of the
+  sanitized `practical` block it returns (see Implementation status below). The acquisition
+  layer runs the comparator. The driver validates the block and never runs the comparator.
+  Offline only; no native run has used it.
+- **Unimplemented practical qualification verdict:** the mechanism that would turn comparator
+  results, with operation and ledger correlation and the S1, S2, S5 and S7 conditions, into
+  the PASS, FAIL and INCONCLUSIVE verdict and the native ledger. It does not exist yet. The
+  block's `verdict` is always `NOT_DECIDED`.
+- **Native testing not authorized or accepted:** neither the comparator nor its wiring
+  authorizes a native scenario, and nothing here is native acceptance.
 
-Until the practical qualification mechanism is integrated and independently
-reviewed, every strict five-file difference is MEANINGFUL-unclassified for the
-practical verdict, and the practical verdict cannot be PASS.
+Until the practical verdict is implemented and independently reviewed, no practical PASS is
+possible. A strict difference that the offline wiring classifies as `MAINTENANCE_ONLY` is
+recorded as a classification only and does not decide the practical verdict.
 
 Required properties of the comparator:
 
@@ -162,10 +175,12 @@ Required properties of the comparator:
   with fixed file names, closed class names and integer counts. No private
   projection, path, value, row identity or digest is returned.
 - The driver validates that block exactly: closed keys and names, counts, the
-  aggregate, and consistency with each strict per-file status. A malformed block
-  refuses the finish with `finish_refused` and is not persisted. A valid block is
-  written to `result.json` under `after.practical`, beside the unchanged strict
-  fields.
+  aggregate, consistency with each strict per-file status, and the per-file class
+  vocabulary: `M1_UPTIME` on guisettings only, the approved M2 classes on Textures13
+  only, and no maintenance class on Addons33, the Estuary settings or the keyboard
+  settings. A malformed block refuses the finish with `finish_refused` and is not
+  persisted. A valid block is written to `result.json` under `after.practical`, beside
+  the unchanged strict fields.
 - The strict gate, the driver `state` and `reason`, and the per-file statuses are
   unchanged, and the strict gate never reads the practical block. A strict
   `SCOPED_PRESERVED` state can therefore coexist with a practical `INCONCLUSIVE`
@@ -174,9 +189,9 @@ Required properties of the comparator:
   PASS, FAIL or INCONCLUSIVE verdict, and no native run has used it.
 - `tools/bm_practical_preservation_comparator.py` is added to the driver's
   `HOST_PATHS`, so the host source binding covers it.
-- The wiring is the integration that the approval-scope sentence above ("does not
-  integrate the offline comparator into any driver") excludes. That approved text is
-  left unchanged here and needs an explicit decision.
+- This wiring is the driver integration that the 2026-11-17 M2 clarification in
+  `.orchestrator/DECISIONS.md` restricted. Eric's 2026-11-17 retention approval
+  supersedes only that restriction. The original 2026-11-15 D-032 text is unchanged.
 
 #### Still unqualified
 

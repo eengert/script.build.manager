@@ -385,6 +385,50 @@ class DriverTests(fixtures.TripwireTestCase):
                                                    practical=practical_block(*rows))
                 self.blocked('finish_refused')
 
+    def test_maintenance_class_on_the_wrong_file_is_refused(self):
+        # Each class name is closed and valid on some file, but not on this one. The strict
+        # status is CHANGED so that only the per-file vocabulary can refuse the block.
+        m1, m2 = ('M1_UPTIME', 1), ('M2_SIZES_USECOUNT', 1)
+        cases = {
+            'm1_on_addons33': (0, (m1,)), 'm1_on_textures13': (1, (m1,)),
+            'm1_on_estuary': (3, (m1,)), 'm1_on_keyboard': (4, (m1,)),
+            'm2_on_addons33': (0, (m2,)), 'm2_on_guisettings': (2, (m2,)),
+            'm2_on_estuary': (3, (m2,)), 'm2_on_keyboard': (4, (m2,)),
+        }
+        for name, (index, pairs) in cases.items():
+            with self.subTest(case=name):
+                self.reset_run('wrong-file-' + name)
+                rows = list(EXACT_ROWS)
+                rows[index] = ('MAINTENANCE_ONLY', pairs, 0)
+                statuses = ['PRESERVED'] * 5
+                statuses[index] = 'CHANGED_OR_MISSING'
+                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                                                   practical=practical_block(*rows))
+                result = self.blocked('finish_refused')
+                self.assertNotIn('after', result)
+
+    def test_valid_maintenance_classes_on_their_own_file_still_pass(self):
+        m2 = ['M2_SIZES_USECOUNT', 'M2_SIZES_LASTUSETIME', 'M2_TEXTURE_LASTHASHCHECK',
+              'M2_CACHE_ROW_CREATE', 'M2_CACHE_ROW_EVICT', 'M2_CACHE_SIZES_CREATE', 'M2_CACHE_SIZES_EVICT']
+        cases = [(2, ('M1_UPTIME', 1))] + [(1, (name, 1)) for name in m2]
+        for index, pair in cases:
+            with self.subTest(file=index, cls=pair[0]):
+                self.reset_run('valid-' + pair[0])
+                rows = list(EXACT_ROWS)
+                rows[index] = ('MAINTENANCE_ONLY', (pair,), 0)
+                statuses = ['PRESERVED'] * 5
+                statuses[index] = 'CHANGED_OR_MISSING'
+                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                                                   practical=practical_block(*rows))
+                code, result = self.run_driver()
+                # The strict gate still refuses the changed file, exactly as before.
+                self.assertNotEqual(code, 0)
+                self.assertEqual((result['state'], result['reason']), ('INCONCLUSIVE', 'changed'))
+                row = result['after']['practical']['files'][index]
+                self.assertEqual(row['classification'], 'MAINTENANCE_ONLY')
+                self.assertEqual(row['maintenance'], [list(pair)])
+                self.assertEqual(result['after']['practical']['verdict'], 'NOT_DECIDED')
+
     def test_host_source_binds_the_practical_comparator(self):
         self.assertIn('tools/bm_practical_preservation_comparator.py', driver.HOST_PATHS)
 
