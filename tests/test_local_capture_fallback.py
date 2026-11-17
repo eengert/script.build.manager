@@ -48,7 +48,7 @@ class LocalCaptureFixture(OfficialBackendFixture):
         self.mirror = FakeMirror()
         self.mirror.publish(archive=self.archive, index_xml=OTHER_INDEX)
 
-    def acquire_local(self, backend=None, allowed=(ADDON,)):
+    def acquire_local(self, backend=None, allowed=((ADDON, VERSION),)):
         backend = backend or self.backend()
         return ArtifactAcquirer(self.store, backend, allowed).acquire(ADDON, VERSION)
 
@@ -76,15 +76,17 @@ class AcquisitionPolicyTests(LocalCaptureFixture):
         with zipfile.ZipFile(io.BytesIO(stored)) as archive:
             self.assertEqual([f"{ADDON}/addon.xml", f"{ADDON}/lib.py"], archive.namelist())
 
-    def test_authorisation_is_per_add_on(self):
-        result = self.acquire_local(allowed=("some.other.addon",))
-        self.assertTrue(result.local_capture_eligible)
-        self.refused_without_registration(result)
+    def test_authorisation_is_per_exact_add_on_and_version(self):
+        for allowed in ((("some.other.addon", VERSION),), ((ADDON, "0.0.1"),)):
+            with self.subTest(allowed=allowed):
+                result = self.acquire_local(allowed=allowed)
+                self.assertTrue(result.local_capture_eligible)
+                self.refused_without_registration(result)
 
     def test_capture_is_deterministic_and_idempotent(self):
         first = self.acquire_local()
         other_store = ArtifactStore(self.base / "second-store")
-        second = ArtifactAcquirer(other_store, self.backend(), (ADDON,)).acquire(ADDON, VERSION)
+        second = ArtifactAcquirer(other_store, self.backend(), ((ADDON, VERSION),)).acquire(ADDON, VERSION)
         self.assertEqual(first.metadata.sha256, second.metadata.sha256)
         again = self.acquire_local()
         self.assertEqual("artifact_store", again.source)
@@ -102,7 +104,7 @@ class AcquisitionPolicyTests(LocalCaptureFixture):
         other = ArtifactStore(self.base / "cache-store")
         (self.packages / FILENAME).write_bytes(self.archive)
         with mock.patch.object(backend, "capture_installed_artifact", spy):
-            result = ArtifactAcquirer(other, backend, (ADDON,)).acquire(ADDON, VERSION)
+            result = ArtifactAcquirer(other, backend, ((ADDON, VERSION),)).acquire(ADDON, VERSION)
         self.assertEqual("package_cache", result.source)
         self.assertEqual(stored.sha256, result.metadata.sha256)
         # 3. Official repository when the version is listed.
@@ -110,7 +112,7 @@ class AcquisitionPolicyTests(LocalCaptureFixture):
         self.mirror.publish(archive=self.archive, index_xml=_standard_index(self.archive))
         third = ArtifactStore(self.base / "official-store")
         with mock.patch.object(backend, "capture_installed_artifact", spy):
-            result = ArtifactAcquirer(third, backend, (ADDON,)).acquire(ADDON, VERSION)
+            result = ArtifactAcquirer(third, backend, ((ADDON, VERSION),)).acquire(ADDON, VERSION)
         self.assertEqual("repository", result.source)
 
 
@@ -197,7 +199,7 @@ class PlatformProvidedTests(LocalCaptureFixture):
         spy = mock.Mock(side_effect=AssertionError("must not run"))
         backend = self.backend()
         with mock.patch.object(backend, "capture_installed_artifact", spy):
-            ArtifactAcquirer(self.store, backend, (ADDON,))  # construction alone never packages
+            ArtifactAcquirer(self.store, backend, ((ADDON, VERSION),))  # construction alone never packages
         spy.assert_not_called()
 
     def test_version_must_be_the_exact_installed_version(self):
@@ -479,7 +481,7 @@ class ThreeMissingOriginalsTests(unittest.TestCase):
         return capture_frozen_build(
             backend=self.backend(), store=self.store, root_addon_ids=[TMDB[0]], build_id="b", name="n",
             created_at="2026-11-16T00:00:00Z", kodi_version="21.3", platform="macos",
-            local_capture_addon_ids=allowed)
+            local_capture_approvals=allowed)
 
     def test_without_authorisation_all_three_are_offered_and_nothing_is_stored(self):
         result = self.capture()
@@ -488,7 +490,7 @@ class ThreeMissingOriginalsTests(unittest.TestCase):
         self.assertEqual([], list((self.base / "store" / "artifacts").iterdir()))
 
     def test_with_per_add_on_authorisation_all_three_are_captured_locally(self):
-        result = self.capture(allowed=[a for a, _ in (TMDB,) + TMDB_DEPENDENCIES])
+        result = self.capture(allowed=(TMDB,) + TMDB_DEPENDENCIES)
         self.assertTrue(result.complete, result.errors)
         sources = {n.addon_id: n.artifact.source for n in result.manifest.addons}
         self.assertEqual({LOCAL_CAPTURE_SOURCE}, set(sources.values()))
@@ -500,7 +502,7 @@ class ThreeMissingOriginalsTests(unittest.TestCase):
         self.assertEqual((), result.local_capture_candidates)
 
     def test_partial_authorisation_leaves_the_build_incomplete(self):
-        result = self.capture(allowed=[TMDB[0]])
+        result = self.capture(allowed=[TMDB])
         self.assertFalse(result.complete)
         self.assertEqual(sorted(TMDB_DEPENDENCIES), list(result.local_capture_candidates))
 
@@ -567,7 +569,7 @@ class CreateIntegrationTests(unittest.TestCase):
         stored = self.base.artifacts.find("plugin.demo", "1.0.0")
         self.assertEqual(LOCAL_CAPTURE_SOURCE, stored.source)
 
-    def test_approval_for_an_unoffered_add_on_is_ignored(self):
+    def test_approval_for_an_unoffered_add_on_is_rejected(self):
         self.base.workflow.confirm_local_capture = lambda c: (("script.module.demo", "1.0.0"),)
         terminal = self.base.workflow.execute(self.base.workflow.preview(self.base.session))
         self.assertEqual(32730, terminal.string_id)

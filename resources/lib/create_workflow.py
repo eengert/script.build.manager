@@ -203,8 +203,10 @@ class CreateBuildWorkflow:
         """Called only after native confirmation; preserve the one previewed request.
 
         ``self.confirm_local_capture`` (D-033, set by the presentation layer) receives the (addon_id, version) pairs whose exact
-        original is demonstrably unavailable and returns the subset the user approved one by
-        one. Without it, or with an empty answer, no add-on is ever captured locally.
+        original is demonstrably unavailable and returns the pairs the user approved, one by one.
+        An answer containing any pair that was not offered is rejected whole. Without it, or with an
+        empty answer, no add-on is ever captured locally. A second pass may use only the exact approved
+        pairs, so a changed installed version is refused rather than re-authorised.
 
         Private lock spans register/rollback so another Create cannot adopt a new
         overlay before an ordinary failed registration removes it. A crash may
@@ -217,10 +219,9 @@ class CreateBuildWorkflow:
             candidates = tuple(getattr(result, 'local_capture_candidates', ()))
             if (result.status is not CreateCaptureStatus.COMPLETE and candidates
                     and self.confirm_local_capture is not None):
-                approved = tuple(sorted({a for a, _ in self.confirm_local_capture(candidates)}
-                                        & {a for a, _ in candidates}))
+                approved = _approved_local_pairs(self.confirm_local_capture(candidates), candidates)
                 if approved:
-                    result = engine.capture(request, created_at=self.clock(), local_capture_addon_ids=approved)
+                    result = engine.capture(request, created_at=self.clock(), local_capture_approvals=approved)
         except Exception:
             return CreateTerminal(32732)
         if result.status is not CreateCaptureStatus.COMPLETE:
@@ -299,6 +300,19 @@ class CreateBuildWorkflow:
                                   len(getattr(result, 'local_capture_artifacts', ())))
         return CreateTerminal(32736, result.addon_count, result.skin_included, bool(result.private_overlay),
                               len(getattr(result, 'local_capture_artifacts', ())))
+
+
+def _approved_local_pairs(answer, offered):
+    """D-033: the exact (addon_id, version) pairs the user approved, or () unless the answer is a
+    subset of the pairs that were offered. A bare add-on ID, another version or an unoffered add-on
+    rejects the whole answer, so a partial or stale reading never authorises a local package."""
+    offered_pairs = set(offered)
+    approved = set()
+    for item in answer:
+        if not (isinstance(item, tuple) and item in offered_pairs):
+            return ()
+        approved.add(item)
+    return tuple(sorted(approved))
 
 
 def runtime_create_workflow():

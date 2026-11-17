@@ -296,7 +296,7 @@ class CreateBuildCaptureEngine:
         self.private_resources = private_resources
 
     def capture(self, request: CreateBuildRequest, *, created_at: str,
-                local_capture_addon_ids: tuple[str, ...] = ()) -> CreateBuildResult:
+                local_capture_approvals: tuple[tuple[str, str], ...] = ()) -> CreateBuildResult:
         if not isinstance(request, CreateBuildRequest):
             return CreateBuildResult(CreateCaptureStatus.FAILED, "", "", 0, 0, False, 0, 0, 0, 0,
                                      gaps=("INVALID_CREATE_REQUEST",))
@@ -327,7 +327,7 @@ class CreateBuildCaptureEngine:
                                            root_addon_ids=roots, build_id=request.build_id, name=request.build_name,
                                            created_at=created_at, kodi_version=state.kodi_version, platform=state.platform,
                                            configuration_packages=(request.config_package_id,),
-                                           local_capture_addon_ids=local_capture_addon_ids)
+                                           local_capture_approvals=local_capture_approvals)
             raw = captured.manifest
             exact = sum(n.artifact is not None for n in raw.addons)
             # A platform-provided requirement is verified on the target, so it is never a missing artifact.

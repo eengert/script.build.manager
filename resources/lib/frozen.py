@@ -1320,17 +1320,32 @@ class KodiInventoryBackend(InventoryBackend):
         return {}
 
 
+def _exact_local_approvals(approvals: Iterable[Tuple[str, str]]) -> frozenset:
+    """Exact (addon_id, version) pairs approved for the D-033 local capture.
+
+    A bare add-on ID, or anything else that is not a pair of non-empty strings, is refused
+    outright. An ID-only approval would authorise whichever version happens to be installed.
+    """
+    pairs = set()
+    for pair in approvals:
+        if not (isinstance(pair, tuple) and len(pair) == 2
+                and all(isinstance(part, str) and part for part in pair)):
+            raise ValueError("local capture approvals must be exact (addon_id, version) pairs")
+        pairs.add(pair)
+    return frozenset(pairs)
+
+
 class ArtifactAcquirer:
     """Acquire exact artifacts in the BM-021A priority order."""
 
     def __init__(
         self, store: ArtifactStore, backend: InventoryBackend,
-        local_capture_addon_ids: Iterable[str] = (),
+        local_capture_approvals: Iterable[Tuple[str, str]] = (),
     ):
         self.store = store
         self.backend = backend
-        # Explicit per-add-on authorisation for the D-033 last-resort local capture.
-        self.local_capture_addon_ids = frozenset(local_capture_addon_ids)
+        # Exact (addon_id, version) pairs the user approved for the D-033 last-resort local capture.
+        self.local_capture_approvals = _exact_local_approvals(local_capture_approvals)
 
     def acquire(self, addon_id: str, version: str) -> ArtifactAcquisition:
         existing = self.store.find(addon_id, version)
@@ -1358,8 +1373,8 @@ class ArtifactAcquirer:
         try:
             repository_candidate = self.backend.get_repository_artifact(addon_id, version)
         except RepositoryArtifactUnlisted as exc:
-            # The only proof of unavailability. Fallback still needs explicit authorisation.
-            if addon_id not in self.local_capture_addon_ids:
+            # The only proof of unavailability. Fallback needs an approval for this exact pair.
+            if (addon_id, version) not in self.local_capture_approvals:
                 return ArtifactAcquisition(
                     CaptureStatus.INCOMPLETE_ARTIFACT,
                     error=f"exact artifact unavailable for {addon_id} {version}: {exc}",
@@ -1394,6 +1409,12 @@ class ArtifactAcquirer:
 
     def _acquire_local_capture(self, addon_id: str, version: str) -> ArtifactAcquisition:
         """D-033: store a controlled package of the installed files, recorded as local capture."""
+        # The gate comes before any package is created or imported, and checks the exact pair only.
+        if (addon_id, version) not in self.local_capture_approvals:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"local capture is not approved for {addon_id} {version}",
+            )
         try:
             candidate = self.backend.capture_installed_artifact(addon_id, version)
         except (LocalCaptureRefusal, RepositoryArtifactRefusal) as exc:
@@ -1590,12 +1611,14 @@ def capture_frozen_build(
     platform: str = "",
     configuration_packages: Sequence[str] = (),
     install_policies: Sequence["FrozenInstallPolicy"] = (),
-    local_capture_addon_ids: Iterable[str] = (),
+    local_capture_approvals: Iterable[Tuple[str, str]] = (),
 ) -> FrozenBuildCaptureResult:
     """Capture exact installed software for selected roots and dependencies.
 
-    ``local_capture_addon_ids`` explicitly authorises the D-033 last-resort local capture for
-    those add-ons only. It is empty by default, so no add-on is ever captured locally silently.
+    ``local_capture_approvals`` explicitly authorises the D-033 last-resort local capture for
+    exact (addon_id, version) pairs only. It is empty by default, so no add-on is ever captured
+    locally silently. Consent is a snapshot: if any approved add-on is no longer installed at the
+    approved version, local capture is refused for the whole pass and nothing is packaged.
     """
     listing = tuple(backend.get_installed_addons())
     installed = {}
@@ -1616,7 +1639,12 @@ def capture_frozen_build(
     errors: List[str] = []
     diagnostic_categories = set()
     local_candidates: List[Tuple[str, str]] = []
-    local_capture_ids = frozenset(local_capture_addon_ids)
+    approvals = _exact_local_approvals(local_capture_approvals)
+    if any((installed.get(addon_id) or {}).get("version") != version for addon_id, version in approvals):
+        # A changed or removed approved add-on voids the authorisation for this whole pass, so no
+        # approved add-on is packaged or imported beside it, and nothing is captured under a new version.
+        approvals = frozenset()
+        diagnostic_categories.add("local_capture_snapshot_changed")
 
     def walk(addon_id: str, optional: bool = False) -> None:
         optional_by_id[addon_id] = optional_by_id.get(addon_id, True) and optional
@@ -1786,7 +1814,7 @@ def capture_frozen_build(
             )
             continue
         provenance, detail = backend.get_provenance(addon_id)
-        acquisition = ArtifactAcquirer(store, backend, local_capture_ids).acquire(addon_id, version)
+        acquisition = ArtifactAcquirer(store, backend, approvals).acquire(addon_id, version)
         if acquisition.local_capture_eligible:
             local_candidates.append((addon_id, version))
         status = acquisition.status
