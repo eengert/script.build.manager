@@ -16,7 +16,10 @@ Keep three distinct observations; never replace the strict comparison result:
 
 The current bridge/driver deliberately return per-file equality results and
 `maintenance_attribution=UNKNOWN`; they do not export field deltas or private
-baseline values. There is no current automatic causal classifier. Do not infer
+baseline values. Since the 2026-11-17 offline wiring, the bridge's after result also
+carries a sanitized D-032 classification of class names and counts, which is not a
+verdict (see "Implementation status" under the D-032 section). There is no current
+automatic causal classifier. Do not infer
 one from file names, numeric direction, timestamps, receipt validity, source
 plausibility or a run without Build Manager. A same-shaped overwrite can
 produce exactly the same projection as a legitimate lifecycle update.
@@ -47,10 +50,11 @@ For the strict comparison, any difference stays `CHANGED_OR_MISSING`, and proven
 maintenance never turns it into `PRESERVED`. D-032 (2026-11-15) adds a separate
 practical verdict, defined in "Practical beta preservation contract (D-032)" below.
 It may classify only the closed maintenance classes M1 and M2, and only through a
-reviewed in-memory comparator. An offline comparator (`tools/bm_practical_preservation_comparator.py`)
-is implemented, but it is not integrated into any driver and has not passed independent
-qualification review. The strict result is
-unchanged by that decision. No monitoring service or private baseline persistence
+reviewed in-memory comparator. The offline comparator
+(`tools/bm_practical_preservation_comparator.py`) is wired, offline only, into the
+in-memory acquisition session and the driver's evidence validator (see "Implementation
+status" below). It has not passed independent qualification review. The strict result
+is unchanged by that wiring. No monitoring service or private baseline persistence
 is needed or authorized by this contract.
 
 ## Practical beta preservation contract (D-032)
@@ -116,9 +120,8 @@ and it cannot classify a difference without exporting field deltas, which N6
 forbids. The two parts of the mechanism below have different status:
 
 - **Implemented offline, not reviewed for qualification:** the pure comparator in
-  `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. It is
-  not integrated into the A15 driver or any native task, and its output is not a
-  native practical verdict.
+  `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. Its
+  output is not a native practical verdict.
 - **Not integrated and not reviewed:** the practical qualification mechanism that
   would feed comparator results into the PASS, FAIL and INCONCLUSIVE verdict and
   the native ledger.
@@ -148,6 +151,43 @@ Required properties of the comparator:
   `ComparatorRejected` with a fixed reason code and no caller text. `BaseException`
   is deliberately not caught. This does not clear exception context a caller holds.
 - Independent review of the comparator and its tests before any native use.
+
+#### Implementation status (2026-11-17, offline wiring)
+
+- `AcquisitionSession.finish()` classifies the same session's before and after
+  projections of the five files with the comparator's `compare_file`. Each file is
+  `EXACT`, `MAINTENANCE_ONLY` (class names and counts), `MEANINGFUL` (count) or
+  `INCONCLUSIVE`. A comparator rejection, missing input or unexpected fault makes
+  only that file `INCONCLUSIVE`. The result is the after result's `practical` block,
+  with fixed file names, closed class names and integer counts. No private
+  projection, path, value, row identity or digest is returned.
+- The driver validates that block exactly: closed keys and names, counts, the
+  aggregate, and consistency with each strict per-file status. A malformed block
+  refuses the finish with `finish_refused` and is not persisted. A valid block is
+  written to `result.json` under `after.practical`, beside the unchanged strict
+  fields.
+- The strict gate, the driver `state` and `reason`, and the per-file statuses are
+  unchanged, and the strict gate never reads the practical block. A strict
+  `SCOPED_PRESERVED` state can therefore coexist with a practical `INCONCLUSIVE`
+  classification. Practical acceptance cannot be read from the strict state.
+- The block's `verdict` is always `NOT_DECIDED`. This wiring produces no practical
+  PASS, FAIL or INCONCLUSIVE verdict, and no native run has used it.
+- `tools/bm_practical_preservation_comparator.py` is added to the driver's
+  `HOST_PATHS`, so the host source binding covers it.
+- The wiring is the integration that the approval-scope sentence above ("does not
+  integrate the offline comparator into any driver") excludes. That approved text is
+  left unchanged here and needs an explicit decision.
+
+#### Still unqualified
+
+- Independent review of the comparator and of this wiring. The offline tests do not
+  replace that review.
+- The practical verdict mechanism: operation and ledger correlation, S7 after stop,
+  the S1, S2 and S5 public witness conditions, and the limitation reporting that a
+  practical PASS requires.
+- S1 to S9 preservation beyond the five projections, transaction closure, and native
+  acceptance. Classification alone establishes none of these.
+- A practical PASS for A15. This status authorizes no native scenario.
 
 ### Practical verdict
 

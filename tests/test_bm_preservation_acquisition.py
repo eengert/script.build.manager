@@ -13,6 +13,7 @@ from tests import test_bm_public_preservation_witness as semantic
 from tools import bm_preservation_acquisition as bridge
 from tools import bm_public_preservation_witness as w
 from tools import bm_test_app as bm
+from tools import bm_practical_preservation_comparator as comparator
 
 
 class AcquisitionTests(fixtures.TripwireTestCase):
@@ -145,6 +146,154 @@ class AcquisitionTests(fixtures.TripwireTestCase):
         with sqlite3.connect(self.path(self.root, 1)) as db: db.execute('UPDATE sizes SET usecount=usecount+1')
         result = self.safe(self.session.finish())
         self.assertEqual(result['files'][1]['status'], 'CHANGED_OR_MISSING')
+
+    def gui(self, uptime, level='1'):
+        # Kodi 21.3 native shape: general/systemtotaluptime plus one general setting.
+        self.path(self.root, 2).write_text(
+            '<settings version="2"><general><systemtotaluptime>' + uptime + '</systemtotaluptime>'
+            '<settinglevel>' + level + '</settinglevel></general><viewstates><musicfiles>'
+            '<viewmode>50</viewmode></musicfiles></viewstates></settings>')
+
+    def estuary(self, flag):
+        self.path(self.root, 3).write_text('<settings><setting id="flag" type="bool">' + flag + '</setting>'
+                                           '<setting id="private.label" type="string">' + semantic.SECRET
+                                           + '</setting></settings>')
+
+    def projections(self):
+        read = [(self.root / name).read_bytes() for name in w.FILES]
+        return [w.database_projection(read[0], 0), w.database_projection(read[1], 1)] + [
+            w.xml_projection(read[i], i) for i in (2, 3, 4)]
+
+    def practical(self, result):
+        practical = result['practical']
+        self.assertEqual(set(practical), {'schema', 'classification', 'files', 'verdict', 'qualification'})
+        self.assertEqual(practical['verdict'], 'NOT_DECIDED')
+        self.assertEqual([row['file'] for row in practical['files']], list(w.FILES))
+        return practical
+
+    def test_practical_classification_is_exact_for_all_five_unchanged_projections(self):
+        self.begin()
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        practical = self.practical(result)
+        self.assertEqual(practical['classification'], 'EXACT')
+        self.assertEqual([row['classification'] for row in practical['files']], ['EXACT'] * 5)
+        self.assertEqual([row['maintenance'] for row in practical['files']], [[]] * 5)
+
+    def test_uptime_only_change_is_strict_changed_and_practical_maintenance_only(self):
+        self.gui('10')
+        self.begin()
+        self.gui('11')
+        result = self.safe(self.session.finish())
+        self.assertEqual([row['status'] for row in result['files']],
+                         ['PRESERVED', 'PRESERVED', 'CHANGED_OR_MISSING', 'PRESERVED', 'PRESERVED'])
+        practical = self.practical(result)
+        self.assertEqual(practical['files'][2], {'file': w.FILES[2], 'classification': 'MAINTENANCE_ONLY',
+                                                 'maintenance': [['M1_UPTIME', 1]], 'meaningful_count': 0})
+        self.assertEqual(practical['classification'], 'MAINTENANCE_ONLY')
+        self.assertEqual({row['classification'] for i, row in enumerate(practical['files']) if i != 2},
+                         {'EXACT'})
+
+    def test_texture_maintenance_is_strict_changed_and_practical_maintenance_only(self):
+        self.begin()
+        with sqlite3.connect(self.path(self.root, 1)) as db:
+            db.execute('UPDATE sizes SET usecount=usecount+1, lastusetime=?', ('synthetic-later',))
+            db.execute('UPDATE texture SET lasthashcheck=?', ('synthetic-later',))
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['files'][1]['status'], 'CHANGED_OR_MISSING')
+        practical = self.practical(result)
+        self.assertEqual(practical['files'][1]['classification'], 'MAINTENANCE_ONLY')
+        self.assertEqual(practical['files'][1]['maintenance'], [
+            ['M2_SIZES_LASTUSETIME', 1], ['M2_SIZES_USECOUNT', 1], ['M2_TEXTURE_LASTHASHCHECK', 1]])
+        self.assertEqual(practical['classification'], 'MAINTENANCE_ONLY')
+
+    def test_cache_row_creation_and_eviction_with_their_sizes_are_maintenance_only(self):
+        self.begin()
+        with sqlite3.connect(self.path(self.root, 1)) as db:
+            db.execute('INSERT INTO texture VALUES (2, ?, ?, ?, NULL)',
+                       ('synthetic-new', 'synthetic-cached', 'synthetic-hash'))
+            db.execute('INSERT INTO sizes VALUES (2, 32, 32, 32, 0, NULL)')
+            db.execute('DELETE FROM texture WHERE id=1')  # The schema trigger removes its sizes row.
+        result = self.safe(self.session.finish())
+        practical = self.practical(result)
+        self.assertEqual(practical['files'][1]['maintenance'], [
+            ['M2_CACHE_ROW_CREATE', 1], ['M2_CACHE_ROW_EVICT', 1],
+            ['M2_CACHE_SIZES_CREATE', 1], ['M2_CACHE_SIZES_EVICT', 1]])
+        self.assertEqual(practical['files'][1]['classification'], 'MAINTENANCE_ONLY')
+
+    def test_meaningful_setting_change_is_practical_meaningful(self):
+        self.begin()
+        self.estuary('false')
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['files'][3]['status'], 'CHANGED_OR_MISSING')
+        practical = self.practical(result)
+        self.assertEqual(practical['files'][3], {'file': w.FILES[3], 'classification': 'MEANINGFUL',
+                                                 'maintenance': [], 'meaningful_count': 1})
+        self.assertEqual(practical['classification'], 'MEANINGFUL')
+
+    def test_combined_maintenance_and_meaningful_changes_are_never_maintenance_only(self):
+        # Same file: uptime maintenance plus a meaningful setting leaf.
+        self.gui('10')
+        self.begin()
+        self.gui('11', level='2')
+        practical = self.practical(self.safe(self.session.finish()))
+        self.assertEqual(practical['files'][2], {'file': w.FILES[2], 'classification': 'MEANINGFUL',
+                                                 'maintenance': [], 'meaningful_count': 1})
+        self.assertEqual(practical['classification'], 'MEANINGFUL')
+        # Different files: maintenance in one and a meaningful estuary setting in another.
+        self.session = self.new_session()
+        self.gui('10')
+        self.begin()
+        self.gui('11')
+        self.estuary('false')
+        practical = self.practical(self.safe(self.session.finish()))
+        self.assertEqual(practical['files'][2]['classification'], 'MAINTENANCE_ONLY')
+        self.assertEqual(practical['files'][3]['classification'], 'MEANINGFUL')
+        self.assertEqual(practical['classification'], 'MEANINGFUL')
+
+    def test_comparator_rejection_is_inconclusive_for_its_file_and_never_pass(self):
+        # Malformed uptime is identical on both sides: strict PRESERVED, practical INCONCLUSIVE.
+        self.gui('010')
+        self.begin()
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        practical = self.practical(result)
+        self.assertEqual(practical['files'][2]['classification'], 'INCONCLUSIVE')
+        self.assertEqual(practical['classification'], 'INCONCLUSIVE')
+
+    def test_rejection_detail_never_reaches_the_result(self):
+        self.begin()
+        rejected = comparator.ComparatorRejected(semantic.SECRET, 'unexpected_schema')
+        with mock.patch.object(comparator, 'compare_file', side_effect=rejected):
+            result = self.safe(self.session.finish())
+        practical = self.practical(result)
+        self.assertEqual([row['classification'] for row in practical['files']], ['INCONCLUSIVE'] * 5)
+        self.assertEqual(practical['classification'], 'INCONCLUSIVE')
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+
+    def test_failed_after_acquisition_carries_no_practical_block(self):
+        self.begin()
+        with mock.patch.object(w, 'read_copy', side_effect=OSError(semantic.SECRET)):
+            result = self.refused('after')
+        self.assertNotIn('practical', result)
+
+    def test_practical_classification_reads_and_writes_nothing(self):
+        before, after = self.projections(), self.projections()
+        with mock.patch('builtins.open', side_effect=AssertionError('io')), \
+             mock.patch('os.open', side_effect=AssertionError('io')), \
+             mock.patch('os.write', side_effect=AssertionError('io')), \
+             mock.patch('tempfile.TemporaryDirectory', side_effect=AssertionError('io')):
+            practical = bridge._practical(before, after)
+        self.assertEqual(practical['classification'], 'EXACT')
+        self.assertEqual(before, self.projections())
+
+    def test_practical_path_keeps_single_finish_and_closed_session(self):
+        self.begin()
+        self.practical(self.safe(self.session.finish()))
+        self.assertIsNone(self.session._before)
+        again = self.safe(self.session.finish())
+        self.assertEqual(again['acquisition'], 'REFUSED')
+        self.assertNotIn('practical', again)
 
     def test_missing_baseline_refuses_but_missing_after_is_difference(self):
         path = self.path(self.root, 4); saved = path.read_bytes(); path.unlink()

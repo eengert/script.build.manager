@@ -20,6 +20,7 @@ from tools import bm_profile_isolation as isolation
 from tools import bm023a_adapter_support as support
 from tools.bm_preservation_acquisition import AcquisitionSession
 from tools import bm_public_preservation_witness as witness
+from tools import bm_practical_preservation_comparator as comparator
 from resources.lib.build_library import BuildLibrary
 from resources.lib.frozen_install import FrozenInstallStore
 from resources.lib.capture_lifecycle import FILENAME as CAPTURE_RECORD
@@ -29,7 +30,7 @@ WAIT_SECONDS = 900
 HOST_PATHS = ('tools/__init__.py', 'tools/bm_preservation_driver.py', 'tools/bm_preservation_acquisition.py',
               'tools/bm_test_app.py', 'tools/bm_profile_isolation.py',
               'tools/bm_public_preservation_witness.py', 'tools/bm023a_adapter_support.py',
-              'resources')
+              'tools/bm_practical_preservation_comparator.py', 'resources')
 REASONS = frozenset({'arguments_invalid', 'source_unverified', 'evidence_invalid',
     'public_unverified', 'begin_refused', 'finish_refused', 'changed', 'cancelled',
     'timeout', 'eof', 'protocol_invalid', 'quit_unverified', 'interrupted',
@@ -248,12 +249,69 @@ def announce(stream, text):
         need(os.write(fd, data) == len(data), 'output_failed')
 
 
+PRACTICAL_KEYS = frozenset({'schema', 'classification', 'files', 'verdict', 'qualification'})
+PRACTICAL_ROW_KEYS = frozenset({'file', 'classification', 'maintenance', 'meaningful_count'})
+PRACTICAL_LABELS = frozenset({'EXACT', 'MAINTENANCE_ONLY', 'MEANINGFUL', 'INCONCLUSIVE'})
+
+
+def practical_aggregate(labels):
+    for label in ('INCONCLUSIVE', 'MEANINGFUL', 'MAINTENANCE_ONLY'):
+        if label in labels:
+            return label
+    return 'EXACT'
+
+
+def project_practical(value, strict_rows, reason):
+    """Closed shape, closed names, exact counts and strict cross-checks; rebuilt, never copied."""
+    need(type(value) is dict and set(value) == PRACTICAL_KEYS, reason)
+    need(value['schema'] == 'bm-a15-practical-classification/1' and value['verdict'] == 'NOT_DECIDED'
+         and value['qualification'] == 'not_qualified', reason)
+    need(type(value['files']) is list and len(value['files']) == len(witness.FILES), reason)
+    rows = []
+    for row, name, strict in zip(value['files'], witness.FILES, strict_rows):
+        need(type(row) is dict and set(row) == PRACTICAL_ROW_KEYS and row['file'] == name, reason)
+        label = row['classification']
+        need(type(label) is str and label in PRACTICAL_LABELS, reason)
+        need(type(row['maintenance']) is list, reason)
+        classes = []
+        for item in row['maintenance']:
+            need(type(item) is list and len(item) == 2 and type(item[0]) is str
+                 and item[0] in comparator.ALLOWED_CLASSES and type(item[1]) is int and item[1] > 0, reason)
+            classes.append([item[0], item[1]])
+        names = [item[0] for item in classes]
+        need(names == sorted(set(names)), reason)
+        count = row['meaningful_count']
+        need(type(count) is int and count >= 0, reason)
+        if label == 'EXACT':
+            need(not classes and count == 0, reason)
+        elif label == 'MAINTENANCE_ONLY':
+            need(bool(classes) and count == 0, reason)
+        elif label == 'MEANINGFUL':
+            need(not classes and count >= 1, reason)
+        else:
+            need(not classes and count == 0, reason)
+        # The strict result constrains the classification: an unchanged projection is
+        # EXACT or INCONCLUSIVE, and a changed projection is never EXACT.
+        if strict['status'] == 'PRESERVED':
+            need(label in ('EXACT', 'INCONCLUSIVE'), reason)
+        else:
+            need(label != 'EXACT', reason)
+        rows.append({'file': name, 'classification': label, 'maintenance': classes,
+                     'meaningful_count': count})
+    aggregate = practical_aggregate({row['classification'] for row in rows})
+    need(value['classification'] == aggregate, reason)
+    return {'schema': 'bm-a15-practical-classification/1', 'classification': aggregate,
+            'files': rows, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
+
+
 def project_acquisition(value, boundary):
     """Do not persist arbitrary bridge dictionaries, even on unexpected faults."""
     expected = {'schema','boundary','acquisition','reason','scope_result','files',
                 'complete_preservation','qualification','maintenance_attribution',
                 'writer_exclusion','temporary_cleanup'}
     reason = 'begin_refused' if boundary == 'before' else 'finish_refused'
+    if boundary == 'after':
+        expected = expected | {'practical'}
     need(type(value) is dict and set(value) == expected, reason)
     need(value['schema'] == 'bm-a15-acquisition/1' and value['boundary'] == boundary
          and value['reason'] == ('baseline_held_in_memory' if boundary == 'before' else 'scoped_comparison')
@@ -273,7 +331,10 @@ def project_acquisition(value, boundary):
     scope = 'UNVERIFIED' if boundary == 'before' else (
         'PRESERVED' if all(row['status'] == 'PRESERVED' for row in rows) else 'CHANGED_OR_MISSING')
     need(value['scope_result'] == scope, reason)
-    return {'acquisition':'ACQUIRED','scope_result':scope,'files':rows}
+    projected = {'acquisition':'ACQUIRED','scope_result':scope,'files':rows}
+    if boundary == 'after':
+        projected['practical'] = project_practical(value['practical'], rows, reason)
+    return projected
 
 
 def run(services, *, manifest_path, evidence_path, host_commit, signals, output):

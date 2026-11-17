@@ -2,7 +2,9 @@
 
 No native operation is invoked here. A caller must separately authorize the
 intervening UI operation. Private projections live only in this session; they
-are not resumable, serializable, or public evidence. This is not an atomic
+are not resumable, serializable, or public evidence. The after result also
+carries a sanitized D-032 classification of the same session's projections; it
+is a classification only and never a practical verdict. This is not an atomic
 snapshot or proof of writer exclusion, maintenance attribution or qualification.
 """
 from __future__ import annotations
@@ -12,24 +14,69 @@ from pathlib import Path
 
 from tools import bm_test_app as bm
 from tools import bm_public_preservation_witness as witness
+from tools import bm_practical_preservation_comparator as comparator
+
+PRACTICAL_SCHEMA = 'bm-a15-practical-classification/1'
+_PER_FILE_CLASSES = (comparator.EXACT, comparator.MAINTENANCE_ONLY, comparator.MEANINGFUL)
 
 
 class _Refused(Exception):
     pass
 
 
-def _result(boundary, acquisition, reason, statuses=None):
+def _result(boundary, acquisition, reason, statuses=None, practical=None):
     statuses = statuses or ['UNVERIFIED'] * len(witness.FILES)
     compared = boundary == 'after' and acquisition == 'ACQUIRED'
     scope = ('PRESERVED' if all(s == 'PRESERVED' for s in statuses)
              else 'CHANGED_OR_MISSING') if compared else 'UNVERIFIED'
-    return {'schema': 'bm-a15-acquisition/1', 'boundary': boundary,
-            'acquisition': acquisition, 'reason': reason, 'scope_result': scope,
-            'files': [{'file': name, 'scope': description, 'status': status}
-                      for name, description, status in zip(witness.FILES, witness.SCOPES, statuses)],
-            'complete_preservation': 'UNVERIFIED', 'qualification': 'not_qualified',
-            'maintenance_attribution': 'UNKNOWN', 'writer_exclusion': 'UNVERIFIED',
-            'temporary_cleanup': 'COMPLETE' if acquisition == 'ACQUIRED' else 'UNVERIFIED'}
+    result = {'schema': 'bm-a15-acquisition/1', 'boundary': boundary,
+              'acquisition': acquisition, 'reason': reason, 'scope_result': scope,
+              'files': [{'file': name, 'scope': description, 'status': status}
+                        for name, description, status in zip(witness.FILES, witness.SCOPES, statuses)],
+              'complete_preservation': 'UNVERIFIED', 'qualification': 'not_qualified',
+              'maintenance_attribution': 'UNKNOWN', 'writer_exclusion': 'UNVERIFIED',
+              'temporary_cleanup': 'COMPLETE' if acquisition == 'ACQUIRED' else 'UNVERIFIED'}
+    if practical is not None:
+        result['practical'] = practical
+    return result
+
+
+def _aggregate(labels):
+    # INCONCLUSIVE dominates, and any meaningful file makes the run non-maintenance.
+    for label in ('INCONCLUSIVE', comparator.MEANINGFUL, comparator.MAINTENANCE_ONLY):
+        if label in labels:
+            return label
+    return comparator.EXACT
+
+
+def _practical_row(name, summary):
+    if type(summary) is not comparator.FileSummary or summary.verdict not in _PER_FILE_CLASSES:
+        return {'file': name, 'classification': 'INCONCLUSIVE', 'maintenance': [], 'meaningful_count': 0}
+    return {'file': name, 'classification': summary.verdict,
+            'maintenance': [[cls, count] for cls, count in summary.maintenance],
+            'meaningful_count': summary.meaningful_count}
+
+
+def _practical(before, after):
+    """Sanitized D-032 classification of this session's own in-memory projections.
+
+    Each file is classified on its own. A comparator rejection, missing input or any
+    other fault makes that file INCONCLUSIVE and never reaches the strict result. The
+    output holds fixed names, closed class names and integer counts only. It is a
+    classification, not a practical verdict, and it is never PASS.
+    """
+    sized = type(before) is list and type(after) is list and len(before) == len(after) == len(witness.FILES)
+    rows = []
+    for index, name in enumerate(witness.FILES):
+        summary = None
+        if sized:
+            try:
+                summary = comparator.compare_file(comparator.PROTECTED_KEYS[index], before[index], after[index])
+            except Exception:
+                summary = None
+        rows.append(_practical_row(name, summary))
+    return {'schema': PRACTICAL_SCHEMA, 'classification': _aggregate({row['classification'] for row in rows}),
+            'files': rows, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
 class AcquisitionSession:
@@ -162,7 +209,8 @@ class AcquisitionSession:
             after = self._capture(baseline=False)
             statuses = ['PRESERVED' if left == right else 'CHANGED_OR_MISSING'
                         for left, right in zip(before, after)]
-            return _result('after', 'ACQUIRED', 'scoped_comparison', statuses)
+            return _result('after', 'ACQUIRED', 'scoped_comparison', statuses,
+                           _practical(before, after))
         except (Exception, KeyboardInterrupt) as exc:
             return self._failure('after', exc)
         finally:

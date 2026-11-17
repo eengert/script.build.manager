@@ -16,6 +16,19 @@ from tools import bm_preservation_acquisition as bridge
 from tools import bm_preservation_driver as driver
 
 SECRET = 'synthetic-private-driver-value'
+EXACT_ROWS = [('EXACT', (), 0)] * 5
+
+
+def practical_block(*rows):
+    """Five (classification, maintenance pairs, meaningful count) rows in witness order."""
+    files = [{'file': name, 'classification': label, 'maintenance': [list(pair) for pair in pairs],
+              'meaningful_count': count}
+             for name, (label, pairs, count) in zip(semantic.w.FILES, rows)]
+    labels = {row['classification'] for row in files}
+    aggregate = next((label for label in ('INCONCLUSIVE', 'MEANINGFUL', 'MAINTENANCE_ONLY')
+                      if label in labels), 'EXACT')
+    return {'schema': 'bm-a15-practical-classification/1', 'classification': aggregate,
+            'files': files, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
 class DriverTests(fixtures.TripwireTestCase):
@@ -40,7 +53,8 @@ class DriverTests(fixtures.TripwireTestCase):
         self.public_call = self.public_patch.start()
         self.calls = []
         self.begin_result = bridge._result('before','ACQUIRED','baseline_held_in_memory')
-        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5)
+        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+                                           practical=practical_block(*EXACT_ROWS))
         owner = self
         class Session:
             def begin(self): owner.calls.append('begin'); return owner.begin_result
@@ -269,8 +283,110 @@ class DriverTests(fixtures.TripwireTestCase):
 
     def test_semantic_change_is_not_harmless_maintenance(self):
         self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',
-                                         ['PRESERVED']*4+['CHANGED_OR_MISSING'])
+                                         ['PRESERVED']*4+['CHANGED_OR_MISSING'],
+                                         practical=practical_block(*(EXACT_ROWS[:4]+[('MEANINGFUL',(),1)])))
         self.blocked('changed')
+
+    def reset_run(self, name):
+        self.evidence = self.tmp / '.qualification-evidence' / name
+        self.output.seek(0); self.output.truncate(0); self.calls.clear()
+
+    def test_practical_block_is_validated_and_persisted_beside_the_strict_result(self):
+        code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['state'], 'SCOPED_PRESERVED')
+        self.assertEqual(result['after']['scope_result'], 'PRESERVED')
+        practical = result['after']['practical']
+        self.assertEqual(practical['classification'], 'EXACT')
+        self.assertEqual(practical['verdict'], 'NOT_DECIDED')
+        self.assertEqual(practical['qualification'], 'not_qualified')
+        self.assertEqual([row['file'] for row in practical['files']], list(semantic.w.FILES))
+
+    def test_maintenance_beside_a_strict_change_keeps_the_strict_refusal(self):
+        rows = list(EXACT_ROWS)
+        rows[2] = ('MAINTENANCE_ONLY', (('M1_UPTIME', 1),), 0)
+        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',
+                                           ['PRESERVED','PRESERVED','CHANGED_OR_MISSING','PRESERVED','PRESERVED'],
+                                           practical=practical_block(*rows))
+        code, result = self.run_driver()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(result['state'], 'INCONCLUSIVE')
+        self.assertEqual(result['reason'], 'changed')
+        self.assertEqual(result['after']['practical']['classification'], 'MAINTENANCE_ONLY')
+        self.assertEqual(result['after']['practical']['files'][2]['maintenance'], [['M1_UPTIME', 1]])
+
+    def test_comparator_rejection_is_recorded_inconclusive_and_never_a_practical_pass(self):
+        rows = [('INCONCLUSIVE', (), 0)] + EXACT_ROWS[1:]
+        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+                                           practical=practical_block(*rows))
+        code, result = self.run_driver()
+        # The strict gate is unchanged, so a strict PRESERVED scope keeps its strict state.
+        self.assertEqual(code, 0)
+        self.assertEqual(result['state'], 'SCOPED_PRESERVED')
+        practical = result['after']['practical']
+        self.assertEqual(practical['classification'], 'INCONCLUSIVE')
+        self.assertEqual(practical['verdict'], 'NOT_DECIDED')
+
+    def test_malformed_practical_blocks_refuse_and_are_never_persisted(self):
+        def first(block):
+            return block['files'][0]
+        cases = {
+            'extra_top_level_field': lambda b: b.update(raw_private=SECRET),
+            'pass_verdict': lambda b: b.update(verdict='PASS'),
+            'wrong_schema': lambda b: b.update(schema='bm-a15-practical-classification/0'),
+            'aggregate_mismatch': lambda b: b.update(classification='MAINTENANCE_ONLY'),
+            'row_name_mismatch': lambda b: first(b).update(file='other.xml'),
+            'extra_row_field': lambda b: first(b).update(path=SECRET),
+            'unknown_label': lambda b: first(b).update(classification='PASS'),
+            'unknown_class_name': lambda b: first(b).update(
+                classification='MAINTENANCE_ONLY', maintenance=[[SECRET, 1]]),
+            'bool_count': lambda b: first(b).update(
+                classification='MAINTENANCE_ONLY', maintenance=[['M1_UPTIME', True]]),
+            'zero_count': lambda b: first(b).update(
+                classification='MAINTENANCE_ONLY', maintenance=[['M1_UPTIME', 0]]),
+            'duplicate_class': lambda b: first(b).update(
+                classification='MAINTENANCE_ONLY', maintenance=[['M1_UPTIME', 1], ['M1_UPTIME', 1]]),
+            'unsorted_classes': lambda b: first(b).update(
+                classification='MAINTENANCE_ONLY', maintenance=[['M2_SIZES_USECOUNT', 1], ['M1_UPTIME', 1]]),
+            'exact_with_count': lambda b: first(b).update(meaningful_count=1),
+            'meaningful_without_count': lambda b: first(b).update(
+                classification='MEANINGFUL', meaningful_count=0),
+            'meaningful_with_maintenance': lambda b: first(b).update(
+                classification='MEANINGFUL', maintenance=[['M1_UPTIME', 1]], meaningful_count=1),
+            'missing_row': lambda b: b['files'].pop(),
+        }
+        for name, edit in cases.items():
+            with self.subTest(case=name):
+                block = practical_block(*EXACT_ROWS)
+                edit(block)
+                self.reset_run('malformed-' + name)
+                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+                                                   practical=block)
+                result = self.blocked('finish_refused')
+                self.assertNotIn('after', result)
+
+    def test_failed_after_has_no_practical_acceptance(self):
+        self.after_result = bridge._result('after','FAILED','acquisition_failed',
+                                           practical=practical_block(*EXACT_ROWS))
+        self.blocked('finish_refused')
+        self.reset_run('failed-after-with-practical')
+        self.after_result = bridge._result('after','FAILED','acquisition_failed')
+        self.blocked('finish_refused')
+
+    def test_practical_inconsistent_with_the_strict_status_refuses(self):
+        cases = {
+            'meaningful_under_preserved': (['PRESERVED']*5, [('MEANINGFUL',(),1)] + EXACT_ROWS[1:]),
+            'exact_under_changed': (['CHANGED_OR_MISSING']+['PRESERVED']*4, EXACT_ROWS),
+        }
+        for name, (statuses, rows) in cases.items():
+            with self.subTest(case=name):
+                self.reset_run('inconsistent-' + name)
+                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                                                   practical=practical_block(*rows))
+                self.blocked('finish_refused')
+
+    def test_host_source_binds_the_practical_comparator(self):
+        self.assertIn('tools/bm_practical_preservation_comparator.py', driver.HOST_PATHS)
 
     def test_host_source_drift_blocks_before_finish(self):
         self.host.side_effect = [None, RuntimeError(SECRET)]
@@ -376,6 +492,14 @@ class DriverTests(fixtures.TripwireTestCase):
             (repo/'tools/bm_preservation_acquisition.py').write_text('# changed')
             with self.assertRaises(driver.Refused):driver.host_source(self.services,commit)
 
+    def test_real_host_git_provenance_rejects_comparator_tampering(self):
+        self.host_patch.stop()
+        repo, commit = fixtures.build_candidate_repo(self.tmp)
+        with mock.patch.object(driver,'REPO',repo):
+            driver.host_source(self.services,commit)
+            (repo/'tools/bm_practical_preservation_comparator.py').write_text('# changed')
+            with self.assertRaises(driver.Refused):driver.host_source(self.services,commit)
+
     def test_unchanged_real_bridge_lifecycle_on_synthetic_five_file_profile(self):
         self.factory_patch.stop()
         semantic.PreservationTests.populate(self, self.target.portable_data)
@@ -385,6 +509,7 @@ class DriverTests(fixtures.TripwireTestCase):
                  'git_binding':{'checked':True,'ok':True}}):
             code, result = self.run_driver()
         self.assertEqual(code,0); self.assertEqual(result['state'],'SCOPED_PRESERVED')
+        self.assertEqual(result['after']['practical']['classification'],'EXACT')
 
     def path(self, root, i):
         return root / semantic.w.FILES[i]
