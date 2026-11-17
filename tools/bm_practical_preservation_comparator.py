@@ -113,7 +113,9 @@ def _reject(reason):
 
 
 def _is_seq(value):
-    return isinstance(value, (list, tuple))
+    # Exact built-in types only. A subclass can return different values on each
+    # read, so validation and comparison could see different content.
+    return type(value) is list or type(value) is tuple
 
 
 def _need_seq(value):

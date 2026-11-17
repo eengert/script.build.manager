@@ -669,6 +669,100 @@ class HostileSequence(list):
         raise RuntimeError(HOSTILE_TEXT)
 
 
+TWO_FACED_TOKEN = 'SECRET-TWOFACED-3d8e'
+
+
+class TwoFacedPair(tuple):
+    """A (key, value) pair whose value reads differ: validation sees `validated`, every later read sees `compared`."""
+
+    def __new__(cls, key, validated, compared):
+        pair = tuple.__new__(cls, (key, validated))
+        pair._compared = compared
+        pair._reads = 0
+        return pair
+
+    def __getitem__(self, index):
+        if index == 1:
+            self._reads += 1
+            if self._reads > 1:
+                return self._compared
+        return tuple.__getitem__(self, index)
+
+
+class ListSubclass(list):
+    pass
+
+
+class TwoFacedSequenceTests(ComparatorTestCase):
+    """A changed value must never be EXACT or MAINTENANCE_ONLY because a sequence subclass
+    presented different content to validation and to comparison. Exact built-in list and
+    tuple shapes remain the only accepted sequences."""
+
+    def assert_rejected(self, call, scope, reason='unexpected_shape'):
+        with self.assertRaises(pc.ComparatorRejected) as caught:
+            call()
+        error = caught.exception
+        self.assertEqual((error.scope, error.reason), (scope, reason))
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        report = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        for text in (report, repr(error), str(error), repr(error.args)):
+            self.assertNotIn(TWO_FACED_TOKEN, text)
+
+    def test_two_faced_estuary_setting_is_rejected_not_exact(self):
+        attrs, rows = w.xml_projection(ESTUARY_XML, 3)
+        key, original = rows[0]
+        after = (attrs, [TwoFacedPair(key, ('CHANGED-' + TWO_FACED_TOKEN,), original)] + list(rows[1:]))
+        before = w.xml_projection(ESTUARY_XML, 3)
+        self.assert_rejected(lambda: pc.compare_file('estuary', before, after), 'estuary')
+
+    def test_two_faced_guisettings_setting_is_rejected_not_exact(self):
+        attrs, rows, sections = gui()
+        key, original = rows[0]
+        after = (attrs, [TwoFacedPair(key, ('CHANGED-' + TWO_FACED_TOKEN,), original)] + list(rows[1:]), sections)
+        self.assert_rejected(lambda: pc.compare_file('guisettings', gui(), after), 'guisettings')
+
+    def test_two_faced_addons33_entry_is_rejected_not_exact(self):
+        # Validation sees a disabled add-on; the comparison-side read sees the enabled before value.
+        after = [TwoFacedPair('plugin.SECRET-ADDON-4b1d', False, True), ('script.beta', False)]
+        before = [('plugin.SECRET-ADDON-4b1d', True), ('script.beta', False)]
+        self.assert_rejected(lambda: pc.compare_file('addons33', before, after), 'addons33')
+
+    def test_two_faced_entry_is_rejected_for_compare_protected_files_on_either_side(self):
+        attrs, rows = w.xml_projection(ESTUARY_XML, 3)
+        key, original = rows[0]
+        hostile = (attrs, [TwoFacedPair(key, ('CHANGED-' + TWO_FACED_TOKEN,), original)] + list(rows[1:]))
+        self.assert_rejected(lambda: pc.compare_protected_files(baseline(), baseline(estuary=hostile)), 'estuary')
+        self.assert_rejected(lambda: pc.compare_protected_files(baseline(estuary=hostile), baseline()), 'estuary')
+
+    def test_full_comparison_with_two_faced_entry_never_returns_an_exact_verdict(self):
+        attrs, rows = w.xml_projection(ESTUARY_XML, 3)
+        key, original = rows[0]
+        hostile = (attrs, [TwoFacedPair(key, ('CHANGED-' + TWO_FACED_TOKEN,), original)] + list(rows[1:]))
+        outcome = None
+        try:
+            outcome = pc.compare_protected_files(baseline(), baseline(estuary=hostile))
+        except pc.ComparatorRejected:
+            pass
+        self.assertIsNone(outcome)
+
+    def test_sequence_subclasses_at_every_container_level_are_rejected(self):
+        attrs, rows = w.xml_projection(ESTUARY_XML, 3)
+        key, original = rows[0]
+        cases = {
+            'estuary setting container': ('estuary', (attrs, ListSubclass(rows))),
+            'estuary attribute container': ('estuary', (ListSubclass(attrs), rows)),
+            'estuary pair as tuple subclass': ('estuary', (attrs, [TwoFacedPair(key, original, original)])),
+            'guisettings projection container': ('guisettings', ListSubclass(gui())),
+            'addons33 container': ('addons33', ListSubclass(ADDONS_BASE)),
+            'addons33 pair subclass': ('addons33', [TwoFacedPair('script.beta', True, False)]),
+        }
+        for label, (scope, hostile) in cases.items():
+            with self.subTest(case=label):
+                before = baseline()[scope]
+                self.assert_rejected(lambda: pc.compare_file(scope, before, hostile), scope)
+
+
 class HostileMappingTests(ComparatorTestCase):
     """Caller-supplied objects may raise arbitrary text. Only fixed codes may leave the API."""
 
@@ -710,8 +804,8 @@ class HostileMappingTests(ComparatorTestCase):
         with self.assertRaises(pc.ComparatorRejected) as caught:
             pc.compare_protected_files(bad, baseline())
         error = caught.exception
-        self.assertEqual((error.scope, error.reason), ('guisettings', 'internal_error'))
-        self.assertEqual(str(error), 'guisettings: internal_error')
+        self.assertEqual((error.scope, error.reason), ('guisettings', 'unexpected_shape'))
+        self.assertEqual(str(error), 'guisettings: unexpected_shape')
         self.assertIsNone(error.__cause__)
         self.assertIsNone(error.__context__)
 
