@@ -19,6 +19,7 @@ from resources.lib.build_library import _validate_bundle, _validate_bundle_struc
 from resources.lib.config import ConfigSettingType, ConfigTargetKind, ConfigAddonUnavailableError, validate_package_id
 from resources.lib.failure_diagnostics import emit
 from resources.lib.frozen import capture_frozen_build, FrozenBuildManifest, CaptureStatus
+from resources.lib.local_capture import LOCAL_CAPTURE_SOURCE
 from resources.lib.manifest import PrivateSettingDeclaration, SettingTargetKind, validate_manifest
 from resources.lib.private_overlay import PrivateOverlay, PrivateOverlayEntry, validate_private_overlay
 from resources.lib.private_resource import StructuredPrivateResourceDeclaration, PrivateResourceNotInitializedError
@@ -154,6 +155,10 @@ class CreateBuildResult:
     missing_artifact_count: int = 0
     gaps: tuple[str, ...] = ()
     artifact_gaps: tuple[tuple[str, str], ...] = ()
+    # D-033: add-ons whose exact original is demonstrably unavailable and that may be offered
+    # for explicit local capture, and add-ons that were saved as local copies (weaker provenance).
+    local_capture_candidates: tuple[tuple[str, str], ...] = ()
+    local_capture_artifacts: tuple[tuple[str, str], ...] = ()
     public_bundle: PreparedPublicBundle | None = field(default=None, repr=False)
     private_overlay: PrivateOverlay | None = field(default=None, repr=False)
 
@@ -290,7 +295,8 @@ class CreateBuildCaptureEngine:
         self.inspect_state = inspect_state
         self.private_resources = private_resources
 
-    def capture(self, request: CreateBuildRequest, *, created_at: str) -> CreateBuildResult:
+    def capture(self, request: CreateBuildRequest, *, created_at: str,
+                local_capture_addon_ids: tuple[str, ...] = ()) -> CreateBuildResult:
         if not isinstance(request, CreateBuildRequest):
             return CreateBuildResult(CreateCaptureStatus.FAILED, "", "", 0, 0, False, 0, 0, 0, 0,
                                      gaps=("INVALID_CREATE_REQUEST",))
@@ -320,7 +326,8 @@ class CreateBuildCaptureEngine:
             captured = capture_frozen_build(backend=self.inventory, store=self.artifact_store,
                                            root_addon_ids=roots, build_id=request.build_id, name=request.build_name,
                                            created_at=created_at, kodi_version=state.kodi_version, platform=state.platform,
-                                           configuration_packages=(request.config_package_id,))
+                                           configuration_packages=(request.config_package_id,),
+                                           local_capture_addon_ids=local_capture_addon_ids)
             raw = captured.manifest
             exact = sum(n.artifact is not None for n in raw.addons)
             # A platform-provided requirement is verified on the target, so it is never a missing artifact.
@@ -331,8 +338,11 @@ class CreateBuildCaptureEngine:
             for node in raw.addons:
                 validate_manifest({"schema_version": 1, "build": {"id": request.build_id, "version": request.build_version},
                                    "addons": [{"addon_id": node.addon_id, "state": "enabled"}]})
+            local_copies = tuple(sorted((n.addon_id, n.version) for n in raw.addons
+                                        if n.artifact is not None and n.artifact.source == LOCAL_CAPTURE_SOURCE))
             result = replace(result, addon_count=len(raw.addons), exact_artifact_count=exact,
-                             missing_artifact_count=len(gaps))
+                             missing_artifact_count=len(gaps), local_capture_artifacts=local_copies,
+                             local_capture_candidates=captured.local_capture_candidates)
             if not captured.complete or captured.errors:
                 # Fixed allowlisted phases only: never forward IDs or error text.
                 emit("create.capture.incomplete")

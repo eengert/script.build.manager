@@ -1214,6 +1214,19 @@ msgctxt "#32748"
 msgid "None"
 msgstr ""
 
+# D-033 last-resort local capture
+msgctxt "#32749"
+msgid "The original file for %s %s is no longer available from the official repository. Build Manager can instead package the files installed on this device. This is a local copy, not the original, and it may not work on other platforms. Package this add-on?"
+msgstr ""
+
+msgctxt "#32750"
+msgid "Package local copy"
+msgstr ""
+
+msgctxt "#32751"
+msgid "%s add-ons are local copies, not original files"
+msgstr ""
+
 # Install final confirmation warning
 msgctxt "#32818"
 msgid "WARNING: Applying a build can overwrite your current Kodi configuration. Review the proposed changes before continuing."

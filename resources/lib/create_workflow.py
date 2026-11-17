@@ -93,6 +93,7 @@ class CreateTerminal:
     addon_count: int = 0
     skin_included: bool = False
     private_included: bool = False
+    local_copy_count: int = 0
     def safe_dict(self):
         return dict(vars(self))
 
@@ -126,6 +127,8 @@ class CreateBuildWorkflow:
         self.engine_factory, self.private_store_factory = engine_factory, private_store_factory
         self.catalog = catalog or TrustedCaptureCatalog()
         self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
+        # D-033: presentation-layer consent callback. None means no local capture is ever offered.
+        self.confirm_local_capture = None
 
     def _is_application_addon(self, addon_id, inventory):
         metadata = self.inventory.read_installed_metadata(addon_id, installed=inventory)
@@ -199,13 +202,25 @@ class CreateBuildWorkflow:
     def execute(self, preview):
         """Called only after native confirmation; preserve the one previewed request.
 
+        ``self.confirm_local_capture`` (D-033, set by the presentation layer) receives the (addon_id, version) pairs whose exact
+        original is demonstrably unavailable and returns the subset the user approved one by
+        one. Without it, or with an empty answer, no add-on is ever captured locally.
+
         Private lock spans register/rollback so another Create cannot adopt a new
         overlay before an ordinary failed registration removes it. A crash may
         leave an unregistered private orphan; it never publishes the wrong data.
         """
         request = preview.request
         try:
-            result = self.engine_factory().capture(request, created_at=self.clock())
+            engine = self.engine_factory()
+            result = engine.capture(request, created_at=self.clock())
+            candidates = tuple(getattr(result, 'local_capture_candidates', ()))
+            if (result.status is not CreateCaptureStatus.COMPLETE and candidates
+                    and self.confirm_local_capture is not None):
+                approved = tuple(sorted({a for a, _ in self.confirm_local_capture(candidates)}
+                                        & {a for a, _ in candidates}))
+                if approved:
+                    result = engine.capture(request, created_at=self.clock(), local_capture_addon_ids=approved)
         except Exception:
             return CreateTerminal(32732)
         if result.status is not CreateCaptureStatus.COMPLETE:
@@ -280,8 +295,10 @@ class CreateBuildWorkflow:
         try:
             self.library.select(entry.entry_id, request.device_profile_id)
         except Exception:
-            return CreateTerminal(32735, result.addon_count, result.skin_included, bool(result.private_overlay))
-        return CreateTerminal(32736, result.addon_count, result.skin_included, bool(result.private_overlay))
+            return CreateTerminal(32735, result.addon_count, result.skin_included, bool(result.private_overlay),
+                                  len(getattr(result, 'local_capture_artifacts', ())))
+        return CreateTerminal(32736, result.addon_count, result.skin_included, bool(result.private_overlay),
+                              len(getattr(result, 'local_capture_artifacts', ())))
 
 
 def runtime_create_workflow():

@@ -2,8 +2,10 @@
 
 This module creates immutable software snapshots; it does not install add-ons,
 change Kodi settings, or read/write Kodi databases.  Acquisition is limited to
-an existing artifact store, exact package-cache ZIPs, and an explicit optional
-repository provider.  Installed-directory zipping is intentionally absent.
+an existing artifact store, exact package-cache ZIPs, the exact official repository
+archive, and (D-033) one explicitly authorised, controlled local capture that is used
+only when the official index proves the exact original is absent. Installed-directory
+zipping is otherwise intentionally absent.
 """
 
 from __future__ import annotations
@@ -36,7 +38,14 @@ from resources.lib.official_repository import (
     BoundedHttpsGetter,
     OfficialRepositoryProvider,
     RepositoryArtifactRefusal,
+    RepositoryArtifactUnlisted,
     parse_official_repository_config,
+)
+from resources.lib.local_capture import (
+    LOCAL_CAPTURE_MAX_BYTES,
+    LOCAL_CAPTURE_SOURCE,
+    LocalCaptureRefusal,
+    build_local_capture_zip,
 )
 from resources.lib.readonly_io import read_regular_file
 
@@ -108,6 +117,9 @@ class ArtifactAcquisition:
     metadata: Optional[ArtifactMetadata] = None
     source: str = ""
     error: str = ""
+    # True only when the checksum-verified official index proved the exact original is absent
+    # and an explicit per-add-on local capture has not been authorised (D-033).
+    local_capture_eligible: bool = False
 
 
 @dataclass(frozen=True)
@@ -325,6 +337,9 @@ class FrozenBuildCaptureResult:
     recoverability: Optional["FrozenBuildRecoverabilitySummary"] = None
     # Fixed diagnostic categories only; excluded from manifest/fingerprint truth.
     diagnostic_categories: Tuple[str, ...] = ()
+    # (addon_id, version) pairs whose exact original is demonstrably unavailable and that
+    # may be offered for explicit local capture. Excluded from manifest/fingerprint truth.
+    local_capture_candidates: Tuple[Tuple[str, str], ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -500,6 +515,10 @@ class InventoryBackend:
         return ()
 
     def get_repository_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        return None
+
+    def capture_installed_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        """Last-resort controlled package of the installed add-on (D-033). Unsupported by default."""
         return None
 
     def get_provenance(self, addon_id: str) -> Tuple[ProvenanceStatus, Mapping[str, str]]:
@@ -708,8 +727,13 @@ def _open_identical(directory_fd: int, name: str, info: os.stat_result, *, direc
         raise
 
 
-def _digest_bounded(file_fd: int, info: os.stat_result, totals: Dict[str, int]) -> Tuple[int, str]:
-    """Hash one open file, refusing if the file changes while it is being read."""
+def _digest_bounded(
+    file_fd: int, info: os.stat_result, totals: Dict[str, int], sink: Optional[bytearray] = None,
+) -> Tuple[int, str]:
+    """Hash one open file, refusing if the file changes while it is being read.
+
+    ``sink`` additionally keeps the exact bytes that were hashed (local capture only).
+    """
     if _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
         raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
     digest = hashlib.sha256()
@@ -723,6 +747,10 @@ def _digest_bounded(file_fd: int, info: os.stat_result, totals: Dict[str, int]) 
         if size > _TREE_MAX_FILE_BYTES or totals["bytes"] > _TREE_MAX_BYTES:
             raise RepositoryArtifactRefusal("installed add-on content exceeds its safe size limit")
         digest.update(chunk)
+        if sink is not None:
+            if totals["bytes"] > LOCAL_CAPTURE_MAX_BYTES:
+                raise RepositoryArtifactRefusal("installed add-on exceeds the local capture size limit")
+            sink.extend(chunk)
     if size != info.st_size or _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
         raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
     return size, digest.hexdigest()
@@ -739,6 +767,8 @@ class _InstalledSnapshot:
 
     digests: Mapping[Tuple[str, ...], Tuple[int, str]]
     stamps: Mapping[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]]
+    # Exact scanned bytes, kept only on request; never part of snapshot equality.
+    contents: Optional[Mapping[Tuple[str, ...], bytes]] = field(default=None, compare=False, repr=False)
 
 
 def _walk_installed_directory(
@@ -748,6 +778,7 @@ def _walk_installed_directory(
     stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]],
     totals: Dict[str, int],
     depth: int,
+    contents: Optional[Dict[Tuple[str, ...], bytes]] = None,
 ) -> None:
     if depth > _TREE_MAX_DEPTH:
         raise RepositoryArtifactRefusal("installed add-on content is too deeply nested")
@@ -770,7 +801,7 @@ def _walk_installed_directory(
         if stat.S_ISDIR(info.st_mode):
             child_fd = _open_identical(directory_fd, name, info, directory=True)
             try:
-                _walk_installed_directory(child_fd, child, digests, stamps, totals, depth + 1)
+                _walk_installed_directory(child_fd, child, digests, stamps, totals, depth + 1, contents)
             finally:
                 os.close(child_fd)
         elif not stat.S_ISREG(info.st_mode):
@@ -778,7 +809,12 @@ def _walk_installed_directory(
         else:
             file_fd = _open_identical(directory_fd, name, info, directory=False)
             try:
-                digests[child] = _digest_bounded(file_fd, info, totals)
+                if contents is None:
+                    digests[child] = _digest_bounded(file_fd, info, totals)
+                else:
+                    sink = bytearray()
+                    digests[child] = _digest_bounded(file_fd, info, totals, sink)
+                    contents[child] = bytes(sink)
                 stamps[child] = ("f", info.st_dev, _entry_stamp(info))
             finally:
                 os.close(file_fd)
@@ -816,7 +852,9 @@ def _confirm_root_binding(root: "_TrustedRoot", addon_id: str, scanned: os.stat_
         raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
 
 
-def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _InstalledSnapshot:
+def _installed_addon_snapshot(
+    root: "_TrustedRoot", addon_id: str, *, collect: bool = False,
+) -> _InstalledSnapshot:
     """Digest every file of one installed add-on without following any link.
 
     The trusted root must still be the recorded object, every entry must be the object that
@@ -828,6 +866,7 @@ def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _Installed
     digests: Dict[Tuple[str, ...], Tuple[int, str]] = {}
     stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]] = {}
     totals = {"entries": 0, "bytes": 0}
+    contents: Optional[Dict[Tuple[str, ...], bytes]] = {} if collect else None
     try:
         try:
             addon_fd = os.open(
@@ -837,7 +876,7 @@ def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _Installed
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
         try:
             scanned = os.fstat(addon_fd)
-            _walk_installed_directory(addon_fd, (), digests, stamps, totals, 0)
+            _walk_installed_directory(addon_fd, (), digests, stamps, totals, 0, contents)
             _confirm_root_binding(root, addon_id, scanned)
         except OSError as exc:
             raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
@@ -848,6 +887,10 @@ def _installed_addon_snapshot(root: "_TrustedRoot", addon_id: str) -> _Installed
     return _InstalledSnapshot(
         digests=_normalized_digests(digests, "installed add-on content"),
         stamps=dict(stamps),
+        contents=(
+            {tuple(unicodedata.normalize("NFC", part) for part in key): value for key, value in contents.items()}
+            if contents is not None else None
+        ),
     )
 
 
@@ -1209,6 +1252,47 @@ class KodiInventoryBackend(InventoryBackend):
             raise RepositoryArtifactRefusal("installed add-on content differs from the official archive")
         return filename, archive
 
+    def capture_installed_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        """Package the installed add-on's own files, only for its exact installed ID and version.
+
+        Reached solely through an explicit per-add-on authorisation after the official index
+        proved the exact original absent (D-033). Platform-provided add-ons are never packaged.
+        The scan uses the same trusted root, no-follow traversal, bounded reads, identity and
+        freshness checks as the official provider: the content that is packaged is read once,
+        then the whole tree is scanned again and must be identical before the ZIP is returned.
+        Any failure raises LocalCaptureRefusal or RepositoryArtifactRefusal and returns nothing.
+        """
+        if (not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id)
+                or not isinstance(version, str) or not _SAFE_ADDON_VERSION.fullmatch(version)):
+            raise LocalCaptureRefusal("exact add-on identity is invalid")
+        details = next((item for item in self.get_installed_addons() if item.get("addonid") == addon_id), None)
+        if details is None or details.get("version") != version:
+            raise LocalCaptureRefusal("installed add-on is not the exact requested version")
+        root = self._trusted_root(addon_id, details.get("path"))
+        if root is None:
+            raise LocalCaptureRefusal("installed add-on location is not trusted")
+        if root is self._application:
+            raise LocalCaptureRefusal("platform-provided add-ons are never packaged")
+        first = _installed_addon_snapshot(root, addon_id, collect=True)
+        files = first.contents or {}
+        xml_bytes = files.get(("addon.xml",))
+        if xml_bytes is None:
+            raise LocalCaptureRefusal("installed add-on has no addon.xml")
+        try:
+            _check_addon_xml_identity(xml_bytes, addon_id, version)
+        except CaptureError as exc:
+            raise LocalCaptureRefusal("installed add-on metadata does not match its identity") from exc
+        archive, _dropped = build_local_capture_zip(addon_id, files)
+        second = _installed_addon_snapshot(root, addon_id)
+        if second != first:
+            raise LocalCaptureRefusal("installed add-on content changed during capture")
+        try:
+            validate_addon_zip(archive, expected_addon_id=addon_id, expected_version=version,
+                               source=LOCAL_CAPTURE_SOURCE)
+        except ArtifactValidationError as exc:
+            raise LocalCaptureRefusal("local package failed exact validation") from exc
+        return f"{addon_id}-{version}.zip", archive
+
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         if not self.package_cache_dir.is_dir():
             return ()
@@ -1239,9 +1323,14 @@ class KodiInventoryBackend(InventoryBackend):
 class ArtifactAcquirer:
     """Acquire exact artifacts in the BM-021A priority order."""
 
-    def __init__(self, store: ArtifactStore, backend: InventoryBackend):
+    def __init__(
+        self, store: ArtifactStore, backend: InventoryBackend,
+        local_capture_addon_ids: Iterable[str] = (),
+    ):
         self.store = store
         self.backend = backend
+        # Explicit per-add-on authorisation for the D-033 last-resort local capture.
+        self.local_capture_addon_ids = frozenset(local_capture_addon_ids)
 
     def acquire(self, addon_id: str, version: str) -> ArtifactAcquisition:
         existing = self.store.find(addon_id, version)
@@ -1268,7 +1357,17 @@ class ArtifactAcquirer:
 
         try:
             repository_candidate = self.backend.get_repository_artifact(addon_id, version)
+        except RepositoryArtifactUnlisted as exc:
+            # The only proof of unavailability. Fallback still needs explicit authorisation.
+            if addon_id not in self.local_capture_addon_ids:
+                return ArtifactAcquisition(
+                    CaptureStatus.INCOMPLETE_ARTIFACT,
+                    error=f"exact artifact unavailable for {addon_id} {version}: {exc}",
+                    local_capture_eligible=True,
+                )
+            return self._acquire_local_capture(addon_id, version)
         except RepositoryArtifactRefusal as exc:
+            # Integrity, security, transport and ambiguity refusals never fall back.
             return ArtifactAcquisition(
                 CaptureStatus.INCOMPLETE_ARTIFACT,
                 error=f"exact artifact unavailable for {addon_id} {version}: {exc}",
@@ -1292,6 +1391,29 @@ class ArtifactAcquirer:
             CaptureStatus.INCOMPLETE_ARTIFACT,
             error=f"exact artifact unavailable for {addon_id} {version}",
         )
+
+    def _acquire_local_capture(self, addon_id: str, version: str) -> ArtifactAcquisition:
+        """D-033: store a controlled package of the installed files, recorded as local capture."""
+        try:
+            candidate = self.backend.capture_installed_artifact(addon_id, version)
+        except (LocalCaptureRefusal, RepositoryArtifactRefusal) as exc:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"local capture refused for {addon_id} {version}: {exc}",
+            )
+        if candidate is None:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"exact artifact unavailable for {addon_id} {version}",
+            )
+        filename, data = candidate
+        try:
+            metadata = self.store.import_zip(
+                data, expected_addon_id=addon_id, expected_version=version, source=LOCAL_CAPTURE_SOURCE,
+            )
+        except Exception as exc:
+            return ArtifactAcquisition(CaptureStatus.INVALID_PACKAGE, error=f"{filename}: {exc}")
+        return ArtifactAcquisition(CaptureStatus.COMPLETE, metadata, LOCAL_CAPTURE_SOURCE)
 
 
 _IMPORT_RE = re.compile(r"^import$")
@@ -1468,8 +1590,13 @@ def capture_frozen_build(
     platform: str = "",
     configuration_packages: Sequence[str] = (),
     install_policies: Sequence["FrozenInstallPolicy"] = (),
+    local_capture_addon_ids: Iterable[str] = (),
 ) -> FrozenBuildCaptureResult:
-    """Capture exact installed software for selected roots and dependencies."""
+    """Capture exact installed software for selected roots and dependencies.
+
+    ``local_capture_addon_ids`` explicitly authorises the D-033 last-resort local capture for
+    those add-ons only. It is empty by default, so no add-on is ever captured locally silently.
+    """
     listing = tuple(backend.get_installed_addons())
     installed = {}
     for raw in listing:
@@ -1488,6 +1615,8 @@ def capture_frozen_build(
     visited = set()
     errors: List[str] = []
     diagnostic_categories = set()
+    local_candidates: List[Tuple[str, str]] = []
+    local_capture_ids = frozenset(local_capture_addon_ids)
 
     def walk(addon_id: str, optional: bool = False) -> None:
         optional_by_id[addon_id] = optional_by_id.get(addon_id, True) and optional
@@ -1657,7 +1786,9 @@ def capture_frozen_build(
             )
             continue
         provenance, detail = backend.get_provenance(addon_id)
-        acquisition = ArtifactAcquirer(store, backend).acquire(addon_id, version)
+        acquisition = ArtifactAcquirer(store, backend, local_capture_ids).acquire(addon_id, version)
+        if acquisition.local_capture_eligible:
+            local_candidates.append((addon_id, version))
         status = acquisition.status
         if status == CaptureStatus.COMPLETE:
             status = CaptureStatus.COMPLETE
@@ -1722,4 +1853,5 @@ def capture_frozen_build(
         tuple(sorted(set(errors))),
         recoverability,
         tuple(sorted(diagnostic_categories)),
+        tuple(sorted(set(local_candidates))),
     )

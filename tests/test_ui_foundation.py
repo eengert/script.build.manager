@@ -36,7 +36,8 @@ class NativeFoundationTests(unittest.TestCase):
                      and isinstance(n.func, ast.Attribute)]
             self.assertFalse(any(n.func.attr in ('yesno', 'yesnocustom') for n in calls), path)
             if path.name == 'native_dialogs.py':
-                self.assertEqual(sum(n.func.attr == 'confirmation' for n in calls), 3)
+                # Final Create, second Create confirmation, and the D-033 per-add-on local-capture consent.
+                self.assertEqual(sum(n.func.attr == 'confirmation' for n in calls), 4)
 
     def test_fallback_action_menu_has_navigation_before_help(self):
         _, dialog, _ = self.flow([0, -1, -1])

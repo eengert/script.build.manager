@@ -94,6 +94,15 @@ class RepositoryArtifactRefusal(Exception):
     """Fail-closed refusal. The message is a fixed reason with no URL, path or secret."""
 
 
+class RepositoryArtifactUnlisted(RepositoryArtifactRefusal):
+    """The checksum-verified official index was read and does not list this exact version.
+
+    This is the only refusal that proves the exact original is unavailable. Every other
+    refusal (transport, TLS, checksum, ambiguity, malformed index) proves nothing about
+    availability and must never lead to a weaker acquisition path (D-033).
+    """
+
+
 @dataclass(frozen=True)
 class OfficialRepositoryConfig:
     """The validated single official directory of the bundled repository add-on."""
@@ -558,7 +567,7 @@ class OfficialRepositoryProvider:
         entries = self._index_entries()
         key = (addon_id, version)
         if key not in entries:
-            raise RepositoryArtifactRefusal("exact version is not listed in the official index")
+            raise RepositoryArtifactUnlisted("exact version is not listed in the official index")
         location = entries[key]
         if location is None:
             raise RepositoryArtifactRefusal("official index lists this version ambiguously")
