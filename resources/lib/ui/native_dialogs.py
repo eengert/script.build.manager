@@ -251,7 +251,12 @@ class NativeDialogs:
                                 local_copies = getattr(terminal, 'local_copy_count', 0)
                                 if local_copies:
                                     message += '\n' + self.text(32751) % local_copies
-                            self.dialog.ok(self.text(32100), message)
+                                # Kodi's OK dialog shows only about four lines and clipped the D-033
+                                # disclosure; the scrollable text page keeps every identity line visible.
+                                self.create_dialogs.information(self.text(32100), message,
+                                    actions=(('ok', self.text(32744)),))
+                            else:
+                                self.dialog.ok(self.text(32100), message)
                             self.settle(200)
                             return
                         else:

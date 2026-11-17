@@ -152,6 +152,7 @@
                             <include>Size_Grouplist_Pad</include>
                         </control>
                         <control type="textbox" id="110">
+                            <onright>121</onright>
                             <font>font_main_plot</font>
                             <textcolor>dialog_fg_70</textcolor>
                             <pagecontrol>121</pagecontrol>
@@ -171,7 +172,7 @@
                             <param name="showonepage">true</param>
                             <param name="inset">false</param>
                             <visible>Control.IsVisible(110)</visible>
-                            <onleft>201</onleft>
+                            <onleft>110</onleft>
                             <onright>201</onright>
                         </include>
                     </control>
@@ -194,7 +195,7 @@
                             <textcolor>dialog_fg_70</textcolor>
                             <focusedcolor>$VAR[ColorSelected]</focusedcolor>
                             <wrapmultiline>false</wrapmultiline>
-                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="Control.IsVisible(110)">110</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
@@ -210,7 +211,7 @@
                             <textcolor>dialog_fg_70</textcolor>
                             <focusedcolor>$VAR[ColorSelected]</focusedcolor>
                             <wrapmultiline>false</wrapmultiline>
-                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="Control.IsVisible(110)">110</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
@@ -226,7 +227,7 @@
                             <textcolor>dialog_fg_70</textcolor>
                             <focusedcolor>$VAR[ColorSelected]</focusedcolor>
                             <wrapmultiline>false</wrapmultiline>
-                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="Control.IsVisible(110)">110</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>
@@ -242,7 +243,7 @@
                             <textcolor>dialog_fg_70</textcolor>
                             <focusedcolor>$VAR[ColorSelected]</focusedcolor>
                             <wrapmultiline>false</wrapmultiline>
-                            <onleft condition="Control.IsVisible(110)">121</onleft>
+                            <onleft condition="Control.IsVisible(110)">110</onleft>
                             <onleft condition="!Control.IsVisible(110)">100</onleft>
                             <onright condition="Control.IsVisible(110)">121</onright>
                             <onright condition="!Control.IsVisible(110)">100</onright>

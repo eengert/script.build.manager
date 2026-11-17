@@ -177,6 +177,7 @@
                 </focusedlayout>
             </control>
             <control type="textbox" id="110">
+                <onright>121</onright>
                 <left>40</left>
                 <top>130</top>
                 <width>1100</width>
@@ -209,7 +210,7 @@
                 <height>660</height>
                 <orientation>vertical</orientation>
                 <visible>Control.IsVisible(110)</visible>
-                <onleft>201</onleft>
+                <onleft>110</onleft>
                 <onright>201</onright>
                 <showonepage>true</showonepage>
                 <texturesliderbackground colordiffuse="FF454C55">bm-white.png</texturesliderbackground>
@@ -234,7 +235,7 @@
                 <textoffsetx>20</textoffsetx>
                 <texturefocus border="16" colordiffuse="FF277DA8">bm-panel.png</texturefocus>
                 <texturenofocus border="16" colordiffuse="FF30363D">bm-panel.png</texturenofocus>
-                <onleft condition="Control.IsVisible(110)">121</onleft>
+                <onleft condition="Control.IsVisible(110)">110</onleft>
                 <onleft condition="!Control.IsVisible(110)">100</onleft>
                 <onright condition="Control.IsVisible(110)">121</onright>
                 <onright condition="!Control.IsVisible(110)">100</onright>
@@ -255,7 +256,7 @@
                 <textoffsetx>20</textoffsetx>
                 <texturefocus border="16" colordiffuse="FF277DA8">bm-panel.png</texturefocus>
                 <texturenofocus border="16" colordiffuse="FF30363D">bm-panel.png</texturenofocus>
-                <onleft condition="Control.IsVisible(110)">121</onleft>
+                <onleft condition="Control.IsVisible(110)">110</onleft>
                 <onleft condition="!Control.IsVisible(110)">100</onleft>
                 <onright condition="Control.IsVisible(110)">121</onright>
                 <onright condition="!Control.IsVisible(110)">100</onright>
@@ -276,7 +277,7 @@
                 <textoffsetx>20</textoffsetx>
                 <texturefocus border="16" colordiffuse="FF277DA8">bm-panel.png</texturefocus>
                 <texturenofocus border="16" colordiffuse="FF30363D">bm-panel.png</texturenofocus>
-                <onleft condition="Control.IsVisible(110)">121</onleft>
+                <onleft condition="Control.IsVisible(110)">110</onleft>
                 <onleft condition="!Control.IsVisible(110)">100</onleft>
                 <onright condition="Control.IsVisible(110)">121</onright>
                 <onright condition="!Control.IsVisible(110)">100</onright>
@@ -297,7 +298,7 @@
                 <textoffsetx>20</textoffsetx>
                 <texturefocus border="16" colordiffuse="FF277DA8">bm-panel.png</texturefocus>
                 <texturenofocus border="16" colordiffuse="FF30363D">bm-panel.png</texturenofocus>
-                <onleft condition="Control.IsVisible(110)">121</onleft>
+                <onleft condition="Control.IsVisible(110)">110</onleft>
                 <onleft condition="!Control.IsVisible(110)">100</onleft>
                 <onright condition="Control.IsVisible(110)">121</onright>
                 <onright condition="!Control.IsVisible(110)">100</onright>

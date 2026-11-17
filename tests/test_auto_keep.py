@@ -427,11 +427,11 @@ class TestBackgroundProgress(unittest.TestCase):
         gui = Mock()
         gui.DialogProgressBG.side_effect = [first, good]
         busy = entry.background_busy(gui, 'Build Manager')
-        def ui():
+        def ui(tail='cancel'):
             # Create renders a sanitized failure and returns to its menu; Back
             # exits that existing UI path. Unlike execute_install it doesn't
             # propagate an execution exception to its caller.
-            dialog = NativeDialog([0, 'apply', 'create', 'confirm', 'cancel'], inputs=['B1 synthetic build'])
+            dialog = NativeDialog([0, 'apply', 'create', 'confirm', tail], inputs=['B1 synthetic build'])
             return NativeDialogs(CreateAddon(), dialog, lambda ms: None,
                                  create_provider=lambda: workflow, busy=busy,
                                  create_dialogs=CreateDialogs(CreateAddon(), show=dialog.show_page))
@@ -441,7 +441,8 @@ class TestBackgroundProgress(unittest.TestCase):
         self.assertNotIn(str(primary), str(first_ui.dialog.results))
         workflow.execute.assert_not_called()
         self.assertEqual(first.closes, 1)
-        ui().create()
+        # The successful completion page is dismissed with its own OK action.
+        ui(tail='ok').create()
         workflow.execute.assert_called_once()
         self.assertTrue(good.handle.finished)
         self.assertEqual(good.closes, 1)
