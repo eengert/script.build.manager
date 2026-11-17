@@ -101,7 +101,9 @@ class CreateDialogs:
         page = CreatePage(t(32708), actions=(('create', t(32747)),
             ('cancel', t(32743)), ('help', t(32112))), body=body, focus=self.review_focus)
         result = self.show(page)
-        self.review_focus = page.focus
+        # Only a visible action button is remembered; text or scrollbar focus resets to Create.
+        action_ids = range(201, 201 + len(page.actions))
+        self.review_focus = page.focus if page.focus in action_ids else 201
         return result
 
     def status(self, body):

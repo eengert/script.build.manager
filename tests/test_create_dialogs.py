@@ -371,6 +371,53 @@ class WorkflowDialogTests(unittest.TestCase):
         self.dialog.ok.assert_called_once_with('Create Build', Addon.strings[32732])
 
 
+    def test_presentation_failure_after_successful_create_keeps_the_success(self):
+        # The scrollable completion page fails after Create succeeded: the OK text carries the
+        # same summary, Create runs once, and no failure text or second execution appears.
+        self.workflow.execute.return_value = SimpleNamespace(string_id=32736, addon_count=2,
+            skin_included=False, private_included=False)
+        inner = ScriptedShow([(201, 0)], [(201, 0)], [('confirm', 0)])
+        def show(page):
+            if [key for key, _ in page.actions] == ['ok']:
+                raise RuntimeError('private-presentation-detail')
+            return inner(page)
+        ui = NativeDialogs(Addon(), self.dialog, lambda _: None,
+            create_provider=lambda: self.workflow, busy=self.busy.append,
+            create_dialogs=CreateDialogs(Addon(), show))
+        ui.create()
+        self.workflow.execute.assert_called_once_with(self.preview)
+        self.assertEqual(self.busy, [True, False])
+        self.dialog.yesno.assert_not_called()
+        self.assertEqual(self.dialog.ok.call_count, 1)
+        self.assertEqual(self.dialog.ok.call_args.args[0], 'Create Build')
+        self.assertIn(Addon.strings[32736], self.dialog.ok.call_args.args[1])
+        self.assertIn('BM-MANUAL-CREATE-01 1.0.0', self.dialog.ok.call_args.args[1])
+        self.assertNotIn(Addon.strings[32732], str(self.dialog.ok.call_args_list))
+        self.assertNotIn('private-presentation-detail', str(self.dialog.ok.call_args_list))
+
+    def test_both_completion_presentations_failing_still_reports_success_once(self):
+        self.workflow.execute.return_value = SimpleNamespace(string_id=32736, addon_count=2,
+            skin_included=False, private_included=False)
+        self.dialog.ok.side_effect = RuntimeError('ok dialog unavailable')
+        inner = ScriptedShow([(201, 0)], [(201, 0)], [('confirm', 0)])
+        def show(page):
+            if [key for key, _ in page.actions] == ['ok']:
+                raise RuntimeError('page unavailable')
+            return inner(page)
+        ui = NativeDialogs(Addon(), self.dialog, lambda _: None,
+            create_provider=lambda: self.workflow, busy=self.busy.append,
+            create_dialogs=CreateDialogs(Addon(), show))
+        ui.create()
+        self.workflow.execute.assert_called_once_with(self.preview)
+        self.assertEqual(self.busy, [True, False])
+        self.assertNotIn(Addon.strings[32732], str(self.dialog.ok.call_args_list))
+
+    def test_genuine_create_failure_still_reports_the_failure_text(self):
+        self.workflow.execute.side_effect = RuntimeError('private-token')
+        self.run_ui([(201, 0)], [(201, 0)], [('confirm', 0)], [('cancel', 0)])
+        self.workflow.execute.assert_called_once()
+        self.dialog.ok.assert_called_once_with('Create Build', Addon.strings[32732])
+
 class Control:
     def __init__(self): self.items = []; self.position = 0
     def setLabel(self, label): self.label = label
@@ -787,6 +834,48 @@ class KodiBindingTests(unittest.TestCase):
         self.assertEqual(captures[0].arguments,
             ('script-build-manager-create.xml', str(ROOT), 'Default', '1080i'))
         self.assertEqual(captures[0].getControl(201).label, 'Close')
+
+
+class ReviewFocusTests(unittest.TestCase):
+    """N2: Review remembers only visible action buttons between openings."""
+
+    def reviews(self, steps):
+        """Return the focus each Review page opened with, in order."""
+        opened, queue = [], iter(steps)
+        def show(page):
+            opened.append(page.focus)
+            focus, result = next(queue)
+            page.focus = focus  # where D-pad focus was when the page closed
+            return result
+        ui = CreateDialogs(Addon(), show)
+        for _ in steps:
+            ui.review('plan body')
+        return opened
+
+    def test_back_from_text_focus_reopens_on_create(self):
+        opened = self.reviews([(110, 'cancel'), (201, 'cancel')])
+        self.assertEqual(opened[1], 201)
+
+    def test_back_from_scrollbar_focus_reopens_on_create(self):
+        opened = self.reviews([(121, 'cancel'), (201, 'cancel')])
+        self.assertEqual(opened[1], 201)
+
+    def test_visible_cancel_focus_is_preserved(self):
+        opened = self.reviews([(202, 'cancel'), (201, 'cancel')])
+        self.assertEqual(opened[1], 202)
+
+    def test_help_round_trip_keeps_help_focus(self):
+        opened = self.reviews([(203, 'help'), (203, 'cancel')])
+        self.assertEqual(opened[1], 203)
+
+    def test_focus_outside_the_visible_actions_resets_to_create(self):
+        opened = self.reviews([(204, 'cancel'), (201, 'cancel')])
+        self.assertEqual(opened[1], 201)
+
+    def test_text_focus_after_a_preserved_action_does_not_persist(self):
+        opened = self.reviews([(202, 'cancel'), (110, 'cancel'), (201, 'cancel')])
+        self.assertEqual(opened[1], 202)
+        self.assertEqual(opened[2], 201)
 
 
 class XmlTests(unittest.TestCase):
