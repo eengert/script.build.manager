@@ -358,7 +358,7 @@ Prohibited. Each of these makes the run INCONCLUSIVE at least: any artifact-deci
 | Public comparison before and after | `result.json` `public_comparison` (`PRESERVED` or `CHANGED_OR_MISSING`) |
 | After public-state contents | Not exported |
 | S1 and S2 equality, with reason | `result.json` `practical_precondition` prerequisites `S1` and `S2` (status and reason) |
-| S5 Addons33 identity and enabled state | `practical_precondition` prerequisite `S5` (`identity_and_enabled_match`) |
+| S5 installed add-on identity and enabled state, and EXACT Addons33 projection | `practical_precondition` prerequisite `S5` (status `MET`, reason `addons33_exact_and_identity_match`), which combines `identity_and_enabled_match` (installed identity and enabled equality) and `addons33_exact` (Addons33 projection classified `EXACT`) |
 | Five strict file statuses | `result.json` `after.files[].status` |
 | Five-file practical classes and maintenance classes | `result.json` `after.practical.files` |
 | S7 owners, pending publication, quit and source binding | `practical_precondition` prerequisite `S7` (reason `owner_pending_quit_and_source_verified` when met), with L10 to L12 |
