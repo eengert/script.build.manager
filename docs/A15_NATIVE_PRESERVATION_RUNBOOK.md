@@ -16,10 +16,7 @@ Keep three distinct observations; never replace the strict comparison result:
 
 The current bridge/driver deliberately return per-file equality results and
 `maintenance_attribution=UNKNOWN`; they do not export field deltas or private
-baseline values. Since the 2026-11-17 offline wiring, the bridge's after result also
-carries a sanitized D-032 classification of class names and counts, which is not a
-verdict (see "Implementation status" under the D-032 section). There is no current
-automatic causal classifier. Do not infer
+baseline values. There is no current automatic causal classifier. Do not infer
 one from file names, numeric direction, timestamps, receipt validity, source
 plausibility or a run without Build Manager. A same-shaped overwrite can
 produce exactly the same projection as a legitimate lifecycle update.
@@ -54,16 +51,12 @@ reviewed in-memory comparator that is not implemented here. The strict result is
 unchanged by that decision. No monitoring service or private baseline persistence
 is needed or authorized by this contract.
 
-Current status (2026-11-17): the offline comparator is wired into offline evidence only, with the scope set out in the current-status clarification under the D-032 section. That wiring is not a practical verdict, not native authorization and not a change to the strict comparison.
-
 ## Practical beta preservation contract (D-032)
 
 Approved by Eric on 2026-11-15 for personal beta readiness. This section defines
 an additional practical verdict. It does not run, authorize or accept any native
 task, does not change the N6 strict comparison, and does not add a comparison
 subsystem.
-
-**Current status (2026-11-17, additive; the paragraph above is the original 2026-11-15 text).** Eric explicitly approved retaining the offline evidence wiring implemented in commit `a4509a5`, subject to the corrections recorded under D-032 in `.orchestrator/DECISIONS.md`. The approved scope is the same-session in-memory comparison in `AcquisitionSession.finish()`, sanitized per-file classifications and integer counts, their validation in A15 evidence, and the practical verdict remaining `NOT_DECIDED`. This explicitly supersedes only the restriction against comparator integration into a driver stated in the 2026-11-17 M2 clarification in `.orchestrator/DECISIONS.md`. It does not authorize native execution, a practical PASS, any weakening of the strict N6 gates, publication, or integration to `matrix`. Native testing is not authorized or accepted by this status.
 
 ### Relationship to the strict comparison
 
@@ -73,11 +66,6 @@ subsystem.
 - Practical beta acceptance is judged by the practical verdict below. Byte-for-byte
   equality of an entire Kodi session is not required for that verdict. Every
   strict difference must still be classified. None may be ignored or waived.
-- Strict and practical status are separate. `SCOPED_PRESERVED` and exit code 0 describe
-  strict N6 scope preservation only; they are not a practical PASS. A strict
-  `SCOPED_PRESERVED` may coexist with a practical `INCONCLUSIVE` classification, and the
-  practical verdict remains `NOT_DECIDED`. Renaming a state or changing exit semantics is
-  not authorized by this contract.
 
 ### Protected scopes and current witnesses
 
@@ -104,105 +92,37 @@ ledger records that reasoning. Otherwise it is INCONCLUSIVE until witnessed.
   value (N6). Only the value of this leaf may differ. A structural change to that
   element is MEANINGFUL.
 - **M2, texture cache metadata:** `Textures13` `sizes.usecount`, `sizes.lastusetime`
-  and `texture.lasthashcheck` values, plus cache row creation and eviction. The
-  classes are `M2_SIZES_USECOUNT`, `M2_SIZES_LASTUSETIME`, `M2_TEXTURE_LASTHASHCHECK`,
-  `M2_CACHE_ROW_CREATE`, `M2_CACHE_ROW_EVICT`, `M2_CACHE_SIZES_CREATE` and
-  `M2_CACHE_SIZES_EVICT`. A sizes row is maintenance only when its parent texture row
-  is created or evicted in the same comparison (D-032 clarification, 2026-11-17).
-  Allowed only when the schema is exact and every pre-existing texture row that
-  remains keeps identical `url`, `cachedurl` and `imagehash`. Row counts are reported.
+  and `texture.lasthashcheck` values, plus cache row creation and eviction. Allowed
+  only when the schema is exact and every pre-existing texture row that remains
+  keeps identical `url`, `cachedurl` and `imagehash`. Row counts are reported.
 
 Everything else is MEANINGFUL: all other leaves, view-state and event-log state
 (user configuration), skin, peripheral and Addons33 changes within their witnessed
-fields, every public-witness difference, any change to a pre-existing texture
-row's identity fields, and any sizes row added or removed beneath a retained texture
-row. A class is never extended by inference from names,
+fields, every public-witness difference, and any change to a pre-existing texture
+row's identity fields. A class is never extended by inference from names,
 timestamps, a writer's presence in Kodi source, or a matching control run.
 
-### Offline comparator and practical qualification mechanism
+### Minimal verification mechanism (defined, not implemented)
 
-The driver's strict export remains per-file equality with `maintenance_attribution=UNKNOWN`.
-It exports no field deltas, which N6 forbids. Four statuses apply and must not be merged:
-
-- **Implemented offline comparator, not reviewed for qualification:** the pure comparator
-  in `tools/bm_practical_preservation_comparator.py`, with its synthetic tests. Its output
-  is not a native practical verdict.
-- **Implemented offline evidence wiring, not reviewed for qualification:** the same-session
-  classification in `AcquisitionSession.finish()`, and the driver's validation of the
-  sanitized `practical` block it returns (see Implementation status below). The acquisition
-  layer runs the comparator. The driver validates the block and never runs the comparator.
-  Offline only; no native run has used it.
-- **Unimplemented practical qualification verdict:** the mechanism that would turn comparator
-  results, with operation and ledger correlation and the S1, S2, S5 and S7 conditions, into
-  the PASS, FAIL and INCONCLUSIVE verdict and the native ledger. It does not exist yet. The
-  block's `verdict` is always `NOT_DECIDED`.
-- **Native testing not authorized or accepted:** neither the comparator nor its wiring
-  authorizes a native scenario, and nothing here is native acceptance.
-
-Until the practical verdict is implemented and independently reviewed, no practical PASS is
-possible. A strict difference that the offline wiring classifies as `MAINTENANCE_ONLY` is
-recorded as a classification only and does not decide the practical verdict.
-
-Required properties of the comparator:
+The current driver exports per-file equality and `maintenance_attribution=UNKNOWN`,
+and it cannot classify a difference without exporting field deltas, which N6
+forbids. Until the mechanism below is implemented and independently reviewed, every
+strict five-file difference is MEANINGFUL-unclassified, and the practical verdict
+cannot be PASS.
 
 - An in-memory comparator run only on the existing private before and after
   projections of the five files. For each file it returns `EXACT`,
   `MAINTENANCE_ONLY` with the class names and counts, or `MEANINGFUL` with a count.
   It returns no paths, values, row identifiers or value digests.
 - Positive controls: an M1-only change; M2 `usecount`, `lastusetime` or
-  `lasthashcheck` changes; M2 texture row creation and eviction with identities
-  kept; sizes rows created or evicted together with their parent texture in the same
-  comparison. Each must yield `MAINTENANCE_ONLY` with the correct class.
+  `lasthashcheck` changes; M2 row creation and eviction with identities kept. Each
+  must yield `MAINTENANCE_ONLY` with the correct class.
 - Negative controls, each of which must yield `MEANINGFUL`: any other guisettings
   leaf; a structural change to the M1 element; an M1 change combined with another
   leaf change in the same file; a Textures13 schema change; a changed `url`,
-  `cachedurl` or `imagehash` on a pre-existing row; a sizes row added or removed
-  beneath a retained texture row. A non-exact Textures13 schema in the baseline is
-  rejected, never maintenance-only.
+  `cachedurl` or `imagehash` on a pre-existing row.
 - Output tests: the comparator output must contain no paths, values or digests.
-- Rejection: a caller's Mapping that fails during iteration or lookup yields
-  `ComparatorRejected` with a fixed reason code and no caller text. `BaseException`
-  is deliberately not caught. This does not clear exception context a caller holds.
 - Independent review of the comparator and its tests before any native use.
-
-#### Implementation status (2026-11-17, offline wiring)
-
-- `AcquisitionSession.finish()` classifies the same session's before and after
-  projections of the five files with the comparator's `compare_file`. Each file is
-  `EXACT`, `MAINTENANCE_ONLY` (class names and counts), `MEANINGFUL` (count) or
-  `INCONCLUSIVE`. A comparator rejection, missing input or unexpected fault makes
-  only that file `INCONCLUSIVE`. The result is the after result's `practical` block,
-  with fixed file names, closed class names and integer counts. No private
-  projection, path, value, row identity or digest is returned.
-- The driver validates that block exactly: closed keys and names, counts, the
-  aggregate, consistency with each strict per-file status, and the per-file class
-  vocabulary: `M1_UPTIME` on guisettings only, the approved M2 classes on Textures13
-  only, and no maintenance class on Addons33, the Estuary settings or the keyboard
-  settings. A malformed block refuses the finish with `finish_refused` and is not
-  persisted. A valid block is written to `result.json` under `after.practical`, beside
-  the unchanged strict fields.
-- The strict gate, the driver `state` and `reason`, and the per-file statuses are
-  unchanged, and the strict gate never reads the practical block. A strict
-  `SCOPED_PRESERVED` state can therefore coexist with a practical `INCONCLUSIVE`
-  classification. Practical acceptance cannot be read from the strict state.
-- The block's `verdict` is always `NOT_DECIDED`. This wiring produces no practical
-  PASS, FAIL or INCONCLUSIVE verdict, and no native run has used it.
-- `tools/bm_practical_preservation_comparator.py` is added to the driver's
-  `HOST_PATHS`, so the host source binding covers it.
-- This wiring is the driver integration that the 2026-11-17 M2 clarification in
-  `.orchestrator/DECISIONS.md` restricted. Eric's 2026-11-17 retention approval
-  supersedes only that restriction. The original 2026-11-15 D-032 text is unchanged.
-
-#### Still unqualified
-
-- Independent review of the comparator and of this wiring. The offline tests do not
-  replace that review.
-- The practical verdict mechanism: operation and ledger correlation, S7 after stop,
-  the S1, S2 and S5 public witness conditions, and the limitation reporting that a
-  practical PASS requires.
-- S1 to S9 preservation beyond the five projections, transaction closure, and native
-  acceptance. Classification alone establishes none of these.
-- A practical PASS for A15. This status authorizes no native scenario.
 
 ### Practical verdict
 
@@ -241,6 +161,69 @@ lifecycles, publication, public-product qualification or macOS beta acceptance. 
 practical PASS for A15 requires the reviewed comparator, a separate task naming the
 one scenario, sealed native evidence, and independent review of that evidence. Until
 then A15 is not accepted.
+
+### Dated addenda (2026-11-17)
+
+The text above this heading is the 2026-11-15 D-032 contract, restored byte for byte from commit `9f686dc`. Three later commits altered that wording in place: `a16c877` (the M2 sizes-row clarification), `a4509a5` (the offline wiring, which also reworded the mechanism section) and `6ee74a2` (the per-file class vocabulary). Those changes are recorded here as dated addenda instead. The earlier statement that all original D-032 text was unchanged was inaccurate for HEAD before this restoration.
+
+Where an addendum adds to the historical text, the historical condition still applies unless the addendum states that it is met. No addendum authorizes native testing, a practical PASS, any change to the strict N6 comparison or qualification gates, publication, or integration to `matrix`.
+
+#### A. M2 sizes-row lifecycle (approved 2026-11-17)
+
+Eric approved the maintenance classes `M2_CACHE_SIZES_CREATE` and `M2_CACHE_SIZES_EVICT`, as recorded in the 2026-11-17 M2 clarification in `.orchestrator/DECISIONS.md`. A sizes row is maintenance only when its parent texture row is created or evicted in the same comparison. A sizes row added or removed beneath a retained texture row is MEANINGFUL. No other sizes lifecycle is accepted.
+
+The closed M2 class list is now: `M2_SIZES_USECOUNT`, `M2_SIZES_LASTUSETIME`, `M2_TEXTURE_LASTHASHCHECK`, `M2_CACHE_ROW_CREATE`, `M2_CACHE_ROW_EVICT`, `M2_CACHE_SIZES_CREATE` and `M2_CACHE_SIZES_EVICT`.
+
+Additional controls under this addendum:
+- Positive: sizes rows created or evicted together with their parent texture row in the same comparison must each yield `MAINTENANCE_ONLY` with the correct class.
+- Negative: a sizes row added or removed beneath a retained texture row must yield `MEANINGFUL`.
+- Negative: a non-exact Textures13 schema in the baseline is rejected, never maintenance-only.
+
+#### B. Offline comparator (implemented 2026-11-17; not reviewed for qualification)
+
+The comparator exists as the pure, in-memory module `tools/bm_practical_preservation_comparator.py`, with synthetic tests in `tests/test_bm_practical_preservation_comparator.py`. The historical requirement for independent review before any native use still applies. Its output is a classification only, not a native practical verdict.
+
+Additional properties implemented under this addendum:
+- Inputs must use exact built-in `list` and `tuple` containers. Subclasses are rejected with the fixed code `unexpected_shape` (commit `28e33e3`).
+- A caller Mapping that fails during iteration or lookup yields `ComparatorRejected` with a fixed code. `BaseException` is deliberately not caught.
+
+#### C. Offline evidence wiring (retained 2026-11-17; commits `a4509a5` and `6ee74a2`)
+
+Eric approved retaining the offline wiring, subject to the per-file class correction recorded in `.orchestrator/DECISIONS.md`. That approval supersedes only the restriction against comparator integration into a driver, stated in the 2026-11-17 M2 clarification. It does not authorize native execution, a practical PASS, any weakening of the strict N6 gates, publication, or integration to `matrix`.
+
+The driver's strict export remains per-file equality with `maintenance_attribution=UNKNOWN`. It exports no field deltas, which N6 forbids.
+
+Current implementation:
+- The acquisition layer runs the comparator. The driver validates the block and never runs the comparator.
+- `AcquisitionSession.finish()` classifies the same session's before and after projections of the five files with the comparator's `compare_file`. Each file is `EXACT`, `MAINTENANCE_ONLY` (class names and counts), `MEANINGFUL` (count) or `INCONCLUSIVE`. A comparator rejection, missing input or unexpected fault makes only that file `INCONCLUSIVE`. The output is the after result's `practical` block, with fixed file names, closed class names and integer counts. No private projection, path, value, row identity or digest is returned.
+- The driver validates that block exactly: closed keys and names, counts, the aggregate, consistency with each strict per-file status, and the per-file class vocabulary. `M1_UPTIME` is valid on guisettings only. The approved M2 classes are valid on Textures13 only. No maintenance class is valid on Addons33, the Estuary settings or the keyboard settings. A valid block is written to `result.json` under `after.practical`, beside the unchanged strict fields.
+- `tools/bm_practical_preservation_comparator.py` is in the driver's `HOST_PATHS`, so the host source binding covers it.
+- The block's `verdict` is always `NOT_DECIDED`.
+
+Correction to earlier wording. The earlier sentence "the strict gate never reads the practical block" was inaccurate. Three distinct facts apply:
+1. Practical block validation is required for admission. The driver validates the block before it admits the acquisition result. A malformed block raises `finish_refused`, the run is recorded as `INCONCLUSIVE` with that reason, and the `after` block is not recorded.
+2. The strict decision still uses only the original strict scope and public comparison. `scope_result` and the per-file statuses come from equality of the five projections, not from the practical classification. The strict state and reason remain `SCOPED_PRESERVED` / `scoped_comparison` only when the strict scope and public comparison both pass.
+3. Practical classification never creates a PASS. The strict result constrains the classification: an unchanged projection may be `EXACT` or `INCONCLUSIVE`, and a changed projection is never `EXACT`. No classification produces a practical PASS, FAIL or INCONCLUSIVE verdict. The verdict remains `NOT_DECIDED`.
+
+#### D. Strict and practical status are separate (2026-11-17)
+
+`SCOPED_PRESERVED` and exit code 0 describe strict N6 scope preservation only. They are not a practical PASS. A strict `SCOPED_PRESERVED` may coexist with a practical `INCONCLUSIVE` classification, and the practical verdict remains `NOT_DECIDED`. Renaming a state or changing exit semantics is not authorized by this contract.
+
+#### E. Current position of the practical verdict and native gates (2026-11-17)
+
+- The practical verdict mechanism is not implemented. Operation and ledger correlation, the S7 after-stop condition, the S1, S2 and S5 public witness conditions, and the limitation reporting that a practical PASS requires are all absent.
+- The historical conditional in "Minimal verification mechanism (defined, not implemented)" still applies. Until the mechanism is implemented and independently reviewed, strict differences remain MEANINGFUL-unclassified for the practical verdict, and practical PASS is unavailable. That condition is not met. The comparator's `MAINTENANCE_ONLY` results are classifications only and do not decide the practical verdict.
+- Still unqualified:
+  - independent review of the comparator and of the offline wiring;
+  - the practical verdict mechanism, as listed above;
+  - S1 to S9 preservation beyond the five projections, transaction closure and native acceptance;
+  - a practical PASS for A15.
+- Four statuses, which must not be merged:
+  1. The comparator is implemented offline and is not reviewed for qualification. Its output is not a native practical verdict.
+  2. The offline evidence wiring is implemented and retained for offline use only. It is not reviewed for qualification, and no native run has used it.
+  3. The practical qualification verdict is not implemented. The block's verdict is always `NOT_DECIDED`.
+  4. Native testing is not authorized or accepted.
+- Native testing is not authorized or accepted by any addendum in this section.
 
 ## Audio root placement (N2)
 
