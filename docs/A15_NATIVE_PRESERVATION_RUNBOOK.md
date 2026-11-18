@@ -224,15 +224,28 @@ Correction to earlier wording. The earlier sentence "the strict gate never reads
   3. The practical qualification verdict is not implemented. The block's verdict is always `NOT_DECIDED`.
   4. Native testing is not authorized or accepted.
 - Native testing is not authorized or accepted by any addendum in this section.
+- Dated clarification (2026-11-18). The 2026-11-17 status in this section is retained as historical. The offline precondition assessment (`tools/bm_practical_precondition.py`, commit `95b0d5d`) has since been added. It evaluates the available S1, S2, S5 and S7 evidence and five-file eligibility, and it lists its scope limitations explicitly (section F). The 2026-11-17 bullet that lists the S7 after-stop condition, the S1, S2 and S5 public witness conditions and the limitation reporting as absent is superseded for those offline checks only.
+  - Completed offline: the prerequisite checks for S1, S2, S5, S7 and five-file eligibility, each `MET`, `NOT_MET` or `UNVERIFIED`, with unverified requirements and limitations listed.
+  - Still missing: operation and ledger correlation; the expected-result check; scenario justifications for any exclusion of S4, S5 database coverage, S6, S8 or S9; and the final practical verdict logic.
+  - The practical verdict remains `NOT_DECIDED`, and no practical PASS is available. The historical conditional still applies, because the practical verdict mechanism is not implemented. The offline review status of the comparator and wiring is recorded in section F; it does not change the independent-review requirement for native use.
 
 #### F. Current status and practical precondition assessment (2026-11-17)
 
-- Offline review status. Independent offline review of the comparator, including the B1 correction in `28e33e3`, and independent offline review of the offline evidence wiring (`a4509a5`, retained by `6ee74a2`) are recorded here as passed. The review status was supplied with this update, and the review records are not stored in this repository. These are offline reviews only. They are not qualification reviews, they do not qualify any native behaviour, and they do not authorize a practical PASS, a native run, publication or integration to `matrix`. This status supersedes the "independent review" item in section E for offline review only.
+- Offline review status, by item. Provenance: these results were relayed through the manual Supervisor workflow. They are not repository-hosted review artifacts, and this repository does not contain the review reports.
+  - Comparator: the D-032 B1 CORRECTION REVIEW returned PASS for candidate `28e33e3`, the exact list/tuple gate. That PASS covers the B1 correction only.
+  - Offline evidence wiring (`a4509a5`, retained by `6ee74a2`): the earlier wiring reviews accepted the technical findings but returned NOT PASS for documentation. The D-032 HISTORICAL CONTRACT REVIEW returned PASS for candidate `13687f4`, and that resolved the documentation blocker. No separate wiring PASS report exists.
+  - These are offline reviews only. They are not qualification reviews, they do not qualify any native behaviour, and they do not authorize a practical PASS, a native run, publication or integration to `matrix`. For offline review, this status supersedes the "independent review" item in section E; that item is unchanged for native use.
+- Status record for the precondition assessment (`95b0d5d`):
+  - Implemented offline in commit `95b0d5d`.
+  - Under independent review. Its review, relayed through the same Supervisor workflow, returned NOT PASS on three documentation blockers only; the implementation was found technically sound. This correction addresses those blockers. No re-review verdict is recorded here.
+  - Not accepted for native qualification.
+  - Always `INCONCLUSIVE` / `NOT_DECIDED` in the current evidence flow.
+- The comparator, the offline evidence wiring and the precondition assessment have separate review statuses. Do not merge them.
 - Precondition assessment. `tools/bm_practical_precondition.py` implements an offline, fail-closed assessment. It reads only values the driver has already validated: the two public witnesses, the validated begin and after projections, and two driver facts. The driver records its result under `practical_precondition` in `result.json`, beside the unchanged strict result and `after.practical`. A run that does not reach the finish records `not_reached`.
 - Scope-specific comparisons:
   - S1 compares the library census (root, registry and selection facts), the selection, and the `build-library` tree.
   - S2 compares the `frozen-artifacts` and `install_resolutions` trees and the applied association.
-  - S5 compares Addons33 installed identity and enabled state from the `addons_db` source, and requires the Addons33 classification to be `EXACT`.
+  - S5 compares Addons33 add-on identity, taken from the `addon.xml` census, and enabled state, taken from the `addons_db` source. It requires the Addons33 classification to be `EXACT`. The comparator's `EXACT` classification covers the approved Addons33 identity/enabled projection only; all other Addons33 content remains `UNVERIFIED`.
   - S7 requires a verified quit, source binding at both boundaries, owner absence and pending-publication absence at both boundaries, and an unchanged bundle identity.
   - Five-file eligibility accepts `EXACT`, and the approved `MAINTENANCE_ONLY` classes on their own files. `MEANINGFUL` prevents eligibility. `INCONCLUSIVE` leaves the requirement unverified.
 - Each prerequisite is `MET`, `NOT_MET` or `UNVERIFIED`. A missing witness is `UNVERIFIED` and is never inferred. Malformed input yields `input_invalid`, and no prerequisite is treated as met.
