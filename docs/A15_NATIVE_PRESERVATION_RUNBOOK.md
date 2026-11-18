@@ -261,7 +261,7 @@ Correction to earlier wording. The earlier sentence "the strict gate never reads
 
 ### Dated addendum (2026-11-18): external practical adjudication, Create conflict only
 
-Status. Documentation only. It authorizes no native test, Test.app launch or staging, profile access, practical PASS, qualification or acceptance. It records the direction of an independent Codex design review of the exact candidate, which returned PARTIALLY CONFIRMED. That review was relayed through the manual workflow and is not repository-hosted. The driver's practical block stays `verdict = NOT_DECIDED`, and `tools/bm_practical_precondition.py` stays `INCONCLUSIVE`. This procedure is applied by an independent reviewer to retained evidence. It is not a ledger service, a machine producer, a verdict engine or a driver change.
+Status. Documentation only. It authorizes no native test, Test.app launch or staging, profile access, practical PASS, qualification or acceptance. It records the direction of an independent Codex design review of the exact candidate, which returned PARTIALLY CONFIRMED. That review was relayed through the manual workflow and is not repository-hosted. Codex's adjudication review of commit `731b29b` returned NOT PASS on four blockers (execution provenance, ledger order and exports, S5 and S6 exclusion, and artifact-bearing dependencies). This revision corrects them, and it is subject to a narrow re-review. The driver's practical block stays `verdict = NOT_DECIDED`, and `tools/bm_practical_precondition.py` stays `INCONCLUSIVE`. This procedure is applied by an independent reviewer to retained evidence. It is not a ledger service, a signing or attestation service, a machine verdict engine or a driver change.
 
 This follows D-032's requirement (2026-11-15, "Independent review and native evidence") for a separate authorized scenario, sealed native evidence and independent review of that evidence.
 
@@ -272,12 +272,16 @@ Scope. One scenario only: Create name `BM-ITEM8-INSTALL-20261015`, version `1.0.
 Checked against candidate `bbfbb7e` on 2026-11-18. Line numbers refer to that commit.
 
 - Identity. `build_id` is `identity(name)`: a slug plus the first 12 hex digits of the SHA-256 of the stripped label (`resources/lib/create_workflow.py:27-34`). The name alone fixes the build identity.
-- Conflict key. `BuildLibrary.register` raises `LibraryConflict("build_library_conflict")` only when an existing entry has the same `(build_id, build_version)` (`resources/lib/build_library.py:612-616`). The root add-on is not part of the key. It affects only capture success and artifact acquisition.
+- Conflict key. `BuildLibrary.register` raises `LibraryConflict("build_library_conflict")` only when an existing entry has the same `(build_id, build_version)` (`resources/lib/build_library.py:612-616`). The root add-on is not part of that key. The root does enter the captured bundle: its node, its dependencies and their artifacts form the frozen manifest. The root therefore changes the bundle content, the capture and the acquisition, but not the name-derived identity or the conflict key.
 - Terminal mapping. `LibraryConflict` maps to `CreateTerminal(32733)` (`create_workflow.py:292-293`). With private capture off, `execute()` calls `register()` directly (`create_workflow.py:270-271`), so 32733 can then come only from the library conflict.
 - Order. Frozen capture runs first (`create_workflow.py:218`; a second pass runs only after an explicit local-capture approval, line 224). Registration follows at line 271. An incomplete capture returns its category at line 232, before registration (for example 32730 for SOFTWARE_INCOMPLETE). So 32733 is reachable only after a COMPLETE capture of the root and every dependency.
-- Version suggestion. `suggest_version` pre-fills the next version when an entry with the same identity exists (`create_workflow.py:172-182`). This is the reason for runbook gate B-2.
+- Node kinds in capture. Each closure node is one of three kinds, and only one kind needs a ZIP:
+  - System nodes: add-ons whose IDs start with `xbmc.`, and `kodi.resource` (`resources/lib/dependencies.py:344`). They are never acquired. Each must pass the trusted builtin read (`read_verified_builtin_metadata`, `resources/lib/frozen.py:1662`). For the passive builtins that read requires the exact pinned descriptor (`resources/lib/frozen_install.py:1561-1565`, including `xbmc.metadata` 2.1.0).
+  - Platform-provided nodes: installed add-ons whose metadata origin is the application directory (`resources/lib/frozen.py:1708-1711`). They are never acquired and must pass the platform checks.
+  - Artifact-bearing nodes: every other installed add-on in the closure. They require a verified ZIP through `ArtifactAcquirer.acquire` (`resources/lib/frozen.py:1350`): the store first, then the package cache, the official repository or an approved local capture. The root `metadata.generic.albums` 1.0.20 is installed in the portable user add-on directory, not the application directory, so it is artifact-bearing.
+- Builtin pins are admission data, not closure verdicts. The candidate's pin for `xbmc.metadata` 2.1.0 (`frozen_install.py:1565`) does not by itself admit the node. Admission depends on the installed descriptor passing the verified read during capture. The offline diagnosis of 2026-11-18 traced the earlier 32730 builtin-closure refusal to the missing pin. It did not establish that the current installed descriptor passes that read.
+- Version suggestion. `suggest_version` pre-fills the next version when an entry with the same identity exists (`create_workflow.py:172-182`). This is why runbook gate B-2 re-enters `1.0.0` after every name edit.
 - Identical bundle. If the bundle key equals an existing entry, `register` returns that entry without conflict (`build_library.py:612-614`). The frozen manifest carries `created_at` (`frozen.py:250`), so a fresh Create normally produces a new key. A success where 32733 is expected is therefore a wrong result (see F1).
-- Builtin requirement. The root requires `xbmc.metadata` 2.1.0. Candidate `bbfbb7e` carries the trusted passive pin (`resources/lib/frozen_install.py:1565`). The offline diagnosis of 2026-11-18 traced the earlier 32730 builtin-closure refusal to the missing pin.
 - Selection. `select()` runs only after a successful register (`create_workflow.py:297`). A conflict never reaches it.
 
 #### Rejection does not establish that nothing was written
@@ -286,110 +290,162 @@ The conflict is detected after capture and acquisition. With private capture off
 
 | Write site | When it happens | Scope |
 | --- | --- | --- |
-| `ArtifactStore` creates `artifacts/` (`artifacts.py:141`) under `addon_data/script.build.manager/frozen-artifacts` (`create_workflow.py:356`) | Only if the directory is missing | S2 |
-| `ArtifactStore.import_zip` (`artifacts.py:152`; called at `frozen.py:1364`, `1396`, `1432`) | Only when an exact `(addon_id, version)` is not already a verified store artifact and its bytes come from the package cache, the official repository or an approved local capture | S2 |
+| `ArtifactStore` creates `artifacts/` (`artifacts.py:141`) under `addon_data/script.build.manager/frozen-artifacts` (`create_workflow.py:356`) | Only if that `artifacts/` directory is missing | S2 |
+| `ArtifactStore.import_zip` (`artifacts.py:152`; called at `frozen.py:1364`, `1396`, `1432`) | Only for an artifact-bearing node whose exact `(addon_id, version)` is not already a verified store artifact and whose bytes come from the package cache, the official repository or an approved local capture | S2 |
 | `BuildLibrary` lock file and root (`build_library.py:546-551`) | Created only if missing; no content change | None |
 | `builds/<key>.json` and `registry.json` (`build_library.py:618-632`) | Only after the conflict check, which is not passed | S1 (not reached) |
 | Registration inputs (`create_capture.py:121-139`) | System temporary directory | None (outside the profile) |
 
-No write site was found on this path for: configuration (the configuration backend's writers have no Create call site; capture uses only `read_file` and getters); skin activation (`skin.py:235` is not on the path); the capture lifecycle (`CaptureLifecycleCoordinator` has no production call site, and `create_capture_transaction.json` is only read); private overlays (private path only); or add-on enable, disable or install. The Red Light resource initializes only through `private_resources.capture` for a declared resource (`create_capture.py:396-418`), and no private declaration is produced when private capture is off (`create_workflow.py:117-120`).
+No write site was found on this path for: configuration (the configuration backend's writers have no Create call site; capture uses only `read_file` and the getters); skin activation (`skin.py:235` is not on the path); the capture lifecycle (`CaptureLifecycleCoordinator` has no production call site, and `create_capture_transaction.json` is only read); private overlays (private path only); add-on enable, disable or install; or the product or application add-on trees.
 
-Consequence. S2 changes if and only if at least one artifact is imported before the conflict. D-032 has no maintenance class for artifact addition, so such a change is MEANINGFUL-unclassified and blocks PASS. A rejection that imported nothing leaves S1 and S2 unchanged, but that must be witnessed from the before and after public state. It cannot be inferred from the 32733 outcome.
+Consequence. The S2 frozen-artifacts witness can change before the conflict in two ways: by creating the missing `artifacts/` directory, or by importing an artifact. The driver's witness is a recursive tree digest of `addon_data/script.build.manager/frozen-artifacts` (`tools/bm_preservation_driver.py:95-141`, `tools/bm023a_adapter_support.py:2169-2185`), and each subdirectory contributes its own entry. Creating an empty `artifacts/` therefore changes the digest even if no file is added. D-032 has no maintenance class for either change, so either change is MEANINGFUL-unclassified and blocks PASS. An unchanged post-run S2 witness shows that neither occurred. The 32733 outcome does not show it.
 
-Kodi's own runtime writes during the UI session (texture cache, uptime and settings saved at exit, view state) are not Create writes. They are classified only by the five-file comparator (S3) and by the S4, S6 and S8 dispositions below.
+Kodi's own runtime writes during the UI session (texture cache, uptime and settings saved at exit, view state) are not Create writes. They are classified only by the five-file comparator (S3) and by the S5, S6 and S8 dispositions below.
 
-#### 1. External evidence ledger
+#### 1. Execution provenance and external ledger
 
-One protected, sanitized, ordered ledger is kept by the controller for the single authorized native attempt. Each entry has a sequence number, host UTC time, host monotonic reading, source class and evidence reference (a path relative to the sealed evidence directory, with SHA-256 and size). Entries are not edited after sealing; a correction is a new entry. A missing value is recorded as `UNKNOWN`, never omitted.
+**1.1 Fact classes.** Four classes, never merged:
 
-Source classes, kept separate:
+- **T, tool-observed or independently verified.** A value stated in a tool's own output or raw response: the `identify`, `verify` and `quit` output files; the driver's `ready.json` and `result.json`; the READY and DONE lines and exit status in the raw session transcript; and MCP image and text responses. A T fact names its producing tool. It is independently verified only when the adjudicator matches it to its original invocation record under §1.2.
+- **C, controller-recorded observation.** What the controller records about its own actions and clocks: call times, the chosen navigation, budget readings, and the session identifier as returned to it. A C entry supports timing or ordering only where T records corroborate it.
+- **A, operator attestation.** A human statement: focus confirmed, text typed, step acknowledged. It counts only where a later T image or record is consistent with it.
+- **R, reviewer conclusion.** The adjudicator's finding. It is recorded only in the adjudication record.
 
-- **M, machine-established fact.** Output of a named tool or the driver, recomputed by the adjudicator from the retained file.
-- **N, native observation.** An MCP image or retained UI text at a recorded time. It shows what was displayed, not the underlying state.
-- **A, operator attestation.** A human statement (focus confirmed, text typed, step acknowledged), recorded in order. It counts only when a later N or M entry is consistent with it.
-- **R, reviewer conclusion.** The adjudicator's finding, recorded in a separate adjudication record that cites the sealed ledger hash. It never appears inside the ledger.
+**1.2 Provenance rules.** Every material execution or ordering claim (launch, name and version entry, review, confirm, rejection, UI exit, prequit identity, quit, final verification, FINISH and DONE) must satisfy all of the following. Otherwise it is UNVERIFIED.
 
-Required entries, in order:
+- P-a. The original records are retained unedited: the raw transcript of the driver session (each `exec_command` and `write_stdin` call with its returned output and session identifier); the raw MCP tool-call responses; and each helper output written by `--output` into the sealed evidence directory, together with the raw call that named its output path.
+- P-b. Each claim cites its original record by call sequence number and session identifier. The adjudicator inspects the raw record, not the controller's copy or summary.
+- P-c. Producer identity. Every helper output's `tool.sha256` must equal the SHA-256 of the reviewed candidate's `tools/bm_test_app.py`, recorded in L1. For `bbfbb7e` that value is `eabee188c999d2e21738e70fa10e98bf082eec7931ebb5cbeb2bb1614797311a` (`git show bbfbb7e:tools/bm_test_app.py`). The driver's `ready.json` `host_commit` must equal the reviewed commit, because the driver verifies host source against that commit before READY.
+- P-d. Order comes from raw sequence numbers. Clock readings corroborate only. Monotonic readings are controller-recorded (C).
+- P-e. A file hash binds a retained file to the bytes named by its original record. It proves that the bytes are unchanged. It does not prove that the bytes were produced by that execution. A copied or re-created file with a matching hash fails P-b unless its original record shows that it was produced by that invocation.
+- P-f. If producer identity, session identifier, timing or ordering cannot be verified from the original records, the claim is UNVERIFIED, and every conclusion that depends on it is INCONCLUSIVE. This procedure introduces no signing, attestation or ledger service. The raw transcripts and helper outputs are the authority.
 
-- **L1 Authority and identity (M, A).** Task identifier and authorization reference; scenario (name, version, root `metadata.generic.albums` 1.0.20, expected 32733); candidate commit `bbfbb7e440b7093eb3ccff7576b23888930d4021` and tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`; stage manifest `stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json` with SHA-256 `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6`; product tree `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files); driver identity and the adapter version Eric accepted (the open 0.0.17 decision must be settled before this entry is sealed); target `/Applications/Kodi Build Manager Test.app`, portable `-p` only.
-- **L2 Pre-run public witness (M).** Begin public-state fingerprint; stage verification (installed equals candidate, Git binding checked and ok); Test.app identity not running; fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present; and, if checked, the store-hit result for every `(addon_id, version)` pair the reviewed content needs.
-- **L3 Driver session and READY (M).** Original PTY session identifier; the rendered command, with no secret or private value; READY time (host UTC and monotonic); `ready.json` SHA-256; the `begin` projection; and `native_operation_authorized: false`, which records that the driver does not authorize the operation.
-- **L4 Launch (M, N).** Launch identity (PID, bundle identifier, portable flag); one Test.app process; the launch PID.
-- **L5 Ordered navigation (N).** Each `test_app_observe` and `test_app_navigate` call with its direction, MCP result time, image SHA-256 and a one-line description of the screen.
-- **L6 Input (A, N).** For each input dialog: the B-1 fresh observation, the operator's OS-focus confirmation, the completion acknowledgement, and the exact-field observation that follows. Name is entered first, then version, with B-2 verification after every edit. Each entry records the value as observed.
-- **L7 Review and single confirmation (N, A).** The full review image before confirm; the single confirm action with its time and count (must be 1).
-- **L8 Terminal outcome (N).** The image and text shown after confirm (expected localized 32733), its acknowledgement, and the absence of Apply, of any local-capture approval and of any retry. Any other outcome is recorded exactly as observed.
-- **L9 UI exit (N).** The outside-BM verified exit (K1), with its screen evidence and Back/observe times.
-- **L10 Prequit identity (M).** Identify result: a single process, PID equal to L4, portable.
-- **L11 Quit (M).** The actual quit command with start and end times and exit code; the quit receipt SHA-256 recorded at the time of quit; the receipt's PID and listener fields; and a post-quit identify (not running, zero processes).
-- **L12 FINISH (M, A).** Exactly one FINISH sent to the original session identifier, with its time and count. No CANCEL and no other input to that session.
-- **L13 Driver result (M).** `result.json` SHA-256; `state`, `reason`, `public_comparison`, the five-file strict statuses, the `after.practical` block and `practical_precondition`; exit code; DONE observed.
-- **L14 Post-stop verification (M).** Fresh identify (not running); fresh stage verification with Git binding; owner-absence and pending-publication fields from the after public state.
-- **L15 Evidence index.** Every retained file (path, SHA-256, size), including UI images. No private values and no raw logs.
-- **L16 Limitations.** Explicit `UNKNOWN` or limitation entries.
+**1.3 Template, contemporaneous entries and sealing.**
 
-Checksums. A SHA-256 shows that a sealed file is the file that was sealed. It does not show that an observation inside it is true. An entry is relied on only when it was sealed before the later entries that depend on it and when independent entries agree with it. For example, the PID in L4 must equal the PID in L11, and a typed value in A must be visible in an N image.
+- Before READY, the controller creates an empty ledger template with slots for L1 to L16. The template contains no outcomes and no values. Its SHA-256 is printed in a raw tool output produced before the driver session starts.
+- Entries are appended contemporaneously, each immediately after its event and citing the raw record sequence number. An entry that describes an event before its raw record exists is invalid.
+- After execution the append-only ledger is sealed. Its final SHA-256, the template hash, and an index of raw records (sequence numbers with file hashes) are recorded in the adjudication record. Corrections are appended as new entries, never edited in place.
+
+**1.4 Permitted and prohibited choices.** The ordinary Create component selection in the review is permitted. It must stay within the reviewed content: the existing name and version, legitimate different public software content, skin and private scope excluded, and no unintended configuration or package action (runbook step 3). Every selection and toggle is recorded in L7 with its image.
+
+Prohibited. Each of these makes the run INCONCLUSIVE at least: any artifact-decision or recovery choice for a missing saved copy (Install the current version, Skip, Repository Current, or any alternative offered for it); version substitution; D-033 local-capture consent or any approval of a local capture; a scope change outside the reviewed exclusions (skin, private, configuration or package action); a second Create; and Apply, Install, Repair or any recovery.
+
+**1.5 Required entries, in order.** Fact classes appear in brackets. The order follows the runbook's executable sequence (steps 1 to 5, including the K1 UI-exit gate).
+
+- **L1 Authority and identity [A, T].** Task identifier and authorization reference. Scenario: name, version, root `metadata.generic.albums` 1.0.20, expected 32733. Reviewed candidate `bbfbb7e440b7093eb3ccff7576b23888930d4021`, tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`. Stage manifest `.qualification-evidence/bm-claude-final-candidate-stage-20261118/stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json`, SHA-256 `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6`. Product tree `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files). Helper SHA-256 (P-c). Driver host commit and manifest SHA. The adapter version that Eric accepted; the open 0.0.17 decision must be settled before this entry is sealed. Target `/Applications/Kodi Build Manager Test.app`, portable `-p` only.
+- **L2 Pre-run source and identity [T].** The pre-run `verify --output` result (installed equals manifest and candidate; Git binding checked and ok) and the pre-run `identify --output` result (not running; zero processes), each with its raw call sequence. The optional closure and store determination in §5 is recorded here as a T output if it was run. Otherwise it is recorded as UNVERIFIED.
+- **L3 Driver session and READY [T, C].** The session identifier as returned to the controller (C) and as it appears in the raw transcript (T). The READY line in the raw transcript (T). The `ready.json` SHA-256 (T), with its `host_commit`, `manifest_sha256`, `staged_candidate`, `public_baseline_acquired`, `begin` block and `native_operation_authorized: false`. The `native_operation_authorized: false` value records that the driver does not authorize the operation. READY time (C).
+- **L4 Launch [T].** The raw `test_app_launch` call (sequence and response), and the `identify --output launch-identity.json` result (T): `process.pid`, bundle, `portable_flag`, and `test_app_process_count` 1. The launch PID is taken from this file, not from the MCP response.
+- **L5 Ordered navigation and observation [T, C].** Each `test_app_observe` and `test_app_navigate` call: raw sequence number, direction, response time (C), and the image SHA-256 from the raw response (T). The controller's one-line description of each screen is C.
+- **L6 Input [A, T].** For each input dialog: the B-1 focus observation (T image), the operator's OS-focus confirmation (A), the completion acknowledgement (A), and the exact-field observation that follows (T). Name is entered first, then version, with B-2 verification after every edit. The recorded value is the value shown in the T image.
+- **L7 Review, component selection and single confirmation [T, A, C].** The full review image before confirm (T). Each ordinary component selection or toggle, with its image (T), under §1.4. The single confirm action: raw sequence number and count, which must be 1 (T). The controller's time for it is C.
+- **L8 Terminal outcome [T].** The raw response image and text after confirm (expected localized 32733), the acknowledgement call, and the absence of any prohibited choice in §1.4, as shown by the raw sequence. Any other outcome is recorded exactly as observed.
+- **L9 UI exit [T, C].** Each raw Back and observe call with its image (T), and the observed outside-BM state. The controller's `UI_EXIT_VERIFIED` marker (C) is valid only with the image it cites.
+- **L10 Prequit identity [T].** The `identify --output prequit-identity.json` result with its raw call sequence: the same PID as L4, the same bundle, portable state, and a single process.
+- **L11 Authenticated quit [T].** The raw invocation of `tools/bm_test_app_keychain.py quit` with `--output <run>/quit.json`: its sequence, command, start and end times as the raw record shows, and exit code. The raw record binds the `quit.json` SHA-256 (P-e). The `quit.json` fields are `schema`, `command`, `ok`, `graceful`, `identity_before`, `identity_after`, `invocation`, `shutdown` and `tool`. Required values: `ok` and `graceful` true; `invocation.authenticated` and `invocation.listener_pid_verified` true; `invocation.test_app_pid` equal to the L4 PID; `shutdown.accepted` and `shutdown.exited` true; `shutdown.forced_termination` false; `identity_after` not running, with zero processes; and `tool.sha256` equal to P-c.
+- **L12 Final identity and source verification, before FINISH [T].** `final-identity.json` (not running; zero processes) and `final-source.json` (installed equals manifest and candidate; Git binding checked and ok), each with its raw call sequence. Both must succeed before L13. On failure the runbook's stop rules apply, and no FINISH is sent.
+- **L13 FINISH [T, C].** Exactly one raw `write_stdin` call with `FINISH\n` to the original session identifier (T), with the controller's time (C). The count must be 1. No CANCEL and no other input to that session.
+- **L14 Driver result and exit [T].** The session's raw transcript: its DONE line and exit status. The `result.json` SHA-256, and these fields: `state`, `reason`, `public_comparison`, `after.files[].status` (the five strict statuses), `after.practical` (per-file classifications and maintenance classes), `practical_precondition` (prerequisite IDs, statuses and reasons), and `receipt_form_and_file_time_validated` when present. The driver's post-FINISH checks (quit receipt form, source and public admission) appear only through `state` and `reason`. They are not independent verification.
+- **L15 Sealing and index [C, T].** The template hash, the sealed ledger hash, the raw-record index with SHA-256 and sequence numbers, and the UI image hashes. No private values and no raw logs.
+- **L16 Limitations and UNKNOWN [C].** Explicit entries for anything that was not recorded.
+
+**1.6 Required machine facts and their exported sources.** The driver keeps the raw public states in memory. It writes only the fields below, so the adjudication uses only these fields. Any fact not listed is not assumed to be exported.
+
+| Required fact | Exported field or supported original result |
+| --- | --- |
+| Begin acquired, and the begin file statuses | `ready.json` `begin.acquisition` (`ACQUIRED`) and `begin.files[].status` (`UNVERIFIED`, the before boundary) |
+| Begin public-state fingerprint | Not exported and not required. The begin boundary is witnessed by the pre-run `verify` (L2) |
+| Public comparison before and after | `result.json` `public_comparison` (`PRESERVED` or `CHANGED_OR_MISSING`) |
+| After public-state contents | Not exported |
+| S1 and S2 equality, with reason | `result.json` `practical_precondition` prerequisites `S1` and `S2` (status and reason) |
+| S5 Addons33 identity and enabled state | `practical_precondition` prerequisite `S5` (`identity_and_enabled_match`) |
+| Five strict file statuses | `result.json` `after.files[].status` |
+| Five-file practical classes and maintenance classes | `result.json` `after.practical.files` |
+| S7 owners, pending publication, quit and source binding | `practical_precondition` prerequisite `S7` (reason `owner_pending_quit_and_source_verified` when met), with L10 to L12 |
+| Quit facts | `quit.json` fields in L11 |
+| Stage and Git binding before and after | `verify --output` results (L2 and L12) |
+| Not running, process count and launch PID | `identify --output` results (L2, L4, L10 and L12) |
+| READY, DONE and exit status | Lines and exit status in the raw session transcript |
+| Native screens | Raw MCP responses (images and text) |
+
+A reviewer confirms each row against the retained file before relying on it. A row whose field is absent from the retained files is UNVERIFIED.
 
 #### 2. S1-S9 disposition table
 
-Each scope needs a witness or a defensible, scenario-specific exclusion. A rejected Create is not a witness. The table gives what a narrow PASS requires and what this addendum can establish from source alone.
+Each scope needs an adequate witness, or a reviewed, scenario-specific proof that the authorized operation cannot touch it by design, including its reachable lifecycle paths. A rejected Create is not a witness. A limitation statement clears nothing.
 
-| Scope | Witness in the run | Create-conflict argument | Required for PASS | Status now |
+| Scope | Witness and exported source | Create-conflict argument | Required for PASS | Status now |
 | --- | --- | --- | --- | --- |
-| S1 Saved builds and library | Library root, registry and selection; `build-library` tree digest, before and after | The conflict path writes nothing under `build-library`; only the lock and root can be created, and only if missing | EXACT | Post-run witness needed |
-| S2 Artifacts and associations | `frozen-artifacts` and `install_resolutions` tree digests; applied association | Writes occur only through the store (directory creation and `import_zip`) before the conflict | EXACT, so store hits only for every needed pair | Feasibility condition (see Feasibility) |
-| S3 Configuration and meaningful settings | Five-file comparator; public settings | Create writes no settings. Kodi may write the M1 and M2 classes; view-state or other leaves are MEANINGFUL | Each file EXACT, or MAINTENANCE_ONLY on its own file | Comparator not qualification-reviewed |
-| S4 Supported add-on resources and private settings | None in the driver | The catalog never produces private settings (`create_workflow.py:120`). Private resources appear only when private capture is on (`create_workflow.py:117-119`), and with it off `captures_private` is false (`create_capture.py:80-81`). "Private capture Off" alone is insufficient: the exclusion rests on the built request, whose declarations are recorded in L1 and L7 and reviewed | Justified exclusion, with the request's declarations recorded and reviewed | Exclusion candidate; needs review |
-| S5 Addons33 | Identity and enabled state from the `addons_db` census | No enable, disable or install call on the path | Identity and enabled EXACT. Other Addons33 content is a stated limitation, not a preserved claim | Identity witnessed; limitation stated |
-| S6 Unmanaged add-ons and unrelated configuration | None | BM writes on the path stay in BM-owned roots. Import failures remove their temporary files (`artifacts.py:194-225`). Capture failures return before registration. Kodi's own incidental writes to unmanaged add-on directories are not covered by any Create source path | Complete write-set and failure-path justification, including a reviewed argument for Kodi's incidental writes that cites the pinned Kodi source `a3a448d26b` | Not justified: INCONCLUSIVE unless the reviewer accepts the argument |
-| S7 Transaction, hold and publication | Owner absence (frozen, restart and capture transaction files); pending publication; quit receipt; bundle identity; source binding; both boundaries | No transaction, hold or publication record is created | MET at both boundaries | Witnessed; MET needs the run |
-| S8 Source installation | Stage verification at begin and after (installed equals candidate; Git binding) | Create reads application add-ons under `special://xbmc/addons`; no write call on the path targets the product tree or the application add-on tree | Boundary witnesses, the stated limitation (no source-tree census in the interval), and the source argument | Boundary witness exists; argument recorded here |
+| S1 Saved builds and library | `practical_precondition` S1 (library, selection and build-library tree) and `public_comparison` | The conflict path writes nothing under `build-library`. The lock and root are created only if missing | S1 MET (reason `library_selection_and_tree_match`) | Post-run witness needed |
+| S2 Artifacts and associations | `practical_precondition` S2 (frozen-artifacts and install-resolution trees, and association) and `public_comparison` | Writes occur only through creation of `artifacts/` and `import_zip`, both before the conflict (write-site table) | S2 MET (reason `artifacts_and_association_match`). This is the decisive post-run witness: it shows that no artifact-bearing node needed an import and that `artifacts/` already existed. No universal pre-run store-hit condition is required (see §5) | Decisive witness exported; feasibility depends on store state |
+| S3 Configuration and meaningful settings | Five-file comparator (`after.practical`) and `after.files` | Create writes no settings. Kodi may write the M1 and M2 classes. View-state or other leaves are MEANINGFUL | Each file EXACT, or MAINTENANCE_ONLY on its own file | Comparator not qualification-reviewed |
+| S4 Supported add-on resources and private settings | None in the driver | Call path: `compose` returns no private settings and adds resources only when private capture is on (`create_workflow.py:117-120`). `captures_private` is false when neither exists (`create_capture.py:80-81`). Private resource capture is reached only under `if request.captures_private` (`create_capture.py:396-418`). The reviewed content has zero public configuration scope (runbook step 3). "Private capture Off" alone is insufficient | Reviewed call-path justification, plus L7 recording that the built request has no private declarations | Exclusion candidate; needs review |
+| S5 Addons33 | Identity and enabled state: `practical_precondition` S5. Other Addons33 content: no witness | The Create path makes no enable, disable or install call (none found). Other reachable Addons33 writers during the interval (Kodi startup and shutdown, UI navigation, add-on list access) are not analysed here | Identity and enabled MET. Other Addons33 content needs an adequate witness, OR reviewed scenario-specific proof of no reachable write by design. Without either, PASS is unavailable. The limitation stays reported | Identity witnessed; other content unresolved |
+| S6 Unmanaged add-ons and unrelated configuration | None | BM write sites on the path stay in BM-owned roots (write-site table). Import failures remove their temporary files (`artifacts.py:194-225`), and capture failures return before registration. Kodi's reachable writes to unmanaged add-on directories and to unrelated configuration are not analysed here | The complete BM write-set (above) AND either an adequate witness or reviewed proof covering Kodi's reachable writes, citing pinned Kodi source. Without either, PASS is unavailable | Not justified. Unresolved, not presumed safe |
+| S7 Transaction, hold and publication | `practical_precondition` S7 (reason `owner_pending_quit_and_source_verified`), with L10 to L12 | No transaction, hold or publication record is created on the path | S7 MET at both boundaries | Must be met by the run |
+| S8 Source installation | Boundary witnesses: the `verify` results in L2 and L12 | Create reads application add-ons through `KodiInventoryBackend(..., application_addons_dir=special://xbmc/addons)` (`create_workflow.py:345-350`). No write call on the path targets the product tree or the application add-on tree (write-site table) | Boundary witnesses, plus the bounded source argument above. The limitation (no source-tree census during the interval) is reported | Source argument recorded; boundary witnesses must come from the run |
 | S9 Receiving installation | The S1 to S6 witnesses | Not applicable. The conflict performs no install, update or repair, and `select()` is never reached (`create_workflow.py:297`) | Stated as not applicable. Remains unqualified for receiving operations | Not applicable to this scenario |
 
 #### 3. Independent adjudication rules
 
-Precondition for any PASS. The comparator and the driver's practical validator must have independent qualification-review records for the exact candidate. Without them the result is INCONCLUSIVE. No such records exist yet.
+**Precondition for any PASS.** The comparator and the driver's practical validator must have independent qualification-review records for the exact candidate. Without them the result is INCONCLUSIVE. No such records exist yet.
 
-**Narrow practical PASS (external, Create conflict only).** Every condition must hold, and each must be cited to a ledger entry or a recomputed machine fact:
+**Narrow practical PASS (external, Create conflict only).** Every condition must hold. Each must cite an original record under §1.2 or a field listed in §1.6.
 
-- P1 Identity: L1 matches the artifacts; exactly one confirmation; no Apply, chooser, local-capture approval or retry.
-- P2 Expected result: 32733 is visible after that single confirmation, acknowledged, in a fresh image.
-- P3 Correlation: READY, launch, navigation, confirm, UI exit, prequit, quit, FINISH and DONE belong to the original session and the single launch PID; the receipt PID equals the launch PID; FINISH was sent once.
-- P4 Driver record: `result.json` agrees with the ledger, and its `after.practical` block passed the driver's validator.
-- P5 Public witnesses: `public_comparison` is PRESERVED, covering the library, registry, selection, build-library tree, frozen-artifacts and install-resolution trees, association, bundle, settings, and Addons33 identity and enabled state.
-- P6 Five files: each is EXACT, or MAINTENANCE_ONLY with an approved class on its own file (M1 on guisettings; M2 on Textures13). None is MEANINGFUL or INCONCLUSIVE.
-- P7 S7: MET at both boundaries, with a fresh post-stop identify and stage verification.
-- P8 Dispositions: S2 has store hits only; S4, S6, S8 and S9 are justified as in the table and signed off by the reviewer; S5 other Addons33 content and any other limitation are reported.
-- P9 Attestations: each A entry is followed by a consistent N observation.
+- P1 Identity and provenance: L1 matches the reviewed candidate, manifest, helper and driver identities. Every T fact relied on passes §1.2. There is exactly one confirmation.
+- P2 Expected result: the 32733 outcome is visible in a verified T image after that single confirmation, with its acknowledgement. No prohibited choice in §1.4 occurred.
+- P3 Ordering and correlation: the raw sequence shows READY, launch, review, confirm, rejection, UI exit, prequit identity, authenticated quit, final identity, final source verification, the single FINISH, and then the driver's result and DONE, in that order. The PID is the same in L4, L10 and the quit invocation. The session identifier is the same from READY to DONE.
+- P4 Driver record: `result.json` agrees with the raw transcript and with its own validated `after.practical` block.
+- P5 Public witnesses: `public_comparison` is PRESERVED, and the exported S1 and S2 prerequisites are MET.
+- P6 Five files: each file is EXACT, or MAINTENANCE_ONLY with an approved class on its own file (M1 on guisettings; M2 on Textures13). None is MEANINGFUL or INCONCLUSIVE.
+- P7 S7: exported S7 MET, with L10 to L12.
+- P8 Dispositions: S4 is justified by its call path. S5 other Addons33 content and S6 each have an adequate witness, or reviewed scenario-specific proof, under §2. S8 has its boundary witnesses and bounded source argument. S9 is recorded as not applicable. Any unresolved disposition makes PASS unavailable.
+- P9 Attestations: each A entry is followed by a T image or record that is consistent with it.
 
-The strict N6 five-file statuses may still read CHANGED_OR_MISSING when the only difference is an approved M1 or M2 class. The strict result stays as produced. Practical classification never rewrites it, and a practical PASS never makes the strict state PRESERVED.
+Under P5 and P6 together, the strict five-file statuses may still read CHANGED_OR_MISSING when the only difference is an approved M1 or M2 class. The strict result stays as produced. Practical classification never rewrites it, and a practical PASS never makes the strict state PRESERVED.
 
-**FAIL.** Requires independently established evidence, correlated through the ledger to the operation, of at least one of:
+**FAIL.** Requires independently established evidence, correlated through the ledger and §1.2 to the operation, of at least one of:
 
-- F1 Wrong operation result: a success where 32733 was expected, including a byte-identical bundle success, or any increase in registry entries for the same identity and version.
+- F1 Wrong operation result: success where 32733 was expected, including a byte-identical bundle success, or any increase in registry entries for the same identity and version.
 - F2 BM-caused loss, overwrite, truncation or deletion of meaningful content in S1 to S6, such as the fixture entry or its build file, the selection, the association, or a store artifact. The store is write-once, so this needs direct evidence.
 - F3 BM-caused unsafe transaction, hold or publication residue attributable to the operation (S7 NOT_MET from an operation-created record).
 - F4 Unrelated mutation attributable to the operation, including of an unmanaged add-on.
 - F5 Exposure of secret or private values in retained evidence.
 
-Not FAIL by themselves: a strict difference; an additive artifact import; an approved M1 or M2 change; an incomplete terminal such as 32730 or 32732; a timeout or CANCEL.
+A claim that fails §1.2 cannot ground FAIL. It yields INCONCLUSIVE.
 
-**INCONCLUSIVE** is the default for: an S2 change by additive import (no D-032 class); any MEANINGFUL or unclassified classification; any reachable S4, S6, S8 or S9 scope without a justified disposition; any missing, contradictory or unsealed ledger entry; any unverified attestation; broken or uncertain session, PID or receipt correlation; a terminal other than 32733 that is not a success (the conflict gate was not reached); process loss, timeout, EOF, CANCEL or interruption; incomplete cleanup; an absent `result.json`; and a comparator or validator without review.
+Not FAIL by themselves: a strict difference; an additive artifact import; creation of `artifacts/`; an approved M1 or M2 change; an incomplete terminal such as 32730 or 32732; a timeout or CANCEL.
+
+**INCONCLUSIVE** is the default for: any unverified T fact (§1.2); a prohibited choice (§1.4); an unexpected dialog or ambiguous screen; an S2 change (import or directory creation) with no D-032 class; any MEANINGFUL or unclassified classification; any reachable S4, S5, S6, S8 or S9 scope without its required disposition; any missing, contradictory or unsealed ledger entry; any unverified attestation; broken or uncertain session, PID or receipt correlation; a terminal other than 32733 that is not a success (the conflict gate was not reached); process loss, timeout, EOF, CANCEL or interruption; incomplete cleanup; an absent `result.json`; and a comparator or validator without review.
+
+The N6 strict state, reason and per-file statuses are copied from `result.json` unchanged. The adjudication may cite them. It never rewrites them and never derives a strict result from them.
 
 #### 4. Negative evidence cases
 
 Each case below prevents PASS, alone or in combination.
 
 - **Caller-supplied VERIFIED alone.** `tools/bm_practical_precondition.py` accepts the string `correlation='VERIFIED'` (lines 292-293), and no producer exists. The driver passes `None` (`tools/bm_preservation_driver.py:396`). A string or flag is not evidence. This procedure never uses that field.
-- **Copied receipt with refreshed mtime.** `quit_receipt` checks shape, owner, mode, link count and an mtime inside the READY-to-read window (`tools/bm_preservation_driver.py:172-207`). A copied file touched into that window passes. Its mtime is not provenance. PASS needs the receipt hash recorded at the original quit (L11), a receipt PID equal to the launch PID, and a post-quit identify. A receipt whose hash was not recorded at quit time, or that was created outside the original session, is UNVERIFIED.
-- **No native activity despite a structurally valid driver.** READY, FINISH and `result.json` establish only the acquisition and comparison boundaries. Without N entries for the review and the confirm, the scenario did not occur: INCONCLUSIVE (not reached).
-- **Missing terminal result observation.** Without a fresh image of the 32733 outcome after the single confirmation, the expected result is unverified. A chooser, receipt, comparison or driver success does not show it (runbook step 3).
+- **Copied receipt with refreshed mtime.** `quit_receipt` checks shape, owner, mode, link count and an mtime inside the READY-to-read window (`tools/bm_preservation_driver.py:172-207`). A copied file touched into that window passes those checks. Its mtime is not provenance. PASS needs the raw invocation of the authenticated quit, whose record names the output path and binds the `quit.json` SHA-256 (L11, P-a, P-e), a receipt PID equal to the launch PID, and the final identity (L12). A receipt without that binding is UNVERIFIED.
+- **Controller-authored summary without an original record.** A statement such as "launch succeeded" or "32733 observed" that has no raw record is a C claim. It yields INCONCLUSIVE for the fact it asserts.
+- **No native activity despite a structurally valid driver.** READY, FINISH and `result.json` establish only the acquisition and comparison boundaries. Without T entries for the review and the confirm, the scenario did not occur: INCONCLUSIVE (not reached).
+- **Missing terminal result observation.** Without a fresh T image of the 32733 outcome after the single confirmation, the expected result is unverified. A selection screen, a receipt, a comparison or a driver success does not show it (runbook step 3).
 - **Stale or broken process or session correlation.** Different session identifiers at READY and FINISH; a second driver; a launch PID that differs from the receipt PID; more than one Test.app process; a process still running after quit; FINISH sent twice or to another session; `ready.json` changed after READY. Each is INCONCLUSIVE.
 - **CANCEL, timeout or interrupted acquisition.** CANCEL discards the host baseline and produces no comparison. A 900-second timeout, EOF, controller loss or interruption is INCONCLUSIVE. No comparison may be rebuilt from hashes or persisted private data (runbook B1 and the stop rules).
 - **Meaningful or unclassified changes.** Any MEANINGFUL or INCONCLUSIVE classification, any public-witness difference, and any leaf outside the M1 and M2 classes block PASS. A class counts only on its own file.
-- **Reachable but unwitnessed protected scopes.** S4, S6, S8 or S9 reachable without a justified disposition, or S5 other Addons33 content presented as preserved, blocks PASS. The 32733 outcome cannot exclude S2 writes, because an import happens before the conflict is detected.
+- **Unwitnessed protected scopes without proof.** S5 other Addons33 content and S6 are unwitnessed. A limitation statement does not clear them. Without an adequate witness or reviewed proof they block PASS. The 32733 outcome cannot exclude S2 writes, because an import or the creation of `artifacts/` happens before the conflict is detected.
+- **Pre-run store probe alone.** A read-only store probe shows the presence of artifacts. It is not the post-run S2 witness, and it does not establish builtin admission.
+- **Source pin alone.** A pin in source (for example `xbmc.metadata` 2.1.0 at `frozen_install.py:1565`) does not establish that the installed descriptor passes the verified builtin read. It does not make a system node artifact-bearing or artifact-free.
 
-#### 5. Acceptance boundary
+#### 5. Pre-run determination (advisory; not a PASS input)
+
+- The decisive witness is the exported post-run S2 result (§2). The pre-run determination only predicts whether capture will import an artifact or create `artifacts/`. It is recorded in L2 as UNVERIFIED if it was not performed.
+- Node kinds. Using the classification in the source facts, the determination places each closure node in one of three kinds: system (`xbmc.` and `kodi.resource`), platform-provided (application-origin), or artifact-bearing. For a system node it must establish that the verified builtin read succeeds for the installed descriptor. A source pin is not enough. For a platform-provided node it must establish the platform admission. Neither kind receives or needs a ZIP, and no ZIP is manufactured for either.
+- Store probe for artifact-bearing nodes only. The method is `ReadOnlyArtifactStore` over `addon_data/script.build.manager/frozen-artifacts`, followed by `find(addon_id, version)` and `read_bytes(sha256)` with its digest check. `ReadOnlyArtifactStore` creates nothing and refuses `import_zip` (`resources/lib/plan.py:197-208`). The capture's own `ArtifactStore` must not be constructed for this step, because its constructor creates `artifacts/` (`artifacts.py:141`).
+- Closure source. This review found no existing read-only entry point that returns the complete classified closure separately from acquisition. The closure walk and the acquisition are one function, `capture_frozen_build`. A composition of the same installed-descriptor edge parser and node predicates with the read-only store probe is not an existing supported method until a reviewer accepts it from source. If it is not accepted, the determination is UNVERIFIED and reported as such.
+- Never: call `capture_frozen_build` or `CreateBuildCaptureEngine.capture` for the determination; use the package cache, the official repository or local capture in it; manufacture a ZIP for a system or platform node; or infer eligibility from a pin or from the mere presence of a directory.
+- Each determination output is a T record under §1.2, with its raw invocation retained.
+
+#### 6. Acceptance boundary
 
 - A PASS under this procedure is independently adjudicated external evidence for the Create conflict scenario only, and it must be labelled that way. It is not a PASS from the existing driver, and the driver's verdict stays `NOT_DECIDED`.
 - It does not establish S9 receiving-installation preservation, install, update or repair preservation, the D-030 deferred lifecycles, whole-profile preservation, complete Addons33 or unmanaged add-on verification, publication, public-product qualification, or macOS beta acceptance.
@@ -398,34 +454,36 @@ Each case below prevents PASS, alone or in combination.
 
 #### Illustrative outcomes (hypothetical; not observations)
 
-These examples show how the rules apply. They describe no run and must not be cited as evidence.
+These examples show how the rules apply. They describe no run, make no finding, and must not be cited as evidence.
 
-- **H1, hypothetical narrow PASS.** Ledger complete and consistent. `public_comparison` PRESERVED. guisettings MAINTENANCE_ONLY with `M1_UPTIME` count 1; the other four files EXACT. S2 has store hits only; S4, S6, S8 and S9 justified. `result.json` strict state INCONCLUSIVE, reason `changed`, because guisettings differs. Adjudication: narrow external practical PASS; the strict result is reported unchanged.
-- **H2, hypothetical FAIL (F1).** Confirm produced a success screen instead of 32733, and the registry gained a second entry for the same identity and version. Adjudication: FAIL for wrong operation result, cited to the N entry and the registry witness difference.
-- **H3, hypothetical INCONCLUSIVE.** 32733 observed and all other entries clean, but the S2 digest changed because one dependency was imported before the conflict. No D-032 class covers artifact addition. Adjudication: INCONCLUSIVE; preserve the evidence; no retry. Not FAIL, because the import is additive and not shown to be harmful.
+- **H1, hypothetical narrow PASS.** The ledger is complete, and its raw records are verified. `public_comparison` is PRESERVED, and exported S1 and S2 are MET. guisettings is MAINTENANCE_ONLY with `M1_UPTIME` count 1, and the other four files are EXACT. S4 is justified by a hypothetical reviewed call path. S5 other content and S6 are covered by a hypothetical reviewed proof, which is an assumption of this example. The `result.json` strict state is INCONCLUSIVE, reason `changed`, because guisettings differs. Adjudication: narrow external practical PASS, with the strict result reported unchanged.
+- **H2, hypothetical FAIL (F1).** The confirm produced a success screen instead of 32733, and the exported S1 is NOT_MET because the registry gained a second entry for the same identity and version. Adjudication: FAIL for wrong operation result, cited to the verified T image and the S1 field.
+- **H3, hypothetical INCONCLUSIVE.** 32733 is observed and all other entries are clean, but the exported S2 is NOT_MET because one dependency was imported before the conflict. No D-032 class covers artifact addition. Adjudication: INCONCLUSIVE. Preserve the evidence and make no retry. It is not FAIL, because the import is additive and not shown to be harmful.
 
 #### Feasibility of this scenario
 
-- Feasible in principle. The 32733 gate is reached only after a complete capture, and the candidate's builtin pin is present.
-- A narrow PASS is feasible only if every needed `(addon_id, version)` pair is already a verified store artifact before READY. The conflict depends only on identity and version, so the reviewed content can be chosen to match existing store artifacts. If the content needs a new artifact, expect INCONCLUSIVE by design.
-- Maintenance from UI use (M1, M2) is classifiable. View-state or other settings changes are not, and a single such change blocks PASS.
+- Feasible in principle. The 32733 gate is reached only after a COMPLETE capture. System and platform nodes are admitted without ZIPs, and artifact-bearing nodes need verified ZIPs.
+- A narrow PASS needs the exported post-run S2 to show no import and no creation of `artifacts/`. That holds when every artifact-bearing node already had a verified store artifact and `artifacts/` already existed. The conflict key needs only identity and version, so the reviewed content can be chosen to match existing store artifacts. Otherwise expect INCONCLUSIVE by design.
+- Root content changes the bundle, the captured nodes and their artifacts, but not the conflict key.
+- Maintenance from UI use (M1, M2) is classifiable. View-state or other settings changes are not.
 
 #### Conditions still required before a native A15 run
 
 1. Qualification reviews of the comparator, the driver practical validator and the precondition assessment for the exact candidate (none recorded yet).
-2. Independent Codex review of this addendum, with particular attention to the S4 and S6 arguments.
-3. Eric's authorization of a separate native task naming this scenario, the target, the permitted actions and the operator's physical-entry role, plus his decision on the adapter 0.0.17 driver.
-4. The B1 PTY channel in the executing session. This Claude session does not have one.
-5. A pre-run store-hit determination for every needed pair, with the review content fixed before READY.
-6. A sealed ledger instantiated from L1 to L16 before READY, using the bbfbb7e stage manifest rather than the stale path in runbook step 1.
-7. The fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present and unchanged before READY.
-8. Operator availability for B-1 focus confirmation and physical entry, arranged before READY.
+2. A narrow independent Codex re-review of this corrected addendum.
+3. Eric's authorization of a separate native task naming the scenario, target, permitted actions and operator role, and his decision on the adapter 0.0.17 driver.
+4. A B1 PTY channel in the executing session, with raw transcript retention under §1.2 P-a. This Claude session has none.
+5. A disposition for S5 other Addons33 content and for S6: an adequate witness, or reviewed proof citing pinned Kodi source. Neither exists yet.
+6. A reviewed decision on the closure composition in §5, if the advisory determination is wanted.
+7. The ledger template prepared and hashed before READY (§1.3), using the bbfbb7e stage manifest rather than the stale path in runbook step 1.
+8. The fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present and unchanged before READY, and `artifacts/` already present under `frozen-artifacts`, so that no directory creation is expected.
+9. Operator availability for B-1 focus confirmation and physical entry, arranged before READY.
 
 #### Consistency findings
 
 - Consistent: the 32733 mapping; the 32730 path ends before registration; the B-2 re-entry rule matches `suggest_version`; the absence of a D-032 class for artifact addition is consistent with the S2 digest rule.
-- Clarified here: the conflict key is identity and version only. The root is a capture variable, not an identity variable.
-- Open, not changed by this addendum: S2 has no class for additive imports, so a scenario PASS depends on store state; runbook step 1 still names the stale manifest path; the precondition module still accepts a caller correlation string; the driver's quit receipt check is mtime-bounded only.
+- Clarified here: the root changes the captured bundle but not the conflict key, which is identity and version only.
+- Open, not changed by this addendum: S2 has no class for additive imports or directory creation, so a scenario PASS depends on store state; runbook step 1 still names the stale manifest path; the precondition module still accepts a caller correlation string; the driver's quit receipt check is mtime-bounded only.
 
 ## Audio root placement (N2)
 
