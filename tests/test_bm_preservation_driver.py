@@ -31,6 +31,30 @@ def practical_block(*rows):
             'files': files, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
+def public_witness():
+    """Synthetic public witnesses with the shape public_state returns."""
+    return {'bundle': {'identifier': 'org.xbmc.kodi'},
+            'settings': {'readable': True, 'active_skin': 'skin.estuary', 'updater_policy': 'NOTIFY_ONLY'},
+            'addons': {'count': 1, 'enabled_state_source': 'addons_db', 'id_mismatch': 0,
+                       'skipped_invalid_names': 0, 'skipped_non_directories': 0, 'unreadable_addon_xml': 0,
+                       'entries': [{'enabled': True, 'id': 'script.synthetic', 'version': '1.0.0'}]},
+            'library': {'root_present': True,
+                        'registry': {'file_present': True, 'sha256': 'a' * 64, 'size': 120,
+                                     'entry_count': 1, 'entry_ids': ['build-one']},
+                        'selection': {'file_present': True, 'selected': True, 'sha256': 'b' * 64,
+                                      'size': 30, 'entry_id': 'build-one', 'device_profile_id': 'profile-one'}},
+            'trees': {'build-library': {'registry.json': 'c' * 64},
+                      'install_resolutions': {'resolution.json': 'd' * 64},
+                      'frozen-artifacts': {'artifact.json': 'e' * 64}},
+            'association': {'entry_id': 'build-one', 'artifact': 'f' * 64},
+            'selection': ('build-one', 'profile-one'),
+            'owners_absent': True, 'pending_publication_absent': True}
+
+
+def precondition_entry(block, identifier):
+    return next(item for item in block['prerequisites'] if item['id'] == identifier)
+
+
 class DriverTests(fixtures.TripwireTestCase):
     def setUp(self):
         super().setUp()
@@ -48,7 +72,7 @@ class DriverTests(fixtures.TripwireTestCase):
         self.host_patch = mock.patch.object(driver, 'host_source')
         self.host = self.host_patch.start()
         mock.patch.object(bm, 'load_manifest', return_value=(self.manifest,'b'*64)).start()
-        self.public = {'bundle':{'identifier':'org.xbmc.kodi'},'public':'same'}
+        self.public = public_witness()
         self.public_patch = mock.patch.object(driver, 'public_state', return_value=self.public)
         self.public_call = self.public_patch.start()
         self.calls = []
@@ -431,6 +455,56 @@ class DriverTests(fixtures.TripwireTestCase):
 
     def test_host_source_binds_the_practical_comparator(self):
         self.assertIn('tools/bm_practical_preservation_comparator.py', driver.HOST_PATHS)
+
+    def test_precondition_is_recorded_beside_the_unchanged_strict_outcome(self):
+        code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['state'], 'SCOPED_PRESERVED')
+        self.assertEqual(result['reason'], 'scoped_comparison')
+        block = result['practical_precondition']
+        self.assertEqual(block['assessment'], 'INCONCLUSIVE')
+        self.assertEqual(block['reason'], 'prerequisite_unverified')
+        for identifier in ('S1', 'S2', 'S5', 'S7', 'FIVE_FILE'):
+            self.assertEqual(precondition_entry(block, identifier)['status'], 'MET', identifier)
+        self.assertEqual(precondition_entry(block, 'OPERATION_CORRELATION')['status'], 'UNVERIFIED')
+        self.assertNotIn('practical_precondition', result['after'])
+        self.assertEqual(result['after']['practical']['verdict'], 'NOT_DECIDED')
+
+    def test_changed_library_keeps_the_strict_refusal_and_records_s1_not_met(self):
+        changed = copy.deepcopy(self.public)
+        changed['library']['registry']['sha256'] = '0' * 64
+        self.public_call.side_effect = [self.public, changed]
+        code, result = self.run_driver()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(result['state'], 'INCONCLUSIVE')
+        self.assertEqual(result['reason'], 'changed')
+        self.assertEqual(precondition_entry(result['practical_precondition'], 'S1')['status'], 'NOT_MET')
+        self.assertEqual(result['practical_precondition']['reason'], 'prerequisite_not_met')
+
+    def test_refused_finish_records_a_not_reached_precondition(self):
+        self.after_result = bridge._result('after', 'FAILED', 'acquisition_failed')
+        result = self.blocked('finish_refused')
+        self.assertEqual(result['practical_precondition']['assessment'], 'INCONCLUSIVE')
+        self.assertEqual(result['practical_precondition']['reason'], 'not_reached')
+
+    def test_malformed_public_witness_fails_closed_without_changing_the_strict_outcome(self):
+        self.public_call.return_value = {'bundle': self.public['bundle'], 'public': 'same'}
+        code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['state'], 'SCOPED_PRESERVED')
+        self.assertEqual(result['practical_precondition']['assessment'], 'INCONCLUSIVE')
+        self.assertEqual(result['practical_precondition']['reason'], 'input_invalid')
+
+    def test_host_source_binds_the_precondition_module(self):
+        self.assertIn('tools/bm_practical_precondition.py', driver.HOST_PATHS)
+
+    def test_real_host_git_provenance_rejects_precondition_tampering(self):
+        self.host_patch.stop()
+        repo, commit = fixtures.build_candidate_repo(self.tmp)
+        with mock.patch.object(driver,'REPO',repo):
+            driver.host_source(self.services,commit)
+            (repo/'tools/bm_practical_precondition.py').write_text('# changed')
+            with self.assertRaises(driver.Refused):driver.host_source(self.services,commit)
 
     def test_host_source_drift_blocks_before_finish(self):
         self.host.side_effect = [None, RuntimeError(SECRET)]

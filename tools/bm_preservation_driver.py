@@ -21,6 +21,7 @@ from tools import bm023a_adapter_support as support
 from tools.bm_preservation_acquisition import AcquisitionSession
 from tools import bm_public_preservation_witness as witness
 from tools import bm_practical_preservation_comparator as comparator
+from tools import bm_practical_precondition as precondition
 from resources.lib.build_library import BuildLibrary
 from resources.lib.frozen_install import FrozenInstallStore
 from resources.lib.capture_lifecycle import FILENAME as CAPTURE_RECORD
@@ -30,7 +31,8 @@ WAIT_SECONDS = 900
 HOST_PATHS = ('tools/__init__.py', 'tools/bm_preservation_driver.py', 'tools/bm_preservation_acquisition.py',
               'tools/bm_test_app.py', 'tools/bm_profile_isolation.py',
               'tools/bm_public_preservation_witness.py', 'tools/bm023a_adapter_support.py',
-              'tools/bm_practical_preservation_comparator.py', 'resources')
+              'tools/bm_practical_preservation_comparator.py', 'tools/bm_practical_precondition.py',
+              'resources')
 REASONS = frozenset({'arguments_invalid', 'source_unverified', 'evidence_invalid',
     'public_unverified', 'begin_refused', 'finish_refused', 'changed', 'cancelled',
     'timeout', 'eof', 'protocol_invalid', 'quit_unverified', 'interrupted',
@@ -131,7 +133,8 @@ def public_state(services, manifest, manifest_sha):
     return {'bundle': snapshot['identity']['bundle'], 'settings': settings,
             'addons': addons, 'library': snapshot['build_library'], 'trees': trees,
             'association': association.to_dict(),
-            'selection': (selected.entry_id, selected.device_profile_id), 'owners_absent': True}
+            'selection': (selected.entry_id, selected.device_profile_id), 'owners_absent': True,
+            'pending_publication_absent': True}
 
 
 class Evidence:
@@ -356,7 +359,8 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
     evidence = session = None
     result = {'schema':'bm-a15-driver/1', 'state':'BLOCKED', 'reason':'operation_failed',
               'complete_preservation':'UNVERIFIED', 'qualification':'not_qualified',
-              'native_run_attribution':'UNVERIFIED', 'external_native_evidence_required':True}
+              'native_run_attribution':'UNVERIFIED', 'external_native_evidence_required':True,
+              'practical_precondition': precondition.not_reached()}
     code = 2
     try:
         trusted_invocation()
@@ -385,6 +389,11 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         after = project_acquisition(session.finish(), 'after')
         public_comparison = 'PRESERVED' if public_before == public_after else 'CHANGED_OR_MISSING'
         result.update(after=after, public_comparison=public_comparison)
+        # Informational precondition assessment, kept beside the strict result. Quit
+        # verification and both source-binding checks have already succeeded here.
+        result['practical_precondition'] = precondition.assess(
+            public_before=public_before, public_after=public_after, begin=begin, after=after,
+            quit_verified=True, source_bound=True, correlation=None)
         need(after['scope_result'] == 'PRESERVED' and public_comparison == 'PRESERVED', 'changed')
         session.close(); session = None
         result.update(state='SCOPED_PRESERVED', reason='scoped_comparison',

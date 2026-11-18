@@ -225,6 +225,27 @@ Correction to earlier wording. The earlier sentence "the strict gate never reads
   4. Native testing is not authorized or accepted.
 - Native testing is not authorized or accepted by any addendum in this section.
 
+#### F. Current status and practical precondition assessment (2026-11-17)
+
+- Offline review status. Independent offline review of the comparator, including the B1 correction in `28e33e3`, and independent offline review of the offline evidence wiring (`a4509a5`, retained by `6ee74a2`) are recorded here as passed. The review status was supplied with this update, and the review records are not stored in this repository. These are offline reviews only. They are not qualification reviews, they do not qualify any native behaviour, and they do not authorize a practical PASS, a native run, publication or integration to `matrix`. This status supersedes the "independent review" item in section E for offline review only.
+- Precondition assessment. `tools/bm_practical_precondition.py` implements an offline, fail-closed assessment. It reads only values the driver has already validated: the two public witnesses, the validated begin and after projections, and two driver facts. The driver records its result under `practical_precondition` in `result.json`, beside the unchanged strict result and `after.practical`. A run that does not reach the finish records `not_reached`.
+- Scope-specific comparisons:
+  - S1 compares the library census (root, registry and selection facts), the selection, and the `build-library` tree.
+  - S2 compares the `frozen-artifacts` and `install_resolutions` trees and the applied association.
+  - S5 compares Addons33 installed identity and enabled state from the `addons_db` source, and requires the Addons33 classification to be `EXACT`.
+  - S7 requires a verified quit, source binding at both boundaries, owner absence and pending-publication absence at both boundaries, and an unchanged bundle identity.
+  - Five-file eligibility accepts `EXACT`, and the approved `MAINTENANCE_ONLY` classes on their own files. `MEANINGFUL` prevents eligibility. `INCONCLUSIVE` leaves the requirement unverified.
+- Each prerequisite is `MET`, `NOT_MET` or `UNVERIFIED`. A missing witness is `UNVERIFIED` and is never inferred. Malformed input yields `input_invalid`, and no prerequisite is treated as met.
+- Unverified requirements are listed explicitly and are never assumed untouched: the operation's expected result, fresh operation and ledger correlation, and the limitations for S4, S5 database coverage, S6, S8 and S9. Any future exclusion needs a scenario that justifies it.
+- The assessment is `INCONCLUSIVE` in every case in this implementation. It never emits a practical PASS or FAIL. Its `verdict` remains `NOT_DECIDED`, and its `qualification` remains `not_qualified`.
+- Exception-context limitation. The comparator cannot clear exception context that a caller already holds in its own frames. Its rejections carry no caller text and are raised outside exception handlers, so the comparator adds no chained context. A caller's existing `__context__` or traceback remains outside this module's control.
+- Four statuses, which must not be merged:
+  1. The comparator is implemented offline and has the offline review status described above. It is not a qualification review, and its output is not a native practical verdict.
+  2. The offline evidence wiring is retained for offline use and has the offline review status described above. No native run has used it.
+  3. The practical verdict is not implemented. The precondition assessment is `INCONCLUSIVE`, and the `verdict` is always `NOT_DECIDED`.
+  4. Native testing is not authorized or accepted.
+- Still unqualified: the practical verdict mechanism itself (its decision logic, operation and ledger correlation, the expected-result check, and the witnesses or justified exclusions for S4, S5 database coverage, S6, S8 and S9); S1 to S9 beyond these checks; transaction closure; native acceptance; and a practical PASS for A15.
+
 ## Audio root placement (N2)
 
 The accepted grammar is correct. The pinned call chain is:
