@@ -481,6 +481,31 @@ class TestBuildManager(unittest.TestCase):
         self.assertEqual(owners.dependency_installer.calls[0][0], "plugin.a")
         self.assertEqual(len(owners.dependency_installer.calls), 2)
 
+    def test_final_inspection_still_missing_required_state_is_post_validation_failure(self):
+        from resources.lib.build_manager import ReconcilePhase
+
+        desired = _desired((AddonEntry("plugin.example", "enabled"),))
+        # First inspection (preflight) sees nothing installed; final inspection
+        # after the successful install still sees nothing installed.
+        owners = _Owners(
+            desired,
+            [_state(), _state()],
+            ("plugin.example",),
+            {"plugin.example": _Outcome(changed=True)},
+        )
+        result = BuildManager(owners.owners).reconcile(ReconcileRequest("m", "dev"))
+
+        self.assertEqual(owners.dependency_installer.calls[0][0], "plugin.example")
+        self.assertEqual(len(result.action_results), 1)
+        self.assertTrue(result.action_results[0].succeeded)
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.failure)
+        self.assertEqual(result.failure.phase, ReconcilePhase.VALIDATE)
+        self.assertEqual(result.failure.code, "POST_VALIDATION_FAILED")
+        self.assertIsNotNone(result.validation_report)
+        self.assertFalse(result.validation_report.passed)
+        self.assertFalse(result.to_dict()["success"])
+
     def test_authorized_lifecycle_projects_held_owner_disabled_and_rejects_other_request(self):
         from resources.lib.frozen_install import (
             FrozenInstallPhase,
