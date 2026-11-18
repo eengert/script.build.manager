@@ -259,6 +259,174 @@ Correction to earlier wording. The earlier sentence "the strict gate never reads
   4. Native testing is not authorized or accepted.
 - Still unqualified: the practical verdict mechanism itself (its decision logic, operation and ledger correlation, the expected-result check, and the witnesses or justified exclusions for S4, S5 database coverage, S6, S8 and S9); S1 to S9 beyond these checks; transaction closure; native acceptance; and a practical PASS for A15.
 
+### Dated addendum (2026-11-18): external practical adjudication, Create conflict only
+
+Status. Documentation only. It authorizes no native test, Test.app launch or staging, profile access, practical PASS, qualification or acceptance. It records the direction of an independent Codex design review of the exact candidate, which returned PARTIALLY CONFIRMED. That review was relayed through the manual workflow and is not repository-hosted. The driver's practical block stays `verdict = NOT_DECIDED`, and `tools/bm_practical_precondition.py` stays `INCONCLUSIVE`. This procedure is applied by an independent reviewer to retained evidence. It is not a ledger service, a machine producer, a verdict engine or a driver change.
+
+This follows D-032's requirement (2026-11-15, "Independent review and native evidence") for a separate authorized scenario, sealed native evidence and independent review of that evidence.
+
+Scope. One scenario only: Create name `BM-ITEM8-INSTALL-20261015`, version `1.0.0`, root `metadata.generic.albums` `1.0.20`, expected terminal `32733`. Any other scenario needs its own addendum.
+
+#### Source facts for this scenario
+
+Checked against candidate `bbfbb7e` on 2026-11-18. Line numbers refer to that commit.
+
+- Identity. `build_id` is `identity(name)`: a slug plus the first 12 hex digits of the SHA-256 of the stripped label (`resources/lib/create_workflow.py:27-34`). The name alone fixes the build identity.
+- Conflict key. `BuildLibrary.register` raises `LibraryConflict("build_library_conflict")` only when an existing entry has the same `(build_id, build_version)` (`resources/lib/build_library.py:612-616`). The root add-on is not part of the key. It affects only capture success and artifact acquisition.
+- Terminal mapping. `LibraryConflict` maps to `CreateTerminal(32733)` (`create_workflow.py:292-293`). With private capture off, `execute()` calls `register()` directly (`create_workflow.py:270-271`), so 32733 can then come only from the library conflict.
+- Order. Frozen capture runs first (`create_workflow.py:218`; a second pass runs only after an explicit local-capture approval, line 224). Registration follows at line 271. An incomplete capture returns its category at line 232, before registration (for example 32730 for SOFTWARE_INCOMPLETE). So 32733 is reachable only after a COMPLETE capture of the root and every dependency.
+- Version suggestion. `suggest_version` pre-fills the next version when an entry with the same identity exists (`create_workflow.py:172-182`). This is the reason for runbook gate B-2.
+- Identical bundle. If the bundle key equals an existing entry, `register` returns that entry without conflict (`build_library.py:612-614`). The frozen manifest carries `created_at` (`frozen.py:250`), so a fresh Create normally produces a new key. A success where 32733 is expected is therefore a wrong result (see F1).
+- Builtin requirement. The root requires `xbmc.metadata` 2.1.0. Candidate `bbfbb7e` carries the trusted passive pin (`resources/lib/frozen_install.py:1565`). The offline diagnosis of 2026-11-18 traced the earlier 32730 builtin-closure refusal to the missing pin.
+- Selection. `select()` runs only after a successful register (`create_workflow.py:297`). A conflict never reaches it.
+
+#### Rejection does not establish that nothing was written
+
+The conflict is detected after capture and acquisition. With private capture off, these are the writes that can occur before the 32733 result:
+
+| Write site | When it happens | Scope |
+| --- | --- | --- |
+| `ArtifactStore` creates `artifacts/` (`artifacts.py:141`) under `addon_data/script.build.manager/frozen-artifacts` (`create_workflow.py:356`) | Only if the directory is missing | S2 |
+| `ArtifactStore.import_zip` (`artifacts.py:152`; called at `frozen.py:1364`, `1396`, `1432`) | Only when an exact `(addon_id, version)` is not already a verified store artifact and its bytes come from the package cache, the official repository or an approved local capture | S2 |
+| `BuildLibrary` lock file and root (`build_library.py:546-551`) | Created only if missing; no content change | None |
+| `builds/<key>.json` and `registry.json` (`build_library.py:618-632`) | Only after the conflict check, which is not passed | S1 (not reached) |
+| Registration inputs (`create_capture.py:121-139`) | System temporary directory | None (outside the profile) |
+
+No write site was found on this path for: configuration (the configuration backend's writers have no Create call site; capture uses only `read_file` and getters); skin activation (`skin.py:235` is not on the path); the capture lifecycle (`CaptureLifecycleCoordinator` has no production call site, and `create_capture_transaction.json` is only read); private overlays (private path only); or add-on enable, disable or install. The Red Light resource initializes only through `private_resources.capture` for a declared resource (`create_capture.py:396-418`), and no private declaration is produced when private capture is off (`create_workflow.py:117-120`).
+
+Consequence. S2 changes if and only if at least one artifact is imported before the conflict. D-032 has no maintenance class for artifact addition, so such a change is MEANINGFUL-unclassified and blocks PASS. A rejection that imported nothing leaves S1 and S2 unchanged, but that must be witnessed from the before and after public state. It cannot be inferred from the 32733 outcome.
+
+Kodi's own runtime writes during the UI session (texture cache, uptime and settings saved at exit, view state) are not Create writes. They are classified only by the five-file comparator (S3) and by the S4, S6 and S8 dispositions below.
+
+#### 1. External evidence ledger
+
+One protected, sanitized, ordered ledger is kept by the controller for the single authorized native attempt. Each entry has a sequence number, host UTC time, host monotonic reading, source class and evidence reference (a path relative to the sealed evidence directory, with SHA-256 and size). Entries are not edited after sealing; a correction is a new entry. A missing value is recorded as `UNKNOWN`, never omitted.
+
+Source classes, kept separate:
+
+- **M, machine-established fact.** Output of a named tool or the driver, recomputed by the adjudicator from the retained file.
+- **N, native observation.** An MCP image or retained UI text at a recorded time. It shows what was displayed, not the underlying state.
+- **A, operator attestation.** A human statement (focus confirmed, text typed, step acknowledged), recorded in order. It counts only when a later N or M entry is consistent with it.
+- **R, reviewer conclusion.** The adjudicator's finding, recorded in a separate adjudication record that cites the sealed ledger hash. It never appears inside the ledger.
+
+Required entries, in order:
+
+- **L1 Authority and identity (M, A).** Task identifier and authorization reference; scenario (name, version, root `metadata.generic.albums` 1.0.20, expected 32733); candidate commit `bbfbb7e440b7093eb3ccff7576b23888930d4021` and tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`; stage manifest `stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json` with SHA-256 `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6`; product tree `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files); driver identity and the adapter version Eric accepted (the open 0.0.17 decision must be settled before this entry is sealed); target `/Applications/Kodi Build Manager Test.app`, portable `-p` only.
+- **L2 Pre-run public witness (M).** Begin public-state fingerprint; stage verification (installed equals candidate, Git binding checked and ok); Test.app identity not running; fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present; and, if checked, the store-hit result for every `(addon_id, version)` pair the reviewed content needs.
+- **L3 Driver session and READY (M).** Original PTY session identifier; the rendered command, with no secret or private value; READY time (host UTC and monotonic); `ready.json` SHA-256; the `begin` projection; and `native_operation_authorized: false`, which records that the driver does not authorize the operation.
+- **L4 Launch (M, N).** Launch identity (PID, bundle identifier, portable flag); one Test.app process; the launch PID.
+- **L5 Ordered navigation (N).** Each `test_app_observe` and `test_app_navigate` call with its direction, MCP result time, image SHA-256 and a one-line description of the screen.
+- **L6 Input (A, N).** For each input dialog: the B-1 fresh observation, the operator's OS-focus confirmation, the completion acknowledgement, and the exact-field observation that follows. Name is entered first, then version, with B-2 verification after every edit. Each entry records the value as observed.
+- **L7 Review and single confirmation (N, A).** The full review image before confirm; the single confirm action with its time and count (must be 1).
+- **L8 Terminal outcome (N).** The image and text shown after confirm (expected localized 32733), its acknowledgement, and the absence of Apply, of any local-capture approval and of any retry. Any other outcome is recorded exactly as observed.
+- **L9 UI exit (N).** The outside-BM verified exit (K1), with its screen evidence and Back/observe times.
+- **L10 Prequit identity (M).** Identify result: a single process, PID equal to L4, portable.
+- **L11 Quit (M).** The actual quit command with start and end times and exit code; the quit receipt SHA-256 recorded at the time of quit; the receipt's PID and listener fields; and a post-quit identify (not running, zero processes).
+- **L12 FINISH (M, A).** Exactly one FINISH sent to the original session identifier, with its time and count. No CANCEL and no other input to that session.
+- **L13 Driver result (M).** `result.json` SHA-256; `state`, `reason`, `public_comparison`, the five-file strict statuses, the `after.practical` block and `practical_precondition`; exit code; DONE observed.
+- **L14 Post-stop verification (M).** Fresh identify (not running); fresh stage verification with Git binding; owner-absence and pending-publication fields from the after public state.
+- **L15 Evidence index.** Every retained file (path, SHA-256, size), including UI images. No private values and no raw logs.
+- **L16 Limitations.** Explicit `UNKNOWN` or limitation entries.
+
+Checksums. A SHA-256 shows that a sealed file is the file that was sealed. It does not show that an observation inside it is true. An entry is relied on only when it was sealed before the later entries that depend on it and when independent entries agree with it. For example, the PID in L4 must equal the PID in L11, and a typed value in A must be visible in an N image.
+
+#### 2. S1-S9 disposition table
+
+Each scope needs a witness or a defensible, scenario-specific exclusion. A rejected Create is not a witness. The table gives what a narrow PASS requires and what this addendum can establish from source alone.
+
+| Scope | Witness in the run | Create-conflict argument | Required for PASS | Status now |
+| --- | --- | --- | --- | --- |
+| S1 Saved builds and library | Library root, registry and selection; `build-library` tree digest, before and after | The conflict path writes nothing under `build-library`; only the lock and root can be created, and only if missing | EXACT | Post-run witness needed |
+| S2 Artifacts and associations | `frozen-artifacts` and `install_resolutions` tree digests; applied association | Writes occur only through the store (directory creation and `import_zip`) before the conflict | EXACT, so store hits only for every needed pair | Feasibility condition (see Feasibility) |
+| S3 Configuration and meaningful settings | Five-file comparator; public settings | Create writes no settings. Kodi may write the M1 and M2 classes; view-state or other leaves are MEANINGFUL | Each file EXACT, or MAINTENANCE_ONLY on its own file | Comparator not qualification-reviewed |
+| S4 Supported add-on resources and private settings | None in the driver | The catalog never produces private settings (`create_workflow.py:120`). Private resources appear only when private capture is on (`create_workflow.py:117-119`), and with it off `captures_private` is false (`create_capture.py:80-81`). "Private capture Off" alone is insufficient: the exclusion rests on the built request, whose declarations are recorded in L1 and L7 and reviewed | Justified exclusion, with the request's declarations recorded and reviewed | Exclusion candidate; needs review |
+| S5 Addons33 | Identity and enabled state from the `addons_db` census | No enable, disable or install call on the path | Identity and enabled EXACT. Other Addons33 content is a stated limitation, not a preserved claim | Identity witnessed; limitation stated |
+| S6 Unmanaged add-ons and unrelated configuration | None | BM writes on the path stay in BM-owned roots. Import failures remove their temporary files (`artifacts.py:194-225`). Capture failures return before registration. Kodi's own incidental writes to unmanaged add-on directories are not covered by any Create source path | Complete write-set and failure-path justification, including a reviewed argument for Kodi's incidental writes that cites the pinned Kodi source `a3a448d26b` | Not justified: INCONCLUSIVE unless the reviewer accepts the argument |
+| S7 Transaction, hold and publication | Owner absence (frozen, restart and capture transaction files); pending publication; quit receipt; bundle identity; source binding; both boundaries | No transaction, hold or publication record is created | MET at both boundaries | Witnessed; MET needs the run |
+| S8 Source installation | Stage verification at begin and after (installed equals candidate; Git binding) | Create reads application add-ons under `special://xbmc/addons`; no write call on the path targets the product tree or the application add-on tree | Boundary witnesses, the stated limitation (no source-tree census in the interval), and the source argument | Boundary witness exists; argument recorded here |
+| S9 Receiving installation | The S1 to S6 witnesses | Not applicable. The conflict performs no install, update or repair, and `select()` is never reached (`create_workflow.py:297`) | Stated as not applicable. Remains unqualified for receiving operations | Not applicable to this scenario |
+
+#### 3. Independent adjudication rules
+
+Precondition for any PASS. The comparator and the driver's practical validator must have independent qualification-review records for the exact candidate. Without them the result is INCONCLUSIVE. No such records exist yet.
+
+**Narrow practical PASS (external, Create conflict only).** Every condition must hold, and each must be cited to a ledger entry or a recomputed machine fact:
+
+- P1 Identity: L1 matches the artifacts; exactly one confirmation; no Apply, chooser, local-capture approval or retry.
+- P2 Expected result: 32733 is visible after that single confirmation, acknowledged, in a fresh image.
+- P3 Correlation: READY, launch, navigation, confirm, UI exit, prequit, quit, FINISH and DONE belong to the original session and the single launch PID; the receipt PID equals the launch PID; FINISH was sent once.
+- P4 Driver record: `result.json` agrees with the ledger, and its `after.practical` block passed the driver's validator.
+- P5 Public witnesses: `public_comparison` is PRESERVED, covering the library, registry, selection, build-library tree, frozen-artifacts and install-resolution trees, association, bundle, settings, and Addons33 identity and enabled state.
+- P6 Five files: each is EXACT, or MAINTENANCE_ONLY with an approved class on its own file (M1 on guisettings; M2 on Textures13). None is MEANINGFUL or INCONCLUSIVE.
+- P7 S7: MET at both boundaries, with a fresh post-stop identify and stage verification.
+- P8 Dispositions: S2 has store hits only; S4, S6, S8 and S9 are justified as in the table and signed off by the reviewer; S5 other Addons33 content and any other limitation are reported.
+- P9 Attestations: each A entry is followed by a consistent N observation.
+
+The strict N6 five-file statuses may still read CHANGED_OR_MISSING when the only difference is an approved M1 or M2 class. The strict result stays as produced. Practical classification never rewrites it, and a practical PASS never makes the strict state PRESERVED.
+
+**FAIL.** Requires independently established evidence, correlated through the ledger to the operation, of at least one of:
+
+- F1 Wrong operation result: a success where 32733 was expected, including a byte-identical bundle success, or any increase in registry entries for the same identity and version.
+- F2 BM-caused loss, overwrite, truncation or deletion of meaningful content in S1 to S6, such as the fixture entry or its build file, the selection, the association, or a store artifact. The store is write-once, so this needs direct evidence.
+- F3 BM-caused unsafe transaction, hold or publication residue attributable to the operation (S7 NOT_MET from an operation-created record).
+- F4 Unrelated mutation attributable to the operation, including of an unmanaged add-on.
+- F5 Exposure of secret or private values in retained evidence.
+
+Not FAIL by themselves: a strict difference; an additive artifact import; an approved M1 or M2 change; an incomplete terminal such as 32730 or 32732; a timeout or CANCEL.
+
+**INCONCLUSIVE** is the default for: an S2 change by additive import (no D-032 class); any MEANINGFUL or unclassified classification; any reachable S4, S6, S8 or S9 scope without a justified disposition; any missing, contradictory or unsealed ledger entry; any unverified attestation; broken or uncertain session, PID or receipt correlation; a terminal other than 32733 that is not a success (the conflict gate was not reached); process loss, timeout, EOF, CANCEL or interruption; incomplete cleanup; an absent `result.json`; and a comparator or validator without review.
+
+#### 4. Negative evidence cases
+
+Each case below prevents PASS, alone or in combination.
+
+- **Caller-supplied VERIFIED alone.** `tools/bm_practical_precondition.py` accepts the string `correlation='VERIFIED'` (lines 292-293), and no producer exists. The driver passes `None` (`tools/bm_preservation_driver.py:396`). A string or flag is not evidence. This procedure never uses that field.
+- **Copied receipt with refreshed mtime.** `quit_receipt` checks shape, owner, mode, link count and an mtime inside the READY-to-read window (`tools/bm_preservation_driver.py:172-207`). A copied file touched into that window passes. Its mtime is not provenance. PASS needs the receipt hash recorded at the original quit (L11), a receipt PID equal to the launch PID, and a post-quit identify. A receipt whose hash was not recorded at quit time, or that was created outside the original session, is UNVERIFIED.
+- **No native activity despite a structurally valid driver.** READY, FINISH and `result.json` establish only the acquisition and comparison boundaries. Without N entries for the review and the confirm, the scenario did not occur: INCONCLUSIVE (not reached).
+- **Missing terminal result observation.** Without a fresh image of the 32733 outcome after the single confirmation, the expected result is unverified. A chooser, receipt, comparison or driver success does not show it (runbook step 3).
+- **Stale or broken process or session correlation.** Different session identifiers at READY and FINISH; a second driver; a launch PID that differs from the receipt PID; more than one Test.app process; a process still running after quit; FINISH sent twice or to another session; `ready.json` changed after READY. Each is INCONCLUSIVE.
+- **CANCEL, timeout or interrupted acquisition.** CANCEL discards the host baseline and produces no comparison. A 900-second timeout, EOF, controller loss or interruption is INCONCLUSIVE. No comparison may be rebuilt from hashes or persisted private data (runbook B1 and the stop rules).
+- **Meaningful or unclassified changes.** Any MEANINGFUL or INCONCLUSIVE classification, any public-witness difference, and any leaf outside the M1 and M2 classes block PASS. A class counts only on its own file.
+- **Reachable but unwitnessed protected scopes.** S4, S6, S8 or S9 reachable without a justified disposition, or S5 other Addons33 content presented as preserved, blocks PASS. The 32733 outcome cannot exclude S2 writes, because an import happens before the conflict is detected.
+
+#### 5. Acceptance boundary
+
+- A PASS under this procedure is independently adjudicated external evidence for the Create conflict scenario only, and it must be labelled that way. It is not a PASS from the existing driver, and the driver's verdict stays `NOT_DECIDED`.
+- It does not establish S9 receiving-installation preservation, install, update or repair preservation, the D-030 deferred lifecycles, whole-profile preservation, complete Addons33 or unmanaged add-on verification, publication, public-product qualification, or macOS beta acceptance.
+- It does not replace an accepted native run. A native run needs its own authorization naming the scenario, target, permitted actions and operator steps.
+- It does not replace independent qualification reviews of the comparator, the driver validator, the precondition assessment or the evidence itself.
+
+#### Illustrative outcomes (hypothetical; not observations)
+
+These examples show how the rules apply. They describe no run and must not be cited as evidence.
+
+- **H1, hypothetical narrow PASS.** Ledger complete and consistent. `public_comparison` PRESERVED. guisettings MAINTENANCE_ONLY with `M1_UPTIME` count 1; the other four files EXACT. S2 has store hits only; S4, S6, S8 and S9 justified. `result.json` strict state INCONCLUSIVE, reason `changed`, because guisettings differs. Adjudication: narrow external practical PASS; the strict result is reported unchanged.
+- **H2, hypothetical FAIL (F1).** Confirm produced a success screen instead of 32733, and the registry gained a second entry for the same identity and version. Adjudication: FAIL for wrong operation result, cited to the N entry and the registry witness difference.
+- **H3, hypothetical INCONCLUSIVE.** 32733 observed and all other entries clean, but the S2 digest changed because one dependency was imported before the conflict. No D-032 class covers artifact addition. Adjudication: INCONCLUSIVE; preserve the evidence; no retry. Not FAIL, because the import is additive and not shown to be harmful.
+
+#### Feasibility of this scenario
+
+- Feasible in principle. The 32733 gate is reached only after a complete capture, and the candidate's builtin pin is present.
+- A narrow PASS is feasible only if every needed `(addon_id, version)` pair is already a verified store artifact before READY. The conflict depends only on identity and version, so the reviewed content can be chosen to match existing store artifacts. If the content needs a new artifact, expect INCONCLUSIVE by design.
+- Maintenance from UI use (M1, M2) is classifiable. View-state or other settings changes are not, and a single such change blocks PASS.
+
+#### Conditions still required before a native A15 run
+
+1. Qualification reviews of the comparator, the driver practical validator and the precondition assessment for the exact candidate (none recorded yet).
+2. Independent Codex review of this addendum, with particular attention to the S4 and S6 arguments.
+3. Eric's authorization of a separate native task naming this scenario, the target, the permitted actions and the operator's physical-entry role, plus his decision on the adapter 0.0.17 driver.
+4. The B1 PTY channel in the executing session. This Claude session does not have one.
+5. A pre-run store-hit determination for every needed pair, with the review content fixed before READY.
+6. A sealed ledger instantiated from L1 to L16 before READY, using the bbfbb7e stage manifest rather than the stale path in runbook step 1.
+7. The fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present and unchanged before READY.
+8. Operator availability for B-1 focus confirmation and physical entry, arranged before READY.
+
+#### Consistency findings
+
+- Consistent: the 32733 mapping; the 32730 path ends before registration; the B-2 re-entry rule matches `suggest_version`; the absence of a D-032 class for artifact addition is consistent with the S2 digest rule.
+- Clarified here: the conflict key is identity and version only. The root is a capture variable, not an identity variable.
+- Open, not changed by this addendum: S2 has no class for additive imports, so a scenario PASS depends on store state; runbook step 1 still names the stale manifest path; the precondition module still accepts a caller correlation string; the driver's quit receipt check is mtime-bounded only.
+
 ## Audio root placement (N2)
 
 The accepted grammar is correct. The pinned call chain is:
