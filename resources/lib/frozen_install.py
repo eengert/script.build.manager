@@ -1553,12 +1553,16 @@ def _admission_dependency_edges(xml_bytes, addon_id):
 
 # Passive registration evidence is deliberately limited to this reviewed macOS
 # build. It is not independent functional usability proof and never covers Python.
+# xbmc.metadata (D-032) is an extension-point interface: Kodi types it UNKNOWN and
+# omits it from JSON-RPC by design. Its pin proves registration, identity, origin
+# and descriptor only.
 _PASSIVE_BUILD = "20251031-a3a448d26b"
 _PASSIVE_PLIST_SHA256 = "9f37ef7b63021ef2ab01b98a44f2f62c8eb68c3f61c014510cc3b7166450bcac"
 _PASSIVE_BUILTINS = MappingProxyType({
     "xbmc.core": ("0.1.0", "0.1", "e38ace50afe6e15b918fa51038504fc11888038671bdacac2521af931b538a6f"),
     "xbmc.gui": ("5.17.0", "5.17.0", "7d8602ff6510bbb5ae8098d60c563c4e82c5f0b682220aad297982c9e116e6bb"),
     "kodi.resource": ("1.0.0", "1.0", "dd54ff32f0920d4fe68bff14c1a51311ac8f31e639fbbe7123a16905901b06f3"),
+    "xbmc.metadata": ("2.1.0", "1.0", "95082198599c695a91d2aefb072f0457e9ffd5eb3f2dc1587fa58159750db1b6"),
 })
 
 
@@ -1700,7 +1704,7 @@ def _verify_builtin_closure(plan, installer, required, verified, target_edges, s
                     or (edge.min_version and not _builtin_version_satisfies(edge.min_version, abi))):
                 raise ValueError("incompatible interface interval")
             children = _builtin_metadata_edges(metadata, aid)
-            if aid in ("xbmc.python", "xbmc.gui", "kodi.resource") and not any(
+            if aid in ("xbmc.python", "xbmc.gui", "kodi.resource", "xbmc.metadata") and not any(
                     child.addon_id == "xbmc.core" and not child.optional for child in children):
                 raise ValueError("missing mandatory core interface requirement")
             identity = (version, abi, hashlib.sha256(metadata.xml_bytes).hexdigest())
@@ -2220,7 +2224,7 @@ class KodiRuntimeFrozenArtifactBackend(FrozenArtifactBackend):
         its actual identity/version/path. Executing here proves the Python runtime
         is usable. The XML's ABI floor additionally excludes incompatible Python
         API requirements; a Kodi release number or a dependent's declaration is
-        never target evidence. The three allowlisted passive interfaces instead
+        never target evidence. The four allowlisted passive interfaces instead
         use pinned registration compatibility; that proves no independent API
         functional usability. Every other interface remains unverified.
         """

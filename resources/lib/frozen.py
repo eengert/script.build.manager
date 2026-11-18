@@ -1182,7 +1182,7 @@ def capture_frozen_build(
                 if not abi or not _builtin_version_satisfies(version, abi):
                     raise CaptureError("invalid builtin ABI interval")
                 edges = _builtin_metadata_edges(metadata, addon_id)
-                if addon_id in ("xbmc.python", "xbmc.gui", "kodi.resource") and not any(
+                if addon_id in ("xbmc.python", "xbmc.gui", "kodi.resource", "xbmc.metadata") and not any(
                         e.addon_id == "xbmc.core" and not e.optional for e in edges):
                     raise CaptureError("missing mandatory core requirement")
                 builtin_versions[addon_id] = (version, abi)

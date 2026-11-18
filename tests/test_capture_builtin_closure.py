@@ -1,7 +1,9 @@
 """Capture-to-admission builtin closure; synthetic authority only, no native calls."""
 from dataclasses import replace
+import hashlib
 from pathlib import Path
 import tempfile
+from types import MappingProxyType
 import unittest
 from unittest.mock import patch
 
@@ -159,3 +161,122 @@ class CaptureBuiltinClosureTests(unittest.TestCase):
             # A native home shadow withdraws authority; ordinary XML cannot fix it.
             (fixture.home / 'xbmc.core').mkdir()
             self.assertFalse(self.capture().complete)
+
+
+class XbmcMetadataClosureTests(unittest.TestCase):
+    """Representative metadata.generic.albums closure through the pinned native path (D-032)."""
+    ROOT = 'metadata.generic.albums'
+    XBMC = 'xbmc.metadata'
+
+    def setUp(self):
+        from resources.lib import frozen_install as fi
+        from tests.test_d028_passive import PassiveFixture
+        self.fi = fi
+        self.f = PassiveFixture(self)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.store = ArtifactStore(Path(temp.name))
+        self.backends = []
+        original = fi.KodiRuntimeFrozenArtifactBackend
+
+        def native():
+            backend = original()
+            self.backends.append(backend)
+            backend._addons_dir = lambda: self.f.home
+            backend._application_addons_dir = lambda: self.f.app
+            backend._xbmc = self.f.backend._xbmc
+            backend._rpc = self.f.backend._rpc
+            return backend
+
+        patcher = patch.object(fi, 'KodiRuntimeFrozenArtifactBackend', side_effect=native)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(lambda: [backend.close() for backend in self.backends])
+
+    def root_xml(self, metadata='2.1.0', core='0.1.0'):
+        """Representative managed root: only its builtin closure is under test."""
+        return _xml(self.ROOT, version='1.0.20', imports=(
+            (self.XBMC, metadata, False), ('xbmc.core', core, False)))
+
+    def install_root(self, xml):
+        from tests.test_frozen import _kodi_entry, _kodi_rpc
+        target = self.f.home / self.ROOT
+        target.mkdir(parents=True, exist_ok=True)
+        (target / 'addon.xml').write_bytes(xml)
+        cache = self.f.home / 'packages'
+        cache.mkdir(exist_ok=True)
+        (cache / 'metadata-albums.zip').write_bytes(_zip(self.ROOT, xml_bytes=xml))
+        inventory = KodiInventoryBackend(
+            _kodi_rpc([_kodi_entry(self.ROOT, str(target), version='1.0.20')]),
+            addons_dir=self.f.home, package_cache_dir=cache, application_addons_dir=self.f.app)
+        self.addCleanup(inventory.close)
+        return inventory
+
+    def capture(self, xml=None):
+        return capture_frozen_build(
+            backend=self.install_root(self.root_xml() if xml is None else xml),
+            store=self.store, root_addon_ids=(self.ROOT,), build_id='metadata-closure',
+            name='Metadata closure', created_at='now')
+
+    def admit(self, manifest):
+        plan = validate_frozen_manifest(manifest, self.store)
+        verified = verify_platform_requirements(plan, self.fi.KodiRuntimeFrozenArtifactBackend(),
+            planned_versions={self.ROOT: '1.0.20'})
+        return plan, verified
+
+    def test_metadata_generic_albums_closure_uses_pinned_xbmc_metadata_and_core(self):
+        result = self.capture()
+        self.assertTrue(result.complete, result.errors)
+        nodes = {n.addon_id: n for n in result.manifest.addons}
+        self.assertTrue(nodes[self.XBMC].system and nodes['xbmc.core'].system)
+        self.assertEqual(('2.1.0', '0.1.0'), (nodes[self.XBMC].version, nodes['xbmc.core'].version))
+        edge, = nodes[self.XBMC].dependency_edges
+        self.assertEqual(('xbmc.core', '0.1.0', False), (edge.addon_id, edge.min_version, edge.optional))
+        plan, verified = self.admit(result.manifest)
+        self.assertEqual({self.XBMC: '2.1.0', 'xbmc.core': '0.1.0'}, dict(verified.builtin_versions))
+        self.assertEqual({self.XBMC: '1.0', 'xbmc.core': '0.1'}, dict(verified.builtin_abis))
+        self.assertEqual([self.ROOT], [n.addon_id for n in plan.install_order])
+
+    def test_incompatible_metadata_minimum_never_completes(self):
+        for minimum in ('2.1.1', '2.2.0', '0.9'):
+            with self.subTest(minimum=minimum):
+                result = self.capture(self.root_xml(metadata=minimum))
+                self.assertFalse(result.complete)
+                self.assertNotEqual(CaptureStatus.COMPLETE, result.manifest.capture_status)
+                self.assertTrue(result.errors)
+
+    def test_disabled_absent_or_shadowed_closure_members_never_complete(self):
+        for condition in ('System.AddonIsEnabled(xbmc.metadata)', 'System.HasAddon(xbmc.core)',
+                          'System.AddonIsEnabled(xbmc.core)'):
+            with self.subTest(condition=condition):
+                self.f.conditions[condition] = False
+                self.assertFalse(self.capture().complete)
+                self.f.conditions[condition] = True
+        self.assertTrue(self.capture().complete)
+        shadow = self.f.home / self.XBMC
+        shadow.mkdir()
+        (shadow / 'addon.xml').write_bytes(self.f.descriptor(self.XBMC).read_bytes())
+        try:
+            self.assertFalse(self.capture().complete)
+        finally:
+            (shadow / 'addon.xml').unlink()
+            shadow.rmdir()
+
+    def test_missing_mandatory_core_import_refuses_at_capture_and_admission(self):
+        good = self.f.descriptor(self.XBMC).read_bytes()
+        bad = good.replace(b'<import addon="xbmc.core" version="0.1.0"/>', b'')
+        self.assertNotEqual(good, bad)
+        result = self.capture()
+        self.assertTrue(result.complete, result.errors)
+        manifest = result.manifest
+        pin = ('2.1.0', '1.0', hashlib.sha256(bad).hexdigest())
+        self.f.descriptor(self.XBMC).write_bytes(bad)
+        try:
+            with patch.object(self.fi, '_PASSIVE_BUILTINS',
+                              MappingProxyType({**self.fi._PASSIVE_BUILTINS, self.XBMC: pin})):
+                self.assertFalse(self.capture().complete)
+                with self.assertRaises(self.fi.FrozenPlatformRequirementError):
+                    self.admit(manifest)
+        finally:
+            self.f.descriptor(self.XBMC).write_bytes(good)
+        self.assertTrue(self.capture().complete)
