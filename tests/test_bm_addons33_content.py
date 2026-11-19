@@ -64,6 +64,19 @@ def installed_db(*rows, user_version=None):
     return build(INSTALLED_SQL, *rows, user_version=user_version)
 
 
+def observed_rows(raw):
+    """Rows read through a view that exposes rowid, using an independent SQLite connection."""
+    with tempfile.TemporaryDirectory(prefix='bm-addons33-test-') as directory:
+        path = os.path.join(directory, 'synthetic.db')
+        with open(path, 'wb') as stream:
+            stream.write(raw)
+        connection = sqlite3.connect('file:' + path + '?mode=ro', uri=True)
+        try:
+            return connection.execute('SELECT identity, v FROM observed').fetchall()
+        finally:
+            connection.close()
+
+
 def build_corrupt_table_page():
     """A valid header with an invalid b-tree page type on the installed table's root page."""
     with tempfile.TemporaryDirectory(prefix='bm-addons33-test-') as directory:
@@ -124,12 +137,67 @@ class ContentWitnessTests(unittest.TestCase):
         self.assertEqual(self.compare(before, after), self.compare(before, after))
 
     def test_reordered_rows_are_exact(self):
+        # Physical insertion order is not logical content while every rowid keeps its value.
+        forward = build(PLAIN_SQL, "INSERT INTO plain(rowid, a, b) VALUES (1, 'x', 1)",
+                        "INSERT INTO plain(rowid, a, b) VALUES (2, 'y', 2)",
+                        "INSERT INTO plain(rowid, a, b) VALUES (3, 'z', 3)")
+        reversed_ = build(PLAIN_SQL, "INSERT INTO plain(rowid, a, b) VALUES (3, 'z', 3)",
+                          "INSERT INTO plain(rowid, a, b) VALUES (2, 'y', 2)",
+                          "INSERT INTO plain(rowid, a, b) VALUES (1, 'x', 1)")
+        result = self.compare(forward, reversed_)
+        self.assertReason(result, witness.EXACT, 'logical_content_identical')
+
+    def test_insertion_order_that_reassigns_rowids_is_meaningful(self):
+        # The same declared rows in reverse insertion order carry different rowids.
         forward = build(PLAIN_SQL, "INSERT INTO plain VALUES ('x', 1)", "INSERT INTO plain VALUES ('y', 2)",
                         "INSERT INTO plain VALUES ('z', 3)")
         reversed_ = build(PLAIN_SQL, "INSERT INTO plain VALUES ('z', 3)", "INSERT INTO plain VALUES ('y', 2)",
                           "INSERT INTO plain VALUES ('x', 1)")
         result = self.compare(forward, reversed_)
-        self.assertReason(result, witness.EXACT, 'logical_content_identical')
+        self.assertReason(result, witness.MEANINGFUL, 'rows_changed')
+        self.assertEqual(result['counts']['row_changes'], 4)
+
+    def test_observable_rowid_through_a_view_is_meaningful(self):
+        # The view exposes rowid, so the same declared value at another rowid is observable.
+        view = 'CREATE VIEW observed AS SELECT rowid AS identity, v FROM t'
+        before = build('CREATE TABLE t(v TEXT)', view, "INSERT INTO t VALUES ('x')")
+        after = build('CREATE TABLE t(v TEXT)', view, "INSERT INTO t VALUES ('y')",
+                      "INSERT INTO t VALUES ('x')", "DELETE FROM t WHERE v = 'y'")
+        self.assertEqual(observed_rows(before), [(1, 'x')])
+        self.assertEqual(observed_rows(after), [(2, 'x')])
+        result = self.compare(before, after)
+        self.assertReason(result, witness.MEANINGFUL, 'rows_changed')
+        self.assertEqual(result['counts']['row_changes'], 2)
+        self.assertSanitized(result)
+
+    def test_without_rowid_tables_compare_by_primary_key(self):
+        schema = 'CREATE TABLE w(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID'
+        forward = build(schema, "INSERT INTO w VALUES ('a', '1')", "INSERT INTO w VALUES ('b', '2')")
+        reversed_ = build(schema, "INSERT INTO w VALUES ('b', '2')", "INSERT INTO w VALUES ('a', '1')")
+        self.assertReason(self.compare(forward, reversed_), witness.EXACT, 'logical_content_identical')
+        changed = build(schema, "INSERT INTO w VALUES ('a', '1')", "INSERT INTO w VALUES ('b', '3')")
+        self.assertReason(self.compare(forward, changed), witness.MEANINGFUL, 'rows_changed')
+
+    def test_integer_primary_key_alias_is_compared_by_value(self):
+        schema = 'CREATE TABLE ipk(id INTEGER PRIMARY KEY, v TEXT)'
+        before = build(schema, "INSERT INTO ipk VALUES (1, 'x')", "INSERT INTO ipk VALUES (2, 'y')")
+        reversed_ = build(schema, "INSERT INTO ipk VALUES (2, 'y')", "INSERT INTO ipk VALUES (1, 'x')")
+        self.assertReason(self.compare(before, reversed_), witness.EXACT, 'logical_content_identical')
+        swapped = build(schema, "INSERT INTO ipk VALUES (1, 'y')", "INSERT INTO ipk VALUES (2, 'x')")
+        self.assertReason(self.compare(before, swapped), witness.MEANINGFUL, 'rows_changed')
+
+    def test_shadowed_rowid_column_falls_back_to_an_unshadowed_alias(self):
+        schema = 'CREATE TABLE sh(rowid TEXT, v TEXT)'
+        before = build(schema, "INSERT INTO sh VALUES ('a', 'x')")
+        same = build(schema, "INSERT INTO sh VALUES ('a', 'x')")
+        self.assertReason(self.compare(before, same), witness.EXACT, 'logical_content_identical')
+        moved = build(schema, "INSERT INTO sh VALUES ('z', 'q')", "INSERT INTO sh VALUES ('a', 'x')",
+                      "DELETE FROM sh WHERE rowid = 'z'")
+        self.assertReason(self.compare(before, moved), witness.MEANINGFUL, 'rows_changed')
+
+    def test_table_with_every_rowid_alias_shadowed_is_inconclusive(self):
+        valid = build('CREATE TABLE shadowed(rowid, _rowid_, oid)', 'INSERT INTO shadowed VALUES (1, 2, 3)')
+        self.assertInconclusive(self.compare(valid, valid), 'unsupported_schema_object')
 
     def test_empty_database_is_exact_with_no_tables(self):
         empty = build('CREATE TABLE gone (x)', 'DROP TABLE gone')
@@ -433,6 +501,76 @@ class ContentWitnessTests(unittest.TestCase):
         for result in cases:
             with self.subTest(reason=result['reason']):
                 self.assertSanitized(result)
+
+    # Classification boundary and descriptor ownership ------------------------
+
+    def recording_open(self):
+        """Patch os.open to record every descriptor the module (or rmtree) obtains."""
+        real_open = os.open
+        opened = []
+
+        def record(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened.append(descriptor)
+            return descriptor
+
+        return mock.patch.object(witness.os, 'open', side_effect=record), opened
+
+    def assertClosed(self, descriptor):
+        with self.assertRaises(OSError):
+            os.fstat(descriptor)
+
+    def test_classification_failure_is_a_sanitized_inconclusive(self):
+        valid = installed_db(installed_row('a'))
+        with mock.patch.object(witness, '_difference', side_effect=MemoryError(SECRET)):
+            result = self.compare(valid, valid)
+        self.assertInconclusive(result, 'internal_error')
+        self.assertNotIn(SECRET, json.dumps(result))
+
+    def test_classification_interrupts_propagate(self):
+        valid = installed_db(installed_row('a'))
+        for exc_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception=exc_type.__name__):
+                with mock.patch.object(witness, '_difference', side_effect=exc_type()):
+                    with self.assertRaises(exc_type):
+                        self.compare(valid, valid)
+
+    def test_fdopen_failure_closes_the_descriptor_and_leaves_no_copy(self):
+        valid = installed_db(installed_row('a'))
+        before = private_copies()
+        patcher, opened = self.recording_open()
+        with patcher, mock.patch.object(witness.os, 'fdopen', side_effect=OSError(f'/tmp/{SECRET}')):
+            result = self.compare(valid, valid)
+        self.assertInconclusive(result, 'internal_error')
+        self.assertNotIn(SECRET, json.dumps(result))
+        self.assertTrue(opened)
+        for descriptor in opened:
+            self.assertClosed(descriptor)
+        self.assertEqual(private_copies(), before)
+
+    def test_fdopen_interrupts_close_the_descriptor_and_propagate(self):
+        valid = installed_db(installed_row('a'))
+        for exc_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception=exc_type.__name__):
+                before = private_copies()
+                patcher, opened = self.recording_open()
+                with patcher, mock.patch.object(witness.os, 'fdopen', side_effect=exc_type()):
+                    with self.assertRaises(exc_type):
+                        self.compare(valid, valid)
+                self.assertTrue(opened)
+                for descriptor in opened:
+                    self.assertClosed(descriptor)
+                self.assertEqual(private_copies(), before)
+
+    def test_successful_stream_keeps_descriptor_ownership_and_closes_it_once(self):
+        valid = installed_db(installed_row('a'))
+        patcher, opened = self.recording_open()
+        with patcher:
+            result = self.compare(valid, valid)
+        self.assertReason(result, witness.EXACT, 'logical_content_identical')
+        self.assertTrue(opened)
+        for descriptor in opened:
+            self.assertClosed(descriptor)
 
     # Standalone boundary ----------------------------------------------------
 

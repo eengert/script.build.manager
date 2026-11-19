@@ -9,9 +9,14 @@ can see in the header.
 
 The logical projection covers the complete content of the database: every schema
 object (type, name, table and exact definition text), user_version and application_id,
-and every ordinary table's complete typed rows as a multiset. Row order, rowid values
-and physical page layout are not logical content and are not compared. Index contents
-are covered by their definitions and by integrity_check.
+and every ordinary table's complete typed rows as a multiset. Each row of a rowid table
+carries its observable rowid, read through the first of rowid, _rowid_ or oid that no
+column of the table shadows, because views and triggers can expose that identity. A
+WITHOUT ROWID table is identified by its primary key columns, which are already row
+content. A table whose rowid aliases are all shadowed is INCONCLUSIVE. Row order and
+physical page layout are not compared. Index contents are covered by their definitions
+and by integrity_check. A rowid renumbering, for example by a maintenance operation,
+is an observable difference and is classified MEANINGFUL.
 
 Classification: EXACT, MEANINGFUL or INCONCLUSIVE. There are no maintenance classes.
 Any demonstrated difference is MEANINGFUL until separately adjudicated under D-032.
@@ -50,6 +55,8 @@ _MAX_VALUE_BYTES = 1 << 20
 _MAX_PROJECTION_BYTES = 32 << 20
 _PROGRESS_INTERVAL = 1000  # SQLite virtual-machine instructions per progress callback
 _MAX_PROGRESS_STEPS = 20000
+_MAX_COLUMNS = 1024
+_ROWID_ALIASES = ('rowid', '_rowid_', 'oid')
 
 _HEADER_BYTES = 100
 _MAGIC = b'SQLite format 3\x00'
@@ -71,7 +78,7 @@ class _Refused(Exception):
 class _Projection:
     schema: tuple  # sorted (kind, name, table, definition-or-None)
     pragmas: tuple  # (user_version, application_id)
-    rows: tuple  # sorted (table name, canonical row bytes); duplicates kept
+    rows: tuple  # sorted (table name, rowid alias or '', canonical row bytes); duplicates kept
     tables: int
 
 
@@ -113,11 +120,24 @@ def _check_header(raw):
         raise _Refused('malformed_database')
 
 
+def _close_descriptor(descriptor):
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass  # a failed fdopen may already have released the descriptor
+
+
 def _write_copy(directory, raw):
     path = os.path.join(directory, 'copy.db')
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
     descriptor = os.open(path, flags, 0o600)
-    with os.fdopen(descriptor, 'wb') as stream:
+    try:
+        stream = os.fdopen(descriptor, 'wb')
+    except BaseException:
+        # Ownership never reached the stream, so this function still owns the descriptor.
+        _close_descriptor(descriptor)
+        raise
+    with stream:  # from here the stream owns the descriptor and closes it exactly once
         if stream.write(raw) != len(raw):
             raise _Refused('read_failed')
     return path
@@ -158,9 +178,9 @@ def _translate(exc, budget):
     return _Refused('internal_error')
 
 
-def _rows(connection, sql, factory, cap, code):
+def _rows(connection, sql, factory, cap, code, params=()):
     connection.text_factory = factory
-    cursor = connection.execute(sql)
+    cursor = connection.execute(sql, params)
     try:
         found = []
         for row in cursor:
@@ -179,6 +199,35 @@ def _text(raw):
         return raw.decode('utf-8')
     except UnicodeDecodeError:
         raise _Refused('unsupported_text') from None
+
+
+def _quote(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _identity_alias(connection, name):
+    """The rowid alias that observes a rowid table's row identity, or None for WITHOUT ROWID.
+
+    rowid, _rowid_ and oid name the same implicit rowid unless a column shadows that name.
+    A probe that fails with 'no such column' on an unshadowed alias means that the table
+    has no rowid. Any other failure propagates, so it is never read as WITHOUT ROWID.
+    """
+    columns = {_text(raw).lower() for (raw,) in _rows(
+        connection, 'SELECT name FROM pragma_table_xinfo(?)', bytes, _MAX_COLUMNS,
+        'schema_object_cap', (name,))}
+    if all(alias in columns for alias in _ROWID_ALIASES):
+        raise _Refused('unsupported_schema_object')
+    for alias in _ROWID_ALIASES:
+        if alias in columns:
+            continue
+        try:
+            connection.execute('SELECT ' + alias + ' FROM ' + _quote(name) + ' LIMIT 0').close()
+        except sqlite3.OperationalError as exc:
+            if 'no such column' in str(exc):
+                return None
+            raise
+        return alias
+    raise _Refused('unsupported_schema_object')
 
 
 def _single_int(connection, sql):
@@ -255,8 +304,10 @@ def _gather(connection, budget):
     all_rows = []
     total_rows = 0
     for name in sorted(tables):
-        quoted = '"' + name.replace('"', '""') + '"'
-        found = _rows(connection, 'SELECT * FROM ' + quoted, _tagged, _MAX_ROWS_PER_TABLE, 'row_cap')
+        alias = _identity_alias(connection, name)
+        select = '*' if alias is None else alias + ', *'
+        found = _rows(connection, 'SELECT ' + select + ' FROM ' + _quote(name), _tagged,
+                      _MAX_ROWS_PER_TABLE, 'row_cap')
         total_rows += len(found)
         if total_rows > _MAX_TOTAL_ROWS:
             raise _Refused('row_cap')
@@ -265,7 +316,7 @@ def _gather(connection, budget):
             size += len(encoded)
             if size > _MAX_PROJECTION_BYTES:
                 raise _Refused('projection_too_large')
-            all_rows.append((name, encoded))
+            all_rows.append((name, alias or '', encoded))
     all_rows.sort()
     return _Projection(schema=tuple(schema), pragmas=(user_version, application_id),
                        rows=tuple(all_rows), tables=len(tables))
@@ -365,4 +416,8 @@ def compare_databases(before, after):
         return _result(INCONCLUSIVE, exc.code)
     except Exception:
         return _result(INCONCLUSIVE, 'internal_error')
-    return _classify(left, right)
+    try:
+        return _classify(left, right)
+    except Exception:
+        # The fixed-code boundary covers classification as well as projection.
+        return _result(INCONCLUSIVE, 'internal_error')
