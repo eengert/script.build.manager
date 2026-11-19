@@ -1,5 +1,11 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 evidence collection candidate
+
+- Source candidate `99927bb81f7503837032d1e6a49d67d46c468970` adds bounded staging/cleanup, actual store-branch, native root, startup recovery and stopped-path observations. Product tree SHA-256 `431adf98e258de0109f45ec57cfcca53df5004f8f29219b473ba232d30ee7167` (89 files). The driver adds fixed supplemental stopped codes. Accepted comparison, S7 and verdict logic are unchanged.
+- The exact source candidate passed 806 guarded tests covering the new observations, Create, startup, publication, frozen artifacts, Build Library and preservation tooling. One independent delta review is next. Review the product/host collection, authenticate the U1 Kodi API effect argument for the installed build, and reconcile the outstanding review references. The card explains the actual-run requirements and remains BLOCKED.
+- New source requires separately authorized controlled staging and a new Git-bound manifest; the five recovered `bbfbb7e` records remain historical. No current installation, launch, authorization of adapter 0.0.17 for A15, or native qualification is established.
+
 ## November 19 checkpoint — A15 offline run-card repair
 
 - The authoritative Create-conflict run card now points to the authentic `bbfbb7e` manifest. Five byte-identical source records are retained under `.qualification-evidence/a15-pinned-stage-provenance-20261119/`, including the separate November 18 Git-bound verification. Current installed identity requires later authorized stopped verification.
