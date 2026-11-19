@@ -1,6 +1,6 @@
 {
   "agent": "codex",
-  "status": "complete",
+  "status": "idle",
   "task": "BM-UI-HEADER-CLOSE-STAGE",
   "head": "afb774b5025bf2391cb052af33439d8094a12237",
   "result": "STAGING PASS; product86/adapter5 Git-bound verified; stopped/count0",
@@ -1498,5 +1498,10 @@
       }
     }
   },
-  "active_agent": "codex"
+  "active_agent": "claude",
+  "reason": null,
+  "last_commit": "aecb881",
+  "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
+  "next_agent": null,
+  "updated_at": "2026-11-13T20:22:22Z"
 }

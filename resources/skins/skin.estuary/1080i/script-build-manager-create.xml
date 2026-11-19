@@ -222,6 +222,7 @@
                 </focusedlayout>
             </control>
             <control type="textbox" id="110">
+                <onright>121</onright>
                 <left>29</left>
                 <top>100</top>
                 <width>1160</width>
@@ -249,7 +250,7 @@
                 <height>750</height>
                 <orientation>vertical</orientation>
                 <visible>Control.IsVisible(110)</visible>
-                <onleft>201</onleft>
+                <onleft>110</onleft>
                 <onright>201</onright>
                 <showonepage>true</showonepage>
             </control>
@@ -260,7 +261,7 @@
                 <height>750</height>
                 <orientation>vertical</orientation>
                 <itemgap>-10</itemgap>
-                <onleft condition="Control.IsVisible(110)">121</onleft>
+                <onleft condition="Control.IsVisible(110)">110</onleft>
                 <onleft condition="!Control.IsVisible(110)">100</onleft>
                 <onright condition="Control.IsVisible(110)">121</onright>
                 <onright condition="!Control.IsVisible(110)">100</onright>

@@ -1,4 +1,27 @@
-# Current Handoff — Build Manager Manual Mode (refreshed 2026-10-16)
+# Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
+
+## November 19 checkpoint — A15 S6 policy clarification (documentation only, local, unpushed)
+
+- Lane: Claude, `agent/claude`. Eric approved option D1 on 2026-11-19: a scenario-specific, BM-attributable S6 standard for the Create-conflict scenario only (Create `BM-ITEM8-INSTALL-20261015` 1.0.0, root `metadata.generic.albums` 1.0.20, private capture off, expected 32733). Recorded as a D-032 clarification in `.orchestrator/DECISIONS.md` and a dated addendum in `docs/A15_NATIVE_PRESERVATION_RUNBOOK.md`. The earlier Kodi-inclusive wording is retained as history, with pointers.
+- Scope: documentation only. No product code, test, witness, schema or maintenance class changed. S6 is not marked MET: the addendum holds a reviewed-from-source BM write-set table, four unresolved attribution items (U1 to U4), and a ledger slot `L2A` that a future run must fill. Ambient Kodi and third-party add-on activity stays outside the claim. 32733 and a missing write call prove nothing.
+- Required next: an independent Codex review of the cited write sites, their scope and the absence of unsupported source or causality claims, and of the distinction between BM-attributable and ambient changes.
+- Remaining A15 gates (unchanged): qualification reviews of the comparator, driver validator and precondition; S4 justification; S8 and S9 dispositions; S5 adjudication under addendum G; operation and ledger correlation; the expected-result check; the PTY channel and operator arrangements; Eric's authorization of a separate native task. No native run, practical PASS or acceptance.
+
+## November 19 checkpoint — A15 S5 byte-identity witness (offline, local, unpushed)
+
+- Lane: Claude, `agent/claude`. Eric approved a scenario-specific D-032 clarification (see `.orchestrator/DECISIONS.md`, 2026-11-19; runbook addendum G). The offline implementation adds an Addons33 whole-file byte-identity witness to the acquisition session. It reports `after.addons33_bytes.status` (`BYTES_IDENTICAL`, `BYTES_DIFFERENT` or `UNVERIFIED`), the driver validates it, and the precondition assessment validates it and refines only the `S5_DATABASE` limitation reason.
+- The assessment cannot promote `S5_DATABASE` to MET: it has no authenticated scenario context, and none was invented. Strict N6, the practical block schema and `NOT_DECIDED` are unchanged. Different or missing bytes are UNVERIFIED, never FAIL. No Addons33 maintenance class exists.
+- `tools/bm_addons33_content.py` and its tests are a superseded, unwired experiment that never received a PASS. They are preserved unchanged.
+- Not independently reviewed, no native run, S6/S4/S8/S9 unresolved, A15 not accepted. The Nov 15 line below that calls the comparator "not integrated" is historical: the offline wiring was retained on 2026-11-17.
+
+## November 15 checkpoint — D-032 practical beta readiness
+
+- Lane: Claude, `agent/claude`, local and unpushed. The production change is commit `7f83134` (pinned `xbmc.metadata` 2.1.0 passive support, D-028 pin updates and offline tests). The policy and documentation commit follows it on the same branch (see `git log`).
+- `xbmc.metadata` support is passive registration only, per D-032. It proves no functional usability. The accepted 2026-11-14 native observation still binds to candidate `b71b408`, so it does not cover `7f83134`. A native Create to Install to Verify run on the exact reviewed candidate is required before the support is relied on in a qualification claim.
+- A15 practical preservation contract is defined in `docs/A15_NATIVE_PRESERVATION_RUNBOOK.md` (D-032). It keeps the strict N6 comparison unchanged. Its comparator for the closed M1/M2 maintenance classes exists as an offline, in-memory module (`tools/bm_practical_preservation_comparator.py`), but it is not integrated and is not independently accepted. No native run occurred and A15 is not accepted.
+- Item 8 remains OPEN. The D-030 deferrals, the publication block and the matrix block are unchanged. No push, merge or release was performed.
+- Next, one of: independent review of `7f83134` and the documentation commit; an authorized native run that names its target and actions; or implementation and offline review of the M1/M2 comparator before any A15 native task.
+- Out of scope, noticed and not changed: `BUILD_MANAGER_PROJECT_PLAN.md` line 79 still names adapter `0.0.15` and says "do not create 0.0.16+". That conflicts with D-031 (0.0.17).
 
 ## October 16 checkpoint — D-030 beta restart deferral
 

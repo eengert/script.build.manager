@@ -13,7 +13,7 @@ from types import ModuleType
 from typing import Any, Dict
 
 
-ADAPTER_VERSION = "0.0.16"
+ADAPTER_VERSION = "0.0.17"
 ADDON_ID = "script.build.manager"
 DRIVER_ADDON_ID = "script.build.manager.bm023a_driver"
 BUNDLED_FROZEN_INSTALL_NAME = "bundled_frozen_install.py"
@@ -39,6 +39,7 @@ ADAPTER_STAGES = frozenset({
     "AF3_FIXTURE",
     "AUTO_KEEP",
     "PLATFORM_CHECK",
+    "XBMC_METADATA_OBSERVE",
     "SERIALIZE_RESULT",
 })
 ADAPTER_CALLABLES = frozenset({
@@ -66,6 +67,7 @@ ADAPTER_CALLABLES = frozenset({
     "read_platform_check",
     "run_af3_fixture",
     "run_auto_keep",
+    "read_xbmc_metadata_observation",
     "result_serializer",
 })
 FAILURE_CATEGORIES = frozenset({
@@ -253,7 +255,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
         )
     if len(arguments) == 1:
         token = arguments[0]
-        if token in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep"):
+        if token in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", "xbmc_metadata_observe"):
             return token
         if token == "?mode=install":
             return "install"
@@ -263,7 +265,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
             return "retry"
         if token == "?mode=status":
             return "status"
-        if token in ("?mode=af3_fixture", "?mode=af3_fixture_verify", "?mode=auto_keep"):
+        if token in ("?mode=af3_fixture", "?mode=af3_fixture_verify", "?mode=auto_keep", "?mode=xbmc_metadata_observe"):
             return token.removeprefix("?mode=")
         if token == "?mode=platform_check":
             return "platform_check"
@@ -275,7 +277,7 @@ def parse_adapter_mode(arguments: list[str]) -> str:
 def identify_adapter_result(payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Tag every result with the selected mode or the safe preselection value."""
     safe_mode = (
-        mode if mode in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep") else "unselected"
+        mode if mode in ("install", "recover", "retry", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", "xbmc_metadata_observe") else "unselected"
     )
     identified = dict(payload)
     identified["adapter_mode"] = safe_mode
@@ -1756,6 +1758,322 @@ def project_platform_check(value):
         and all(row['status'] == row['closure_status'] == 'verified' for row in value['providers'].values()))
     if value['overall'] != ('requirements_verified' if complete else 'unverified'): raise ValueError('diagnostic overall')
     if graph['status'] == 'verified' and not complete: raise ValueError('diagnostic partial graph')
+    # Round-trip closes off custom objects and returns no unvalidated fields.
+    return json.loads(json.dumps(value, sort_keys=True))
+
+
+# Fixed read-only observation of the Kodi application-bundled xbmc.metadata
+# add-on, reusing the platform source and build authorities. It reports
+# registration, identity, origin and descriptor facts for diagnosis only. It
+# grants no D-028 platform authority, no functional usability, no descriptor
+# pin, and no membership in the production trusted allowlist.
+XBMC_METADATA_MODE = "xbmc_metadata_observe"
+XBMC_METADATA_ID = "xbmc.metadata"
+XBMC_METADATA_FAILURES = frozenset({
+    "source_binding_invalid", "source_changed", "runtime_or_build_unverified",
+    "registration_unverified", "origin_unverified", "metadata_invalid",
+    "diagnostic_unavailable",
+})
+_XBMC_ID_PATTERN = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
+_XBMC_VERSION_PATTERN = r"[0-9][0-9A-Za-z._+-]{0,63}"
+_XBMC_LIST_LIMIT = 64
+_XBMC_OBSERVATION_KEYS = (
+    "schema", "source", "build", "registration", "identity", "origin",
+    "descriptor", "functional_usability", "status", "failure_category", "qualification",
+)
+
+
+def _xbmc_token(value, pattern):
+    import re
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        raise ValueError("observation token")
+    return value
+
+
+def _xbmc_descriptor(xml_bytes, expected_version):
+    """Bounded descriptor facts; uncertain identity or structure raises ValueError."""
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+    if (root.tag != "addon" or root.get("id") != XBMC_METADATA_ID
+            or root.get("version") != expected_version):
+        raise ValueError("descriptor identity")
+    floors = root.findall("backwards-compatibility")
+    if len(floors) != 1:
+        raise ValueError("descriptor abi")
+    abi = _xbmc_token(floors[0].get("abi"), _XBMC_VERSION_PATTERN)
+    groups = root.findall("requires")
+    if len(groups) > 1:
+        raise ValueError("descriptor requires")
+    requirements = []
+    for item in (groups[0].findall("import") if groups else []):
+        optional = item.get("optional", "false")
+        if optional not in ("true", "false"):
+            raise ValueError("descriptor optional")
+        requirements.append({
+            "addon_id": _xbmc_token(item.get("addon"), _XBMC_ID_PATTERN),
+            "minimum_version": _xbmc_token(item.get("version"), _XBMC_VERSION_PATTERN),
+            "optional": optional == "true",
+        })
+    points = set()
+    for child in root:
+        if child.tag == "extension" and child.get("point") is not None:
+            points.add(_xbmc_token(child.get("point"), _XBMC_ID_PATTERN))
+        elif child.tag == "extension-point":
+            points.add(_xbmc_token(child.get("id"), _XBMC_ID_PATTERN))
+    if len(requirements) > _XBMC_LIST_LIMIT or len(points) > _XBMC_LIST_LIMIT:
+        raise ValueError("descriptor bounds")
+    return {"abi": abi, "extension_points": sorted(points), "requirements": requirements}
+
+
+def read_xbmc_metadata_observation(addon_root, driver_root, raw_binding):
+    """Observe xbmc.metadata under the fixed source and build authorities. Never Apply."""
+    import importlib
+    diagnostic = {
+        "schema": 1,
+        "source": None,
+        "build": {"status": "unverified", "major": None, "minor": None, "revision": None},
+        "registration": {"status": "unverified", "has_addon": None, "enabled": None,
+            "json_rpc_listed": None},
+        "identity": None,
+        "origin": {"status": "unverified"},
+        "descriptor": {"sha256": None, "version": None, "abi": None,
+            "extension_points": [], "requirements": [], "trust": "observed_unpinned"},
+        "functional_usability": "not_established",
+        "status": "unavailable",
+        "failure_category": "diagnostic_unavailable",
+        "qualification": "not_qualified",
+    }
+    result = {"ok": False, "xbmc_metadata_observation": diagnostic}
+
+    def refuse(category, status="refused"):
+        diagnostic["status"] = status
+        diagnostic["failure_category"] = category
+        return result
+
+    backend = None
+    try:
+        try:
+            _, diagnostic["source"] = _platform_sources(raw_binding, addon_root, driver_root)
+        except Exception:
+            return refuse("source_binding_invalid")
+        try:
+            fi = importlib.import_module("resources.lib.frozen_install")
+            fr = importlib.import_module("resources.lib.frozen")
+            verify_production_module_sources(addon_root, {
+                "resources.lib.frozen_install": fi, "resources.lib.frozen": fr})
+        except Exception:
+            return refuse("source_binding_invalid")
+        try:
+            backend = fi.KodiRuntimeFrozenArtifactBackend()
+            inventory = backend._inventory()
+        except Exception:
+            return refuse("diagnostic_unavailable", status="unavailable")
+
+        fields = ("id", "version", "path", "type")
+        observed = {}
+
+        def registration_state():
+            xbmc = backend._xbmc()
+            return (xbmc.getCondVisibility("System.HasAddon(" + XBMC_METADATA_ID + ")") is True,
+                    xbmc.getCondVisibility("System.AddonIsEnabled(" + XBMC_METADATA_ID + ")") is True)
+
+        def observe_under_build(native_fresh):
+            import xbmcaddon
+            has_addon, enabled = registration_state()
+            registration = diagnostic["registration"]
+            registration["has_addon"] = has_addon
+            registration["enabled"] = enabled
+            registration["status"] = ("enabled" if has_addon and enabled
+                else "disabled" if has_addon else "absent")
+            # JSON-RPC inventory is a separate source that omits extension-point builtins.
+            try:
+                registration["json_rpc_listed"] = backend.get_addon_details(XBMC_METADATA_ID) is not None
+            except Exception:
+                registration["json_rpc_listed"] = None
+            if not (has_addon and enabled):
+                observed["category"] = "registration_unverified"
+                return
+            info = tuple(xbmcaddon.Addon(XBMC_METADATA_ID).getAddonInfo(key) for key in fields)
+            addon_id, version, path, reported_type = info
+            if addon_id != XBMC_METADATA_ID:
+                observed["category"] = "metadata_invalid"
+                return
+            diagnostic["identity"] = {
+                "addon_id": addon_id,
+                "version": _xbmc_token(version, _XBMC_VERSION_PATTERN),
+                "reported_type": _xbmc_token(reported_type, _XBMC_ID_PATTERN),
+            }
+
+            def validate(metadata):
+                if metadata.origin is not fr.InstalledOrigin.APPLICATION:
+                    observed["category"] = "origin_unverified"
+                    return False
+                try:
+                    facts = _xbmc_descriptor(metadata.xml_bytes, version)
+                except Exception:
+                    observed["category"] = "metadata_invalid"
+                    return False
+                try:
+                    fresh = native_fresh() is True
+                except Exception:
+                    fresh = False
+                if not fresh:
+                    observed["category"] = "runtime_or_build_unverified"
+                    return False
+                if (registration_state() != (True, True)
+                        or tuple(xbmcaddon.Addon(XBMC_METADATA_ID).getAddonInfo(key) for key in fields) != info):
+                    observed["category"] = "registration_unverified"
+                    return False
+                observed["facts"] = facts
+                return True
+
+            metadata = inventory.read_application_builtin_metadata(
+                XBMC_METADATA_ID, path, validate=validate)
+            if metadata is None:
+                observed.setdefault("category", "origin_unverified")
+                return
+            facts = observed["facts"]
+            diagnostic["origin"] = {"status": "application"}
+            diagnostic["descriptor"] = {
+                "sha256": hashlib.sha256(metadata.xml_bytes).hexdigest(),
+                "version": version,
+                "abi": facts["abi"],
+                "extension_points": facts["extension_points"],
+                "requirements": facts["requirements"],
+                "trust": "observed_unpinned",
+            }
+            observed["ok"] = True
+
+        def observe(native_fresh):
+            try:
+                observe_under_build(native_fresh)
+            except Exception:
+                observed.setdefault("category", "metadata_invalid")
+
+        try:
+            with backend._passive_build_binding(inventory) as native_fresh:
+                diagnostic["build"] = {"status": "verified", "major": 21, "minor": 3,
+                    "revision": PLATFORM_BUILD}
+                observe(native_fresh)
+        except Exception:
+            diagnostic["build"] = {"status": "unverified", "major": None, "minor": None, "revision": None}
+            return refuse("runtime_or_build_unverified")
+        if not observed.get("ok"):
+            return refuse(observed.get("category", "metadata_invalid"))
+        try:
+            _platform_sources(raw_binding, addon_root, driver_root)
+        except Exception:
+            return refuse("source_changed")
+        result["ok"] = True
+        diagnostic["status"] = "observed"
+        diagnostic["failure_category"] = None
+        return result
+    except Exception:
+        return refuse("diagnostic_unavailable", status="unavailable")
+    finally:
+        if backend is not None:
+            backend.close()
+
+
+def project_xbmc_metadata_observation(value):
+    """Strict bounded projection; unpinned, usable or contradictory claims refuse."""
+    import re
+
+    def keys(record, expected):
+        if not isinstance(record, dict) or set(record) != set(expected):
+            raise ValueError("observation keys")
+
+    def token(item, pattern):
+        if not isinstance(item, str) or not re.fullmatch(pattern, item):
+            raise ValueError("observation token")
+
+    def flag(item):
+        if type(item) is not bool:
+            raise ValueError("observation flag")
+
+    keys(value, _XBMC_OBSERVATION_KEYS)
+    if (type(value["schema"]) is not int or value["schema"] != 1
+            or value["functional_usability"] != "not_established"
+            or value["qualification"] != "not_qualified"):
+        raise ValueError("observation schema")
+    source = value["source"]
+    if source is not None:
+        keys(source, ("candidate_commit", "product_sha256", "adapter_sha256", "binding_sha256"))
+        token(source["candidate_commit"], r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+        for key in ("product_sha256", "adapter_sha256", "binding_sha256"):
+            if not _is_sha256_digest(source[key]):
+                raise ValueError("observation digest")
+    build = value["build"]
+    keys(build, ("status", "major", "minor", "revision"))
+    if build["status"] == "verified":
+        if (type(build["major"]) is not int or type(build["minor"]) is not int
+                or (build["major"], build["minor"], build["revision"]) != (21, 3, PLATFORM_BUILD)):
+            raise ValueError("observation build")
+    elif build != {"status": "unverified", "major": None, "minor": None, "revision": None}:
+        raise ValueError("observation build")
+    registration = value["registration"]
+    keys(registration, ("status", "has_addon", "enabled", "json_rpc_listed"))
+    shapes = {"enabled": (True, True), "disabled": (True, False),
+        "absent": (False, False), "unverified": (None, None)}
+    if registration["status"] not in shapes or (
+            registration["has_addon"], registration["enabled"]) != shapes[registration["status"]]:
+        raise ValueError("observation registration")
+    for key in ("has_addon", "enabled", "json_rpc_listed"):
+        if registration[key] is not None:
+            flag(registration[key])
+    identity = value["identity"]
+    if identity is not None:
+        keys(identity, ("addon_id", "version", "reported_type"))
+        if identity["addon_id"] != XBMC_METADATA_ID:
+            raise ValueError("observation identity")
+        token(identity["version"], _XBMC_VERSION_PATTERN)
+        token(identity["reported_type"], _XBMC_ID_PATTERN)
+    origin = value["origin"]
+    keys(origin, ("status",))
+    if origin["status"] not in ("application", "unverified"):
+        raise ValueError("observation origin")
+    descriptor = value["descriptor"]
+    keys(descriptor, ("sha256", "version", "abi", "extension_points", "requirements", "trust"))
+    if descriptor["trust"] != "observed_unpinned":
+        raise ValueError("observation trust")
+    if descriptor["sha256"] is None:
+        if (descriptor["version"] is not None or descriptor["abi"] is not None
+                or descriptor["extension_points"] or descriptor["requirements"]):
+            raise ValueError("observation descriptor")
+    else:
+        if not _is_sha256_digest(descriptor["sha256"]):
+            raise ValueError("observation digest")
+        token(descriptor["version"], _XBMC_VERSION_PATTERN)
+        token(descriptor["abi"], _XBMC_VERSION_PATTERN)
+        points = descriptor["extension_points"]
+        if (not isinstance(points, list) or len(points) > _XBMC_LIST_LIMIT
+                or points != sorted(set(points))):
+            raise ValueError("observation points")
+        for point in points:
+            token(point, _XBMC_ID_PATTERN)
+        requirements = descriptor["requirements"]
+        if not isinstance(requirements, list) or len(requirements) > _XBMC_LIST_LIMIT:
+            raise ValueError("observation requirements")
+        for item in requirements:
+            keys(item, ("addon_id", "minimum_version", "optional"))
+            token(item["addon_id"], _XBMC_ID_PATTERN)
+            token(item["minimum_version"], _XBMC_VERSION_PATTERN)
+            flag(item["optional"])
+    status = value["status"]
+    category = value["failure_category"]
+    if status == "observed":
+        if (category is not None or source is None or build["status"] != "verified"
+                or registration["status"] != "enabled" or origin["status"] != "application"
+                or identity is None or descriptor["sha256"] is None):
+            raise ValueError("observation status")
+    elif status == "unavailable":
+        if category != "diagnostic_unavailable":
+            raise ValueError("observation status")
+    elif status == "refused":
+        if category not in XBMC_METADATA_FAILURES or category == "diagnostic_unavailable":
+            raise ValueError("observation failure")
+    else:
+        raise ValueError("observation status")
     # Round-trip closes off custom objects and returns no unvalidated fields.
     return json.loads(json.dumps(value, sort_keys=True))
 

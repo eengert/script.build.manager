@@ -20,6 +20,8 @@ from tools import bm_profile_isolation as isolation
 from tools import bm023a_adapter_support as support
 from tools.bm_preservation_acquisition import AcquisitionSession
 from tools import bm_public_preservation_witness as witness
+from tools import bm_practical_preservation_comparator as comparator
+from tools import bm_practical_precondition as precondition
 from resources.lib.build_library import BuildLibrary
 from resources.lib.frozen_install import FrozenInstallStore
 from resources.lib.capture_lifecycle import FILENAME as CAPTURE_RECORD
@@ -29,6 +31,7 @@ WAIT_SECONDS = 900
 HOST_PATHS = ('tools/__init__.py', 'tools/bm_preservation_driver.py', 'tools/bm_preservation_acquisition.py',
               'tools/bm_test_app.py', 'tools/bm_profile_isolation.py',
               'tools/bm_public_preservation_witness.py', 'tools/bm023a_adapter_support.py',
+              'tools/bm_practical_preservation_comparator.py', 'tools/bm_practical_precondition.py',
               'resources')
 REASONS = frozenset({'arguments_invalid', 'source_unverified', 'evidence_invalid',
     'public_unverified', 'begin_refused', 'finish_refused', 'changed', 'cancelled',
@@ -130,7 +133,8 @@ def public_state(services, manifest, manifest_sha):
     return {'bundle': snapshot['identity']['bundle'], 'settings': settings,
             'addons': addons, 'library': snapshot['build_library'], 'trees': trees,
             'association': association.to_dict(),
-            'selection': (selected.entry_id, selected.device_profile_id), 'owners_absent': True}
+            'selection': (selected.entry_id, selected.device_profile_id), 'owners_absent': True,
+            'pending_publication_absent': True}
 
 
 class Evidence:
@@ -248,12 +252,108 @@ def announce(stream, text):
         need(os.write(fd, data) == len(data), 'output_failed')
 
 
+PRACTICAL_KEYS = frozenset({'schema', 'classification', 'files', 'verdict', 'qualification'})
+PRACTICAL_ROW_KEYS = frozenset({'file', 'classification', 'maintenance', 'meaningful_count'})
+PRACTICAL_LABELS = frozenset({'EXACT', 'MAINTENANCE_ONLY', 'MEANINGFUL', 'INCONCLUSIVE'})
+# D-032 closed maintenance vocabulary per protected file, keyed by comparator.PROTECTED_KEYS.
+# A closed class name is valid only for the file it belongs to: M1 for guisettings, the
+# approved M2 classes for Textures13, and no maintenance class for any other file.
+M2_CLASSES = frozenset((comparator.M2_SIZES_USECOUNT, comparator.M2_SIZES_LASTUSETIME,
+                        comparator.M2_TEXTURE_LASTHASHCHECK, comparator.M2_CACHE_ROW_CREATE,
+                        comparator.M2_CACHE_ROW_EVICT, comparator.M2_CACHE_SIZES_CREATE,
+                        comparator.M2_CACHE_SIZES_EVICT))
+MAINTENANCE_BY_FILE = {
+    'addons33': frozenset(),
+    'textures13': M2_CLASSES,
+    'guisettings': frozenset((comparator.M1_UPTIME,)),
+    'estuary': frozenset(),
+    'keyboard': frozenset(),
+}
+
+
+def practical_aggregate(labels):
+    for label in ('INCONCLUSIVE', 'MEANINGFUL', 'MAINTENANCE_ONLY'):
+        if label in labels:
+            return label
+    return 'EXACT'
+
+
+def project_practical(value, strict_rows, reason):
+    """Closed shape, closed names, exact counts and strict cross-checks; rebuilt, never copied."""
+    need(type(value) is dict and set(value) == PRACTICAL_KEYS, reason)
+    need(value['schema'] == 'bm-a15-practical-classification/1' and value['verdict'] == 'NOT_DECIDED'
+         and value['qualification'] == 'not_qualified', reason)
+    need(type(value['files']) is list and len(value['files']) == len(witness.FILES), reason)
+    rows = []
+    for index, (row, name, strict) in enumerate(zip(value['files'], witness.FILES, strict_rows)):
+        need(type(row) is dict and set(row) == PRACTICAL_ROW_KEYS and row['file'] == name, reason)
+        label = row['classification']
+        need(type(label) is str and label in PRACTICAL_LABELS, reason)
+        need(type(row['maintenance']) is list, reason)
+        allowed = MAINTENANCE_BY_FILE[comparator.PROTECTED_KEYS[index]]
+        classes = []
+        for item in row['maintenance']:
+            need(type(item) is list and len(item) == 2 and type(item[0]) is str
+                 and item[0] in allowed and type(item[1]) is int and item[1] > 0, reason)
+            classes.append([item[0], item[1]])
+        names = [item[0] for item in classes]
+        need(names == sorted(set(names)), reason)
+        count = row['meaningful_count']
+        need(type(count) is int and count >= 0, reason)
+        if label == 'EXACT':
+            need(not classes and count == 0, reason)
+        elif label == 'MAINTENANCE_ONLY':
+            need(bool(classes) and count == 0, reason)
+        elif label == 'MEANINGFUL':
+            need(not classes and count >= 1, reason)
+        else:
+            need(not classes and count == 0, reason)
+        # The strict result constrains the classification: an unchanged projection is
+        # EXACT or INCONCLUSIVE, and a changed projection is never EXACT.
+        if strict['status'] == 'PRESERVED':
+            need(label in ('EXACT', 'INCONCLUSIVE'), reason)
+        else:
+            need(label != 'EXACT', reason)
+        rows.append({'file': name, 'classification': label, 'maintenance': classes,
+                     'meaningful_count': count})
+    aggregate = practical_aggregate({row['classification'] for row in rows})
+    need(value['classification'] == aggregate, reason)
+    return {'schema': 'bm-a15-practical-classification/1', 'classification': aggregate,
+            'files': rows, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
+
+
+ADDONS33_BYTES_KEYS = frozenset({'schema', 'scope', 'status'})
+ADDONS33_BYTES_STATUSES = frozenset({'BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'})
+
+
+def project_addons33_bytes(value, strict_rows, practical_rows, reason):
+    """Closed, rebuilt validation of the Addons33 byte-identity sibling block.
+
+    Identical bytes yield an identical projection, so BYTES_IDENTICAL contradicts a changed
+    strict Addons33 status or an Addons33 practical row other than EXACT or INCONCLUSIVE
+    (the latter is a comparator fault on an unchanged projection). A difference of bytes may
+    coexist with an unchanged projection (layout, counters, unwitnessed columns): that is
+    not a contradiction. The block is informational and never changes the strict result.
+    """
+    need(type(value) is dict and set(value) == ADDONS33_BYTES_KEYS, reason)
+    schema, scope, status = value['schema'], value['scope'], value['status']
+    need(type(schema) is str and type(scope) is str and type(status) is str, reason)
+    need(schema == 'bm-a15-addons33-bytes/1' and scope == 'addons33_file_bytes', reason)
+    need(status in ADDONS33_BYTES_STATUSES, reason)
+    if status == 'BYTES_IDENTICAL':
+        need(strict_rows[0]['status'] == 'PRESERVED'
+             and practical_rows[0]['classification'] in ('EXACT', 'INCONCLUSIVE'), reason)
+    return {'schema': 'bm-a15-addons33-bytes/1', 'scope': 'addons33_file_bytes', 'status': status}
+
+
 def project_acquisition(value, boundary):
     """Do not persist arbitrary bridge dictionaries, even on unexpected faults."""
     expected = {'schema','boundary','acquisition','reason','scope_result','files',
                 'complete_preservation','qualification','maintenance_attribution',
                 'writer_exclusion','temporary_cleanup'}
     reason = 'begin_refused' if boundary == 'before' else 'finish_refused'
+    if boundary == 'after':
+        expected = expected | {'practical', 'addons33_bytes'}
     need(type(value) is dict and set(value) == expected, reason)
     need(value['schema'] == 'bm-a15-acquisition/1' and value['boundary'] == boundary
          and value['reason'] == ('baseline_held_in_memory' if boundary == 'before' else 'scoped_comparison')
@@ -273,14 +373,20 @@ def project_acquisition(value, boundary):
     scope = 'UNVERIFIED' if boundary == 'before' else (
         'PRESERVED' if all(row['status'] == 'PRESERVED' for row in rows) else 'CHANGED_OR_MISSING')
     need(value['scope_result'] == scope, reason)
-    return {'acquisition':'ACQUIRED','scope_result':scope,'files':rows}
+    projected = {'acquisition':'ACQUIRED','scope_result':scope,'files':rows}
+    if boundary == 'after':
+        projected['practical'] = project_practical(value['practical'], rows, reason)
+        projected['addons33_bytes'] = project_addons33_bytes(
+            value['addons33_bytes'], rows, projected['practical']['files'], reason)
+    return projected
 
 
 def run(services, *, manifest_path, evidence_path, host_commit, signals, output):
     evidence = session = None
     result = {'schema':'bm-a15-driver/1', 'state':'BLOCKED', 'reason':'operation_failed',
               'complete_preservation':'UNVERIFIED', 'qualification':'not_qualified',
-              'native_run_attribution':'UNVERIFIED', 'external_native_evidence_required':True}
+              'native_run_attribution':'UNVERIFIED', 'external_native_evidence_required':True,
+              'practical_precondition': precondition.not_reached()}
     code = 2
     try:
         trusted_invocation()
@@ -309,6 +415,11 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         after = project_acquisition(session.finish(), 'after')
         public_comparison = 'PRESERVED' if public_before == public_after else 'CHANGED_OR_MISSING'
         result.update(after=after, public_comparison=public_comparison)
+        # Informational precondition assessment, kept beside the strict result. Quit
+        # verification and both source-binding checks have already succeeded here.
+        result['practical_precondition'] = precondition.assess(
+            public_before=public_before, public_after=public_after, begin=begin, after=after,
+            quit_verified=True, source_bound=True, correlation=None)
         need(after['scope_result'] == 'PRESERVED' and public_comparison == 'PRESERVED', 'changed')
         session.close(); session = None
         result.update(state='SCOPED_PRESERVED', reason='scoped_comparison',

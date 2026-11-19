@@ -2,19 +2,25 @@
 
 This module creates immutable software snapshots; it does not install add-ons,
 change Kodi settings, or read/write Kodi databases.  Acquisition is limited to
-an existing artifact store, exact package-cache ZIPs, and an explicit optional
-repository provider.  Installed-directory zipping is intentionally absent.
+an existing artifact store, exact package-cache ZIPs, the exact official repository
+archive, and (D-033) one explicitly authorised, controlled local capture that is used
+only when the official index proves the exact original is absent. Installed-directory
+zipping is otherwise intentionally absent.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
 import stat
+import unicodedata
 import weakref
 import xml.etree.ElementTree as ET
+import zipfile
+import zlib
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -27,6 +33,20 @@ from resources.lib.artifacts import (
     validate_addon_zip,
 )
 from resources.lib.dependencies import _is_system_dependency, _strict_version_satisfies
+from resources.lib.official_repository import (
+    OFFICIAL_REPOSITORY_ID,
+    BoundedHttpsGetter,
+    OfficialRepositoryProvider,
+    RepositoryArtifactRefusal,
+    RepositoryArtifactUnlisted,
+    parse_official_repository_config,
+)
+from resources.lib.local_capture import (
+    LOCAL_CAPTURE_MAX_BYTES,
+    LOCAL_CAPTURE_SOURCE,
+    LocalCaptureRefusal,
+    build_local_capture_zip,
+)
 from resources.lib.readonly_io import read_regular_file
 
 if TYPE_CHECKING:
@@ -97,6 +117,9 @@ class ArtifactAcquisition:
     metadata: Optional[ArtifactMetadata] = None
     source: str = ""
     error: str = ""
+    # True only when the checksum-verified official index proved the exact original is absent
+    # and an explicit per-add-on local capture has not been authorised (D-033).
+    local_capture_eligible: bool = False
 
 
 @dataclass(frozen=True)
@@ -314,6 +337,9 @@ class FrozenBuildCaptureResult:
     recoverability: Optional["FrozenBuildRecoverabilitySummary"] = None
     # Fixed diagnostic categories only; excluded from manifest/fingerprint truth.
     diagnostic_categories: Tuple[str, ...] = ()
+    # (addon_id, version) pairs whose exact original is demonstrably unavailable and that
+    # may be offered for explicit local capture. Excluded from manifest/fingerprint truth.
+    local_capture_candidates: Tuple[Tuple[str, str], ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -491,6 +517,10 @@ class InventoryBackend:
     def get_repository_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
         return None
 
+    def capture_installed_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        """Last-resort controlled package of the installed add-on (D-033). Unsupported by default."""
+        return None
+
     def get_provenance(self, addon_id: str) -> Tuple[ProvenanceStatus, Mapping[str, str]]:
         return ProvenanceStatus.UNKNOWN, {}
 
@@ -557,6 +587,16 @@ _ADDON_XML_LIMIT = 1024 * 1024
 _SAFE_ADDON_COMPONENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,159}")
 _HOME_ADDONS_PREFIX = "special://home/addons/"
 _APPLICATION_ADDONS_PREFIX = "special://xbmc/addons/"
+_SAFE_ADDON_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+~-]{0,63}")
+_CACHE_DIRECTORY = "__pycache__"
+# CPython's own cache file names: <module>.<tag>[.opt-N].pyc. A cache file is only ever written
+# next to the module source it was compiled from, so a cache entry with no source is not a cache.
+_CACHE_FILE = re.compile(r"(?P<module>[^.]+)\.[A-Za-z0-9_-]+(?:\.opt-[12])?\.pyc")
+_TREE_MAX_ENTRIES = 20000
+_TREE_MAX_DEPTH = 32
+_TREE_MAX_FILE_BYTES = 128 * 1024 * 1024
+_TREE_MAX_BYTES = 512 * 1024 * 1024
+_TREE_READ_CHUNK = 65536
 
 
 def _open_canonical_directory(canonical: Path) -> int:
@@ -629,6 +669,281 @@ class _TrustedRoot:
         self._finalizer()
 
 
+def _is_tolerated_cache(
+    parts: Tuple[str, ...],
+    installed: Mapping[Tuple[str, ...], object],
+    archive: Mapping[Tuple[str, ...], object],
+) -> bool:
+    """True only for an installed-only CPython cache file whose source is in both trees.
+
+    Bytecode is executable. The archive side is never filtered, and a loose or sourceless
+    .pyc/.pyo, an unrecognised name inside __pycache__, or a cache whose source is missing
+    or differs is compared like any other file and so fails closed.
+    """
+    if len(parts) < 2 or parts[-2] != _CACHE_DIRECTORY:
+        return False
+    match = _CACHE_FILE.fullmatch(parts[-1])
+    if match is None:
+        return False
+    source = parts[:-2] + (match.group("module") + ".py",)
+    return source in installed and source in archive
+
+
+def _is_safe_entry_name(name: str) -> bool:
+    if name in ("", ".", "..") or "/" in name or "\\" in name:
+        return False
+    return not any(unicodedata.category(ch) in ("Cc", "Cf") for ch in name)
+
+
+def _normalized_digests(
+    digests: Mapping[Tuple[str, ...], Tuple[int, str]], label: str,
+) -> Dict[Tuple[str, ...], Tuple[int, str]]:
+    normalized: Dict[Tuple[str, ...], Tuple[int, str]] = {}
+    for parts, value in digests.items():
+        key = tuple(unicodedata.normalize("NFC", part) for part in parts)
+        if key in normalized:
+            raise RepositoryArtifactRefusal(f"{label} has ambiguous names")
+        normalized[key] = value
+    return normalized
+
+
+def _entry_stamp(info: os.stat_result) -> Tuple[int, int, int, int]:
+    return (info.st_ino, info.st_size if stat.S_ISREG(info.st_mode) else 0, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _open_identical(directory_fd: int, name: str, info: os.stat_result, *, directory: bool) -> int:
+    """Open one entry without following links, then prove it is still the object that was inspected."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    flags |= os.O_DIRECTORY if directory else os.O_NONBLOCK
+    fd = os.open(name, flags, dir_fd=directory_fd)
+    try:
+        current = os.fstat(fd)
+        expected_type = stat.S_ISDIR(current.st_mode) if directory else stat.S_ISREG(current.st_mode)
+        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino) or not expected_type:
+            raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _digest_bounded(
+    file_fd: int, info: os.stat_result, totals: Dict[str, int], sink: Optional[bytearray] = None,
+) -> Tuple[int, str]:
+    """Hash one open file, refusing if the file changes while it is being read.
+
+    ``sink`` additionally keeps the exact bytes that were hashed (local capture only).
+    """
+    if _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = os.read(file_fd, _TREE_READ_CHUNK)
+        if not chunk:
+            break
+        size += len(chunk)
+        totals["bytes"] += len(chunk)
+        if size > _TREE_MAX_FILE_BYTES or totals["bytes"] > _TREE_MAX_BYTES:
+            raise RepositoryArtifactRefusal("installed add-on content exceeds its safe size limit")
+        digest.update(chunk)
+        if sink is not None:
+            if totals["bytes"] > LOCAL_CAPTURE_MAX_BYTES:
+                raise RepositoryArtifactRefusal("installed add-on exceeds the local capture size limit")
+            sink.extend(chunk)
+    if size != info.st_size or _entry_stamp(os.fstat(file_fd)) != _entry_stamp(info):
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
+    return size, digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class _InstalledSnapshot:
+    """Content digests plus the identity stamps of every entry that was read.
+
+    Two snapshots are equal only if every file has the same bytes, inode, size and
+    modification/change times and every directory has the same inode, entry list stamp
+    and times. Restoring original bytes after a write therefore does not hide the write.
+    """
+
+    digests: Mapping[Tuple[str, ...], Tuple[int, str]]
+    stamps: Mapping[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]]
+    # Exact scanned bytes, kept only on request; never part of snapshot equality.
+    contents: Optional[Mapping[Tuple[str, ...], bytes]] = field(default=None, compare=False, repr=False)
+
+
+def _walk_installed_directory(
+    directory_fd: int,
+    parts: Tuple[str, ...],
+    digests: Dict[Tuple[str, ...], Tuple[int, str]],
+    stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]],
+    totals: Dict[str, int],
+    depth: int,
+    contents: Optional[Dict[Tuple[str, ...], bytes]] = None,
+) -> None:
+    if depth > _TREE_MAX_DEPTH:
+        raise RepositoryArtifactRefusal("installed add-on content is too deeply nested")
+    folded: Dict[str, str] = {}
+    listing_before = os.fstat(directory_fd)
+    for name in sorted(os.listdir(directory_fd)):
+        if not _is_safe_entry_name(name):
+            raise RepositoryArtifactRefusal("installed add-on content has an unsafe name")
+        key = unicodedata.normalize("NFC", name).casefold()
+        if key in folded:
+            raise RepositoryArtifactRefusal("installed add-on content has ambiguous names")
+        folded[key] = name
+        totals["entries"] += 1
+        if totals["entries"] > _TREE_MAX_ENTRIES:
+            raise RepositoryArtifactRefusal("installed add-on content has too many entries")
+        info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        child = parts + (name,)
+        if stat.S_ISLNK(info.st_mode):
+            raise RepositoryArtifactRefusal("installed add-on contains a symbolic link")
+        if stat.S_ISDIR(info.st_mode):
+            child_fd = _open_identical(directory_fd, name, info, directory=True)
+            try:
+                _walk_installed_directory(child_fd, child, digests, stamps, totals, depth + 1, contents)
+            finally:
+                os.close(child_fd)
+        elif not stat.S_ISREG(info.st_mode):
+            raise RepositoryArtifactRefusal("installed add-on contains an unsupported file type")
+        else:
+            file_fd = _open_identical(directory_fd, name, info, directory=False)
+            try:
+                if contents is None:
+                    digests[child] = _digest_bounded(file_fd, info, totals)
+                else:
+                    sink = bytearray()
+                    digests[child] = _digest_bounded(file_fd, info, totals, sink)
+                    contents[child] = bytes(sink)
+                stamps[child] = ("f", info.st_dev, _entry_stamp(info))
+            finally:
+                os.close(file_fd)
+    listing_after = os.fstat(directory_fd)
+    if _entry_stamp(listing_after) != _entry_stamp(listing_before) or listing_after.st_ino != listing_before.st_ino:
+        raise RepositoryArtifactRefusal("installed add-on content changed during inspection")
+    stamps[parts] = ("d", listing_after.st_dev, _entry_stamp(listing_after))
+
+
+def _confirm_root_binding(root: "_TrustedRoot", addon_id: str, scanned: os.stat_result) -> None:
+    """After a scan, prove the canonical path still names the trusted root and the scanned add-on.
+
+    The scan reads through descriptors, which stay valid on a tree that was renamed away. The
+    root is therefore reacquired from the canonical path (every ancestor opened without following
+    links, identity compared with the originally trusted object) and the add-on directory is
+    reopened beneath it and compared with the one that was scanned.
+    """
+    fresh_fd = root.reacquire()
+    if fresh_fd is None:
+        raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
+    try:
+        try:
+            again = os.open(
+                addon_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fresh_fd,
+            )
+        except OSError as exc:
+            raise RepositoryArtifactRefusal("installed add-on location changed during inspection") from exc
+        try:
+            current = os.fstat(again)
+        finally:
+            os.close(again)
+    finally:
+        os.close(fresh_fd)
+    if (current.st_dev, current.st_ino) != (scanned.st_dev, scanned.st_ino):
+        raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
+
+
+def _installed_addon_snapshot(
+    root: "_TrustedRoot", addon_id: str, *, collect: bool = False,
+) -> _InstalledSnapshot:
+    """Digest every file of one installed add-on without following any link.
+
+    The trusted root must still be the recorded object, every entry must be the object that
+    was inspected, and no file or directory may change while it is read. Nothing is skipped.
+    """
+    root_fd = root.reacquire()
+    if root_fd is None:
+        raise RepositoryArtifactRefusal("installed add-on location changed during inspection")
+    digests: Dict[Tuple[str, ...], Tuple[int, str]] = {}
+    stamps: Dict[Tuple[str, ...], Tuple[str, int, Tuple[int, int, int, int]]] = {}
+    totals = {"entries": 0, "bytes": 0}
+    contents: Optional[Dict[Tuple[str, ...], bytes]] = {} if collect else None
+    try:
+        try:
+            addon_fd = os.open(
+                addon_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd,
+            )
+        except OSError as exc:
+            raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
+        try:
+            scanned = os.fstat(addon_fd)
+            _walk_installed_directory(addon_fd, (), digests, stamps, totals, 0, contents)
+            _confirm_root_binding(root, addon_id, scanned)
+        except OSError as exc:
+            raise RepositoryArtifactRefusal("installed add-on content could not be read safely") from exc
+        finally:
+            os.close(addon_fd)
+    finally:
+        os.close(root_fd)
+    return _InstalledSnapshot(
+        digests=_normalized_digests(digests, "installed add-on content"),
+        stamps=dict(stamps),
+        contents=(
+            {tuple(unicodedata.normalize("NFC", part) for part in key): value for key, value in contents.items()}
+            if contents is not None else None
+        ),
+    )
+
+
+def _installed_matches_archive(
+    installed: Mapping[Tuple[str, ...], Tuple[int, str]],
+    archive: Mapping[Tuple[str, ...], Tuple[int, str]],
+) -> bool:
+    remaining = {
+        parts: value for parts, value in installed.items()
+        if parts in archive or not _is_tolerated_cache(parts, installed, archive)
+    }
+    return remaining == dict(archive)
+
+
+def _archive_addon_digests(archive_bytes: bytes, addon_id: str) -> Dict[Tuple[str, ...], Tuple[int, str]]:
+    """Digest every file member of an exact official archive, CRC-checked and size-bounded. Nothing is skipped."""
+    digests: Dict[Tuple[str, ...], Tuple[int, str]] = {}
+    totals = {"bytes": 0}
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+            for info in archive.infolist():
+                parts = tuple(info.filename.rstrip("/").split("/"))
+                if not parts or parts[0] != addon_id:
+                    raise RepositoryArtifactRefusal("official archive root does not match the add-on ID")
+                if info.is_dir():
+                    continue
+                relative = parts[1:]
+                if not relative or not all(_is_safe_entry_name(part) for part in relative):
+                    raise RepositoryArtifactRefusal("official archive has an unsafe path")
+                if relative in digests:
+                    raise RepositoryArtifactRefusal("official archive has duplicate entries")
+                if info.file_size > _TREE_MAX_FILE_BYTES:
+                    raise RepositoryArtifactRefusal("official archive exceeds its safe size limit")
+                digest = hashlib.sha256()
+                size = 0
+                with archive.open(info) as member:
+                    while True:
+                        chunk = member.read(_TREE_READ_CHUNK)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        totals["bytes"] += len(chunk)
+                        if size > _TREE_MAX_FILE_BYTES or totals["bytes"] > _TREE_MAX_BYTES:
+                            raise RepositoryArtifactRefusal("official archive exceeds its safe size limit")
+                        digest.update(chunk)
+                if size != info.file_size:
+                    raise RepositoryArtifactRefusal("official archive is malformed")
+                digests[relative] = (size, digest.hexdigest())
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, RuntimeError, ValueError, EOFError, zlib.error) as exc:
+        raise RepositoryArtifactRefusal("official archive is malformed") from exc
+    return _normalized_digests(digests, "official archive")
+
+
 class KodiInventoryBackend(InventoryBackend):
     """Read-only Kodi JSON-RPC/filesystem adapter.
 
@@ -652,8 +967,13 @@ class KodiInventoryBackend(InventoryBackend):
         package_cache_dir: Path,
         origin_reader: Optional[Callable[[str], Tuple[ProvenanceStatus, Mapping[str, str]]]] = None,
         application_addons_dir: Optional[Path] = None,
+        https_connect: Optional[Callable[[str, str, int, float], object]] = None,
+        https_resolve: Optional[Callable[[str, int], Sequence[str]]] = None,
     ):
         self.rpc = rpc
+        self._https_connect = https_connect
+        self._https_resolve = https_resolve
+        self._official_provider: Optional[OfficialRepositoryProvider] = None
         self.addons_dir = Path(addons_dir).resolve()
         self.package_cache_dir = Path(package_cache_dir).resolve()
         self.origin_reader = origin_reader
@@ -883,6 +1203,96 @@ class KodiInventoryBackend(InventoryBackend):
             if root is not None:
                 root.close()
 
+    def _official_repository(self) -> OfficialRepositoryProvider:
+        """Build the official provider once, from the bundled repository add-on under the trusted root."""
+        if self._official_provider is None:
+            if self._application is None:
+                raise RepositoryArtifactRefusal("trusted application repository configuration is unavailable")
+            xml_bytes = self._read_addon_xml_in(self._application, OFFICIAL_REPOSITORY_ID)
+            if xml_bytes is None:
+                raise RepositoryArtifactRefusal("bundled official repository configuration is unavailable")
+            config = parse_official_repository_config(xml_bytes)
+            self._official_provider = OfficialRepositoryProvider(
+                config, transport=BoundedHttpsGetter(connect=self._https_connect, resolve=self._https_resolve),
+            )
+        return self._official_provider
+
+    def get_repository_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        """Return one exact official archive only after the installed content is proven equal.
+
+        Order: identity, trusted installed location, platform exclusion, bundled trust
+        anchor, bounded local digest, then the network. Any failure raises
+        RepositoryArtifactRefusal and registers nothing (D-003, D-004, D-028).
+        """
+        if (not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id)
+                or not isinstance(version, str) or not _SAFE_ADDON_VERSION.fullmatch(version)):
+            raise RepositoryArtifactRefusal("exact add-on identity is invalid")
+        listing = self.get_installed_addons()
+        details = next((item for item in listing if item.get("addonid") == addon_id), None)
+        root = self._trusted_root(addon_id, details.get("path") if details else None)
+        if root is None:
+            raise RepositoryArtifactRefusal("installed add-on location is not trusted")
+        if root is self._application:
+            raise RepositoryArtifactRefusal("platform-provided add-ons are never acquired")
+        provider = self._official_repository()
+        before = _installed_addon_snapshot(root, addon_id)
+        filename, archive = provider.fetch_archive(addon_id, version)
+        try:
+            validate_addon_zip(archive, expected_addon_id=addon_id, expected_version=version, source="repository")
+        except ArtifactValidationError as exc:
+            raise RepositoryArtifactRefusal("official archive failed exact validation") from exc
+        archive_digests = _archive_addon_digests(archive, addon_id)
+        # Freshness boundary: the installed evidence is read again immediately before acceptance,
+        # through the same trusted root. Anything that changed while the network was in use
+        # (bytes, inode, size, times, directory stamps, trusted root identity) refuses the archive.
+        after = _installed_addon_snapshot(root, addon_id)
+        if after != before:
+            raise RepositoryArtifactRefusal("installed add-on content changed during acquisition")
+        if not _installed_matches_archive(after.digests, archive_digests):
+            raise RepositoryArtifactRefusal("installed add-on content differs from the official archive")
+        return filename, archive
+
+    def capture_installed_artifact(self, addon_id: str, version: str) -> Optional[Tuple[str, bytes]]:
+        """Package the installed add-on's own files, only for its exact installed ID and version.
+
+        Reached solely through an explicit per-add-on authorisation after the official index
+        proved the exact original absent (D-033). Platform-provided add-ons are never packaged.
+        The scan uses the same trusted root, no-follow traversal, bounded reads, identity and
+        freshness checks as the official provider: the content that is packaged is read once,
+        then the whole tree is scanned again and must be identical before the ZIP is returned.
+        Any failure raises LocalCaptureRefusal or RepositoryArtifactRefusal and returns nothing.
+        """
+        if (not isinstance(addon_id, str) or not _SAFE_ADDON_COMPONENT.fullmatch(addon_id)
+                or not isinstance(version, str) or not _SAFE_ADDON_VERSION.fullmatch(version)):
+            raise LocalCaptureRefusal("exact add-on identity is invalid")
+        details = next((item for item in self.get_installed_addons() if item.get("addonid") == addon_id), None)
+        if details is None or details.get("version") != version:
+            raise LocalCaptureRefusal("installed add-on is not the exact requested version")
+        root = self._trusted_root(addon_id, details.get("path"))
+        if root is None:
+            raise LocalCaptureRefusal("installed add-on location is not trusted")
+        if root is self._application:
+            raise LocalCaptureRefusal("platform-provided add-ons are never packaged")
+        first = _installed_addon_snapshot(root, addon_id, collect=True)
+        files = first.contents or {}
+        xml_bytes = files.get(("addon.xml",))
+        if xml_bytes is None:
+            raise LocalCaptureRefusal("installed add-on has no addon.xml")
+        try:
+            _check_addon_xml_identity(xml_bytes, addon_id, version)
+        except CaptureError as exc:
+            raise LocalCaptureRefusal("installed add-on metadata does not match its identity") from exc
+        archive, _dropped = build_local_capture_zip(addon_id, files)
+        second = _installed_addon_snapshot(root, addon_id)
+        if second != first:
+            raise LocalCaptureRefusal("installed add-on content changed during capture")
+        try:
+            validate_addon_zip(archive, expected_addon_id=addon_id, expected_version=version,
+                               source=LOCAL_CAPTURE_SOURCE)
+        except ArtifactValidationError as exc:
+            raise LocalCaptureRefusal("local package failed exact validation") from exc
+        return f"{addon_id}-{version}.zip", archive
+
     def get_package_cache(self, addon_id: str, version: str) -> Sequence[Tuple[str, bytes]]:
         if not self.package_cache_dir.is_dir():
             return ()
@@ -910,12 +1320,32 @@ class KodiInventoryBackend(InventoryBackend):
         return {}
 
 
+def _exact_local_approvals(approvals: Iterable[Tuple[str, str]]) -> frozenset:
+    """Exact (addon_id, version) pairs approved for the D-033 local capture.
+
+    A bare add-on ID, or anything else that is not a pair of non-empty strings, is refused
+    outright. An ID-only approval would authorise whichever version happens to be installed.
+    """
+    pairs = set()
+    for pair in approvals:
+        if not (isinstance(pair, tuple) and len(pair) == 2
+                and all(isinstance(part, str) and part for part in pair)):
+            raise ValueError("local capture approvals must be exact (addon_id, version) pairs")
+        pairs.add(pair)
+    return frozenset(pairs)
+
+
 class ArtifactAcquirer:
     """Acquire exact artifacts in the BM-021A priority order."""
 
-    def __init__(self, store: ArtifactStore, backend: InventoryBackend):
+    def __init__(
+        self, store: ArtifactStore, backend: InventoryBackend,
+        local_capture_approvals: Iterable[Tuple[str, str]] = (),
+    ):
         self.store = store
         self.backend = backend
+        # Exact (addon_id, version) pairs the user approved for the D-033 last-resort local capture.
+        self.local_capture_approvals = _exact_local_approvals(local_capture_approvals)
 
     def acquire(self, addon_id: str, version: str) -> ArtifactAcquisition:
         existing = self.store.find(addon_id, version)
@@ -940,7 +1370,23 @@ class ArtifactAcquirer:
             except Exception as exc:
                 return ArtifactAcquisition(CaptureStatus.INVALID_PACKAGE, error=f"{filename}: {exc}")
 
-        repository_candidate = self.backend.get_repository_artifact(addon_id, version)
+        try:
+            repository_candidate = self.backend.get_repository_artifact(addon_id, version)
+        except RepositoryArtifactUnlisted as exc:
+            # The only proof of unavailability. Fallback needs an approval for this exact pair.
+            if (addon_id, version) not in self.local_capture_approvals:
+                return ArtifactAcquisition(
+                    CaptureStatus.INCOMPLETE_ARTIFACT,
+                    error=f"exact artifact unavailable for {addon_id} {version}: {exc}",
+                    local_capture_eligible=True,
+                )
+            return self._acquire_local_capture(addon_id, version)
+        except RepositoryArtifactRefusal as exc:
+            # Integrity, security, transport and ambiguity refusals never fall back.
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"exact artifact unavailable for {addon_id} {version}: {exc}",
+            )
         if repository_candidate is not None:
             filename, data = repository_candidate
             try:
@@ -960,6 +1406,35 @@ class ArtifactAcquirer:
             CaptureStatus.INCOMPLETE_ARTIFACT,
             error=f"exact artifact unavailable for {addon_id} {version}",
         )
+
+    def _acquire_local_capture(self, addon_id: str, version: str) -> ArtifactAcquisition:
+        """D-033: store a controlled package of the installed files, recorded as local capture."""
+        # The gate comes before any package is created or imported, and checks the exact pair only.
+        if (addon_id, version) not in self.local_capture_approvals:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"local capture is not approved for {addon_id} {version}",
+            )
+        try:
+            candidate = self.backend.capture_installed_artifact(addon_id, version)
+        except (LocalCaptureRefusal, RepositoryArtifactRefusal) as exc:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"local capture refused for {addon_id} {version}: {exc}",
+            )
+        if candidate is None:
+            return ArtifactAcquisition(
+                CaptureStatus.INCOMPLETE_ARTIFACT,
+                error=f"exact artifact unavailable for {addon_id} {version}",
+            )
+        filename, data = candidate
+        try:
+            metadata = self.store.import_zip(
+                data, expected_addon_id=addon_id, expected_version=version, source=LOCAL_CAPTURE_SOURCE,
+            )
+        except Exception as exc:
+            return ArtifactAcquisition(CaptureStatus.INVALID_PACKAGE, error=f"{filename}: {exc}")
+        return ArtifactAcquisition(CaptureStatus.COMPLETE, metadata, LOCAL_CAPTURE_SOURCE)
 
 
 _IMPORT_RE = re.compile(r"^import$")
@@ -1136,8 +1611,15 @@ def capture_frozen_build(
     platform: str = "",
     configuration_packages: Sequence[str] = (),
     install_policies: Sequence["FrozenInstallPolicy"] = (),
+    local_capture_approvals: Iterable[Tuple[str, str]] = (),
 ) -> FrozenBuildCaptureResult:
-    """Capture exact installed software for selected roots and dependencies."""
+    """Capture exact installed software for selected roots and dependencies.
+
+    ``local_capture_approvals`` explicitly authorises the D-033 last-resort local capture for
+    exact (addon_id, version) pairs only. It is empty by default, so no add-on is ever captured
+    locally silently. Consent is a snapshot: if any approved add-on is no longer installed at the
+    approved version, local capture is refused for the whole pass and nothing is packaged.
+    """
     listing = tuple(backend.get_installed_addons())
     installed = {}
     for raw in listing:
@@ -1156,6 +1638,13 @@ def capture_frozen_build(
     visited = set()
     errors: List[str] = []
     diagnostic_categories = set()
+    local_candidates: List[Tuple[str, str]] = []
+    approvals = _exact_local_approvals(local_capture_approvals)
+    if any((installed.get(addon_id) or {}).get("version") != version for addon_id, version in approvals):
+        # A changed or removed approved add-on voids the authorisation for this whole pass, so no
+        # approved add-on is packaged or imported beside it, and nothing is captured under a new version.
+        approvals = frozenset()
+        diagnostic_categories.add("local_capture_snapshot_changed")
 
     def walk(addon_id: str, optional: bool = False) -> None:
         optional_by_id[addon_id] = optional_by_id.get(addon_id, True) and optional
@@ -1325,7 +1814,9 @@ def capture_frozen_build(
             )
             continue
         provenance, detail = backend.get_provenance(addon_id)
-        acquisition = ArtifactAcquirer(store, backend).acquire(addon_id, version)
+        acquisition = ArtifactAcquirer(store, backend, approvals).acquire(addon_id, version)
+        if acquisition.local_capture_eligible:
+            local_candidates.append((addon_id, version))
         status = acquisition.status
         if status == CaptureStatus.COMPLETE:
             status = CaptureStatus.COMPLETE
@@ -1390,4 +1881,5 @@ def capture_frozen_build(
         tuple(sorted(set(errors))),
         recoverability,
         tuple(sorted(diagnostic_categories)),
+        tuple(sorted(set(local_candidates))),
     )

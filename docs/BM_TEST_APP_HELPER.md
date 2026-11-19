@@ -780,7 +780,8 @@ Only sanitized status/projection summaries are written; private baseline values
 remain in the original process. All bridge limitations and crash-copy risks above
 remain. This driver supplies neither complete preservation nor beta acceptance.
 
-A15 native conflict execution and maintenance-attribution acceptance are defined
-in [A15 Native Preservation Runbook](A15_NATIVE_PRESERVATION_RUNBOOK.md).
+A15 native conflict execution, the strict comparison, and practical preservation
+acceptance (D-032) are defined in [A15 Native Preservation Runbook](A15_NATIVE_PRESERVATION_RUNBOOK.md).
 The strict comparison remains authoritative; source-plausible maintenance never
-turns a difference into PRESERVED or establishes its writer.
+turns a difference into PRESERVED or establishes its writer. The practical verdict
+classifies only the closed M1/M2 maintenance classes, through a reviewed comparator.

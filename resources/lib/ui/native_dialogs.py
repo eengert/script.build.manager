@@ -237,6 +237,7 @@ class NativeDialogs:
                             try:
                                 if self.busy:
                                     self.busy(True)
+                                workflow.confirm_local_capture = self.confirm_local_capture
                                 terminal = workflow.execute(preview)
                             finally:
                                 if self.busy:
@@ -247,7 +248,12 @@ class NativeDialogs:
                                 message += '\n' + self.text(32737) % terminal.addon_count
                                 message += '\n' + self.text(32712 if terminal.skin_included else 32713)
                                 message += '\n' + self.text(32738 if terminal.private_included else 32739)
-                            self.dialog.ok(self.text(32100), message)
+                                local_copies = getattr(terminal, 'local_copy_count', 0)
+                                if local_copies:
+                                    message += '\n' + self.text(32751) % local_copies
+                                self.present_completion(message)
+                            else:
+                                self.dialog.ok(self.text(32100), message)
                             self.settle(200)
                             return
                         else:
@@ -255,6 +261,34 @@ class NativeDialogs:
             except Exception as exc:
                 self.dialog.ok(self.text(32100), self.text(exc.string_id if isinstance(exc, CreateValidationError) else 32732))
                 self.settle(200)
+
+    def present_completion(self, message):
+        """Show a completed Create's summary; presentation can never turn success into failure.
+
+        The scrollable page keeps every identity line, including the D-033 disclosure, visible.
+        If it cannot open, the same text falls back to the OK dialog. Nothing here re-runs Create
+        or changes its saved result, and exceptions are not reported as a failed capture.
+        """
+        try:
+            self.create_dialogs.information(self.text(32100), message,
+                actions=(('ok', self.text(32744)),))
+            return
+        except Exception:
+            pass
+        try:
+            self.dialog.ok(self.text(32100), message)
+        except Exception:
+            pass
+
+    def confirm_local_capture(self, candidates):
+        """D-033: explicit per-add-on consent. Returns only the (id, version) pairs approved."""
+        approved = []
+        for addon_id, version in candidates:
+            if self.create_dialogs.confirmation(self.text(32749) % (addon_id, version),
+                                                title_id=32100, affirmative_id=32750):
+                approved.append((addon_id, version))
+            self.settle(200)
+        return tuple(approved)
 
     # Install presentation keeps all target/review/lifecycle state in the workflow.
     def install_message(self, string_id):

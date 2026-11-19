@@ -245,10 +245,11 @@ CONVENTIONAL_BASE = 'ce488ac743c65bbe3ce1e97f0e7f45549fcf5b42'
 # or independent-review claim for a5a4a23 or any other whole-main snapshot.
 
 
-# Literal current argument contract (eight exact diagnostic forms). This guards
+# Literal current argument contract (ten exact diagnostic forms: the original
+# eight plus the single supervisor-approved xbmc_metadata_observe pair). This guards
 # only no-write invocation admission; it is not native qualification evidence.
-B2_REQUEST_PREDICATE = "_PLATFORM_REQUESTED = bool(sys.argv[1:]) and (sys.argv[1].startswith('platform_check') or sys.argv[1].startswith('?mode=platform_check') or sys.argv[1].startswith('auto_keep') or sys.argv[1].startswith('?mode=auto_keep') or sys.argv[1].startswith('af3_fixture') or sys.argv[1].startswith('?mode=af3_fixture'))"
-B2_ARGUMENT_GATE = "if sys.argv[1:] not in (['platform_check'], ['?mode=platform_check'], ['af3_fixture'], ['?mode=af3_fixture'], ['af3_fixture_verify'], ['?mode=af3_fixture_verify'], ['auto_keep'], ['?mode=auto_keep']):\n    raise SystemExit('platform_check arguments refused')"
+B2_REQUEST_PREDICATE = "_PLATFORM_REQUESTED = bool(sys.argv[1:]) and (sys.argv[1].startswith('platform_check') or sys.argv[1].startswith('?mode=platform_check') or sys.argv[1].startswith('auto_keep') or sys.argv[1].startswith('?mode=auto_keep') or sys.argv[1].startswith('af3_fixture') or sys.argv[1].startswith('?mode=af3_fixture') or sys.argv[1].startswith('xbmc_metadata_observe') or sys.argv[1].startswith('?mode=xbmc_metadata_observe'))"
+B2_ARGUMENT_GATE = "if sys.argv[1:] not in (['platform_check'], ['?mode=platform_check'], ['af3_fixture'], ['?mode=af3_fixture'], ['af3_fixture_verify'], ['?mode=af3_fixture_verify'], ['auto_keep'], ['?mode=auto_keep'], ['xbmc_metadata_observe'], ['?mode=xbmc_metadata_observe']):\n    raise SystemExit('platform_check arguments refused')"
 
 def legacy_main_projection(tree):
     """Preserve the old platform-only normalization, then check named additions.

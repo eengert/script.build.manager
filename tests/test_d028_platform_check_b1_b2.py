@@ -143,11 +143,11 @@ def execute(f, arguments=('platform_check',), *, real_resources=False, preloaded
 class SourceBoundaryTests(unittest.TestCase):
     def test_matching_driver_cache_cannot_substitute_executed_support(self):
         f=Fixture(self);path=f.driver/'adapter_support.py';source=path.read_bytes();tree=driver_tree(f)
-        plant_pyc(path,source.replace(b'ADAPTER_VERSION = "0.0.16"',b'ADAPTER_VERSION = "9.9.99"'))
+        plant_pyc(path,source.replace(b'ADAPTER_VERSION = "0.0.17"',b'ADAPTER_VERSION = "9.9.99"'))
         before=snapshot(f.native.root)
         self.assertTrue(host.verify_tree_dir(f.driver,tree,'sha1')['ok'])
         result,seen=observe_support(f)
-        self.assertTrue(seen);self.assertEqual({'0.0.16'},set(seen))
+        self.assertTrue(seen);self.assertEqual({'0.0.17'},set(seen))
         self.assertTrue(result['ok'],result)
         self.assertEqual(hashlib.sha256(f.binding.encode('ascii')).hexdigest(),
             result['platform_check']['source']['binding_sha256'])
@@ -282,7 +282,7 @@ class MalformedBoundaryTests(unittest.TestCase):
 
 
 # Exact current gate condition; a missing/changed anchor is a setup error.
-B2_CONDITION = 'sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],\n                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"], ["auto_keep"], ["?mode=auto_keep"])'
+B2_CONDITION = 'sys.argv[1:] not in (["platform_check"], ["?mode=platform_check"], ["af3_fixture"],\n                                  ["?mode=af3_fixture"], ["af3_fixture_verify"], ["?mode=af3_fixture_verify"], ["auto_keep"], ["?mode=auto_keep"],\n                                  ["xbmc_metadata_observe"], ["?mode=xbmc_metadata_observe"])'
 
 
 class CorrectionMutationTests(unittest.TestCase):
@@ -315,7 +315,7 @@ class CorrectionMutationTests(unittest.TestCase):
         self.detected('return self.source_to_code(data, self.path)',
             'return super().get_code(fullname)',
             SourceBoundaryTests('test_matching_driver_cache_cannot_substitute_executed_support'),'B1_source_only_loader',
-            "self.assertTrue(seen);self.assertEqual({'0.0.16'},set(seen))")
+            "self.assertTrue(seen);self.assertEqual({'0.0.17'},set(seen))")
 
     def test_early_argument_refusal_removal_is_detected(self):
         self.detected(B2_CONDITION,'False',

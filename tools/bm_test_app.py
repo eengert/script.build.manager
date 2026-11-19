@@ -97,7 +97,7 @@ _DATA_VOLUME_ALIAS = "/System/Volumes/Data"
 
 BUILD_MANAGER_ID = _adapter.ADDON_ID
 DRIVER_ID = _adapter.DRIVER_ADDON_ID
-ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep")
+ADAPTER_MODES = ("install", "retry", "recover", "status", "platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", "xbmc_metadata_observe")
 RESULT_FILENAME = "bm023a_live_result.json"
 STAGE_AREA_NAME = ".bm-stage"
 
@@ -1837,7 +1837,7 @@ def build_driver(
         "--output-dir", os.fspath(output_dir),
         "--reuse-config-from", os.fspath(config_file),
     ]
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         command += ["--candidate-commit", candidate.identity.commit]
         if "PLATFORM_MANIFEST_SHA256" in adapter_values:
             command += ["--platform-manifest-sha256", adapter_values["PLATFORM_MANIFEST_SHA256"]]
@@ -1875,13 +1875,13 @@ def build_driver(
     except (SyntaxError, ValueError):
         raise HelperError("driver_config_mismatch") from None
     expected_keys = set(ADAPTER_CONFIG_KEYS) | {"EXPECTED_FROZEN_INSTALL_SHA256"}
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         expected_keys.add("PLATFORM_SOURCE_BINDING")
     if set(generated) != expected_keys or any(
         generated[key] != adapter_values[key] for key in ADAPTER_CONFIG_KEYS
     ) or generated["EXPECTED_FROZEN_INSTALL_SHA256"] != frozen_digest:
         raise HelperError("driver_config_mismatch")
-    if candidate.adapter_version == "0.0.16":
+    if candidate.adapter_version == "0.0.17":
         expected_binding = _adapter.platform_source_binding(
             {item.path: item.sha256 for item in candidate.product},
             {name: sha256_hex(data) for name, data in files.items()
@@ -2989,6 +2989,7 @@ _MODE_FIELDS: Dict[str, Dict[str, Callable[[Any], Any]]] = {
     "auto_keep": {"platform_check": _adapter.project_platform_check, "auto_keep": _adapter.project_auto_keep},
     "af3_fixture": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
     "af3_fixture_verify": {"platform_check": _adapter.project_platform_check, "af3_fixture": _adapter.project_af3_fixture},
+    "xbmc_metadata_observe": {"xbmc_metadata_observation": _adapter.project_xbmc_metadata_observation},
 }
 
 
@@ -3045,6 +3046,11 @@ def project_adapter_result(mode: str, raw: Any) -> Tuple[Dict[str, Any], Dict[st
             raise HelperError("result_malformed", reason="auto_keep")
         if "auto_keep" in invalid:
             raise HelperError("result_malformed", reason="auto_keep")
+    if mode == _adapter.XBMC_METADATA_MODE:
+        observation = projected.get("xbmc_metadata_observation")
+        observed = observation is not None and observation["status"] == "observed"
+        if "xbmc_metadata_observation" in invalid or ok != observed:
+            raise HelperError("result_malformed", reason="xbmc_metadata_observation")
     return projected, withheld
 
 
@@ -3275,7 +3281,7 @@ class TcpRpcClient(RpcClient):
 
     def set_adapter_enabled(self, *, expected_enabled, enabled, expected_version):
         if (type(expected_enabled) is not bool or type(enabled) is not bool
-                or expected_enabled == enabled or expected_version != "0.0.16"):
+                or expected_enabled == enabled or expected_version != "0.0.17"):
             raise HelperError("adapter_state_mismatch")
         params = {"addonid": DRIVER_ID, "properties": ["enabled", "version"]}
         before = self.call("Addons.GetAddonDetails", params)
@@ -3411,7 +3417,7 @@ def _require_platform_build(properties):
 
 def run_platform_control(services, *, manifest, git_repo, host, port, enabled=None, expected_enabled=None):
     """Git-bound read-only preflight or one explicitly checked driver transition."""
-    if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.16":
+    if git_repo is None or manifest["driver"]["adapter_version"] != "0.0.17":
         raise HelperError("argument_invalid")
     identity = identify(services, require="running")
     verification = verify_installed(services, manifest, git_repo=git_repo)
@@ -3422,7 +3428,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
         raise HelperError("rpc_response_invalid")
     version = _require_platform_build(client.call("Application.GetProperties", {"properties": ["version"]}))
     view = {}
-    for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.16")):
+    for aid, wanted in ((BUILD_MANAGER_ID, manifest["build_manager"]["addon_version"]), (DRIVER_ID, "0.0.17")):
         value = client.call("Addons.GetAddonDetails", {"addonid": aid, "properties": ["enabled", "version"]})
         addon = value.get("addon") if isinstance(value, dict) else None
         if (not isinstance(addon, dict) or addon.get("addonid") != aid or addon.get("version") != wanted
@@ -3431,7 +3437,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
         view[aid] = {"enabled": addon["enabled"], "version": addon["version"]}
     transition = None
     if enabled is not None:
-        transition = client.set_adapter_enabled(expected_enabled=expected_enabled, enabled=enabled, expected_version="0.0.16")
+        transition = client.set_adapter_enabled(expected_enabled=expected_enabled, enabled=enabled, expected_version="0.0.17")
     return {"ok": True, "command": "platform-preflight" if enabled is None else "platform-adapter-state",
             "candidate_commit": manifest["candidate"]["commit"], "git_binding": verification["git_binding"],
             "transport": "tcp", "authentication": "local_pid_bound_no_http_basic", "authenticated": False,
@@ -3441,7 +3447,7 @@ def run_platform_control(services, *, manifest, git_repo, host, port, enabled=No
             "addons_before": view, "transition": transition, "rpc_requests": client.requests_sent}
 
 
-DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300, "auto_keep": 120}
+DEFAULT_TIMEOUTS = {"install": 1800, "retry": 900, "recover": 300, "status": 120, "platform_check": 300, "af3_fixture": 1800, "af3_fixture_verify": 300, "auto_keep": 120, "xbmc_metadata_observe": 120}
 POLL_INTERVAL_SECONDS = 1.0
 LIVENESS_EVERY_POLLS = 5
 # A graceful Kodi shutdown (settings save, add-on teardown) is short; an
@@ -3661,6 +3667,8 @@ def run_adapter(
         raise HelperError("argument_invalid")
     if mode == "platform_check" and git_repo is None:
         raise HelperError("argument_invalid")
+    if mode == _adapter.XBMC_METADATA_MODE and git_repo is None:
+        raise HelperError("argument_invalid")
     if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
         raise HelperError("argument_invalid")
     if mode in ("af3_fixture", "af3_fixture_verify", "auto_keep") and git_repo is None:
@@ -3688,7 +3696,7 @@ def run_adapter(
     if identity.pid is None:
         raise HelperError("test_app_not_running")
     platform_binding = None
-    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep"):
+    if mode in ("platform_check", "af3_fixture", "af3_fixture_verify", "auto_keep", _adapter.XBMC_METADATA_MODE):
         config_path = target.addon_dir(DRIVER_ID) / "adapter_config.py"
         target.require_chain(config_path.parent)
         try:
@@ -3721,7 +3729,8 @@ def run_adapter(
     before = observe_result(target)
     invoked_ns = services.clock.time_ns()
     invoked_utc = iso_utc_from_ns(invoked_ns)
-    platform_witness = _platform_invocation_snapshot(target, manifest) if mode in ("platform_check", "auto_keep") else None
+    platform_witness = (_platform_invocation_snapshot(target, manifest)
+        if mode in ("platform_check", "auto_keep", _adapter.XBMC_METADATA_MODE) else None)
     fixture_witness = _af3_invocation_snapshot(target, manifest) if mode in _adapter.AF3_FIXTURE_MODES else None
     accepted = client.call("Addons.ExecuteAddon", {"addonid": DRIVER_ID, "params": mode, "wait": False})
     if accepted != "OK":
@@ -3765,13 +3774,21 @@ def run_adapter(
             raise HelperError("result_malformed", reason="platform_manifest_identity")
         if diagnostic_source != expected_source:
             raise HelperError("result_malformed", reason="platform_source_identity")
+    if mode == _adapter.XBMC_METADATA_MODE and (projected.get("xbmc_metadata_observation") or {}).get("source") is not None:
+        expected_source = {"candidate_commit": manifest["candidate"]["commit"],
+            "product_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["build_manager"]["files"]}),
+            "adapter_sha256": _adapter._platform_digest({e["path"]: e["sha256"] for e in manifest["driver"]["files"]
+                if e["path"] in _adapter._PLATFORM_ADAPTER_FILES}),
+            "binding_sha256": sha256_hex(platform_binding.encode("ascii"))}
+        if projected["xbmc_metadata_observation"]["source"] != expected_source:
+            raise HelperError("result_malformed", reason="xbmc_metadata_source_identity")
     after_identity = identify(services, require="running")
     if after_identity.pid != identity.pid:
         raise HelperError("listener_pid_mismatch", port=port)
     after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
     final = verify_installed(services, manifest, git_repo=git_repo)
-    if mode in ("platform_check", "auto_keep") and _platform_invocation_snapshot(target, manifest) != platform_witness:
+    if mode in ("platform_check", "auto_keep", _adapter.XBMC_METADATA_MODE) and _platform_invocation_snapshot(target, manifest) != platform_witness:
         raise HelperError("platform_source_changed")
     if mode in _adapter.AF3_FIXTURE_MODES and _af3_invocation_snapshot(target, manifest) != fixture_witness:
         raise HelperError("platform_source_changed")

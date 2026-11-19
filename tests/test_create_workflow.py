@@ -717,12 +717,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(len(d.confirmation_records), 1)
         self.assertEqual(d.confirmation_records[0][3], 202)
     def test_native_success_persistent_and_busy(self):
-        d=NativeDialog([0,'apply','create','confirm'],inputs=['My Build']);_,busy=self.ui(d)
-        self.assertEqual(busy,[True,False]);self.assertEqual(len(d.results),1)
-        self.assertIn('32736',d.results[0][1]);self.assertNotIn(SECRET,str(vars(d)))
+        d=NativeDialog([0,'apply','create','confirm','ok'],inputs=['My Build']);_,busy=self.ui(d)
+        self.assertEqual(busy,[True,False]);self.assertEqual(d.results,[])
+        self.assertIn('32736',d.details[-1][1]);self.assertNotIn(SECRET,str(vars(d)))
         self.assertNotIn(str(self.base),str(vars(d)));self.assertEqual(self.config.mutations,[])
     def test_native_private_toggle_off(self):
-        d=NativeDialog([0,4,'apply','create','confirm'],inputs=['My Build']);self.ui(d)
+        d=NativeDialog([0,4,'apply','create','confirm','ok'],inputs=['My Build']);self.ui(d)
         self.private_factory.assert_not_called();self.assertEqual(len(self.entries()),1)
     def test_native_failure_persistent(self):
         self.factory.side_effect=RuntimeError(SECRET)
