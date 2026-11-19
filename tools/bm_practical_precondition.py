@@ -13,6 +13,7 @@ limitation scopes cannot be justified without a future scenario.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 
 from tools import bm_public_preservation_witness as witness
@@ -49,13 +50,17 @@ _AFTER_KEYS = _BEGIN_KEYS | frozenset(('practical',))
 _FILE_ROW_KEYS = frozenset(('file', 'status'))
 _PRACTICAL_KEYS = frozenset(('classification', 'files', 'qualification', 'schema', 'verdict'))
 _PRACTICAL_ROW_KEYS = frozenset(('classification', 'file', 'maintenance', 'meaningful_count'))
-# Producer grammars: build_library._KEY (64 lowercase hex, also used for digests by
-# bm_test_app), bm_test_app._VERSION_RE, _LIBRARY_PROFILE_RE and the unsafe-profile
-# projection that bm_test_app.census_build_library emits.
-_DIGEST_RE = re.compile(r'[0-9a-f]{64}')
-_VERSION_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.+~\-]{0,63}')
-_PROFILE_RE = re.compile(r'[A-Za-z0-9_.-]{1,100}')
-_UNSAFE_PROFILE_RE = re.compile(r'<unsafe:[0-9a-f]{12}>')
+# Producer grammars, each copied from the producer named beside it. The test suite checks
+# the named patterns against those modules and the association and add-on grammars against
+# the producer readers, so drift fails in the suite rather than in a native run.
+_DIGEST_RE = re.compile(r'[0-9a-f]{64}')  # build_library._KEY
+_VERSION_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.+~\-]{0,63}')  # bm_test_app._VERSION_RE
+_ADDON_ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}')  # bm_test_app._ADDON_ID_RE
+_BUNDLE_ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9.\-]{0,154}')  # bm_test_app._BUNDLE_ID_RE
+_EXEC_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._ \-]{0,127}')  # bm_test_app._EXEC_NAME_RE
+_ASSOCIATION_PROFILE_RE = re.compile(r'[a-z0-9][a-z0-9._-]{0,63}')  # AppliedBuildAssociation.from_dict
+_LIBRARY_PROFILE_RE = re.compile(r'[A-Za-z0-9_.-]{1,100}')  # bm_test_app._LIBRARY_PROFILE_RE
+_UNSAFE_TOKEN_RE = re.compile(r'<unsafe:[0-9a-f]{12}>')  # bm_test_app.census_build_library projection
 _MAX_DEPTH = 16
 
 
@@ -68,8 +73,12 @@ def _need(condition):
         raise _Reject()
 
 
+def _grammar(pattern, value):
+    return type(value) is str and pattern.fullmatch(value) is not None
+
+
 def _digest(value):
-    return type(value) is str and _DIGEST_RE.fullmatch(value) is not None
+    return _grammar(_DIGEST_RE, value)
 
 
 def _text(value):
@@ -107,7 +116,7 @@ def _check_library_selection(selection, registry_present, entry_ids):
         _need(selection['sha256'] is None and selection['size'] is None)
     if chosen:
         _need(present and registry_present and _digest(selection['entry_id'])
-              and selection['entry_id'] in entry_ids and _text(selection['device_profile_id']))
+              and selection['entry_id'] in entry_ids and _projected_profile_shape(selection['device_profile_id']))
     else:
         _need(selection['entry_id'] is None and selection['device_profile_id'] is None)
     return present, chosen
@@ -126,20 +135,26 @@ def _check_library(value):
         _need(not registry_present and not selection_present and not chosen)
 
 
-def _profile_agrees(projected, raw):
-    # The census projects a profile that falls outside the identifier grammar; only that
-    # projection may differ from the raw selection profile.
-    if projected == raw:
-        return True
-    return _UNSAFE_PROFILE_RE.fullmatch(projected) is not None and _PROFILE_RE.fullmatch(raw) is None
+def _projected_profile(raw):
+    # bm_test_app.census_build_library: a raw profile inside the identifier grammar is projected
+    # unchanged; any other raw profile is projected to a digest token of its UTF-8 bytes.
+    if _LIBRARY_PROFILE_RE.fullmatch(raw) is not None:
+        return raw
+    return '<unsafe:' + hashlib.sha256(raw.encode('utf-8', 'surrogatepass')).hexdigest()[:12] + '>'
+
+
+def _projected_profile_shape(value):
+    # Any value the census can project: the profile itself, or an unsafe token.
+    return _grammar(_LIBRARY_PROFILE_RE, value) or _grammar(_UNSAFE_TOKEN_RE, value)
 
 
 def _check_selection_agreement(library, selection):
     if library is None or selection is None:
         return
+    # The top-level selection carries the raw profile; the library record must be its exact projection.
     record = library['selection']
     _need(record['selected'] is True and record['entry_id'] == selection[0]
-          and _profile_agrees(record['device_profile_id'], selection[1]))
+          and record['device_profile_id'] == _projected_profile(selection[1]))
 
 
 def _check_directory(node, depth):
@@ -168,7 +183,7 @@ def _check_association(value):
     _need(type(value) is dict and set(value) == _ASSOCIATION_KEYS)
     version = value['schema_version']
     _need(type(version) is int and version == 2)
-    _need(_digest(value['entry_id']) and _text(value['device_profile_id'])
+    _need(_digest(value['entry_id']) and _grammar(_ASSOCIATION_PROFILE_RE, value['device_profile_id'])
           and _digest(value['resolution_fingerprint']))
 
 
@@ -193,7 +208,7 @@ def _addon_pairs(addons):
     for entry in entries:
         _need(type(entry) is dict and set(entry) == _ADDON_ENTRY_KEYS)
         identifier, enabled = entry['id'], entry['enabled']
-        _need(_text(identifier) and type(entry['version']) is str)
+        _need(_grammar(_ADDON_ID_RE, identifier) and _grammar(_VERSION_RE, entry['version']))
         _need(identifier not in seen)
         seen.add(identifier)
         if source == 'addons_db':
@@ -209,13 +224,11 @@ def _check_bundle(value):
     if value is None:
         return
     _need(type(value) is dict and set(value) == _BUNDLE_KEYS)
-    executable = value['executable']
-    _need(_text(value['identifier']) and _text(executable) and executable not in ('.', '..')
-          and '/' not in executable)
+    _need(_grammar(_BUNDLE_ID_RE, value['identifier']) and _grammar(_EXEC_NAME_RE, value['executable']))
     _need(value['package_type'] == 'APPL')
     for key in ('build_version', 'short_version'):
         text = value[key]
-        _need(text is None or (type(text) is str and _VERSION_RE.fullmatch(text) is not None))
+        _need(text is None or _grammar(_VERSION_RE, text))
     _need(_digest(value['info_plist_sha256']))
 
 

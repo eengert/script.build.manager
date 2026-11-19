@@ -4,13 +4,32 @@ import json
 import unittest
 from unittest import mock
 
+from resources.lib import build_library
 from tools import bm_practical_precondition as precondition
 from tools import bm_public_preservation_witness as witness
+from tools import bm_test_app
 
 SECRET = 'synthetic-private-precondition-value'
 ENTRY = '9' * 64
 PROFILE = 'profile-one'
 EXACT_ROWS = [('EXACT', (), 0)] * 5
+UNICODE_RAW = 'profi' + chr(0xED) + 'le'
+SURROGATE_RAW = 'bad' + chr(0xD800)
+# (raw profile, producer projection). The token is '<unsafe:' + sha256(raw.encode('utf-8',
+# 'surrogatepass')).hexdigest()[:12] + '>', the rule bm_test_app.census_build_library applies.
+UNSAFE_CASES = (
+    ('bad profile!', '<unsafe:209d2da914f4>'),
+    (UNICODE_RAW, '<unsafe:2ca9acfdc5cf>'),
+    (SURROGATE_RAW, '<unsafe:ffa9f0468a10>'),
+    ('a' * 101, '<unsafe:9d0793397991>'),
+)
+ASSOCIATION_GOOD = ('p', 'p' * 64, 'profile-one', 'profile.one_2', '0profile')
+ASSOCIATION_BAD = ('Profile One', 'Profile-one', 'profile one', '-profile', '.profile', 'profile/one',
+                   'p' * 65, 'profile' + chr(0xED), '')
+ADDON_GOOD = (('plugin.video.example', '1.0.0'), ('a', 'a'), ('a' * 128, 'x' * 64),
+              ('script_module-1.0', '1.0.0~beta+build_2'), ('script.synthetic', '19.0.0-alpha'))
+ADDON_BAD_IDS = ('bad id!', '-addon', 'addon/x', 'a' * 129, '', 'addon' + chr(0xE9))
+ADDON_BAD_VERSIONS = ('bad version!', '', '1 0', '-1.0', '1.0/2', 'v' * 65, '1.0' + chr(0xE9))
 OUTPUT_VOCABULARY = frozenset((
     'schema', 'assessment', 'reason', 'verdict', 'qualification', 'prerequisites', 'limitations',
     'id', 'status', 'counts', precondition.SCHEMA, 'INCONCLUSIVE', 'NOT_DECIDED', 'not_qualified',
@@ -117,6 +136,13 @@ def assess(**overrides):
     return precondition.assess(**arguments)
 
 
+def selection_pair(raw, projected):
+    """The top-level raw selection profile and the library record that projects it."""
+    library = copy.deepcopy(public()['library'])
+    library['selection']['device_profile_id'] = projected
+    return {'library': library, 'selection': (ENTRY, raw)}
+
+
 def entry(block, identifier):
     return next(item for item in block['prerequisites'] if item['id'] == identifier)
 
@@ -141,6 +167,15 @@ class PreconditionTests(unittest.TestCase):
         self.assertEqual({(item['status'], item['reason']) for item in block['prerequisites']},
                          {('UNVERIFIED', 'input_invalid')})
         self.assertNotIn(SECRET, json.dumps(block))
+
+    def assertInvalidAtBothBoundaries(self, **changes):
+        """The same malformed record at public_before and public_after fails closed."""
+        self.assertInvalid(assess(public_before=public(**changes), public_after=public(**copy.deepcopy(changes))))
+
+    def assertAcceptedAtBothBoundaries(self, **changes):
+        block = assess(public_before=public(**changes), public_after=public(**copy.deepcopy(changes)))
+        self.assertNotEqual(block['reason'], 'input_invalid')
+        return block
 
     def test_exact_witnesses_meet_each_assessed_prerequisite_yet_stay_inconclusive(self):
         block = assess()
@@ -529,16 +564,101 @@ class PreconditionTests(unittest.TestCase):
         self.assertInvalid(assess(public_before=public(selection=('8' * 64, PROFILE)),
                                   public_after=public(selection=('8' * 64, PROFILE))))
 
-    def test_unsafe_profile_projection_is_accepted_only_for_a_raw_profile_outside_the_grammar(self):
-        projected = copy.deepcopy(public()['library'])
-        projected['selection']['device_profile_id'] = '<unsafe:0123456789ab>'
-        raw = (ENTRY, 'bad profile!')
-        block = assess(public_before=public(library=projected, selection=raw),
-                       public_after=public(library=copy.deepcopy(projected), selection=raw))
-        self.assertEqual(entry(block, 'S1')['status'], 'MET')
-        self.assertNotEqual(block['reason'], 'input_invalid')
-        self.assertInvalid(assess(public_before=public(library=projected, selection=(ENTRY, PROFILE)),
-                                  public_after=public(library=copy.deepcopy(projected), selection=(ENTRY, PROFILE))))
+    def test_unsafe_profile_projection_is_the_producer_digest_token(self):
+        for raw, token in UNSAFE_CASES:
+            with self.subTest(raw_length=len(raw)):
+                block = self.assertAcceptedAtBothBoundaries(**selection_pair(raw, token))
+                self.assertEqual(entry(block, 'S1')['status'], 'MET')
+
+    def test_unsafe_profile_projection_rejects_arbitrary_wrong_and_unmasked_values(self):
+        raw, token = UNSAFE_CASES[0]
+        cases = {
+            'arbitrary_token': (raw, '<unsafe:0123456789ab>'),
+            'token_of_another_raw_profile': (raw, UNSAFE_CASES[1][1]),
+            'uppercase_digest': (raw, '<unsafe:' + token[len('<unsafe:'):-1].upper() + '>'),
+            'unmasked_unsafe_raw': (raw, raw),
+            'unmasked_unicode_raw': (UNICODE_RAW, UNICODE_RAW),
+            'unmasked_long_raw': ('a' * 101, 'a' * 101),
+            'token_for_an_in_grammar_profile': (PROFILE, '<unsafe:9a13cbbc3edc>'),
+        }
+        for name, (raw_profile, projected) in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalidAtBothBoundaries(**selection_pair(raw_profile, projected))
+        leaked = assess(public_before=public(**selection_pair(raw, raw)),
+                        public_after=public(**selection_pair(raw, raw)))
+        self.assertInvalid(leaked)
+        self.assertNotIn(raw, json.dumps(leaked))
+
+    def test_profile_inside_the_identifier_grammar_projects_unchanged(self):
+        for raw in (PROFILE, 'a' * 100, 'A.b_c-9'):
+            with self.subTest(length=len(raw)):
+                block = self.assertAcceptedAtBothBoundaries(**selection_pair(raw, raw))
+                self.assertEqual(entry(block, 'S1')['status'], 'MET')
+
+    def test_library_projection_shape_is_checked_even_without_a_top_level_selection(self):
+        for projected in ('bad profile!', 'profile one', '<unsafe:0123456789AB>', '<unsafe:01234567>'):
+            with self.subTest(projected=projected):
+                library = copy.deepcopy(public()['library'])
+                library['selection']['device_profile_id'] = projected
+                self.assertInvalidAtBothBoundaries(library=library, selection=None)
+
+    def test_association_profile_must_match_the_applied_association_grammar(self):
+        for profile in ASSOCIATION_BAD:
+            with self.subTest(profile=profile):
+                self.assertInvalidAtBothBoundaries(association=association(device_profile_id=profile))
+        for profile in ASSOCIATION_GOOD:
+            with self.subTest(profile=profile):
+                block = self.assertAcceptedAtBothBoundaries(association=association(device_profile_id=profile))
+                self.assertEqual(entry(block, 'S2')['status'], 'MET')
+
+    def test_bundle_identifier_and_executable_must_match_the_producer_grammars(self):
+        bad = (
+            {'identifier': 'org example'}, {'identifier': 'org_example'}, {'identifier': '-org.example'},
+            {'identifier': 'org/example'}, {'identifier': 'a' * 156}, {'identifier': 'org' + chr(0xE9)},
+            {'identifier': ''}, {'executable': ''}, {'executable': ' Kodi'}, {'executable': 'Kodi;rm'},
+            {'executable': 'Kodi/Exec'}, {'executable': '.hidden'}, {'executable': '..'},
+            {'executable': 'Kodi' + chr(10) + 'X'}, {'executable': 'a' * 129},
+            {'executable': 'Kodi' + chr(0xE9)},
+        )
+        for changes in bad:
+            with self.subTest(changes=changes):
+                self.assertInvalidAtBothBoundaries(bundle=bundle(**changes))
+        good = (
+            {'identifier': 'org.example.app', 'executable': 'Kodi'},
+            {'identifier': 'a', 'executable': 'a'},
+            {'identifier': 'a' * 155, 'executable': 'Kodi Test 2'},
+            {'identifier': 'org-example.app1', 'executable': 'Kodi-Build_1.0'},
+            {'identifier': 'org.xbmc.kodi', 'executable': 'a' * 128},
+        )
+        for changes in good:
+            with self.subTest(changes=changes):
+                block = self.assertAcceptedAtBothBoundaries(bundle=bundle(**changes))
+                self.assertEqual(entry(block, 'S7')['status'], 'MET')
+
+    def test_bundle_versions_follow_the_producer_grammar_and_may_be_absent(self):
+        for changes in ({'build_version': ''}, {'build_version': '1 0'}, {'short_version': '-21'},
+                        {'short_version': 'v' * 65}):
+            with self.subTest(changes=changes):
+                self.assertInvalidAtBothBoundaries(bundle=bundle(**changes))
+        block = self.assertAcceptedAtBothBoundaries(bundle=bundle(build_version=None, short_version=None))
+        self.assertEqual(entry(block, 'S7')['status'], 'MET')
+
+    def test_addon_identifier_and_version_must_match_the_producer_grammars(self):
+        def census(**entry_changes):
+            addons = copy.deepcopy(public()['addons'])
+            addons['entries'][0].update(entry_changes)
+            return addons
+
+        for identifier in ADDON_BAD_IDS:
+            with self.subTest(identifier=identifier):
+                self.assertInvalidAtBothBoundaries(addons=census(id=identifier))
+        for version in ADDON_BAD_VERSIONS:
+            with self.subTest(version=version):
+                self.assertInvalidAtBothBoundaries(addons=census(version=version))
+        for identifier, version in ADDON_GOOD:
+            with self.subTest(identifier=identifier, version=version):
+                block = self.assertAcceptedAtBothBoundaries(addons=census(id=identifier, version=version))
+                self.assertEqual(entry(block, 'S5')['status'], 'MET')
 
     def test_bundle_identity_must_be_the_real_bundle_record(self):
         without_digest = bundle()
@@ -653,6 +773,51 @@ class PreconditionTests(unittest.TestCase):
              mock.patch('tempfile.TemporaryDirectory', side_effect=AssertionError('io')):
             block = assess()
         self.assertEqual(block['assessment'], 'INCONCLUSIVE')
+
+
+class ProducerGrammarTests(unittest.TestCase):
+    """The validator's grammars are the producers' grammars, checked against the producers."""
+
+    def test_named_patterns_are_the_producer_patterns(self):
+        pairs = (
+            (precondition._VERSION_RE, bm_test_app._VERSION_RE),
+            (precondition._ADDON_ID_RE, bm_test_app._ADDON_ID_RE),
+            (precondition._BUNDLE_ID_RE, bm_test_app._BUNDLE_ID_RE),
+            (precondition._EXEC_NAME_RE, bm_test_app._EXEC_NAME_RE),
+            (precondition._LIBRARY_PROFILE_RE, bm_test_app._LIBRARY_PROFILE_RE),
+        )
+        for ours, theirs in pairs:
+            with self.subTest(pattern=theirs.pattern):
+                self.assertEqual(ours.pattern, theirs.pattern)
+
+    def test_association_profile_grammar_agrees_with_the_applied_association_reader(self):
+        for profile in ASSOCIATION_GOOD + ASSOCIATION_BAD:
+            with self.subTest(profile=profile):
+                record = association(device_profile_id=profile)
+                try:
+                    build_library.AppliedBuildAssociation.from_dict(copy.deepcopy(record))
+                    producer_accepts = True
+                except Exception:
+                    producer_accepts = False
+                block = assess(public_before=public(association=record),
+                               public_after=public(association=copy.deepcopy(record)))
+                self.assertEqual(block['reason'] != 'input_invalid', producer_accepts)
+
+    def test_addon_grammar_agrees_with_the_addon_xml_reader(self):
+        cases = list(ADDON_GOOD) + [(identifier, '1.0') for identifier in ADDON_BAD_IDS] + \
+            [('script.a', version) for version in ADDON_BAD_VERSIONS]
+        for identifier, version in cases:
+            with self.subTest(identifier=identifier, version=version):
+                xml = ('<addon id="%s" version="%s"/>' % (identifier, version)).encode('utf-8')
+                try:
+                    producer_accepts = bm_test_app.parse_addon_xml(xml) == (identifier, version)
+                except Exception:
+                    producer_accepts = False
+                addons = copy.deepcopy(public()['addons'])
+                addons['entries'][0].update(id=identifier, version=version)
+                block = assess(public_before=public(addons=addons),
+                               public_after=public(addons=copy.deepcopy(addons)))
+                self.assertEqual(block['reason'] != 'input_invalid', producer_accepts)
 
 
 if __name__ == '__main__':
