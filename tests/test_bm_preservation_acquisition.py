@@ -656,10 +656,156 @@ class AcquisitionTests(fixtures.TripwireTestCase):
         self.assertNotIn('addons33_bytes', result)
         self.assertIsNone(self.session._fingerprint)
 
-    def test_failure_while_comparing_fingerprints_returns_no_block_and_clears_state(self):
+    # An ordinary fault confined to the optional byte witness must never change strict N6.
+    FAULTS = (RuntimeError, MemoryError)
+
+    def control_after(self):
+        """Fault-free control: a fresh session over the same files, finished normally."""
+        self.session = self.new_session(); self.begin()
+        return self.finished()
+
+    def assertWitnessFaultIsContained(self, result, control, *raws):
+        self.assertEqual(self.byte_status(result), 'UNVERIFIED')
+        self.assertEqual(result['acquisition'], 'ACQUIRED')
+        self.assertEqual(result['reason'], 'scoped_comparison')
+        # Everything strict and practical equals the fault-free control.
+        for key in set(control) - {'addons33_bytes'}:
+            self.assertEqual(result[key], control[key], key)
+        self.assertEqual(set(result), set(control))
+        encoded = json.dumps(result)
+        self.assertNotIn(semantic.SECRET, encoded)
+        for text in ('RuntimeError', 'MemoryError', 'Traceback', 'sha256', 'digest'):
+            self.assertNotIn(text, encoded)
+        for raw in raws:
+            self.assertNotIn(hashlib.sha256(raw).hexdigest(), encoded)
+        self.assertIsNone(self.session._fingerprint)
+        self.assertIsNone(self.session._before)
+        self.assertEqual(self.session._state, 'closed')
+
+    def test_fingerprint_fault_at_the_after_boundary_is_contained(self):
+        control = self.control_after()
+        self.assertEqual(self.byte_status(control), 'BYTES_IDENTICAL')
+        for fault in self.FAULTS:
+            with self.subTest(fault=fault.__name__):
+                self.session = self.new_session(); self.begin()
+                self.assertIsNotNone(self.session._fingerprint)
+                with mock.patch.object(bridge, '_fingerprint', side_effect=fault(semantic.SECRET)):
+                    result = self.finished()
+                self.assertWitnessFaultIsContained(result, control, self.addons_bytes())
+
+    def test_fingerprint_fault_at_the_before_boundary_is_contained_and_finish_is_unverified(self):
+        control = self.control_after()
+        for fault in self.FAULTS:
+            with self.subTest(fault=fault.__name__):
+                self.session = self.new_session()
+                with mock.patch.object(bridge, '_fingerprint', side_effect=fault(semantic.SECRET)):
+                    self.begin()
+                self.assertIsNone(self.session._fingerprint)
+                self.assertIsNotNone(self.session._before)
+                result = self.finished()
+                self.assertWitnessFaultIsContained(result, control, self.addons_bytes())
+
+    def test_comparison_fault_is_contained(self):
+        control = self.control_after()
+        for fault in self.FAULTS:
+            with self.subTest(fault=fault.__name__):
+                self.session = self.new_session(); self.begin()
+                with mock.patch.object(bridge, '_addons33_bytes', side_effect=fault(semantic.SECRET)):
+                    result = self.finished()
+                self.assertWitnessFaultIsContained(result, control, self.addons_bytes())
+
+    def test_witness_fault_does_not_hide_a_real_strict_change_elsewhere(self):
         self.begin()
+        self.path(self.root, 4).write_text('<settings><setting id="layout" value="changed"/></settings>')
         with mock.patch.object(bridge, '_addons33_bytes', side_effect=RuntimeError(semantic.SECRET)):
+            result = self.finished()
+        self.assertEqual(self.byte_status(result), 'UNVERIFIED')
+        self.assertEqual(result['files'][4]['status'], 'CHANGED_OR_MISSING')
+        self.assertEqual(result['files'][0]['status'], 'PRESERVED')
+        self.assertEqual(result['scope_result'], 'CHANGED_OR_MISSING')
+        self.assertEqual(result['practical']['files'][0]['classification'], 'EXACT')
+        self.assertNotEqual(result['practical']['files'][4]['classification'], 'EXACT')
+
+    def test_the_fallback_does_not_call_the_failing_helpers(self):
+        calls = []
+        def failing(*args):
+            calls.append(args)
+            raise RuntimeError(semantic.SECRET)
+        self.begin()
+        with mock.patch.object(bridge, '_addons33_bytes', side_effect=failing):
+            result = self.finished()
+        self.assertEqual(len(calls), 1)  # the single failing call; the fallback never retries it
+        self.assertEqual(self.byte_status(result), 'UNVERIFIED')
+
+    def test_interrupt_and_exit_in_the_witness_are_not_suppressed(self):
+        for signal in (KeyboardInterrupt, SystemExit):
+            for target in ('_fingerprint', '_addons33_bytes'):
+                with self.subTest(signal=signal.__name__, target=target):
+                    self.session = self.new_session(); self.begin()
+                    with mock.patch.object(bridge, target, side_effect=signal):
+                        if signal is KeyboardInterrupt:
+                            result = self.refused('after')
+                            self.assertNotIn('addons33_bytes', result)
+                        else:
+                            with self.assertRaises(SystemExit):
+                                self.session.finish()
+                    self.assertIsNone(self.session._fingerprint)
+                    self.assertIsNone(self.session._before)
+                    with mock.patch.object(w, 'read_copy', side_effect=AssertionError('no retry')):
+                        self.assertEqual(self.refused('after')['reason'], 'session_closed')
+
+    def test_real_refusals_still_fail_closed_even_when_the_witness_would_also_fault(self):
+        fault = mock.patch.object(bridge, '_fingerprint', side_effect=RuntimeError(semantic.SECRET))
+        # Snapshot instability.
+        original = w.database_projection
+        def changing(raw, kind):
+            value = original(raw, kind)
+            if kind == 0:
+                with sqlite3.connect(self.path(self.root, 0)) as db:
+                    db.execute("UPDATE installed SET lastUsed='moving'")
+            return value
+        self.session = self.new_session(); self.begin()
+        with fault, mock.patch.object(w, 'database_projection', side_effect=changing):
             result = self.refused('after')
+        self.assertEqual(result['reason'], 'input_changed')
+        self.assertNotIn('addons33_bytes', result)
+        # Sidecar.
+        self.session = self.new_session(); self.begin()
+        sidecar = Path(str(self.path(self.root, 0)) + '-journal'); sidecar.touch()
+        with fault:
+            result = self.refused('after')
+        sidecar.unlink()
+        self.assertEqual(result['reason'], 'sqlite_sidecar_uncertain')
+        self.assertNotIn('addons33_bytes', result)
+        # Invalid input: a legacy header that is not legacy.
+        self.session = self.new_session(); self.begin()
+        path = self.path(self.root, 0); original_bytes = path.read_bytes()
+        raw = bytearray(original_bytes); raw[18:20] = b'\x02\x02'
+        path.write_bytes(raw)
+        with fault:
+            result = self.refused('after')
+        path.write_bytes(original_bytes)
+        self.assertEqual(result['reason'], 'sqlite_wal_mode_uncertain')
+        self.assertNotIn('addons33_bytes', result)
+        # Source admission.
+        self.session = self.new_session(); self.begin()
+        self.verification.side_effect = RuntimeError(semantic.SECRET)
+        with fault:
+            result = self.refused('after')
+        self.verification.side_effect = None
+        self.assertEqual(result['reason'], 'source_unverified')
+        self.assertNotIn('addons33_bytes', result)
+        # Begin: instability and missing input are unchanged too.
+        self.session = self.new_session()
+        self.path(self.root, 0).unlink()
+        with fault:
+            self.assertEqual(self.refused()['reason'], 'missing_input')
+
+    def test_an_unrelated_fault_during_capture_is_still_not_contained(self):
+        self.begin()
+        with mock.patch.object(w, 'database_projection', side_effect=RuntimeError(semantic.SECRET)):
+            result = self.refused('after')
+        self.assertEqual(result['acquisition'], 'FAILED')
         self.assertNotIn('addons33_bytes', result)
         self.assertNotIn('practical', result)
         self.assertIsNone(self.session._fingerprint)

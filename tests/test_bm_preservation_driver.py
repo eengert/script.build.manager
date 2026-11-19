@@ -445,6 +445,27 @@ class DriverTests(fixtures.TripwireTestCase):
                 result = self.blocked('finish_refused')
                 self.assertNotIn('after', result)
 
+    def test_non_string_schema_scope_and_status_that_compare_equal_are_refused(self):
+        class Equal:
+            """Not a str, yet equal to (and hashing like) the expected text."""
+            def __init__(self, text): self.text = text
+            def __eq__(self, other): return True
+            def __hash__(self): return hash(self.text)
+        class Subclass(str):
+            pass
+        for field, text in (('schema', 'bm-a15-addons33-bytes/1'), ('scope', 'addons33_file_bytes'),
+                            ('status', 'BYTES_DIFFERENT')):
+            for name, make in (('equal_object', Equal), ('str_subclass', Subclass)):
+                with self.subTest(field=field, kind=name):
+                    block = bytes_block('BYTES_DIFFERENT')
+                    block[field] = make(text)
+                    self.reset_run('bytes-nonstr-' + field + '-' + name)
+                    self.after_result = bridge._result('after', 'ACQUIRED', 'scoped_comparison',
+                                                       ['PRESERVED']*5, practical=practical_block(*EXACT_ROWS),
+                                                       addons33_bytes=block)
+                    result = self.blocked('finish_refused')
+                    self.assertNotIn('after', result)
+
     def test_dict_subclass_or_hostile_mapping_block_is_refused(self):
         class Hostile(dict):
             def __iter__(self): raise RuntimeError(SECRET)

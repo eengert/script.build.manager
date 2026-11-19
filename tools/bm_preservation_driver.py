@@ -336,9 +336,10 @@ def project_addons33_bytes(value, strict_rows, practical_rows, reason):
     not a contradiction. The block is informational and never changes the strict result.
     """
     need(type(value) is dict and set(value) == ADDONS33_BYTES_KEYS, reason)
-    need(value['schema'] == 'bm-a15-addons33-bytes/1' and value['scope'] == 'addons33_file_bytes', reason)
-    status = value['status']
-    need(type(status) is str and status in ADDONS33_BYTES_STATUSES, reason)
+    schema, scope, status = value['schema'], value['scope'], value['status']
+    need(type(schema) is str and type(scope) is str and type(status) is str, reason)
+    need(schema == 'bm-a15-addons33-bytes/1' and scope == 'addons33_file_bytes', reason)
+    need(status in ADDONS33_BYTES_STATUSES, reason)
     if status == 'BYTES_IDENTICAL':
         need(strict_rows[0]['status'] == 'PRESERVED'
              and practical_rows[0]['classification'] in ('EXACT', 'INCONCLUSIVE'), reason)

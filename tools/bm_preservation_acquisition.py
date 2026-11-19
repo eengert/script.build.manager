@@ -215,7 +215,14 @@ class AcquisitionSession:
             raise witness.Unverified('input_changed')
         self._admit()
         # Only the stable, admitted Addons33 bytes are fingerprinted; no raw copy is kept.
-        return projections, _fingerprint(raw[0][0])
+        # The fingerprint is supplemental: an ordinary fault in it leaves strict N6 untouched
+        # and yields no fingerprint (UNVERIFIED). Every gate above has already been passed.
+        admitted = raw[0][0]
+        try:
+            fingerprint = _fingerprint(admitted)
+        except Exception:
+            fingerprint = None
+        return projections, fingerprint
 
     def _failure(self, boundary, exc):
         self.close()
@@ -250,9 +257,14 @@ class AcquisitionSession:
             after, after_fingerprint = self._capture(baseline=False)
             statuses = ['PRESERVED' if left == right else 'CHANGED_OR_MISSING'
                         for left, right in zip(before, after)]
-            return _result('after', 'ACQUIRED', 'scoped_comparison', statuses,
-                           _practical(before, after),
-                           _addons33_bytes(before_fingerprint, after_fingerprint))
+            practical = _practical(before, after)
+            try:
+                addons33_bytes = _addons33_bytes(before_fingerprint, after_fingerprint)
+            except Exception:
+                # Independent of the failing helper; never carries the exception or any value.
+                addons33_bytes = {'schema': ADDONS33_BYTES_SCHEMA, 'scope': ADDONS33_BYTES_SCOPE,
+                                  'status': BYTES_UNVERIFIED}
+            return _result('after', 'ACQUIRED', 'scoped_comparison', statuses, practical, addons33_bytes)
         except (Exception, KeyboardInterrupt) as exc:
             return self._failure('after', exc)
         finally:

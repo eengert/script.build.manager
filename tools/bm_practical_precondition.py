@@ -324,9 +324,10 @@ def _check_practical(value, statuses):
 
 def _check_addons33_bytes(value, statuses, labels):
     _need(type(value) is dict and set(value) == _BYTES_KEYS)
-    _need(value['schema'] == 'bm-a15-addons33-bytes/1' and value['scope'] == 'addons33_file_bytes')
-    status = value['status']
-    _need(type(status) is str and status in _BYTES_STATUSES)
+    schema, scope, status = value['schema'], value['scope'], value['status']
+    _need(type(schema) is str and type(scope) is str and type(status) is str)
+    _need(schema == 'bm-a15-addons33-bytes/1' and scope == 'addons33_file_bytes')
+    _need(status in _BYTES_STATUSES)
     if status == 'BYTES_IDENTICAL':
         # Identical bytes imply an identical projection. A difference of bytes needs no such check.
         _need(statuses[0] == 'PRESERVED' and labels[0] in ('EXACT', 'INCONCLUSIVE'))

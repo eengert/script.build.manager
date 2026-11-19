@@ -278,6 +278,24 @@ class PreconditionTests(unittest.TestCase):
                 after['addons33_bytes'] = value
                 self.assertInvalid(assess(after=after))
 
+    def test_non_string_schema_scope_and_status_that_compare_equal_are_rejected(self):
+        class Equal:
+            """Not a str, yet equal to (and hashing like) the expected text."""
+            def __init__(self, text): self.text = text
+            def __eq__(self, other): return True
+            def __hash__(self): return hash(self.text)
+        class Subclass(str):
+            pass
+        for field, text in (('schema', 'bm-a15-addons33-bytes/1'), ('scope', 'addons33_file_bytes'),
+                            ('status', 'BYTES_DIFFERENT')):
+            for name, make in (('equal_object', Equal), ('str_subclass', Subclass)):
+                with self.subTest(field=field, kind=name):
+                    after = after_block(bytes_status='BYTES_DIFFERENT')
+                    after['addons33_bytes'][field] = make(text)
+                    block = assess(after=after)
+                    self.assertInvalid(block)
+                    self.assertEqual(self.s5_database(block)['reason'], 'other_addons33_content_unverified')
+
     def test_identical_bytes_contradicting_the_strict_addons33_result_are_rejected(self):
         changed = after_block(('MEANINGFUL', (), 1), *EXACT_ROWS[1:], bytes_status='BYTES_IDENTICAL')
         self.assertInvalid(assess(after=changed))
