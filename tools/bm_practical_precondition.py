@@ -13,6 +13,8 @@ limitation scopes cannot be justified without a future scenario.
 """
 from __future__ import annotations
 
+import re
+
 from tools import bm_public_preservation_witness as witness
 
 SCHEMA = 'bm-a15-practical-precondition/1'
@@ -35,9 +37,25 @@ _TREE_KEYS = frozenset(('build-library', 'frozen-artifacts', 'install_resolution
 _LIBRARY_KEYS = frozenset(('registry', 'root_present', 'selection'))
 _REGISTRY_KEYS = frozenset(('entry_count', 'entry_ids', 'file_present', 'sha256', 'size'))
 _SELECTION_KEYS = frozenset(('device_profile_id', 'entry_id', 'file_present', 'selected', 'sha256', 'size'))
+_ADDONS_KEYS = frozenset(('count', 'enabled_state_source', 'entries', 'id_mismatch',
+                          'skipped_invalid_names', 'skipped_non_directories', 'unreadable_addon_xml'))
+_ADDON_COUNTERS = ('id_mismatch', 'skipped_invalid_names', 'skipped_non_directories', 'unreadable_addon_xml')
 _ADDON_ENTRY_KEYS = frozenset(('enabled', 'id', 'version'))
+_BUNDLE_KEYS = frozenset(('build_version', 'executable', 'identifier', 'info_plist_sha256',
+                          'package_type', 'short_version'))
+_ASSOCIATION_KEYS = frozenset(('device_profile_id', 'entry_id', 'resolution_fingerprint', 'schema_version'))
+_BEGIN_KEYS = frozenset(('acquisition', 'files', 'scope_result'))
+_AFTER_KEYS = _BEGIN_KEYS | frozenset(('practical',))
+_FILE_ROW_KEYS = frozenset(('file', 'status'))
 _PRACTICAL_KEYS = frozenset(('classification', 'files', 'qualification', 'schema', 'verdict'))
 _PRACTICAL_ROW_KEYS = frozenset(('classification', 'file', 'maintenance', 'meaningful_count'))
+# Producer grammars: build_library._KEY (64 lowercase hex, also used for digests by
+# bm_test_app), bm_test_app._VERSION_RE, _LIBRARY_PROFILE_RE and the unsafe-profile
+# projection that bm_test_app.census_build_library emits.
+_DIGEST_RE = re.compile(r'[0-9a-f]{64}')
+_VERSION_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.+~\-]{0,63}')
+_PROFILE_RE = re.compile(r'[A-Za-z0-9_.-]{1,100}')
+_UNSAFE_PROFILE_RE = re.compile(r'<unsafe:[0-9a-f]{12}>')
 _MAX_DEPTH = 16
 
 
@@ -50,43 +68,89 @@ def _need(condition):
         raise _Reject()
 
 
-def _text_or_none(value):
-    return value is None or type(value) is str
+def _digest(value):
+    return type(value) is str and _DIGEST_RE.fullmatch(value) is not None
 
 
-def _int_or_none(value):
-    return value is None or type(value) is int
+def _text(value):
+    return type(value) is str and value != ''
 
 
 def _check_flag(value):
     _need(value is None or type(value) is bool)
 
 
-def _json_like(value, depth=0):
-    if depth > _MAX_DEPTH:
-        return False
-    if value is None or type(value) in (str, int, float, bool):
-        return True
-    if type(value) is list:
-        return all(_json_like(item, depth + 1) for item in value)
-    if type(value) is dict:
-        return all(type(key) is str and _json_like(item, depth + 1) for key, item in value.items())
-    return False
+def _check_registry(registry):
+    _need(type(registry) is dict and set(registry) == _REGISTRY_KEYS)
+    present = registry['file_present']
+    _need(type(present) is bool)
+    ids = registry['entry_ids']
+    _need(type(ids) is list and all(_digest(item) for item in ids))
+    # Driver order: sorted keys of the registry entries, each key once.
+    _need(ids == sorted(set(ids)) and type(registry['entry_count']) is int
+          and registry['entry_count'] == len(ids))
+    if present:
+        _need(_digest(registry['sha256']) and type(registry['size']) is int and registry['size'] >= 0)
+    else:
+        _need(registry['sha256'] is None and registry['size'] is None and not ids
+              and registry['entry_count'] == 0)
+    return present, frozenset(ids)
+
+
+def _check_library_selection(selection, registry_present, entry_ids):
+    _need(type(selection) is dict and set(selection) == _SELECTION_KEYS)
+    present, chosen = selection['file_present'], selection['selected']
+    _need(type(present) is bool and type(chosen) is bool)
+    if present:
+        _need(_digest(selection['sha256']) and type(selection['size']) is int and selection['size'] >= 0)
+    else:
+        _need(selection['sha256'] is None and selection['size'] is None)
+    if chosen:
+        _need(present and registry_present and _digest(selection['entry_id'])
+              and selection['entry_id'] in entry_ids and _text(selection['device_profile_id']))
+    else:
+        _need(selection['entry_id'] is None and selection['device_profile_id'] is None)
+    return present, chosen
 
 
 def _check_library(value):
     if value is None:
         return
-    _need(type(value) is dict and set(value) == _LIBRARY_KEYS and type(value['root_present']) is bool)
-    registry, selection = value['registry'], value['selection']
-    _need(type(registry) is dict and set(registry) == _REGISTRY_KEYS)
-    _need(type(registry['file_present']) is bool and _text_or_none(registry['sha256'])
-          and _int_or_none(registry['size']) and type(registry['entry_count']) is int)
-    _need(type(registry['entry_ids']) is list and all(type(item) is str for item in registry['entry_ids']))
-    _need(type(selection) is dict and set(selection) == _SELECTION_KEYS)
-    _need(type(selection['file_present']) is bool and type(selection['selected']) is bool)
-    _need(_text_or_none(selection['sha256']) and _int_or_none(selection['size']))
-    _need(_text_or_none(selection['entry_id']) and _text_or_none(selection['device_profile_id']))
+    _need(type(value) is dict and set(value) == _LIBRARY_KEYS)
+    root = value['root_present']
+    _need(type(root) is bool)
+    registry_present, entry_ids = _check_registry(value['registry'])
+    selection_present, chosen = _check_library_selection(value['selection'], registry_present, entry_ids)
+    if not root:
+        # The driver census reports an absent root with every nested witness absent.
+        _need(not registry_present and not selection_present and not chosen)
+
+
+def _profile_agrees(projected, raw):
+    # The census projects a profile that falls outside the identifier grammar; only that
+    # projection may differ from the raw selection profile.
+    if projected == raw:
+        return True
+    return _UNSAFE_PROFILE_RE.fullmatch(projected) is not None and _PROFILE_RE.fullmatch(raw) is None
+
+
+def _check_selection_agreement(library, selection):
+    if library is None or selection is None:
+        return
+    record = library['selection']
+    _need(record['selected'] is True and record['entry_id'] == selection[0]
+          and _profile_agrees(record['device_profile_id'], selection[1]))
+
+
+def _check_directory(node, depth):
+    _need(type(node) is dict and depth <= _MAX_DEPTH)
+    for name, child in node.items():
+        _need(type(name) is str and name not in ('', '.', '..') and '/' not in name and '\x00' not in name)
+        if type(child) is dict:
+            _check_directory(child, depth + 1)
+        else:
+            # A file leaf is the SHA-256 of its bytes; anything else is not a tree witness.
+            _need(_digest(child))
 
 
 def _check_trees(value):
@@ -94,37 +158,65 @@ def _check_trees(value):
         return
     _need(type(value) is dict and set(value) == _TREE_KEYS)
     for tree in value.values():
-        _need(tree is None or (type(tree) is dict and _json_like(tree)))
+        if tree is not None:
+            _check_directory(tree, 0)
 
 
 def _check_association(value):
-    _need(value is None or (type(value) is dict and _json_like(value)))
+    if value is None:
+        return
+    _need(type(value) is dict and set(value) == _ASSOCIATION_KEYS)
+    version = value['schema_version']
+    _need(type(version) is int and version == 2)
+    _need(_digest(value['entry_id']) and _text(value['device_profile_id'])
+          and _digest(value['resolution_fingerprint']))
 
 
 def _check_selection(value):
     if value is None:
         return
-    _need(type(value) in (list, tuple) and len(value) == 2 and all(_text_or_none(item) for item in value))
+    _need(type(value) in (list, tuple) and len(value) == 2)
+    _need(_digest(value[0]) and _text(value[1]))
 
 
 def _addon_pairs(addons):
-    _need(type(addons) is dict and type(addons.get('enabled_state_source')) is str
-          and type(addons.get('entries')) is list)
+    _need(type(addons) is dict and set(addons) == _ADDONS_KEYS)
     source = addons['enabled_state_source']
+    _need(type(source) is str and source in ('addons_db', 'unavailable'))
+    # Only a census with no skipped, mismatched or unreadable addon is admissible evidence.
+    for counter in _ADDON_COUNTERS:
+        _need(type(addons[counter]) is int and addons[counter] == 0)
+    entries = addons['entries']
+    _need(type(addons['count']) is int and type(entries) is list and addons['count'] == len(entries))
     seen = set()
     pairs = []
-    for entry in addons['entries']:
+    for entry in entries:
         _need(type(entry) is dict and set(entry) == _ADDON_ENTRY_KEYS)
         identifier, enabled = entry['id'], entry['enabled']
-        _need(type(identifier) is str and identifier != '' and type(entry['version']) is str)
+        _need(_text(identifier) and type(entry['version']) is str)
         _need(identifier not in seen)
         seen.add(identifier)
         if source == 'addons_db':
             _need(type(enabled) is bool)
         else:
-            _need(enabled is None or type(enabled) is bool)
+            # The census reports no enabled state without the addons database.
+            _need(enabled is None)
         pairs.append((identifier, enabled))
     return (sorted(pairs) if source == 'addons_db' else None), source
+
+
+def _check_bundle(value):
+    if value is None:
+        return
+    _need(type(value) is dict and set(value) == _BUNDLE_KEYS)
+    executable = value['executable']
+    _need(_text(value['identifier']) and _text(executable) and executable not in ('.', '..')
+          and '/' not in executable)
+    _need(value['package_type'] == 'APPL')
+    for key in ('build_version', 'short_version'):
+        text = value[key]
+        _need(text is None or (type(text) is str and _VERSION_RE.fullmatch(text) is not None))
+    _need(_digest(value['info_plist_sha256']))
 
 
 def _check_public(value):
@@ -133,41 +225,81 @@ def _check_public(value):
     _check_trees(value['trees'])
     _check_association(value['association'])
     _check_selection(value['selection'])
+    _check_selection_agreement(value['library'], value['selection'])
     if value['addons'] is not None:
         _addon_pairs(value['addons'])
+    _check_bundle(value['bundle'])
     _check_flag(value.get('owners_absent'))
     _check_flag(value.get('pending_publication_absent'))
 
 
+def _check_rows(rows, allowed):
+    _need(type(rows) is list and len(rows) == len(witness.FILES))
+    statuses = []
+    for row, name in zip(rows, witness.FILES):
+        _need(type(row) is dict and set(row) == _FILE_ROW_KEYS and row['file'] == name)
+        status = row['status']
+        _need(type(status) is str and status in allowed)
+        statuses.append(status)
+    return statuses
+
+
 def _check_begin(value):
-    _need(type(value) is dict and value.get('acquisition') == 'ACQUIRED')
+    _need(type(value) is dict and set(value) == _BEGIN_KEYS)
+    _need(value['acquisition'] == 'ACQUIRED' and value['scope_result'] == 'UNVERIFIED')
+    _check_rows(value['files'], ('UNVERIFIED',))
 
 
-def _check_after(value):
-    _need(type(value) is dict and value.get('acquisition') == 'ACQUIRED')
-    practical = value.get('practical')
-    _need(type(practical) is dict and set(practical) == _PRACTICAL_KEYS)
-    _need(practical['schema'] == 'bm-a15-practical-classification/1'
-          and practical['verdict'] == 'NOT_DECIDED' and practical['qualification'] == 'not_qualified')
-    rows = practical['files']
+def _aggregate(labels):
+    for label in ('INCONCLUSIVE', 'MEANINGFUL', 'MAINTENANCE_ONLY'):
+        if label in labels:
+            return label
+    return 'EXACT'
+
+
+def _check_practical(value, statuses):
+    _need(type(value) is dict and set(value) == _PRACTICAL_KEYS)
+    _need(value['schema'] == 'bm-a15-practical-classification/1' and value['verdict'] == 'NOT_DECIDED'
+          and value['qualification'] == 'not_qualified')
+    rows = value['files']
     _need(type(rows) is list and len(rows) == len(witness.FILES))
     labels = []
-    for index, (row, name) in enumerate(zip(rows, witness.FILES)):
+    for index, (row, name, status) in enumerate(zip(rows, witness.FILES, statuses)):
         _need(type(row) is dict and set(row) == _PRACTICAL_ROW_KEYS and row['file'] == name)
         label, maintenance, count = row['classification'], row['maintenance'], row['meaningful_count']
         _need(type(label) is str and label in LABELS)
         _need(type(maintenance) is list and type(count) is int and count >= 0)
+        names = []
         for item in maintenance:
             _need(type(item) is list and len(item) == 2 and type(item[0]) is str
                   and item[0] in _MAINTENANCE_BY_INDEX[index] and type(item[1]) is int and item[1] > 0)
+            names.append(item[0])
+        # Driver order: class names unique and sorted.
+        _need(names == sorted(set(names)))
         if label in ('EXACT', 'INCONCLUSIVE'):
             _need(not maintenance and count == 0)
         elif label == 'MAINTENANCE_ONLY':
             _need(bool(maintenance) and count == 0)
         else:
             _need(not maintenance and count >= 1)
+        # The strict result constrains the classification: an unchanged projection is
+        # EXACT or INCONCLUSIVE, and a changed projection is never EXACT.
+        if status == 'PRESERVED':
+            _need(label in ('EXACT', 'INCONCLUSIVE'))
+        else:
+            _need(label != 'EXACT')
         labels.append(label)
+    _need(value['classification'] == _aggregate(labels))
     return labels
+
+
+def _check_after(value):
+    _need(type(value) is dict and set(value) == _AFTER_KEYS)
+    _need(value['acquisition'] == 'ACQUIRED')
+    statuses = _check_rows(value['files'], ('PRESERVED', 'CHANGED_OR_MISSING'))
+    scope = 'PRESERVED' if all(status == 'PRESERVED' for status in statuses) else 'CHANGED_OR_MISSING'
+    _need(value['scope_result'] == scope)
+    return _check_practical(value['practical'], statuses)
 
 
 def _entry(identifier, status, reason):
@@ -328,6 +460,8 @@ def _blocked(reason):
 
 
 def _assess(public_before, public_after, begin, after, quit_verified, source_bound, correlation):
+    # Every input is validated before any prerequisite is computed, so malformed evidence
+    # can never contribute a MET, even when before and after are identical.
     _check_public(public_before)
     _check_public(public_after)
     _check_begin(begin)

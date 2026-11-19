@@ -33,21 +33,24 @@ def practical_block(*rows):
 
 def public_witness():
     """Synthetic public witnesses with the shape public_state returns."""
-    return {'bundle': {'identifier': 'org.xbmc.kodi'},
+    entry = '9' * 64
+    return {'bundle': {'build_version': '21.3.0', 'executable': 'Kodi', 'identifier': 'org.xbmc.kodi',
+                       'info_plist_sha256': '1' * 64, 'package_type': 'APPL', 'short_version': '21.3'},
             'settings': {'readable': True, 'active_skin': 'skin.estuary', 'updater_policy': 'NOTIFY_ONLY'},
             'addons': {'count': 1, 'enabled_state_source': 'addons_db', 'id_mismatch': 0,
                        'skipped_invalid_names': 0, 'skipped_non_directories': 0, 'unreadable_addon_xml': 0,
                        'entries': [{'enabled': True, 'id': 'script.synthetic', 'version': '1.0.0'}]},
             'library': {'root_present': True,
                         'registry': {'file_present': True, 'sha256': 'a' * 64, 'size': 120,
-                                     'entry_count': 1, 'entry_ids': ['build-one']},
+                                     'entry_count': 1, 'entry_ids': [entry]},
                         'selection': {'file_present': True, 'selected': True, 'sha256': 'b' * 64,
-                                      'size': 30, 'entry_id': 'build-one', 'device_profile_id': 'profile-one'}},
+                                      'size': 30, 'entry_id': entry, 'device_profile_id': 'profile-one'}},
             'trees': {'build-library': {'registry.json': 'c' * 64},
                       'install_resolutions': {'resolution.json': 'd' * 64},
                       'frozen-artifacts': {'artifact.json': 'e' * 64}},
-            'association': {'entry_id': 'build-one', 'artifact': 'f' * 64},
-            'selection': ('build-one', 'profile-one'),
+            'association': {'schema_version': 2, 'entry_id': entry, 'device_profile_id': 'profile-one',
+                            'resolution_fingerprint': 'f' * 64},
+            'selection': (entry, 'profile-one'),
             'owners_absent': True, 'pending_publication_absent': True}
 
 

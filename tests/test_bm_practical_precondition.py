@@ -8,6 +8,8 @@ from tools import bm_practical_precondition as precondition
 from tools import bm_public_preservation_witness as witness
 
 SECRET = 'synthetic-private-precondition-value'
+ENTRY = '9' * 64
+PROFILE = 'profile-one'
 EXACT_ROWS = [('EXACT', (), 0)] * 5
 OUTPUT_VOCABULARY = frozenset((
     'schema', 'assessment', 'reason', 'verdict', 'qualification', 'prerequisites', 'limitations',
@@ -33,10 +35,26 @@ OUTPUT_VOCABULARY = frozenset((
 ))
 
 
+def bundle(**changes):
+    """The bundle identity record bm_test_app.identify().report() emits."""
+    value = {'build_version': '21.3.0', 'executable': 'Kodi', 'identifier': 'org.xbmc.kodi',
+             'info_plist_sha256': '1' * 64, 'package_type': 'APPL', 'short_version': '21.3'}
+    value.update(changes)
+    return value
+
+
+def association(fingerprint='f' * 64, **changes):
+    """The applied association record AppliedBuildAssociation.to_dict() emits."""
+    value = {'schema_version': 2, 'entry_id': ENTRY, 'device_profile_id': PROFILE,
+             'resolution_fingerprint': fingerprint}
+    value.update(changes)
+    return value
+
+
 def public(**changes):
     """Synthetic public witnesses with the shape public_state returns."""
     value = {
-        'bundle': {'identifier': 'org.xbmc.kodi', 'version': '21.3'},
+        'bundle': bundle(),
         'settings': {'readable': True, 'active_skin': 'skin.estuary', 'updater_policy': 'NOTIFY_ONLY'},
         'addons': {'count': 2, 'enabled_state_source': 'addons_db', 'id_mismatch': 0,
                    'skipped_invalid_names': 0, 'skipped_non_directories': 0, 'unreadable_addon_xml': 0,
@@ -44,14 +62,14 @@ def public(**changes):
                                {'enabled': False, 'id': 'script.other', 'version': '2.0.0'}]},
         'library': {'root_present': True,
                     'registry': {'file_present': True, 'sha256': 'a' * 64, 'size': 120,
-                                 'entry_count': 1, 'entry_ids': [SECRET]},
+                                 'entry_count': 1, 'entry_ids': [ENTRY]},
                     'selection': {'file_present': True, 'selected': True, 'sha256': 'b' * 64, 'size': 30,
-                                  'entry_id': SECRET, 'device_profile_id': 'profile-one'}},
+                                  'entry_id': ENTRY, 'device_profile_id': PROFILE}},
         'trees': {'build-library': {'registry.json': 'c' * 64},
                   'install_resolutions': {'resolution.json': 'd' * 64},
                   'frozen-artifacts': {'artifact.json': 'e' * 64}},
-        'association': {'entry_id': SECRET, 'artifact': 'f' * 64},
-        'selection': (SECRET, 'profile-one'),
+        'association': association(),
+        'selection': (ENTRY, PROFILE),
         'owners_absent': True,
         'pending_publication_absent': True,
     }
@@ -72,10 +90,19 @@ def practical(*rows):
             'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
-def after_block(*rows):
-    return {'acquisition': 'ACQUIRED', 'scope_result': 'PRESERVED',
-            'files': [{'file': name, 'status': 'PRESERVED'} for name in witness.FILES],
-            'practical': practical(*(rows or EXACT_ROWS))}
+def strict_for(label):
+    """The strict status the driver derives: only EXACT or INCONCLUSIVE is PRESERVED."""
+    return 'PRESERVED' if label in ('EXACT', 'INCONCLUSIVE') else 'CHANGED_OR_MISSING'
+
+
+def after_block(*rows, statuses=None):
+    rows = rows or EXACT_ROWS
+    if statuses is None:
+        statuses = [strict_for(row[0]) for row in rows]
+    scope = 'PRESERVED' if all(status == 'PRESERVED' for status in statuses) else 'CHANGED_OR_MISSING'
+    return {'acquisition': 'ACQUIRED', 'scope_result': scope,
+            'files': [{'file': name, 'status': status} for name, status in zip(witness.FILES, statuses)],
+            'practical': practical(*rows)}
 
 
 def begin_block():
@@ -107,6 +134,14 @@ def strings(value):
 
 
 class PreconditionTests(unittest.TestCase):
+    def assertInvalid(self, block):
+        """Malformed evidence: a sanitized blocked assessment with no MET prerequisite."""
+        self.assertEqual(block['assessment'], 'INCONCLUSIVE')
+        self.assertEqual(block['reason'], 'input_invalid')
+        self.assertEqual({(item['status'], item['reason']) for item in block['prerequisites']},
+                         {('UNVERIFIED', 'input_invalid')})
+        self.assertNotIn(SECRET, json.dumps(block))
+
     def test_exact_witnesses_meet_each_assessed_prerequisite_yet_stay_inconclusive(self):
         block = assess()
         for identifier in ('S1', 'S2', 'S5', 'S7', 'FIVE_FILE'):
@@ -140,9 +175,12 @@ class PreconditionTests(unittest.TestCase):
         base = public()
         library = copy.deepcopy(base['library'])
         library['registry']['sha256'] = '0' * 64
+        selected = copy.deepcopy(base['library'])
+        selected['selection']['device_profile_id'] = 'profile-two'
         trees = copy.deepcopy(base['trees'])
         trees['build-library']['registry.json'] = '0' * 64
-        changes = [{'library': library}, {'selection': (SECRET, 'profile-two')}, {'trees': trees}]
+        changes = [{'library': library}, {'library': selected, 'selection': (ENTRY, 'profile-two')},
+                   {'trees': trees}]
         for change in changes:
             with self.subTest(change=sorted(change)):
                 block = assess(public_after=public(**change))
@@ -159,7 +197,7 @@ class PreconditionTests(unittest.TestCase):
                 block = assess(public_after=public(trees=trees))
                 self.assertEqual(entry(block, 'S2')['status'], 'NOT_MET')
                 self.assertEqual(entry(block, 'S2')['reason'], 'artifact_or_association_changed')
-        block = assess(public_after=public(association={'entry_id': SECRET, 'artifact': '0' * 64}))
+        block = assess(public_after=public(association=association('0' * 64)))
         self.assertEqual(entry(block, 'S2')['status'], 'NOT_MET')
 
     def test_addons33_identity_or_enabled_change_fails_s5(self):
@@ -190,6 +228,15 @@ class PreconditionTests(unittest.TestCase):
                          {'EXACT': 3, 'MAINTENANCE_ONLY': 2, 'MEANINGFUL': 0, 'INCONCLUSIVE': 0})
         self.assertEqual(entry(block, 'S5')['status'], 'MET')
         self.assertEqual(block['assessment'], 'INCONCLUSIVE')
+
+    def test_strict_change_coexists_with_permitted_maintenance_without_rejection(self):
+        after = after_block(('EXACT', (), 0),
+                            ('MAINTENANCE_ONLY', (('M2_SIZES_LASTUSETIME', 2),), 0), *EXACT_ROWS[2:])
+        self.assertEqual(after['scope_result'], 'CHANGED_OR_MISSING')
+        self.assertEqual(after['files'][1]['status'], 'CHANGED_OR_MISSING')
+        block = assess(after=after)
+        self.assertEqual(entry(block, 'FIVE_FILE')['status'], 'MET')
+        self.assertNotEqual(block['reason'], 'input_invalid')
 
     def test_meaningful_or_inconclusive_classification_prevents_eligibility(self):
         meaningful = list(EXACT_ROWS)
@@ -226,7 +273,7 @@ class PreconditionTests(unittest.TestCase):
             'quit_not_verified': (dict(quit_verified=False), ('NOT_MET', 'quit_not_verified')),
             'source_unverified': (dict(source_bound=None), ('UNVERIFIED', 'source_binding_unverified')),
             'source_failed': (dict(source_bound=False), ('NOT_MET', 'source_binding_failed')),
-            'bundle_changed': (dict(public_after=public(bundle={'identifier': 'other'})),
+            'bundle_changed': (dict(public_after=public(bundle=bundle(identifier='org.example.other'))),
                                ('NOT_MET', 'bundle_changed')),
         }
         for name, (overrides, expected) in cases.items():
@@ -263,6 +310,12 @@ class PreconditionTests(unittest.TestCase):
         block = assess(public_after=public(addons=unavailable))
         self.assertEqual(entry(block, 'S5'),
                          {'id': 'S5', 'status': 'UNVERIFIED', 'reason': 'enabled_state_unavailable'})
+
+    def test_absent_bundle_and_absent_top_level_selection_stay_unverified(self):
+        block = assess(public_before=public(bundle=None), public_after=public(bundle=None))
+        self.assertEqual(entry(block, 'S7'), {'id': 'S7', 'status': 'UNVERIFIED', 'reason': 'bundle_unverified'})
+        block = assess(public_before=public(selection=None), public_after=public(selection=None))
+        self.assertEqual(entry(block, 'S1'), {'id': 'S1', 'status': 'UNVERIFIED', 'reason': 'witness_absent'})
 
     def test_malformed_inputs_fail_closed_with_a_sanitized_reason(self):
         good = public()
@@ -305,18 +358,245 @@ class PreconditionTests(unittest.TestCase):
         }
         for name, overrides in cases.items():
             with self.subTest(case=name):
-                block = assess(**overrides)
-                self.assertEqual(block['assessment'], 'INCONCLUSIVE')
-                self.assertEqual(block['reason'], 'input_invalid')
-                self.assertEqual({(item['status'], item['reason']) for item in block['prerequisites']},
-                                 {('UNVERIFIED', 'input_invalid')})
-                self.assertNotIn(SECRET, json.dumps(block))
+                self.assertInvalid(assess(**overrides))
+
+    def test_begin_projection_must_match_the_driver_schema(self):
+        files = begin_block()['files']
+        cases = {
+            'begin_without_files': {'acquisition': 'ACQUIRED', 'scope_result': 'UNVERIFIED'},
+            'begin_files_short': dict(begin_block(), files=files[:4]),
+            'begin_file_not_unverified': dict(begin_block(), files=[dict(row, status='PRESERVED') for row in files]),
+            'begin_scope_not_unverified': dict(begin_block(), scope_result='PRESERVED'),
+            'begin_extra_key': dict(begin_block(), extra=SECRET),
+        }
+        for name, begin in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(begin=begin))
+
+    def test_after_projection_requires_files_scope_and_the_driver_shape(self):
+        without_files = after_block()
+        del without_files['files']
+        without_scope = after_block()
+        del without_scope['scope_result']
+        scope_contradicts = after_block(('MEANINGFUL', (), 1), *EXACT_ROWS[1:])
+        scope_contradicts['scope_result'] = 'PRESERVED'
+        short_files = after_block()
+        short_files['files'] = short_files['files'][:4]
+        unknown_status = after_block()
+        unknown_status['files'][0]['status'] = 'UNKNOWN'
+        extra_key = after_block()
+        extra_key['extra'] = SECRET
+        cases = {'after_without_files': without_files, 'after_without_scope_result': without_scope,
+                 'scope_contradicts_files': scope_contradicts, 'after_files_short': short_files,
+                 'file_status_unknown': unknown_status, 'after_extra_key': extra_key}
+        for name, after in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(after=after))
+
+    def test_strict_status_and_practical_classification_must_agree(self):
+        preserved = ('PRESERVED',) * 5
+        cases = {
+            # Strict Addons33 CHANGED_OR_MISSING paired with practical EXACT.
+            'addons_changed_practical_exact': after_block(
+                statuses=('CHANGED_OR_MISSING',) + preserved[1:]),
+            # Strict PRESERVED is never paired with a maintenance class.
+            'preserved_with_maintenance': after_block(
+                ('EXACT', (), 0), ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', 1),), 0), *EXACT_ROWS[2:],
+                statuses=preserved),
+            # Strict PRESERVED is never paired with MEANINGFUL.
+            'preserved_with_meaningful': after_block(
+                ('EXACT', (), 0), ('EXACT', (), 0), ('MEANINGFUL', (), 1), *EXACT_ROWS[3:],
+                statuses=preserved),
+            # Strict CHANGED_OR_MISSING is never paired with EXACT, on any file.
+            'textures_changed_exact': after_block(
+                statuses=(preserved[0], 'CHANGED_OR_MISSING') + preserved[2:]),
+        }
+        for name, after in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(after=after))
+
+    def test_invalid_practical_aggregate_is_rejected(self):
+        for name, aggregate in (('meaningful_over_exact_rows', 'MEANINGFUL'),
+                                ('maintenance_over_exact_rows', 'MAINTENANCE_ONLY'),
+                                ('unknown_label', 'PASS')):
+            with self.subTest(case=name):
+                after = after_block()
+                after['practical']['classification'] = aggregate
+                self.assertInvalid(assess(after=after))
+        after = after_block()
+        del after['practical']['classification']
+        self.assertInvalid(assess(after=after))
+
+    def test_maintenance_classes_must_be_approved_unique_ordered_and_counted(self):
+        cases = {
+            'duplicate_class': ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', 1), ('M2_SIZES_USECOUNT', 1)), 0),
+            'unsorted_classes': ('MAINTENANCE_ONLY', (('M2_TEXTURE_LASTHASHCHECK', 1), ('M2_SIZES_USECOUNT', 1)), 0),
+            'zero_count': ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', 0),), 0),
+            'negative_count': ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', -1),), 0),
+            'boolean_count': ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', True),), 0),
+            'empty_maintenance_list': ('MAINTENANCE_ONLY', (), 0),
+            'unknown_class': ('MAINTENANCE_ONLY', (('M2_UNREVIEWED', 1),), 0),
+            'm1_class_on_textures': ('MAINTENANCE_ONLY', (('M1_UPTIME', 1),), 0),
+            'exact_with_maintenance': ('EXACT', (('M2_SIZES_USECOUNT', 1),), 0),
+            'meaningful_with_maintenance': ('MEANINGFUL', (('M2_SIZES_USECOUNT', 1),), 1),
+        }
+        for name, row in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(after=after_block(('EXACT', (), 0), row, *EXACT_ROWS[2:])))
+        block = assess(after=after_block(('EXACT', (), 0),
+                                         ('MAINTENANCE_ONLY', (('M2_SIZES_LASTUSETIME', 2),
+                                                               ('M2_SIZES_USECOUNT', 1)), 0),
+                                         *EXACT_ROWS[2:]))
+        self.assertEqual(entry(block, 'FIVE_FILE')['status'], 'MET')
+
+    def test_frozen_artifact_leaves_must_be_digests_not_numbers(self):
+        base = public()
+        cases = {
+            'numeric_top_leaf': {'artifact.json': 5},
+            'numeric_nested_leaf': {'nested': {'artifact.json': 5}},
+            'boolean_leaf': {'artifact.json': True},
+            'null_leaf': {'artifact.json': None},
+            'short_digest_leaf': {'artifact.json': 'e' * 63},
+            'uppercase_digest_leaf': {'artifact.json': 'E' * 64},
+            'slash_in_name': {'a/b.json': 'e' * 64},
+            'empty_name': {'': 'e' * 64},
+            'tree_is_a_digest': 'e' * 64,
+        }
+        for name, tree in cases.items():
+            with self.subTest(case=name):
+                trees = copy.deepcopy(base['trees'])
+                trees['frozen-artifacts'] = tree
+                self.assertInvalid(assess(public_before=public(trees=trees),
+                                          public_after=public(trees=copy.deepcopy(trees))))
+
+    def test_empty_directories_and_nested_digests_remain_valid(self):
+        trees = copy.deepcopy(public()['trees'])
+        trees['frozen-artifacts'] = {'empty': {}, 'nested': {'a.json': 'e' * 64}}
+        block = assess(public_before=public(trees=trees), public_after=public(trees=copy.deepcopy(trees)))
+        self.assertEqual(entry(block, 'S2')['status'], 'MET')
+        self.assertNotEqual(block['reason'], 'input_invalid')
+
+    def test_registry_witness_requires_digest_size_and_consistent_entries(self):
+        def library_with(**registry_changes):
+            library = copy.deepcopy(public()['library'])
+            library['registry'].update(registry_changes)
+            return library
+
+        cases = {
+            'present_without_digest': library_with(sha256=None),
+            'present_without_size': library_with(size=None),
+            'present_negative_size': library_with(size=-1),
+            'present_text_size': library_with(size='120'),
+            'present_uppercase_digest': library_with(sha256='A' * 64),
+            'present_short_digest': library_with(sha256='a' * 63),
+            'absent_with_digest': library_with(file_present=False),
+            'entry_count_mismatch': library_with(entry_count=2),
+            'entry_ids_unsorted': library_with(entry_ids=[ENTRY, '8' * 64], entry_count=2),
+            'entry_ids_duplicate': library_with(entry_ids=[ENTRY, ENTRY], entry_count=2),
+            'entry_id_not_digest': library_with(entry_ids=['not-a-digest'], entry_count=1),
+        }
+        for name, library in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(public_before=public(library=library),
+                                          public_after=public(library=copy.deepcopy(library))))
+
+    def test_selection_witness_must_agree_with_the_registry_and_root(self):
+        def selection_with(**changes):
+            library = copy.deepcopy(public()['library'])
+            library['selection'].update(changes)
+            return library
+
+        def root_absent():
+            library = copy.deepcopy(public()['library'])
+            library['root_present'] = False
+            return library
+
+        cases = {
+            'selected_entry_not_in_registry': selection_with(entry_id='7' * 64),
+            'selected_without_file': selection_with(file_present=False),
+            'unselected_with_entry': selection_with(selected=False),
+            'selected_without_profile': selection_with(device_profile_id=None),
+            'root_absent_with_registry': root_absent(),
+        }
+        for name, library in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(public_before=public(library=library),
+                                          public_after=public(library=copy.deepcopy(library))))
+
+    def test_top_level_selection_must_agree_with_the_library_selection(self):
+        self.assertInvalid(assess(public_before=public(selection=(ENTRY, 'profile-two')),
+                                  public_after=public(selection=(ENTRY, 'profile-two'))))
+        self.assertInvalid(assess(public_before=public(selection=('8' * 64, PROFILE)),
+                                  public_after=public(selection=('8' * 64, PROFILE))))
+
+    def test_unsafe_profile_projection_is_accepted_only_for_a_raw_profile_outside_the_grammar(self):
+        projected = copy.deepcopy(public()['library'])
+        projected['selection']['device_profile_id'] = '<unsafe:0123456789ab>'
+        raw = (ENTRY, 'bad profile!')
+        block = assess(public_before=public(library=projected, selection=raw),
+                       public_after=public(library=copy.deepcopy(projected), selection=raw))
+        self.assertEqual(entry(block, 'S1')['status'], 'MET')
+        self.assertNotEqual(block['reason'], 'input_invalid')
+        self.assertInvalid(assess(public_before=public(library=projected, selection=(ENTRY, PROFILE)),
+                                  public_after=public(library=copy.deepcopy(projected), selection=(ENTRY, PROFILE))))
+
+    def test_bundle_identity_must_be_the_real_bundle_record(self):
+        without_digest = bundle()
+        del without_digest['info_plist_sha256']
+        cases = {
+            'integer_bundle': 5,
+            'bundle_missing_digest': without_digest,
+            'bundle_extra_key': bundle(version='21.3'),
+            'bundle_not_app': bundle(package_type='PKG'),
+            'executable_with_slash': bundle(executable='bin/Kodi'),
+            'bad_short_version': bundle(short_version='21 beta'),
+            'digest_not_hex': bundle(info_plist_sha256='G' * 64),
+            'empty_identifier': bundle(identifier=''),
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(public_before=public(bundle=value),
+                                          public_after=public(bundle=copy.deepcopy(value))))
+
+    def test_association_must_be_the_applied_association_record(self):
+        cases = {
+            'numeric_fingerprint': association(fingerprint=7),
+            'wrong_schema_version': association(schema_version=3),
+            'boolean_schema_version': association(schema_version=True),
+            'association_extra_key': association(artifact='f' * 64),
+            'association_entry_not_digest': association(entry_id='x'),
+            'association_empty_profile': association(device_profile_id=''),
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(public_before=public(association=value),
+                                          public_after=public(association=copy.deepcopy(value))))
+
+    def test_addon_census_must_be_complete_and_consistent(self):
+        base = public()['addons']
+        unavailable_bool = copy.deepcopy(base)
+        unavailable_bool['enabled_state_source'] = 'unavailable'
+        cases = {
+            'count_mismatch': dict(base, count=9),
+            'unreadable_addon_xml': dict(base, unreadable_addon_xml=1),
+            'id_mismatch': dict(base, id_mismatch=1),
+            'skipped_invalid_names': dict(base, skipped_invalid_names=1),
+            'skipped_non_directories': dict(base, skipped_non_directories=1),
+            'missing_counter': {k: v for k, v in base.items() if k != 'id_mismatch'},
+            'unavailable_with_boolean_enabled': unavailable_bool,
+        }
+        for name, addons in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalid(assess(public_before=public(addons=addons),
+                                          public_after=public(addons=copy.deepcopy(addons))))
 
     def test_output_uses_only_the_fixed_vocabulary_and_no_private_values(self):
         blocks = [assess(), assess(correlation='VERIFIED'), assess(correlation='BROKEN'),
                   assess(public_after=public(owners_absent=None)),
                   assess(public_after=public(library=None)),
                   assess(after=after_block(('MEANINGFUL', (), 1), *EXACT_ROWS[1:])),
+                  assess(public_after=public(library=None), after=after_block(
+                      ('MAINTENANCE_ONLY', (('M2_SIZES_USECOUNT', 0),), 0), *EXACT_ROWS[1:])),
                   precondition.not_reached()]
         for block in blocks:
             text = json.dumps(block, sort_keys=True)
@@ -351,6 +631,13 @@ class PreconditionTests(unittest.TestCase):
         self.assertEqual(block['assessment'], 'INCONCLUSIVE')
         self.assertEqual(block['reason'], 'internal_error')
         self.assertNotIn(SECRET, json.dumps(block))
+
+    def test_interrupts_and_system_exit_propagate(self):
+        for exc_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception=exc_type.__name__):
+                with mock.patch.object(precondition, '_assess', side_effect=exc_type()):
+                    with self.assertRaises(exc_type):
+                        assess()
 
     def test_inputs_are_not_mutated(self):
         before, after_public, begin, after = public(), public(), begin_block(), after_block()
