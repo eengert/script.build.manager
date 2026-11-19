@@ -589,6 +589,35 @@ class PreconditionTests(unittest.TestCase):
         self.assertInvalid(leaked)
         self.assertNotIn(raw, json.dumps(leaked))
 
+    def test_empty_raw_profile_projects_to_the_producer_token(self):
+        # The census projects '' to the digest token of the empty UTF-8 byte string.
+        block = self.assertAcceptedAtBothBoundaries(**selection_pair('', '<unsafe:e3b0c44298fc>'))
+        self.assertEqual(entry(block, 'S1')['status'], 'MET')
+
+    def test_empty_raw_profile_rejects_every_other_projection(self):
+        cases = {
+            'unmasked_empty': '',
+            'arbitrary_token': '<unsafe:0123456789ab>',
+            'uppercase_digest': '<unsafe:E3B0C44298FC>',
+            'token_of_another_raw_profile': UNSAFE_CASES[0][1],
+            'in_grammar_profile': PROFILE,
+        }
+        for name, projected in cases.items():
+            with self.subTest(case=name):
+                self.assertInvalidAtBothBoundaries(**selection_pair('', projected))
+
+    def test_empty_raw_profile_still_requires_a_valid_entry_digest(self):
+        for entry_id in ('8' * 63, 'G' * 64, ''):
+            with self.subTest(entry_id=entry_id):
+                self.assertInvalidAtBothBoundaries(
+                    library=selection_pair('', '<unsafe:e3b0c44298fc>')['library'],
+                    selection=(entry_id, ''))
+
+    def test_non_string_raw_profile_is_rejected(self):
+        for raw in (None, 0, b'profile-one', ('profile-one',), ['profile-one']):
+            with self.subTest(raw_type=type(raw).__name__):
+                self.assertInvalidAtBothBoundaries(**selection_pair(raw, PROFILE))
+
     def test_profile_inside_the_identifier_grammar_projects_unchanged(self):
         for raw in (PROFILE, 'a' * 100, 'A.b_c-9'):
             with self.subTest(length=len(raw)):

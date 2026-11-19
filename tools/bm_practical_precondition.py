@@ -191,7 +191,9 @@ def _check_selection(value):
     if value is None:
         return
     _need(type(value) in (list, tuple) and len(value) == 2)
-    _need(_digest(value[0]) and _text(value[1]))
+    # The raw profile may be any exact str, including '': the census projects it to a token,
+    # and _check_selection_agreement requires that exact projection.
+    _need(_digest(value[0]) and type(value[1]) is str)
 
 
 def _addon_pairs(addons):
