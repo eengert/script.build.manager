@@ -33,6 +33,7 @@ from resources.lib.artifacts import (
     validate_addon_zip,
 )
 from resources.lib.dependencies import _is_system_dependency, _strict_version_satisfies
+from resources.lib.failure_diagnostics import emit
 from resources.lib.official_repository import (
     OFFICIAL_REPOSITORY_ID,
     BoundedHttpsGetter,
@@ -1639,6 +1640,8 @@ def capture_frozen_build(
     errors: List[str] = []
     diagnostic_categories = set()
     local_candidates: List[Tuple[str, str]] = []
+    acquisition_seen = False
+    store_only = True
     approvals = _exact_local_approvals(local_capture_approvals)
     if any((installed.get(addon_id) or {}).get("version") != version for addon_id, version in approvals):
         # A changed or removed approved add-on voids the authorisation for this whole pass, so no
@@ -1815,6 +1818,8 @@ def capture_frozen_build(
             continue
         provenance, detail = backend.get_provenance(addon_id)
         acquisition = ArtifactAcquirer(store, backend, approvals).acquire(addon_id, version)
+        acquisition_seen = True
+        store_only = store_only and acquisition.source == "artifact_store"
         if acquisition.local_capture_eligible:
             local_candidates.append((addon_id, version))
         status = acquisition.status
@@ -1876,6 +1881,9 @@ def capture_frozen_build(
     from resources.lib.frozen_resolution import summarize_frozen_recoverability
 
     recoverability = summarize_frozen_recoverability(manifest, store, install_policies)
+    emit("create.evidence.acquisition_store_only"
+         if acquisition_seen and store_only and overall is CaptureStatus.COMPLETE
+         else "create.evidence.acquisition_unverified")
     return FrozenBuildCaptureResult(
         manifest,
         tuple(sorted(set(errors))),

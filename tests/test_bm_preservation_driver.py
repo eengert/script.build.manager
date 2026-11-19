@@ -179,6 +179,20 @@ class DriverTests(fixtures.TripwireTestCase):
                 self.assertEqual(self.calls, ['begin', 'close'])
                 self.assertNotIn('finish', self.calls)
 
+    def test_path_observations_are_supplemental_and_never_promote_or_refuse_driver(self):
+        with mock.patch.object(driver, 'stopped_path_evidence', side_effect=[
+            ('PRESENT', None), ('UNVERIFIED', None),
+        ]):
+            code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['state'], 'SCOPED_PRESERVED')
+        self.assertEqual(result['practical_precondition']['verdict'], 'NOT_DECIDED')
+        ready = json.loads((self.evidence / 'ready.json').read_text())
+        self.assertEqual(ready['a15_stopped_evidence'], {'journal': 'PRESENT', 'paths': 'UNVERIFIED'})
+        self.assertEqual(result['a15_stopped_evidence'], {
+            'journal_before': 'PRESENT', 'journal_after': 'UNVERIFIED', 'paths': 'UNVERIFIED',
+        })
+
     def test_review_p01_recopy_old_receipt_only_proves_form_and_file_time(self):
         destination = self.evidence
         self.evidence = self.tmp/'earlier-window'; self.evidence.mkdir()

@@ -6,6 +6,7 @@ import re
 import unicodedata
 from pathlib import Path
 
+from resources.lib.a15_observation import observe_create_roots
 from resources.lib.build_library import LibraryConflict
 from resources.lib.config import ConfigPackageLoader
 from resources.lib.create_capture import (CreateBuildRequest, CreateCaptureStatus,
@@ -352,8 +353,11 @@ def runtime_create_workflow():
     def engine():
         resources = StructuredPrivateResourceManager()
         resources.register(RedLightSettingsAdapter(profile()))
+        artifact_root = profile() / 'addon_data' / 'script.build.manager' / 'frozen-artifacts'
+        observe_create_roots(artifact_root, library)
         return CreateBuildCaptureEngine(inventory=inventory,
-            artifact_store=ArtifactStore(profile() / 'addon_data' / 'script.build.manager' / 'frozen-artifacts'),
+            artifact_store=ArtifactStore(artifact_root),
             configuration=KodiRuntimeConfigurationBackend(), inspect_state=inspector.inspect, private_resources=resources)
+    library = default_build_library()
     return CreateBuildWorkflow(inventory=inventory, inspect_state=inspector.inspect,
-        library=default_build_library(), engine_factory=engine, private_store_factory=lambda: PrivateOverlayStore(profile()))
+        library=library, engine_factory=engine, private_store_factory=lambda: PrivateOverlayStore(profile()))

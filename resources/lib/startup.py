@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from resources.lib.a15_observation import observe_restart_root
 from resources.lib.session import SessionIdentityError, get_current_kodi_session_id
 from resources.lib.transaction import (
     RestartTransaction,
@@ -119,10 +120,11 @@ def run_startup(
     # Reclassify after the frozen guard is reasserted so resume uses a fresh
     # transaction snapshot rather than the pre-guard read.
     status = classify_startup_transaction(current_session_id, store=target)
+    initially_absent = status.classification is StartupClassification.NO_TRANSACTION
     if frozen_precondition is None:
         try:
             from resources.lib.frozen_install import ensure_frozen_install_guard
-            frozen_precondition = ensure_frozen_install_guard
+            frozen_precondition = lambda: ensure_frozen_install_guard(startup_observation=True)
         except Exception:
             frozen_precondition = None
     if frozen_precondition is not None:
@@ -139,6 +141,8 @@ def run_startup(
             )
     status = classify_startup_transaction(current_session_id, store=target)
     if not status.eligible_for_resume or status.transaction is None:
+        if initially_absent and status.classification is StartupClassification.NO_TRANSACTION:
+            observe_restart_root(target)
         return status
 
     try:

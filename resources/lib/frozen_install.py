@@ -38,10 +38,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
-from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
+from resources.lib.a15_observation import observe_publication_roots
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
+from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.build_library import LibraryInstallTarget, LibraryError
 from resources.lib.build_manager import ActionFailureDiagnostic, ReconcileRequest
+from resources.lib.failure_diagnostics import emit
 from resources.lib.skin import SkinFailureCode
 from resources.lib.skin_approval_state import SkinApprovalState, AUTHORIZED as SKIN_AUTHORIZED, CANCELLED as SKIN_CANCELLED
 from resources.lib.private_resource import ResourceInitializationStage
@@ -4797,7 +4799,8 @@ def _sync_publication_storage(store):
         os.fsync(fd)
 
 
-def recover_applied_publication(*, store=None, library=None, policy_backend=None, publication=None):
+def recover_applied_publication(*, store=None, library=None, policy_backend=None, publication=None,
+                                startup_observation=False):
     """Existing frozen owner finishes publication; stale snapshots never create."""
     from resources.lib.build_library import authoritative_build_library, LibraryInstallTarget, LibrarySource
     target = store or FrozenInstallStore()
@@ -4821,6 +4824,12 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
                 return None
         observed = publication if publication is not None else library.publication_journal()
         transaction = target.inspect()
+        if startup_observation and publication is None:
+            if observed is not None:
+                emit("startup.evidence.journal_present")
+            elif transaction is None:
+                observe_publication_roots(target, library)
+                emit("startup.evidence.journal_and_frozen_owner_absent")
         if publication is None and (observed is None or (
                 observed.state == "acknowledged" and transaction is not None
                 and transaction.transaction_id != observed.transaction_id)):
@@ -4900,6 +4909,7 @@ def ensure_frozen_install_guard(
     *,
     store: Optional[FrozenInstallStore] = None,
     policy_backend: Optional[UpdatePolicyBackend] = None,
+    startup_observation: bool = False,
 ) -> FrozenStartupPrecondition:
     """Verify the updater quarantine before any BM-020 startup/resume work.
 
@@ -4922,6 +4932,8 @@ def ensure_frozen_install_guard(
     except Exception:
         return FrozenStartupPrecondition(False, code="FROZEN_TRANSACTION_INSPECTION_FAILED", message="active frozen transaction could not be inspected")
     if transaction is None:
+        if startup_observation:
+            emit("startup.evidence.guard_frozen_owner_absent")
         return FrozenStartupPrecondition(True)
     if transaction.phase in {FrozenInstallPhase.COMPLETE, FrozenInstallPhase.PUBLICATION_PENDING} and transaction.library_target is not None:
         return FrozenStartupPrecondition(False, transaction, "APPLIED_PUBLICATION_PENDING",
@@ -5320,11 +5332,13 @@ def run_frozen_install_startup(
             code = "SKIN_APPROVAL_PROTECTION_UNVERIFIED"
         return FrozenInstallResult("needs_attention", transaction=pending_approval,
             code=code, message="skin approval state retained; no automatic continuation")
-    publication = recover_applied_publication(store=target, policy_backend=policy_backend)
+    publication = recover_applied_publication(store=target, policy_backend=policy_backend,
+                                               startup_observation=True)
     if publication is not None:
         return publication
     transaction = target.inspect()
     if transaction is None:
+        emit("startup.evidence.frozen_owner_absent_at_return")
         return None
     precondition = ensure_frozen_install_guard(
         store=target, policy_backend=policy_backend

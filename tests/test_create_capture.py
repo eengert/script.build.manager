@@ -224,7 +224,7 @@ class CreateCaptureTests(unittest.TestCase):
                 LOGINFO=1, log=lambda message, level: logs.append(message))):
             result = self.capture()
         for message in logs:
-            self.assertRegex(message, r'^\[script.build.manager\] diagnostic phase=create\.capture\.[a-z_]+$')
+            self.assertRegex(message, r'^\[script.build.manager\] diagnostic phase=create\.(capture|evidence)\.[a-z_]+$')
             for private in (SECRET, ROOT, DEP, str(self.base), 'exception='):
                 self.assertNotIn(private, message)
         return result, {message.split('phase=')[1] for message in logs}
@@ -235,7 +235,7 @@ class CreateCaptureTests(unittest.TestCase):
         self.assertEqual(result.status, S.INCOMPLETE)
         self.assertIsNone(result.public_bundle)
         self.assertEqual(phases, {'create.capture.incomplete', 'create.capture.incomplete_artifact',
-                                  'create.capture.capture_errors'})
+                                  'create.capture.capture_errors', 'create.evidence.acquisition_unverified'})
 
     def test_capture_diagnostic_metadata_unavailable_and_invalid(self):
         for xml, category in ((None, 'metadata_unavailable'),
@@ -256,7 +256,7 @@ class CreateCaptureTests(unittest.TestCase):
         self.assertIsNone(result.public_bundle)
         self.assertEqual(result.artifact_gaps, ())
         self.assertEqual(phases, {'create.capture.incomplete', 'create.capture.builtin_closure_unavailable',
-                                  'create.capture.capture_errors'})
+                                  'create.capture.capture_errors', 'create.evidence.acquisition_unverified'})
 
     def test_capture_diagnostic_rejects_unallowlisted_output(self):
         from resources.lib.failure_diagnostics import emit
@@ -265,11 +265,19 @@ class CreateCaptureTests(unittest.TestCase):
         emit('create.capture.' + ROOT, log=logs.append)
         self.assertEqual(logs, [])
 
-    def test_capture_diagnostic_success_silent_and_unchanged(self):
+    def test_capture_diagnostic_observes_actual_store_hits_without_changing_result(self):
         before = self.capture()
         result, phases = self.diagnostic_capture()
         self.assertEqual(result, before)
-        self.assertEqual(phases, set())
+        self.assertEqual(phases, {'create.evidence.acquisition_store_only'})
+
+    def test_capture_diagnostic_never_calls_a_cache_import_a_store_hit(self):
+        first, phases = self.diagnostic_capture()
+        self.assertIs(first.status, S.COMPLETE)
+        self.assertEqual(phases, {'create.evidence.acquisition_unverified'})
+        second, phases = self.diagnostic_capture()
+        self.assertEqual(first, second)
+        self.assertEqual(phases, {'create.evidence.acquisition_store_only'})
 
     def test_capture_diagnostic_logger_failure_preserves_refusal(self):
         self.inventory.package_cache = {}

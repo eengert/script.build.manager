@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import base64
 import json
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from pathlib import Path
 from typing import Callable
 
+from resources.lib.a15_observation import registration_staging
 from resources.lib.build_library import _validate_bundle, _validate_bundle_structure, FILE_LIMIT, BUNDLE_LIMIT
 from resources.lib.config import ConfigSettingType, ConfigTargetKind, ConfigAddonUnavailableError, validate_package_id
 from resources.lib.failure_diagnostics import emit
@@ -119,8 +118,7 @@ class PreparedPublicBundle:
 
     @contextmanager
     def registration_inputs(self):
-        with tempfile.TemporaryDirectory(prefix="bm-create-public-") as directory:
-            root = Path(directory).resolve()
+        with registration_staging() as root:
             bundle = self.to_dict()
             manifest = root / "manifest.json"
             frozen = root / "frozen.json"

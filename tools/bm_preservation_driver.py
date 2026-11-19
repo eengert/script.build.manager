@@ -22,6 +22,7 @@ from tools.bm_preservation_acquisition import AcquisitionSession
 from tools import bm_public_preservation_witness as witness
 from tools import bm_practical_preservation_comparator as comparator
 from tools import bm_practical_precondition as precondition
+from resources.lib.a15_observation import _directory_chain
 from resources.lib.build_library import BuildLibrary
 from resources.lib.frozen_install import FrozenInstallStore
 from resources.lib.capture_lifecycle import FILENAME as CAPTURE_RECORD
@@ -135,6 +136,95 @@ def public_state(services, manifest, manifest_sha):
             'association': association.to_dict(),
             'selection': (selected.entry_id, selected.device_profile_id), 'owners_absent': True,
             'pending_publication_absent': True}
+
+
+def _public_path_identities(fd, public_tree, device, budget, depth=0):
+    """Metadata only, bounded to the three public trees we already admit."""
+    if depth > 16 or not isinstance(public_tree, dict):
+        raise ValueError("public path depth")
+    result = {}
+    initial = os.fstat(fd)
+    with os.scandir(fd) as entries:
+        for entry in entries:
+            budget[0] -= 1
+            if budget[0] < 0:
+                raise ValueError("public path count")
+            expected = public_tree[entry.name]
+            info = entry.stat(follow_symlinks=False)
+            identity = (info.st_dev, info.st_ino)
+            if info.st_dev != device:
+                raise ValueError("public path device")
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(entry.name, isolation.DIR, dir_fd=fd)
+                try:
+                    if tuple(isolation.identity(os.fstat(child))) != identity:
+                        raise ValueError("public path changed")
+                    result[entry.name] = (identity, _public_path_identities(
+                        child, expected, device, budget, depth + 1))
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and isinstance(expected, str):
+                result[entry.name] = (identity, info.st_ctime_ns)
+            else:
+                raise ValueError("unsafe public leaf")
+    final = os.fstat(fd)
+    if (result.keys() != public_tree.keys()
+            or (initial.st_ctime_ns, initial.st_mtime_ns) != (final.st_ctime_ns, final.st_mtime_ns)):
+        raise ValueError("public directory changed")
+    return result
+
+
+def stopped_path_evidence(target, public):
+    """Supplemental path/journal facts from the admitted, stopped target."""
+    journal = "UNVERIFIED"
+    try:
+        root = target.bm_data_dir
+        library = root / "build-library"
+        target.require_chain(library)
+        with _directory_chain(library) as (fd, library_chain):
+            journal_info = isolation.exists(fd, "applied-publication.json")
+            observed_journal = "ABSENT" if journal_info is None else "PRESENT"
+            if ("applied-publication.json" in public["trees"]["build-library"]) == (journal_info is not None):
+                journal = observed_journal
+        with _directory_chain(root) as (fd, root_chain):
+            locks = {}
+            for name in ("restart_transaction.lock", "frozen_install_transaction.lock"):
+                info = isolation.exists(fd, name)
+                if info is None:
+                    locks[name] = None
+                elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_dev == root_chain[-1][0]:
+                    locks[name] = (info.st_dev, info.st_ino, info.st_ctime_ns)
+                else:
+                    raise ValueError("unsafe startup lock")
+        trees = {}
+        budget = [4096]
+        for name in ("build-library", "install_resolutions", "frozen-artifacts"):
+            with _directory_chain(root / name) as (fd, chain):
+                if chain[:-1] != root_chain or (name == "build-library" and chain != library_chain):
+                    raise ValueError("public root changed")
+                trees[name] = (chain, _public_path_identities(
+                    fd, public["trees"][name], root_chain[-1][0], budget))
+            with _directory_chain(root / name) as (_, fresh_chain):
+                if fresh_chain != chain:
+                    raise ValueError("public root changed")
+        if not isinstance(public["trees"]["frozen-artifacts"].get("artifacts"), dict):
+            raise ValueError("unverified artifact directory")
+        return journal, (root_chain, trees, locks)
+    except Exception:
+        return journal, None
+
+
+def stopped_path_comparison(before, after):
+    if before is None or after is None:
+        return "UNVERIFIED"
+    before_root, before_trees, before_locks = before
+    after_root, after_trees, after_locks = after
+    # The normal startup inspections can create absent transaction locks.
+    if (before_root != after_root or before_trees != after_trees
+            or any(identity is not None and identity != after_locks[name]
+                   for name, identity in before_locks.items())):
+        return "DIFFERENT"
+    return "STABLE_BOUNDARIES"
 
 
 class Evidence:
@@ -397,6 +487,7 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         evidence = Evidence(evidence_path, services)
         need(not pending(signals), 'protocol_invalid')
         public_before = public_state(services, manifest, manifest_sha)
+        journal_before, paths_before = stopped_path_evidence(services.target, public_before)
         session = AcquisitionSession(services, manifest=manifest, git_repo=REPO)
         begin = project_acquisition(session.begin(), 'before')
         need(isolation.exists(evidence.fd, 'quit.json') is None, 'quit_unverified')
@@ -405,6 +496,8 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         evidence.write('ready.json', {'schema':'bm-a15-driver/1','state':'READY',
             'host_commit':host_commit,'manifest_sha256':manifest_sha,
             'staged_candidate':manifest['candidate']['commit'], 'public_baseline_acquired':True,
+            'a15_stopped_evidence': {'journal': journal_before,
+                                     'paths': 'OBSERVED' if paths_before is not None else 'UNVERIFIED'},
             'begin':begin, 'native_operation_authorized':False})
         announce(output, 'READY')
         signal = wait_signal(signals)
@@ -412,9 +505,14 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         evidence.quit_receipt(public_before['bundle'], ready_ns)
         host_source(services, host_commit)
         public_after = public_state(services, manifest, manifest_sha)
+        journal_after, paths_after = stopped_path_evidence(services.target, public_after)
         after = project_acquisition(session.finish(), 'after')
         public_comparison = 'PRESERVED' if public_before == public_after else 'CHANGED_OR_MISSING'
         result.update(after=after, public_comparison=public_comparison)
+        result['a15_stopped_evidence'] = {
+            'journal_before': journal_before, 'journal_after': journal_after,
+            'paths': stopped_path_comparison(paths_before, paths_after),
+        }
         # Informational precondition assessment, kept beside the strict result. Quit
         # verification and both source-binding checks have already succeeded here.
         result['practical_precondition'] = precondition.assess(
