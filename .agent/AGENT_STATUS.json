@@ -1498,10 +1498,10 @@
       }
     }
   },
-  "active_agent": "claude",
+  "active_agent": "codex",
   "reason": null,
-  "last_commit": "aecb881",
+  "last_commit": "fbc7af0",
   "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
   "next_agent": null,
-  "updated_at": "2026-11-13T20:22:22Z"
+  "updated_at": "2026-11-19T18:43:11Z"
 }
