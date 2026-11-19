@@ -407,7 +407,7 @@ Each scope needs an adequate witness, or a reviewed, scenario-specific proof tha
 | S3 Configuration and meaningful settings | Five-file comparator (`after.practical`) and `after.files` | Create writes no settings. Kodi may write the M1 and M2 classes. View-state or other leaves are MEANINGFUL | Each file EXACT, or MAINTENANCE_ONLY on its own file | Comparator not qualification-reviewed |
 | S4 Supported add-on resources and private settings | None in the driver | Call path: `compose` returns no private settings and adds resources only when private capture is on (`create_workflow.py:117-120`). `captures_private` is false when neither exists (`create_capture.py:80-81`). Private resource capture is reached only under `if request.captures_private` (`create_capture.py:396-418`). The reviewed content has zero public configuration scope (runbook step 3). "Private capture Off" alone is insufficient | Reviewed call-path justification, plus L7 recording that the built request has no private declarations | Exclusion candidate; needs review |
 | S5 Addons33 | Identity and enabled state: `practical_precondition` S5. Other Addons33 content: no witness | The Create path makes no enable, disable or install call (none found). Other reachable Addons33 writers during the interval (Kodi startup and shutdown, UI navigation, add-on list access) are not analysed here | Identity and enabled MET. Other Addons33 content needs an adequate witness, OR reviewed scenario-specific proof of no reachable write by design. Without either, PASS is unavailable. The limitation stays reported | Identity witnessed; other content unresolved |
-| S6 Unmanaged add-ons and unrelated configuration | None | BM write sites on the path stay in BM-owned roots (write-site table). Import failures remove their temporary files (`artifacts.py:194-225`), and capture failures return before registration. Kodi's reachable writes to unmanaged add-on directories and to unrelated configuration are not analysed here | The complete BM write-set (above) AND either an adequate witness or reviewed proof covering Kodi's reachable writes, citing pinned Kodi source. Without either, PASS is unavailable | Not justified. Unresolved, not presumed safe |
+| S6 Unmanaged add-ons and unrelated configuration | None | BM write sites on the path stay in BM-owned roots (write-site table). Import failures remove their temporary files (`artifacts.py:194-225`), and capture failures return before registration. Kodi's reachable writes to unmanaged add-on directories and to unrelated configuration are not analysed here | The complete BM write-set (above) AND either an adequate witness or reviewed proof covering Kodi's reachable writes, citing pinned Kodi source. Without either, PASS is unavailable. [For the Create-conflict scenario only, narrowly overridden by the 2026-11-19 S6 addendum; this original wording is retained as history.] | Not justified. Unresolved, not presumed safe. Stays unresolved until the 2026-11-19 addendum's L2A entry is independently reviewed |
 | S7 Transaction, hold and publication | `practical_precondition` S7 (reason `owner_pending_quit_and_source_verified`), with L10 to L12 | No transaction, hold or publication record is created on the path | S7 MET at both boundaries | Must be met by the run |
 | S8 Source installation | Boundary witnesses: the `verify` results in L2 and L12 | Create reads application add-ons through `KodiInventoryBackend(..., application_addons_dir=special://xbmc/addons)` (`create_workflow.py:345-350`). No write call on the path targets the product tree or the application add-on tree (write-site table) | Boundary witnesses, plus the bounded source argument above. The limitation (no source-tree census during the interval) is reported | Source argument recorded; boundary witnesses must come from the run |
 | S9 Receiving installation | The S1 to S6 witnesses | Not applicable. The conflict performs no install, update or repair, and `select()` is never reached (`create_workflow.py:297`) | Stated as not applicable. Remains unqualified for receiving operations | Not applicable to this scenario |
@@ -425,7 +425,7 @@ Each scope needs an adequate witness, or a reviewed, scenario-specific proof tha
 - P5 Public witnesses: `public_comparison` is PRESERVED, and the exported S1 and S2 prerequisites are MET.
 - P6 Five files: each file is EXACT, or MAINTENANCE_ONLY with an approved class on its own file (M1 on guisettings; M2 on Textures13). None is MEANINGFUL or INCONCLUSIVE.
 - P7 S7: exported S7 MET, with L10 to L12.
-- P8 Dispositions: S4 is justified by its call path. S5 other Addons33 content and S6 each have an adequate witness, or reviewed scenario-specific proof, under §2. S8 has its boundary witnesses and bounded source argument. S9 is recorded as not applicable. Any unresolved disposition makes PASS unavailable.
+- P8 Dispositions: S4 is justified by its call path. S5 other Addons33 content and S6 each have an adequate witness, or reviewed scenario-specific proof, under §2. S8 has its boundary witnesses and bounded source argument. S9 is recorded as not applicable. Any unresolved disposition makes PASS unavailable. [For the Create-conflict scenario only, narrowly overridden by the 2026-11-19 S6 addendum; this original P8 wording is retained as history.]
 - P9 Attestations: each A entry is followed by a T image or record that is consistent with it.
 
 Under P5 and P6 together, the strict five-file statuses may still read CHANGED_OR_MISSING when the only difference is an approved M1 or M2 class. The strict result stays as produced. Practical classification never rewrites it, and a practical PASS never makes the strict state PRESERVED.
@@ -458,7 +458,7 @@ Each case below prevents PASS, alone or in combination.
 - **Stale or broken process or session correlation.** Different session identifiers at READY and FINISH; a second driver; a launch PID that differs from the receipt PID; more than one Test.app process; a process still running after quit; FINISH sent twice or to another session; `ready.json` changed after READY. Each is INCONCLUSIVE.
 - **CANCEL, timeout or interrupted acquisition.** CANCEL discards the host baseline and produces no comparison. A 900-second timeout, EOF, controller loss or interruption is INCONCLUSIVE. No comparison may be rebuilt from hashes or persisted private data (runbook B1 and the stop rules).
 - **Meaningful or unclassified changes.** Any MEANINGFUL or INCONCLUSIVE classification, any public-witness difference, and any leaf outside the M1 and M2 classes block PASS. A class counts only on its own file.
-- **Unwitnessed protected scopes without proof.** S5 other Addons33 content and S6 are unwitnessed. A limitation statement does not clear them. Without an adequate witness or reviewed proof they block PASS. The 32733 outcome cannot exclude S2 writes, because an import or the creation of `artifacts/` happens before the conflict is detected.
+- **Unwitnessed protected scopes without proof.** S5 other Addons33 content and S6 are unwitnessed. A limitation statement does not clear them. Without an adequate witness or reviewed proof they block PASS. [For the Create-conflict scenario only, narrowly overridden by the 2026-11-19 S6 addendum; this S6 part of this bullet is retained as history.] The 32733 outcome cannot exclude S2 writes, because an import or the creation of `artifacts/` happens before the conflict is detected.
 - **Pre-run store probe alone.** A read-only store probe shows the presence of artifacts. It is not the post-run S2 witness, and it does not establish builtin admission.
 - **Source pin alone.** A pin in source (for example `xbmc.metadata` 2.1.0 at `frozen_install.py:1565`) does not establish that the installed descriptor passes the verified builtin read. It does not make a system node artifact-bearing or artifact-free.
 
@@ -499,7 +499,7 @@ These examples show how the rules apply. They describe no run, make no finding, 
 2. A narrow independent Codex re-review of this corrected addendum.
 3. Eric's authorization of a separate native task naming the scenario, target, permitted actions and operator role, and his decision on the adapter 0.0.17 driver.
 4. A B1 PTY channel in the executing session, with raw transcript retention under §1.2 P-a. This Claude session has none.
-5. A disposition for S5 other Addons33 content and for S6: an adequate witness, or reviewed proof citing pinned Kodi source. Neither exists yet.
+5. A disposition for S5 other Addons33 content and for S6: an adequate witness, or reviewed proof citing pinned Kodi source. Neither exists yet. [For S6 only, narrowed by the 2026-11-19 S6 addendum, which is pending independent review; the S5 part is unchanged.]
 6. A reviewed decision on the closure composition in §5, if the advisory determination is wanted.
 7. The ledger template prepared and hashed before READY (§1.3), using the bbfbb7e stage manifest rather than the stale path in runbook step 1.
 8. The fixture entry `BM-ITEM8-INSTALL-20261015` 1.0.0 present and unchanged before READY, and `artifacts/` already present under `frozen-artifacts`, so that no directory creation is expected.
@@ -510,6 +510,98 @@ These examples show how the rules apply. They describe no run, make no finding, 
 - Consistent: the 32733 mapping; the 32730 path ends before registration; the B-2 re-entry rule matches `suggest_version`; the absence of a D-032 class for artifact addition is consistent with the S2 digest rule.
 - Clarified here: the root changes the captured bundle but not the conflict key, which is identity and version only.
 - Open, not changed by this addendum: S2 has no class for additive imports or directory creation, so a scenario PASS depends on store state; runbook step 1 still names the stale manifest path; the precondition module still accepts a caller correlation string; the driver's quit receipt check is mtime-bounded only.
+
+### Dated addendum (2026-11-19): S6 BM-attributable disposition, Create conflict only
+
+Status. Documentation only. Eric approved option D1 on 2026-11-19, recorded in `.orchestrator/DECISIONS.md` (D-032 clarification of 2026-11-19, S6). This addendum is additive and narrowly overrides the Kodi-inclusive S6 wording of the 2026-11-18 addendum for one scenario. It marks S6 as nothing: no native result exists, and the disposition applies to a future run only after the independent review and ledger entry below. It authorizes no native test, Test.app launch or staging, profile access, practical PASS, qualification or acceptance. No product code, test, witness, schema or maintenance class changed.
+
+Scope. The Create-conflict scenario only: Create name `BM-ITEM8-INSTALL-20261015`, version `1.0.0`, root `metadata.generic.albums` `1.0.20`, private capture off, expected terminal `32733`. Install, Update, Repair and every other scenario keep the Kodi-inclusive requirement and need their own approval.
+
+#### Reconciliation with earlier text
+
+The earlier wording stays in place as history. For this scenario only, the standard below replaces it as follows.
+
+| Earlier text | Status for this scenario |
+| --- | --- |
+| Section 2, S6 row, "Required for PASS": the complete BM write set AND an adequate witness or reviewed proof covering Kodi's reachable writes, citing pinned Kodi source | Narrowed. The Kodi-inclusive proof is not required for this scenario. The reviewed BM write-set proof below, with the L2A ledger entry, is required instead |
+| P8 (S5 other content and S6 each need a witness or reviewed scenario-specific proof) | S5 is unchanged (see addendum G). S6 is satisfied by the BM-attributable disposition below, once accepted |
+| Adjudication bullet "Unwitnessed protected scopes without proof" | S6 is no longer unwitnessed-without-proof for this scenario once accepted. It stays a stated limitation. Ambient activity remains unwitnessed |
+| Condition 5 for a native run (a disposition for S5 other content and for S6) | S6 part: the disposition exists in this addendum and is pending independent review. S5 part unchanged |
+| Protected scopes table, S6 row (no unmanaged directory census, no unrelated-file witness) | Still true. No witness was added |
+
+Unchanged: S1 to S5, S7 to S9, strict N6, the five-file comparator, the closed maintenance classes M1 and M2 and the practical FAIL and INCONCLUSIVE rules. A strict or practical difference never becomes FAIL by this addendum.
+
+#### The approved standard
+
+- S6 for this scenario concerns changes attributable to the authorized Build Manager operation, including reasonably traceable direct and indirect effects.
+- Reviewed evidence must establish that the reachable operation cannot modify unmanaged add-on directories, their data or settings, or unrelated configuration.
+- Ambient Kodi and third-party add-on activity is not verified for preservation and is outside this S6 claim. A PASS that relies on this disposition must say so, and must not say that S6 content was preserved.
+- An established BM-caused unrelated mutation, including of an unmanaged add-on, is FAIL under the existing rules. Ambiguous attribution that could conceal a BM-caused modification is INCONCLUSIVE.
+- The 32733 outcome does not prove preservation. A missing direct write call does not prove it either. The proof below is about what the code can reach, and it carries named assumptions.
+
+#### Reachable BM write set (reviewed from source)
+
+Source identity. Line numbers refer to repository commit `6bf489b36856fe0ebddca26ce142e56ebb0ef3b5`. Its product tree is identical to the staged candidate `bbfbb7e440b7093eb3ccff7576b23888930d4021` named in L1: `git rev-parse <commit>:resources` returns `3678e8ee47b1ceb21330ff2a039e3c8be03dfc7d` for both, and `git diff bbfbb7e HEAD -- resources addon.xml default.py service.py` is empty. A different candidate needs its own review. Everything below was read from repository source. Kodi source was not used, because no verifiable pinned copy is available locally.
+
+| Reachable activity | Site | Writes and where |
+| --- | --- | --- |
+| Menu and Create entry | `default.py:45-62`; `resources/lib/ui/native_dialogs.py:173`; `create_workflow.py:137` (`open`) | None. A search of `default.py` and `resources/lib/ui/` finds no file-write call. `open` reads inventory through JSON-RPC and read-only descriptors |
+| Capture, before conflict | `create_workflow.py:218` (`engine.capture`); `create_capture.py:298` (`capture`); `frozen.py:1602` (`capture_frozen_build`) | Reads installed add-on files and metadata through `O_RDONLY`, `O_NOFOLLOW` descriptors (for example `frozen.py:605-615`, `1090-1100`). A search of `frozen.py`, `create_capture.py` (outside the temporary directory below), `inspector.py`, `official_repository.py` and `installed_addon_source.py` for file-write primitives (write-mode `open`, `write_text`, `write_bytes`, `os.replace`, rename, `mkdir`, `unlink`, `rmtree`, `shutil`, `tempfile`, `O_CREAT`, `O_WRONLY`) finds none, apart from the temporary directory below. `local_capture.py` writes only into an in-memory ZIP. `dependencies.py` and `frozen_install.py` contain mutating methods that this path does not call (see the absence paragraph) |
+| Package cache and repository | `frozen.py:1296-1305` (`get_package_cache`); `frozen.py:1350-1409` (`ArtifactAcquirer.acquire`); `official_repository.py` | Reads cached ZIPs from `special://home/addons/packages` (no delete or write). The repository fetch is in memory and has no file-write primitive. Nothing in this path writes to the package cache |
+| Artifact store creation and import | `create_workflow.py:356` (store root `special://profile/addon_data/script.build.manager/frozen-artifacts`); `artifacts.py:141` (`mkdir` of `artifacts/`); `artifacts.py:152-225` (`import_zip`, temporary file at `178-179`, cleanup at `194-225`); `artifacts.py:265-280` (metadata temporary file); `artifacts.py:316-322` (directory sync); callers `frozen.py:1364`, `1396`, `1432` | Creates `artifacts/` if missing, and imports a verified ZIP only when the store has no verified artifact for that `(add-on, version)`. All paths are under the BM-owned `frozen-artifacts` root. This happens before the conflict is detected, so S2 is the witness for it (see "Rejection does not establish that nothing was written"). Line 1432 is local capture, which §1.4 prohibits |
+| Build Library lock and registration | `build_library.py:559` (`register`); `546-556` (`_writer`); `92-116` (`_directory` with `create=True`); `549` (lock open with `O_CREAT`); `610-616` (conflict check); `618-632` (`builds/` and `registry.json`, not reached on conflict) | `_writer` creates `library.lock`, and `_directory` creates any missing component of the path from `/` down to the library root with `os.mkdir`. The conflict check at `616` raises before `builds/` or any envelope is written. The root is `special://profile/addon_data/script.build.manager/build-library` (`build_library.py:1008-1018`). S1 witnesses the `build-library` tree |
+| System temporary capture work | `create_capture.py:121-139` | `tempfile.TemporaryDirectory(prefix="bm-create-public-")` holds registration inputs. It is removed on exit. Its location is the Python temporary directory, and that location is not verified for Test.app (see U2) |
+| BM startup and transaction paths | `service.py`; `startup.py:101-142` (`run_startup`, `classify_startup_transaction` at `55-75`); `transaction.py:394-396` (`inspect` takes the lock); `transaction.py:34`, `375-386` (lock file `restart_transaction.lock` under `addon_data/script.build.manager`); `frozen_install.py:632-639` (`FrozenInstallStore()` creates its root); `751-759` (`inspect`); `4899-4925` (`ensure_frozen_install_guard`); `5278-5390` (`run_frozen_install_startup`) | With no BM transaction and no pending publication, startup creates only the BM-owned root and lock files, then returns (`frozen_install.py:4924-4925`, `5325-5328`) before any resume, publication recovery or policy write. This relies on S7 holding at both boundaries (no transaction, hold or pending publication). `session.py:67` and `service.py:42-63` set Kodi window properties, which are in memory |
+| Read-only inventory and JSON-RPC | `create_workflow.py:333-337` (`rpc`); `frozen.py:993-994`, `1313`; `inspector.py:335`, `353`; `frozen_install.py:2128` | Methods used on this path: `Addons.GetAddons`, `Application.GetProperties`. The builtin check at `frozen.py:1034-1042` calls `KodiRuntimeFrozenArtifactBackend.read_verified_builtin_metadata` (`frozen_install.py:2177-2218`, `2219-2283`), which uses `System.HasAddon`, `System.AddonIsEnabled`, `xbmcaddon.Addon(...)` and descriptor reads (`frozen_install.py:2113-2123`). The same object has install and enable methods, but only the read method is called here |
+| Diagnostics | `failure_diagnostics.py:40-56`; `service.py` | Writes log lines through `xbmc.log` only |
+
+Absence of enabled-state mutation. `Addons.SetAddonEnabled` is issued only at `frozen_install.py:2375`, `repository.py:691`, `dependencies.py:1525`, `addons.py:941` and `addon_state.py:638`. The Create path imports only pure helpers from those modules (`dependencies._is_system_dependency` and `_strict_version_satisfies`), and no call to any of those five sites was found on the path from `create_workflow.py` and `create_capture.py` through `frozen.py`. `artifacts.py:119` imports only `validated_root`. The add-on directory writers `addon_zip.publish_package` and `extract_package` are called only from `addons.py:317`, `repository.py:414` and `645`, and `frozen_install.py:2343`, which are Install, Update and Repair paths. `operation_admission.py` has no caller. So the path neither enables, disables, installs, updates nor removes any add-on, and it does not trigger an add-on service start or stop.
+
+Not inferred. This table does not claim that capture made no writes: `artifacts/` creation and artifact import can occur before the conflict, and S2 continues to witness them. It does not claim that Kodi or an add-on cannot write elsewhere.
+
+#### Effects considered
+
+- Direct BM writes: only the rows above, all under BM-owned roots (`addon_data/script.build.manager/...`) or the system temporary directory, apart from the missing-ancestor case in U3.
+- Indirect effects traced: no BM-initiated add-on lifecycle change (no enable, disable, install, update or remove, so no add-on service start or stop); Kodi writing `__pycache__` into the BM product tree when it imports BM code (observed in the retained 2026-10-08 no-op census, in the BM product tree, which S8 covers); BM log lines into Kodi's own log.
+- Retained evidence of ambient activity. The retained 2026-10-08 Update / Repair censuses (metadata only, not repository-hosted) show, in each of four census pairs, the same two database files of one unmanaged third-party add-on changing by mtime with unchanged size, together with Kodi's log, `guisettings.xml`, `profiles.xml`, peripheral files and a database under `userdata/Database`. In two of those sessions the Build Manager UI was never opened. Content changes are unknown. This is the reason the Kodi-inclusive requirement cannot be met by an exact-content witness, and it is why ambient activity is outside this claim. It is not attribution of any specific change.
+
+#### Unresolved attribution items
+
+- **U1, Kodi API side effects.** BM issues query calls (`Addons.GetAddons`, `Application.GetProperties`, `System.HasAddon`, `System.AddonIsEnabled`, `xbmcaddon.Addon`, `getAddonInfo`). That they have no side effect on add-on data or settings is a documented-API assumption, not verified from pinned Kodi source. The reviewer decides whether it is a reasonably traceable effect; if it cannot be accepted, S6 is unresolved and a PASS is unavailable.
+- **U2, system temporary location.** The Python temporary directory used in the Test.app runtime is not verified. The reviewer needs evidence that it is not inside the profile or an unmanaged add-on directory.
+- **U3, missing ancestors.** `_directory(create=True)` would create a missing component on the path to the library root, including `addon_data/script.build.manager`. The pre-run state must show that the chain through `build-library` and `frozen-artifacts/artifacts` already exists (runbook conditions 8 and §5), so that no ancestor creation is expected. S1 and S2 witness only their own trees.
+- **U4, startup branches.** The no-transaction startup path was read, not exhaustively enumerated for every journal or hold state. It is accepted only together with S7 MET at both boundaries.
+
+#### Evidence an independent reviewer must accept before applying this disposition
+
+1. The reviewed source commit and its `resources` tree, shown equal to the staged candidate in L1 (or the delta reviewed).
+2. Each cited site re-confirmed at that commit, with the raw search outputs retained, and the completeness of the search scope (modules and call paths) stated.
+3. A statement that no cited path writes outside BM-owned roots or the system temporary directory, and that the exceptions in U2 and U3 are resolved.
+4. The disposition of U1 and U4, each as accepted, rejected or unresolved, with reasons.
+5. The scenario identity and private capture off, matching L1 and L7, and the run's S1, S2, S7 and S5 results as exported.
+6. The ambient-activity limitation stated verbatim in the adjudication.
+7. No claim that S6 content was preserved, that 32733 proves nothing changed, or that Kodi cannot write.
+
+#### Ledger entry L2A (pre-run, before READY)
+
+For a run that applies this disposition, the template of §1.3 gains one slot, `L2A`, between L2 and L3. It is appended before READY and sealed with the rest. Required content:
+
+- **Scenario identity [A, T].** Name, version, root, private capture off, expected 32733, equal to L1.
+- **Reviewed source identity [T].** Commit SHA and `resources` tree object of the reviewed source, the L1 candidate commit and tree, and the raw tool output showing their equality or the reviewed delta.
+- **Write-set proof [T].** The table above or its successor, with the raw citation checks.
+- **Effects considered [C].** Direct and reasonably traceable indirect effects, each with its disposition.
+- **Ambient limitation [C].** The sentence: "S6 content was not witnessed. Ambient Kodi and third-party add-on activity during the session is not verified for preservation and is outside this S6 claim."
+- **Unresolved attribution [C].** U1 to U4 and any other, each marked accepted, rejected or unresolved. A rejected or unresolved item that could conceal a BM-caused change leaves S6 unresolved.
+- **Pre-run state facts [T].** Evidence that the chain in U3 and the temporary location in U2 are as required.
+- **Independent review status [T].** Reviewer, commit reviewed, verdict, date and the retained review record. An entry without an accepted review is recorded as UNVERIFIED, and S6 stays unresolved.
+
+An incomplete or unreviewed L2A makes S6 unresolved, so PASS is unavailable and the result is INCONCLUSIVE. A complete, reviewed L2A lets the adjudication record the S6 disposition as BM-attributable only, which supports PASS only when every other requirement also holds.
+
+#### Boundary
+
+- This addendum does not mark S6 MET, add an S6 maintenance class, exclusion, witness or schema, or change a verdict mechanism. It does not apply to any other scenario or to a changed candidate without review.
+- It does not change the remaining gates: the qualification reviews of the comparator, driver validator and precondition; the S4 justification; S8 and S9 dispositions; operation and ledger correlation; the expected-result check; the PTY channel and operator arrangements; and Eric's authorization of a separate native task. Condition 5 now reads: S5 other content per addendum G and the adjudication, and S6 per this addendum after its independent review.
+- A native run still needs its own authorization, and a PASS stays external adjudicated evidence for this scenario only (§6).
 
 ## Audio root placement (N2)
 

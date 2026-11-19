@@ -1,5 +1,12 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 S6 policy clarification (documentation only, local, unpushed)
+
+- Lane: Claude, `agent/claude`. Eric approved option D1 on 2026-11-19: a scenario-specific, BM-attributable S6 standard for the Create-conflict scenario only (Create `BM-ITEM8-INSTALL-20261015` 1.0.0, root `metadata.generic.albums` 1.0.20, private capture off, expected 32733). Recorded as a D-032 clarification in `.orchestrator/DECISIONS.md` and a dated addendum in `docs/A15_NATIVE_PRESERVATION_RUNBOOK.md`. The earlier Kodi-inclusive wording is retained as history, with pointers.
+- Scope: documentation only. No product code, test, witness, schema or maintenance class changed. S6 is not marked MET: the addendum holds a reviewed-from-source BM write-set table, four unresolved attribution items (U1 to U4), and a ledger slot `L2A` that a future run must fill. Ambient Kodi and third-party add-on activity stays outside the claim. 32733 and a missing write call prove nothing.
+- Required next: an independent Codex review of the cited write sites, their scope and the absence of unsupported source or causality claims, and of the distinction between BM-attributable and ambient changes.
+- Remaining A15 gates (unchanged): qualification reviews of the comparator, driver validator and precondition; S4 justification; S8 and S9 dispositions; S5 adjudication under addendum G; operation and ledger correlation; the expected-result check; the PTY channel and operator arrangements; Eric's authorization of a separate native task. No native run, practical PASS or acceptance.
+
 ## November 19 checkpoint — A15 S5 byte-identity witness (offline, local, unpushed)
 
 - Lane: Claude, `agent/claude`. Eric approved a scenario-specific D-032 clarification (see `.orchestrator/DECISIONS.md`, 2026-11-19; runbook addendum G). The offline implementation adds an Addons33 whole-file byte-identity witness to the acquisition session. It reports `after.addons33_bytes.status` (`BYTES_IDENTICAL`, `BYTES_DIFFERENT` or `UNVERIFIED`), the driver validates it, and the precondition assessment validates it and refines only the `S5_DATABASE` limitation reason.
