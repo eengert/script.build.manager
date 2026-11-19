@@ -1,5 +1,10 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 S4 source justification
+
+- The pinned private-off Create path builds empty public configuration and private declaration lists, skips protected configuration reads and overlay persistence, and returns from the public library conflict before selection. The S4 runbook argument also accounts for software-acquisition reads, path confinement, and startup and Kodi effects.
+- S4 remains unresolved. Independent Claude review is next. A later authorized run must bind the argument to its exact candidate and the original L7 and correlated run records, including the actual acquisition and lifecycle bounds. No S4 witness or policy was added.
+
 ## November 19 checkpoint — A15 S6 documentation correction
 
 - Codex corrected the runbook on `agent/codex` after the independent A15 S6 D1 documentation review returned NOT PASS on `161c80592e4468f3de2f5b85f12eb03da858d250`. Eric's approved D1 standard remains limited to the named Create conflict. This checkpoint supersedes the review next step below.
