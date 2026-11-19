@@ -1,5 +1,12 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 S6 documentation correction
+
+- Codex corrected the runbook on `agent/codex` after the independent A15 S6 D1 documentation review returned NOT PASS on `161c80592e4468f3de2f5b85f12eb03da858d250`. Eric's approved D1 standard remains limited to the named Create conflict. This checkpoint supersedes the review next step below.
+- S7 remains required independently. Acknowledged publication can pass the pending check and still reach startup recovery, locking, durability operations and an `applied.json` rewrite. U4 requires journal-absence continuity from preflight into startup or evidence bounding every admitted recovery branch. U1 covers Kodi API effects including input, progress, modals and result dialogs. U2 requires the actual Test.app Python temporary directory. U3 requires verified runtime destinations, real directory chains, BM-owned confinement and stability against redirection. All four evidence gates remain open. Historical unmanaged-add-on database mtimes establish metadata activity only.
+- L2A binds scenario, candidate, source and pre-run records, the independent review reference and unresolved conditions. Tool observations, controller observations, operator attestations and reviewer judgments retain their distinct provenance. The empty template is hashed before READY, entries follow their original records, and the ledger is sealed after execution for independent adjudication. S6 remains unresolved.
+- Next step is independent Claude review of the correction. Native execution, practical PASS and beta acceptance remain pending. The S5 byte witness, strict N6, S2 coverage and all other qualification gates still apply.
+
 ## November 19 checkpoint — A15 S6 policy clarification (documentation only, local, unpushed)
 
 - Lane: Claude, `agent/claude`. Eric approved option D1 on 2026-11-19: a scenario-specific, BM-attributable S6 standard for the Create-conflict scenario only (Create `BM-ITEM8-INSTALL-20261015` 1.0.0, root `metadata.generic.albums` 1.0.20, private capture off, expected 32733). Recorded as a D-032 clarification in `.orchestrator/DECISIONS.md` and a dated addendum in `docs/A15_NATIVE_PRESERVATION_RUNBOOK.md`. The earlier Kodi-inclusive wording is retained as history, with pointers.
