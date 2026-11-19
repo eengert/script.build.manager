@@ -1,5 +1,11 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 offline run-card repair
+
+- The authoritative Create-conflict run card now points to the authentic `bbfbb7e` manifest. Five byte-identical source records are retained under `.qualification-evidence/a15-pinned-stage-provenance-20261119/`, including the separate November 18 Git-bound verification. Current installed identity requires later authorized stopped verification.
+- The card remains BLOCKED on the actual Create interpreter temp observation (U2). A separately reviewed observation route is required. Actual S4 acquisition, U1/U3/U4 evidence routes, missing S5/S6 review records and the external-adjudication review disposition, and Eric's authorization of the exact native sequence and adapter 0.0.17 remain open. The four full relayed report references are recorded.
+- Next step is authorization for the narrow evidence-route work and recovery of the outstanding review references. Native execution and qualification remain pending.
+
 ## November 19 checkpoint — A15 S4 source justification
 
 - The pinned private-off Create path builds empty public configuration and private declaration lists, skips protected configuration reads and overlay persistence, and returns from the public library conflict before selection. The S4 runbook argument also accounts for software-acquisition reads, path confinement, and startup and Kodi effects.

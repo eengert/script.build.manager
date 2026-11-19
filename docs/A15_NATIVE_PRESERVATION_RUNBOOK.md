@@ -358,7 +358,7 @@ Prohibited. Each of these makes the run INCONCLUSIVE at least: any artifact-deci
 
 **1.5 Required entries, in order.** Fact classes appear in brackets. The order follows the runbook's executable sequence (steps 1 to 5, including the K1 UI-exit gate).
 
-- **L1 Authority and identity [A, T].** Task identifier and authorization reference. Scenario: name, version, root `metadata.generic.albums` 1.0.20, expected 32733. Reviewed candidate `bbfbb7e440b7093eb3ccff7576b23888930d4021`, tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`. Stage manifest `.qualification-evidence/bm-claude-final-candidate-stage-20261118/stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json`, SHA-256 `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6`. Product tree `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files). Helper SHA-256 (P-c). Driver host commit and manifest SHA. The adapter version that Eric accepted; the open 0.0.17 decision must be settled before this entry is sealed. Target `/Applications/Kodi Build Manager Test.app`, portable `-p` only.
+- **L1 Authority and identity [A, T].** Task identifier and authorization reference. Scenario: name, version, root `metadata.generic.albums` 1.0.20, expected 32733. Reviewed candidate `bbfbb7e440b7093eb3ccff7576b23888930d4021`, tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`. Stage manifest from the authoritative run card, `.qualification-evidence/a15-pinned-stage-provenance-20261119/stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json`, SHA-256 `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6`. Product tree `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files). Helper SHA-256 (P-c). Driver host commit and manifest SHA. The adapter version that Eric accepted; the open 0.0.17 decision must be settled before this entry is sealed. Target `/Applications/Kodi Build Manager Test.app`, portable `-p` only.
 - **L2 Pre-run source and identity [T].** The pre-run `verify --output` result (installed equals manifest and candidate; Git binding checked and ok) and the pre-run `identify --output` result (not running; zero processes), each with its raw call sequence. The optional closure and store determination in §5 is recorded here as a T output if it was run. Otherwise it is recorded as UNVERIFIED.
 - **L3 Driver session and READY [T, C].** The session identifier as returned to the controller (C) and as it appears in the raw transcript (T). The READY line in the raw transcript (T). The `ready.json` SHA-256 (T), with its `host_commit`, `manifest_sha256`, `staged_candidate`, `public_baseline_acquired`, `begin` block and `native_operation_authorized: false`. The `native_operation_authorized: false` value records that the driver does not authorize the operation. READY time (C).
 - **L4 Launch [T].** The raw `test_app_launch` call (sequence and response), and the `identify --output launch-identity.json` result (T): `process.pid`, bundle, `portable_flag`, and `test_app_process_count` 1. The launch PID is taken from this file, not from the MCP response.
@@ -511,6 +511,8 @@ These examples show how the rules apply. They describe no run, make no finding, 
 
 #### Conditions still required before a native A15 run
 
+This November 18 checklist is historical. The authoritative run card below supersedes its status and executable inputs.
+
 1. Qualification reviews of the comparator, the driver practical validator and the precondition assessment for the exact candidate (none recorded yet).
 2. A narrow independent Codex re-review of this corrected addendum.
 3. Eric's authorization of a separate native task naming the scenario, target, permitted actions and operator role, and his decision on the adapter 0.0.17 driver.
@@ -636,7 +638,67 @@ The accepted grammar is correct. The pinned call chain is:
 This proves placement under the settings root, as well as shape. Keep the
 existing grammar; no new audio permission or runtime claim is introduced.
 
-## Preconditions for the separately authorized test
+## Authoritative run card for the A15 Create conflict
+
+**Status: BLOCKED.** This card supersedes the historical checklist and former step 1 command that used the `a5a4a23` manifest. Do not begin the driver, inspect the target or launch until the offline evidence routes are reviewed and Eric separately authorizes the exact operation. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
+
+### Source and historical stage provenance
+
+- Worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`. Reviewed host-tool reference `457e26935b2bf09da45fdbf65fee013ad3aac4ac`. Bind the later authorized full host SHA to the reviewed tool bytes before rendering the command. The three code reviews compared the relevant sources against this reference.
+- Pinned product `bbfbb7e440b7093eb3ccff7576b23888930d4021`, Git tree `06adffc5e41f8965daaceab8353b96ddfe559c3f`, product tree SHA-256 `98af76306ac113ca29be45beef11771029105d8b12fb5f53399e0b531528cedd` (88 files), helper SHA-256 `eabee188c999d2e21738e70fa10e98bf082eec7931ebb5cbeb2bb1614797311a`. The manifest binds adapter `0.0.17`, tree SHA-256 `11265c6f2cfc76551c553b8f64f139a712a2bfcefce3d50eb2f4d17b487f7582` (5 files). Eric's approval to use this adapter in the A15 native run is pending. D-031 authorizes a narrower diagnostic exception.
+- `A15_MANIFEST` is `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-pinned-stage-provenance-20261119/stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json`. Use this exact path and hash for pre-run verify, the driver, READY correlation and final verify. The `d2a7897` and `a5a4a23` stage records cannot bind this candidate.
+- Original records remain under `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude/.qualification-evidence/bm-claude-final-candidate-stage-20261118`. The same relative paths identify the byte-for-byte copies under `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-pinned-stage-provenance-20261119`.
+
+| Path relative to each evidence root | SHA-256 |
+| --- | --- |
+| `stage-20261118T182302Z-bbfbb7e440b7/stage_manifest.json` | `19dc2e927976176e3b9b9a4b1e5fb60579b9088d8593d32737c3df34abbecde6` |
+| `stage-20261118T182302Z-bbfbb7e440b7/stage_result.json` | `9fa8800f14ae166809281ad12ef4919c8073e7532dd1a8601dc4f0985005e3d3` |
+| `stage-durable-bbfbb7e.json` | `d64d5a6ffb5381972dab3353710ac2e76662e14eab39d7533c37ff58f2fa4969` |
+| `verify-after-stage-bbfbb7e.json` | `b4a540025d7ffc48ea4f9c014081abd79146537d37b29be33a605c7a3326672d` |
+| `stage-dry-run-bbfbb7e.json` | `14cd51a0095449871cc1561e5c2fb4fc28c15a7f31703847bb9171c312cec289` |
+
+The durable stage outputs bind the same manifest and original paths. Their embedded check compared installed bytes to the manifest with Git binding unchecked. The separate November 18 verification has both installed-equality flags and checked/ok Git binding for this manifest and candidate. That is historical evidence only. The dry run has its own manifest hash and establishes no installation. Current installed identity requires separately authorized stopped preflight.
+
+### Independent review references
+
+The [Supervisor - Build Manager](https://chatgpt.com/c/6af886d5-1964-83e9-8cbc-0201bf682eb1) chat retains full relayed Claude report bodies for the first four rows. The identifiers below identify relay items. Original Claude-session records for these reviews were not located. Review conclusions are R under §1.1. A retrieval can establish a relay item's identity as T.
+
+| Review | Retained reference and status |
+| --- | --- |
+| Five-file comparator | Full relayed PASS, item `3e06ecf0-669b-47e6-890d-c4fcabd41770`, bound to `457e269` with comparator blob `d11bff10…` |
+| Driver practical-result validator | Full relayed PASS, item `c19eae93-9692-4f00-8270-dcd20650f18a`, bound to `457e269` with driver blob `72b43c23…` |
+| Practical-precondition assessment | Full relayed PASS, item `7421c788-c1ae-4538-b4e4-09557541154f`, bound to `457e269` with precondition blob `64c19e9d…` |
+| Conditional S4 source justification | Full relayed PASS, item `e523f6fa-f9c4-4542-b7cf-f85079a5270e`, covers `735b847..457e269` and requires authenticated run evidence |
+| S5 byte-witness source work | Prior acceptance reported. Addendum G and `29c45a8` / `6bf489b` identify policy and source. Full review body and original reviewer record were not located |
+| S6 D1 documentation correction | Prior PASS reported. `735b847` identifies the correction. Full report body and original reviewer record were not located. Resolve the retained report reference for L2A |
+| External-practical-adjudication re-review | Historical condition 2 requests a narrow re-review. No retained disposition was located. Reconcile whether it was satisfied or superseded before authorizing execution |
+
+Bind existing reports and decisions by exact references. Retrieve missing report references or reconcile the outstanding requirements in the supervisor record. Do not reconstruct a reviewer report from a summary or repeat accepted reviews for bookkeeping.
+
+### Evidence routes to resolve before launch
+
+Review and accept the collection routes before starting the driver. Collect the actual observations at the stated boundaries during the separately authorized run.
+
+| Gate | Collection and decision |
+| --- | --- |
+| S4 acquisition | Bind the L6–L8 evidence under §2. Record the current public fixture/root and artifact authority during stopped admission. For the actual artifact-bearing closure, bind stable verified store hits or bound any reached cache/repository reads to public software. Include staging, write and cleanup paths through use. The optional §5 advisory probe is insufficient on its own |
+| U1 Kodi API effects | Use the source call table and an accepted review of the pinned Kodi API behavior or equivalent bounded evidence covering traceable S4 and S6 effects. Record references and unknowns in L2A. Screen and build identities bind the called path. No complete evidence route for Kodi implementation effects is recorded here |
+| U2 Python temp directory | **Blocked.** Capture calls `TemporaryDirectory` without an explicit directory (`resources/lib/create_capture.py:121-139`). MCP window, input and lifecycle controls, helper identity/verify/snapshot, capture markers and adapter `xbmc_metadata_observe` do not report the effective Python temp directory of that Create interpreter (`tools/bm_test_app.py:100`, `4822-4881`, `tools/bm023a_adapter_support.py:1828-1978`, `resources/lib/failure_diagnostics.py:5-18`). Host `TMPDIR`, the Kodi log path and a different interpreter cannot establish it |
+| U3 path confinement | Begin with authorized stopped public path and identity admission. Bind actual translated paths, real directory and leaf identities and their stability through use for ArtifactStore, BuildLibrary, FrozenInstallStore and restart paths. Include read, lock, creation, replacement and cleanup targets and rule out path redirection. Current exports do not cover the required runtime confinement |
+| U4 startup and independent S7 | A future authorized creation-free observation of `BuildLibrary.publication_journal()` at the confined library root could supply the preflight fact, including acknowledged journals. Pair it with continuity into startup and owner/hold exclusion, or bound every admitted recovery branch and destination. Record U4 independently of S7 MET at both boundaries. The driver's pending check and current exports do not establish U4 |
+
+**Minimum separate U2 evidence change.** Review and explicitly authorize a fixed observation at the existing registration-staging call site in the same Create interpreter. Observe the effective Python temp parent used at `TemporaryDirectory` and bind the actual staging directory to it before the staged writes. Retain an allowlisted record with source identity, launch PID/session, call phase and confinement result, with path evidence protected for verification. Establish a real directory chain, stability through creation and cleanup, and confinement outside the profile and unmanaged add-on locations. Any required source delta needs its own identity binding and review. This mechanism remains unimplemented and unauthorized.
+
+### Stopped admission and authority for a later run
+
+Eric's later authorization must name the full reviewed host and staged
+product identities, manifest and adapter 0.0.17, the fixed portable Test.app
+target, the exact scenario, and the operator. It must cover the stopped
+admission, approved evidence collection, one launch, scoped observation and UI
+navigation, physical B-1 input, one confirmation, verified UI exit, one
+authenticated PID-bound quit and final stopped verification. It must also
+specify the stop and recovery boundaries below. No prelaunch verification or
+native operation is authorized by the offline repair.
 
 - Work only in `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`,
   branch `agent/codex`, at the exact independently reviewed full commit supplied
@@ -659,9 +721,13 @@ existing grammar; no new audio permission or runtime claim is introduced.
   `.qualification-evidence/item8-public-create-failure-20261016/REPORT.md`:
   exact existing build identity/version, and the previously qualified different
   public root. Do not replace a missing fixture or assume its current health.
-  Require complete current capture eligibility and exact available artifact
-  authority without uncontrolled downloads, skin/private capture or installation.
-  Current readiness must be established then; this offline task reads no profile.
+  Establish the stopped public fixture/root and exact artifact authority that
+  permitted checks can observe. Assess native-only builtin and platform
+  eligibility in the unchanged authorized Create capture. The stopped check
+  cannot supply that authority. Missing static admission stops before launch.
+  Unsupported or incomplete native capture stops the scenario, with no
+  uncontrolled acquisition, local capture, installation or substitution.
+  See `.qualification-evidence/a15-eligibility-method-review-20261113/REPORT.md`.
 - Exclude known concurrent writers. Stopped state and two stable reads are
   bounded evidence, not a global exclusion lock or atomic snapshot.
 - While stopped, establish only what is observable: supported MCP launch/UI
@@ -744,7 +810,7 @@ after READY. EOF is a test-only Ctrl-D; the timeout fixture uses an injected
 hold only an object in memory, exercise no acquisition/native API and do not
 qualify real state preservation.
 
-## One executable sequence, with an external ledger
+### Single execution sequence and external ledger
 
 Use two coordinated execution surfaces: one foreground trusted host process,
 kept alive throughout, and the existing supported Test.app control. No daemon,
@@ -842,19 +908,27 @@ Tell the operator: **Test.app may still be running; no automated shutdown has
 been established. Leave Test.app and Kodi untouched until Supervisor disposition.**
 Do not retry, switch quit transports, or infer shutdown from CANCEL.
 
-1. Record the approved full host commit, old stage manifest path/hash, trusted
-   helper/wrapper hashes, command, environment, external controller/foreground
-   session handle and UTC start. Verify Git/index/source and all preconditions.
-   Set `A15_REVIEWED_SHA` to the explicitly approved full SHA, and `A15_RUN` to
-   one new unused absolute direct child of this worktree's qualification folder.
-   Neither is a target override. From the exact worktree run:
+### Execution steps
+
+1. Only after the offline gates and separate authorization are satisfied,
+   record the approved full host commit, the card's single `A15_MANIFEST`
+   path and verified hash, trusted helper/wrapper hashes, command, environment,
+   controller/foreground session handle and UTC start. Complete stopped L2
+   admission with that manifest. Create an empty L1–L16 template with L2A and
+   retain its hash tool output before starting the driver. Append L1, L2 and
+   pre-run L2A in order after supporting records exist. Record open conditions.
+   Set `A15_REVIEWED_SHA` to the authorized full host SHA, `A15_MANIFEST` to
+   the exact absolute path in the card and `A15_RUN` to one new unused absolute
+   direct child of this worktree's qualification folder. Retain L2 and the
+   external ledger separately so the driver can create that unused directory.
+   Render the values into the first PTY command from the exact worktree:
 
    ```sh
    DEVELOPER_DIR=/Library/Developer/CommandLineTools \
    /Users/eengert/.pyenv/versions/3.10.9/bin/python3 -B \
      -m tools.bm_preservation_driver \
      --host-commit "$A15_REVIEWED_SHA" \
-     --manifest /Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/item8-a11-auto-keep-staging-20261104/stage-20261104T211724Z-a5a4a23b026e/stage_manifest.json \
+     --manifest "$A15_MANIFEST" \
      --evidence-dir "$A15_RUN"
    ```
 
@@ -1116,7 +1190,15 @@ investigation, not a retry. Markers identify fixed categories, not necessarily a
 particular node or builtin subcheck. Never infer a missing artifact, zero capture
 side effects or successful preservation from either UI outcome or from markers.
 
-## Minimal external run ledger
+### Adjudication and stop conditions
+
+Bind the public root ID/version, private off, skin excluded, zero public scope, one separate confirmation and visible 32733 to the same launch and foreground session. Stop on prohibited choices, unexpected or ambiguous UI, wrong terminal, source/PID/session mismatch, failed admission or loss of raw provenance. Below 150 seconds remaining, do not begin confirmation. Follow K1 and B-3 for safe exit. Unverified UI exit prevents quit and FINISH. Failed authenticated quit or final admission prevents FINISH. Any recovery requires separate authorization. CANCEL disposes only the driver baseline. Do not start another Create or driver.
+
+After the single FINISH, reconcile the original result.json, DONE and exit with the sealed ledger. S5 requires identity/enabled and EXACT projection checks. The authenticated scenario may use BYTES_IDENTICAL from after.addons33_bytes.status to adjudicate other Addons33 content. BYTES_DIFFERENT, UNVERIFIED or a refused boundary leaves that disposition open. S8 uses L2 and L12 installed equality and Git binding with the existing bounded source argument. S9 is inapplicable when the correlated rejected Create sequence confirms no receiving operation. Preserve S1–S3 and S7 checks, strict N6, and the existing practical FAIL and INCONCLUSIVE rules. D1's ambient limitation applies only to the narrow S6 claim.
+
+Append later L2A entries only after their raw supporting records exist, in original order. Seal after execution and retain template and ledger hashes and the raw-record index. Independent adjudication follows sealing under §1–§3 and L2A, including actual S4 and U1–U4 dispositions. Missing evidence and unresolved traceable S4/S6 effects keep those dispositions open.
+
+### Minimal external run ledger
 
 Retain a protected, sanitized ordered ledger with the exact host/source/manifest
 identities; rendered commands and environment; original driver PTY session ID;
