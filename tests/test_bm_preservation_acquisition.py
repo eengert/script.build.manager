@@ -452,3 +452,300 @@ class AcquisitionTests(fixtures.TripwireTestCase):
         path = self.target.addon_dir(bm.BUILD_MANAGER_ID)/'default.py'
         path.write_text(path.read_text()+'\n# synthetic tamper\n')
         self.assertEqual(self.refused('after')['reason'], 'source_unverified')
+
+    # --- D-032 clarification of 2026-11-19: whole-file Addons33 byte identity ---------------
+
+    BYTES_KEYS = {'schema', 'scope', 'status'}
+
+    def addons_bytes(self):
+        return self.path(self.root, 0).read_bytes()
+
+    def finished(self):
+        result = self.safe(self.session.finish())
+        self.assertEqual(result['acquisition'], 'ACQUIRED')
+        return result
+
+    def byte_status(self, result):
+        block = result['addons33_bytes']
+        self.assertEqual(set(block), self.BYTES_KEYS)
+        self.assertEqual(block['schema'], 'bm-a15-addons33-bytes/1')
+        self.assertEqual(block['scope'], 'addons33_file_bytes')
+        return block['status']
+
+    def assertNoFingerprintOrPrivateValue(self, result, *raws):
+        encoded = json.dumps(result)
+        for raw in raws:
+            digest = hashlib.sha256(raw).digest()
+            for text in (digest.hex(), digest.hex().upper(), str(len(raw)), repr(digest)):
+                if text.isdigit():
+                    # A length may coincide with a count; it must never appear as a field value.
+                    self.assertNotIn('"length"', encoded)
+                    self.assertNotIn('"size"', encoded)
+                else:
+                    self.assertNotIn(text, encoded)
+        self.assertNotIn(semantic.SECRET, encoded)
+        self.assertNotIn('sha256', encoded)
+        self.assertNotIn('digest', encoded)
+
+    def test_identical_bytes_are_reported_and_leave_the_strict_result_unchanged(self):
+        raw = self.addons_bytes()
+        self.begin()
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'BYTES_IDENTICAL')
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        self.assertEqual([r['status'] for r in result['files']], ['PRESERVED'] * 5)
+        self.assertNoFingerprintOrPrivateValue(result, raw)
+        self.assertEqual(raw, self.addons_bytes())
+
+    def test_the_sibling_block_is_the_only_strict_addition(self):
+        self.begin()
+        result = self.finished()
+        strict = bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED'] * 5,
+                                result['practical'], result['addons33_bytes'])
+        self.assertEqual(result, strict)
+        without = {k: v for k, v in result.items() if k not in ('practical', 'addons33_bytes')}
+        self.assertEqual(without, bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED'] * 5))
+        self.assertEqual(set(result) - set(without), {'practical', 'addons33_bytes'})
+
+    def test_same_length_changed_content_is_different_bytes_with_an_agreeing_projection(self):
+        before = self.addons_bytes()
+        self.begin()
+        with sqlite3.connect(self.path(self.root, 0)) as db:
+            db.execute("UPDATE installed SET lastUsed='Z' || substr(lastUsed, 2)")
+        after = self.addons_bytes()
+        self.assertEqual(len(before), len(after))
+        self.assertNotEqual(before, after)
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'BYTES_DIFFERENT')
+        # The identity/enabled projection is unchanged: strict N6 still says PRESERVED.
+        self.assertEqual(result['files'][0]['status'], 'PRESERVED')
+        self.assertEqual(result['scope_result'], 'PRESERVED')
+        self.assertEqual(result['practical']['files'][0]['classification'], 'EXACT')
+        self.assertNoFingerprintOrPrivateValue(result, before, after)
+
+    def test_different_length_is_different_bytes(self):
+        before = self.addons_bytes()
+        self.begin()
+        with sqlite3.connect(self.path(self.root, 0)) as db:
+            db.execute('CREATE TABLE unrelated (note TEXT)')
+            db.executemany('INSERT INTO unrelated VALUES (?)', [('x' * 900,)] * 40)
+        after = self.addons_bytes()
+        self.assertNotEqual(len(before), len(after))
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'BYTES_DIFFERENT')
+        self.assertEqual(result['files'][0]['status'], 'PRESERVED')
+        self.assertNoFingerprintOrPrivateValue(result, before, after)
+
+    def test_sqlite_header_counter_change_alone_is_different_bytes(self):
+        path = self.path(self.root, 0)
+        self.begin()
+        raw = bytearray(path.read_bytes())
+        counter = int.from_bytes(raw[24:28], 'big') + 1
+        raw[24:28] = raw[92:96] = counter.to_bytes(4, 'big')
+        path.write_bytes(bytes(raw))
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'BYTES_DIFFERENT')
+        self.assertEqual(result['files'][0]['status'], 'PRESERVED')
+
+    def test_same_digest_requires_the_same_length_and_a_different_digest_is_different(self):
+        digest = bytes(range(32))
+        other = bytes(range(1, 33))
+        self.assertEqual(bridge._addons33_bytes((digest, 5), (digest, 5))['status'], 'BYTES_IDENTICAL')
+        self.assertEqual(bridge._addons33_bytes((digest, 5), (digest, 6))['status'], 'BYTES_DIFFERENT')
+        self.assertEqual(bridge._addons33_bytes((digest, 5), (other, 5))['status'], 'BYTES_DIFFERENT')
+
+    def test_missing_or_malformed_fingerprints_are_unverified_never_identical(self):
+        digest = bytes(32)
+        good = (digest, 4)
+        bad = (None, (), [], (digest,), (digest, 4, 1), (digest, True), (digest, -1), (digest, '4'),
+               (digest[:31], 4), (bytearray(digest), 4), (digest.hex(), 4), 'x', 4, {})
+        self.assertEqual(bridge._addons33_bytes(None, None)['status'], 'UNVERIFIED')
+        for value in bad:
+            with self.subTest(value=repr(value)):
+                self.assertEqual(bridge._addons33_bytes(value, good)['status'], 'UNVERIFIED')
+                self.assertEqual(bridge._addons33_bytes(good, value)['status'], 'UNVERIFIED')
+                self.assertEqual(bridge._addons33_bytes(value, value)['status'], 'UNVERIFIED')
+
+    def test_missing_addons33_at_begin_refuses_and_holds_no_fingerprint(self):
+        self.path(self.root, 0).unlink()
+        result = self.refused()
+        self.assertEqual(result['reason'], 'missing_input')
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_missing_addons33_at_finish_is_unverified(self):
+        self.begin()
+        self.path(self.root, 0).unlink()
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'UNVERIFIED')
+        self.assertEqual(result['files'][0]['status'], 'CHANGED_OR_MISSING')
+        self.assertEqual(result['practical']['files'][0]['classification'], 'INCONCLUSIVE')
+
+    def test_database_sidecar_or_wal_header_at_finish_refuses_with_no_byte_status(self):
+        for suffix in ('-wal', '-shm', '-journal'):
+            with self.subTest(suffix=suffix):
+                self.session = self.new_session(); self.begin()
+                sidecar = Path(str(self.path(self.root, 0)) + suffix); sidecar.touch()
+                result = self.refused('after')
+                self.assertEqual(result['reason'], 'sqlite_sidecar_uncertain')
+                self.assertNotIn('addons33_bytes', result)
+                self.assertIsNone(self.session._fingerprint)
+                sidecar.unlink()
+        self.session = self.new_session(); self.begin()
+        path = self.path(self.root, 0); raw = bytearray(path.read_bytes()); raw[18:20] = b'\x02\x02'
+        path.write_bytes(raw)
+        result = self.refused('after')
+        self.assertEqual(result['reason'], 'sqlite_wal_mode_uncertain')
+        self.assertNotIn('addons33_bytes', result)
+
+    def test_sidecar_or_wal_header_at_begin_refuses_and_holds_no_fingerprint(self):
+        sidecar = Path(str(self.path(self.root, 0)) + '-journal'); sidecar.touch()
+        self.assertEqual(self.refused()['reason'], 'sqlite_sidecar_uncertain')
+        self.assertIsNone(self.session._fingerprint)
+        sidecar.unlink()
+        self.session = self.new_session()
+        path = self.path(self.root, 0); raw = bytearray(path.read_bytes()); raw[18:20] = b'\x02\x02'
+        path.write_bytes(raw)
+        self.assertEqual(self.refused()['reason'], 'sqlite_wal_mode_uncertain')
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_addons33_changing_during_capture_refuses_at_both_boundaries(self):
+        original = w.database_projection
+        def changing(raw, kind):
+            value = original(raw, kind)
+            if kind == 0:
+                with sqlite3.connect(self.path(self.root, 0)) as db:
+                    db.execute("UPDATE installed SET lastUsed='moving'")
+            return value
+        with mock.patch.object(w, 'database_projection', side_effect=changing):
+            result = self.refused()
+        self.assertEqual(result['reason'], 'input_changed')
+        self.assertIsNone(self.session._fingerprint)
+        self.session = self.new_session()
+        with sqlite3.connect(self.path(self.root, 0)) as db:
+            db.execute("UPDATE installed SET lastUsed=?", (semantic.SECRET,))
+        self.begin()
+        with mock.patch.object(w, 'database_projection', side_effect=changing):
+            result = self.refused('after')
+        self.assertEqual(result['reason'], 'input_changed')
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_interrupted_acquisition_clears_the_fingerprint_and_cannot_retry(self):
+        with mock.patch.object(w, 'read_copy', side_effect=KeyboardInterrupt):
+            result = self.refused()
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+        self.session = self.new_session(); self.begin()
+        self.assertIsNotNone(self.session._fingerprint)
+        with mock.patch.object(w, 'read_copy', side_effect=KeyboardInterrupt):
+            result = self.refused('after')
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+        with mock.patch.object(w, 'read_copy', side_effect=AssertionError('no retry')):
+            self.refused('after')
+
+    def test_interruption_while_fingerprinting_clears_everything(self):
+        with mock.patch.object(bridge, '_fingerprint', side_effect=KeyboardInterrupt):
+            result = self.refused()
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+        self.session = self.new_session(); self.begin()
+        with mock.patch.object(bridge, '_fingerprint', side_effect=KeyboardInterrupt):
+            result = self.refused('after')
+        self.assertNotIn('addons33_bytes', result)
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_failure_while_comparing_fingerprints_returns_no_block_and_clears_state(self):
+        self.begin()
+        with mock.patch.object(bridge, '_addons33_bytes', side_effect=RuntimeError(semantic.SECRET)):
+            result = self.refused('after')
+        self.assertNotIn('addons33_bytes', result)
+        self.assertNotIn('practical', result)
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_private_fingerprint_is_held_only_between_begin_and_finish(self):
+        raw = self.addons_bytes()
+        self.assertIsNone(self.session._fingerprint)
+        self.begin()
+        held = self.session._fingerprint
+        self.assertEqual(held, (hashlib.sha256(raw).digest(), len(raw)))
+        # No raw copy is retained: no slot holds the database bytes or anything of their size.
+        for name in bridge.AcquisitionSession.__slots__:
+            value = getattr(self.session, name)
+            self.assertFalse(type(value) in (bytes, bytearray) and len(value) > 32, name)
+            self.assertNotIn(raw, [value] if isinstance(value, bytes) else [])
+        self.assertNotIn(repr(held[0]), repr(self.session))
+        self.assertNotIn(held[0].hex(), repr(self.session))
+        self.session.finish()
+        self.assertIsNone(self.session._fingerprint)
+        self.assertIsNone(self.session._before)
+
+    def test_close_and_context_exit_clear_the_fingerprint(self):
+        self.begin()
+        self.assertIsNotNone(self.session._fingerprint)
+        self.session.close()
+        self.assertIsNone(self.session._fingerprint)
+        self.session = self.new_session()
+        with self.session:
+            self.begin()
+            self.assertIsNotNone(self.session._fingerprint)
+        self.assertIsNone(self.session._fingerprint)
+        self.assertEqual(self.refused('after')['reason'], 'session_closed')
+
+    def test_a_second_finish_or_begin_cannot_rebuild_lost_evidence(self):
+        self.begin()
+        self.finished()
+        again = self.safe(self.session.finish())
+        self.assertEqual(again['reason'], 'session_closed')
+        self.assertNotIn('addons33_bytes', again)
+        again = self.safe(self.session.begin())
+        self.assertEqual(again['reason'], 'session_closed')
+        self.assertIsNone(self.session._fingerprint)
+
+    def test_byte_witness_reads_nothing_beyond_the_fixed_five_sources(self):
+        reader = w.read_copy
+        calls = []
+        def fixed(root, relative, limit):
+            calls.append(relative)
+            return reader(root, relative, limit)
+        with mock.patch.object(w, 'read_copy', side_effect=fixed):
+            self.begin(); self.finished()
+        self.assertEqual(set(calls), set(w.FILES))
+        # Each boundary reads each source twice (capture and stability pass), as before.
+        self.assertEqual(len(calls), 20)
+
+    def test_no_practical_pass_or_fail_or_maintenance_class_is_emitted_for_addons33(self):
+        for change in (None, 'content', 'length'):
+            with self.subTest(change=change):
+                self.session = self.new_session(); self.begin()
+                if change == 'content':
+                    with sqlite3.connect(self.path(self.root, 0)) as db:
+                        db.execute("UPDATE installed SET lastUsed='Y' || substr(lastUsed, 2)")
+                elif change == 'length':
+                    with sqlite3.connect(self.path(self.root, 0)) as db:
+                        db.execute('CREATE TABLE IF NOT EXISTS unrelated (note TEXT)')
+                        db.executemany('INSERT INTO unrelated VALUES (?)', [('y' * 900,)] * 10)
+                result = self.finished()
+                encoded = json.dumps(result)
+                self.assertNotIn('PASS', encoded)
+                self.assertNotIn('FAIL', encoded)
+                self.assertEqual(result['practical']['verdict'], 'NOT_DECIDED')
+                self.assertEqual(result['practical']['files'][0]['maintenance'], [])
+                self.assertIn(self.byte_status(result), ('BYTES_IDENTICAL', 'BYTES_DIFFERENT'))
+
+    def test_enabled_state_change_is_strict_changed_and_never_identical_bytes(self):
+        self.begin()
+        with sqlite3.connect(self.path(self.root, 0)) as db:
+            db.execute('UPDATE installed SET enabled=0')
+        result = self.finished()
+        self.assertEqual(result['files'][0]['status'], 'CHANGED_OR_MISSING')
+        self.assertEqual(self.byte_status(result), 'BYTES_DIFFERENT')
+
+    def test_other_protected_files_do_not_affect_the_addons33_byte_status(self):
+        self.begin()
+        self.path(self.root, 4).write_text('<settings><setting id="layout" value="changed"/></settings>')
+        result = self.finished()
+        self.assertEqual(self.byte_status(result), 'BYTES_IDENTICAL')
+        self.assertEqual(result['files'][4]['status'], 'CHANGED_OR_MISSING')
+        self.assertEqual(result['scope_result'], 'CHANGED_OR_MISSING')

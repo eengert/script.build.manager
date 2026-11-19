@@ -322,6 +322,29 @@ def project_practical(value, strict_rows, reason):
             'files': rows, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
+ADDONS33_BYTES_KEYS = frozenset({'schema', 'scope', 'status'})
+ADDONS33_BYTES_STATUSES = frozenset({'BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'})
+
+
+def project_addons33_bytes(value, strict_rows, practical_rows, reason):
+    """Closed, rebuilt validation of the Addons33 byte-identity sibling block.
+
+    Identical bytes yield an identical projection, so BYTES_IDENTICAL contradicts a changed
+    strict Addons33 status or an Addons33 practical row other than EXACT or INCONCLUSIVE
+    (the latter is a comparator fault on an unchanged projection). A difference of bytes may
+    coexist with an unchanged projection (layout, counters, unwitnessed columns): that is
+    not a contradiction. The block is informational and never changes the strict result.
+    """
+    need(type(value) is dict and set(value) == ADDONS33_BYTES_KEYS, reason)
+    need(value['schema'] == 'bm-a15-addons33-bytes/1' and value['scope'] == 'addons33_file_bytes', reason)
+    status = value['status']
+    need(type(status) is str and status in ADDONS33_BYTES_STATUSES, reason)
+    if status == 'BYTES_IDENTICAL':
+        need(strict_rows[0]['status'] == 'PRESERVED'
+             and practical_rows[0]['classification'] in ('EXACT', 'INCONCLUSIVE'), reason)
+    return {'schema': 'bm-a15-addons33-bytes/1', 'scope': 'addons33_file_bytes', 'status': status}
+
+
 def project_acquisition(value, boundary):
     """Do not persist arbitrary bridge dictionaries, even on unexpected faults."""
     expected = {'schema','boundary','acquisition','reason','scope_result','files',
@@ -329,7 +352,7 @@ def project_acquisition(value, boundary):
                 'writer_exclusion','temporary_cleanup'}
     reason = 'begin_refused' if boundary == 'before' else 'finish_refused'
     if boundary == 'after':
-        expected = expected | {'practical'}
+        expected = expected | {'practical', 'addons33_bytes'}
     need(type(value) is dict and set(value) == expected, reason)
     need(value['schema'] == 'bm-a15-acquisition/1' and value['boundary'] == boundary
          and value['reason'] == ('baseline_held_in_memory' if boundary == 'before' else 'scoped_comparison')
@@ -352,6 +375,8 @@ def project_acquisition(value, boundary):
     projected = {'acquisition':'ACQUIRED','scope_result':scope,'files':rows}
     if boundary == 'after':
         projected['practical'] = project_practical(value['practical'], rows, reason)
+        projected['addons33_bytes'] = project_addons33_bytes(
+            value['addons33_bytes'], rows, projected['practical']['files'], reason)
     return projected
 
 

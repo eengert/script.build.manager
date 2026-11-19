@@ -4,12 +4,16 @@ No native operation is invoked here. A caller must separately authorize the
 intervening UI operation. Private projections live only in this session; they
 are not resumable, serializable, or public evidence. The after result also
 carries a sanitized D-032 classification of the same session's projections; it
-is a classification only and never a practical verdict. This is not an atomic
-snapshot or proof of writer exclusion, maintenance attribution or qualification.
+is a classification only and never a practical verdict. A second sibling block
+reports whole-file Addons33 byte identity between the two boundaries (D-032
+clarification of 2026-11-19), from an in-memory SHA-256 and length that never leave
+this module. This is not an atomic snapshot or proof of writer exclusion, maintenance
+attribution or qualification.
 """
 from __future__ import annotations
 
 import copy
+import hashlib
 from pathlib import Path
 
 from tools import bm_test_app as bm
@@ -18,13 +22,20 @@ from tools import bm_practical_preservation_comparator as comparator
 
 PRACTICAL_SCHEMA = 'bm-a15-practical-classification/1'
 _PER_FILE_CLASSES = (comparator.EXACT, comparator.MAINTENANCE_ONLY, comparator.MEANINGFUL)
+# Whole-file Addons33 byte identity at the two boundaries. Closed vocabulary; the public
+# block never carries a digest, a length, a path or any database content.
+ADDONS33_BYTES_SCHEMA = 'bm-a15-addons33-bytes/1'
+ADDONS33_BYTES_SCOPE = 'addons33_file_bytes'
+BYTES_IDENTICAL = 'BYTES_IDENTICAL'
+BYTES_DIFFERENT = 'BYTES_DIFFERENT'
+BYTES_UNVERIFIED = 'UNVERIFIED'
 
 
 class _Refused(Exception):
     pass
 
 
-def _result(boundary, acquisition, reason, statuses=None, practical=None):
+def _result(boundary, acquisition, reason, statuses=None, practical=None, addons33_bytes=None):
     statuses = statuses or ['UNVERIFIED'] * len(witness.FILES)
     compared = boundary == 'after' and acquisition == 'ACQUIRED'
     scope = ('PRESERVED' if all(s == 'PRESERVED' for s in statuses)
@@ -38,6 +49,8 @@ def _result(boundary, acquisition, reason, statuses=None, practical=None):
               'temporary_cleanup': 'COMPLETE' if acquisition == 'ACQUIRED' else 'UNVERIFIED'}
     if practical is not None:
         result['practical'] = practical
+    if addons33_bytes is not None:
+        result['addons33_bytes'] = addons33_bytes
     return result
 
 
@@ -79,6 +92,30 @@ def _practical(before, after):
             'files': rows, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
+def _fingerprint(data):
+    """Private SHA-256 and length of an admitted snapshot, or None when it is absent."""
+    if type(data) is not bytes:
+        return None
+    return (hashlib.sha256(data).digest(), len(data))
+
+
+def _addons33_bytes(before, after):
+    """Sanitized byte-identity status from two private fingerprints.
+
+    Equal digests and lengths are strong evidence that the admitted main files were
+    identical at the two boundaries. Anything else is not a finding: a difference does
+    not show loss, and a missing or malformed fingerprint is simply unverified.
+    """
+    def valid(value):
+        return (type(value) is tuple and len(value) == 2 and type(value[0]) is bytes
+                and len(value[0]) == 32 and type(value[1]) is int and value[1] >= 0)
+    if not valid(before) or not valid(after):
+        status = BYTES_UNVERIFIED
+    else:
+        status = BYTES_IDENTICAL if before == after else BYTES_DIFFERENT
+    return {'schema': ADDONS33_BYTES_SCHEMA, 'scope': ADDONS33_BYTES_SCOPE, 'status': status}
+
+
 class AcquisitionSession:
     """Explicit begin()/finish(), once each; no daemon, persistence or retry.
 
@@ -86,7 +123,8 @@ class AcquisitionSession:
     Dropping Python references is not secure memory erasure. Do not inspect or
     log private attributes, enable locals dumps, or serialize the host process.
     """
-    __slots__ = ('_services', '_manifest', '_repo', '_target', '_bundle', '_before', '_state')
+    __slots__ = ('_services', '_manifest', '_repo', '_target', '_bundle', '_before', '_fingerprint',
+                 '_state')
 
     def __init__(self, services, *, manifest, git_repo):
         self._services = services
@@ -95,6 +133,7 @@ class AcquisitionSession:
         self._target = services.target
         self._bundle = None
         self._before = None
+        self._fingerprint = None
         self._state = 'new'
 
     def __repr__(self):
@@ -117,6 +156,7 @@ class AcquisitionSession:
 
     def close(self):
         self._before = None
+        self._fingerprint = None
         self._bundle = None
         self._state = 'closed'
 
@@ -174,7 +214,8 @@ class AcquisitionSession:
         if raw != read_all():
             raise witness.Unverified('input_changed')
         self._admit()
-        return projections
+        # Only the stable, admitted Addons33 bytes are fingerprinted; no raw copy is kept.
+        return projections, _fingerprint(raw[0][0])
 
     def _failure(self, boundary, exc):
         self.close()
@@ -192,7 +233,7 @@ class AcquisitionSession:
         self._state = 'acquiring'
         try:
             self._manifest = copy.deepcopy(self._manifest)
-            self._before = self._capture(baseline=True)
+            self._before, self._fingerprint = self._capture(baseline=True)
             self._state = 'held'
             return _result('before', 'ACQUIRED', 'baseline_held_in_memory')
         except (Exception, KeyboardInterrupt) as exc:
@@ -202,15 +243,16 @@ class AcquisitionSession:
         if self._state != 'held':
             self.close()
             return _result('after', 'REFUSED', 'session_closed')
-        before = self._before
-        self._before = None
+        before, before_fingerprint = self._before, self._fingerprint
+        self._before = self._fingerprint = None
         self._state = 'closed'  # Consume before any new read; failure cannot retry.
         try:
-            after = self._capture(baseline=False)
+            after, after_fingerprint = self._capture(baseline=False)
             statuses = ['PRESERVED' if left == right else 'CHANGED_OR_MISSING'
                         for left, right in zip(before, after)]
             return _result('after', 'ACQUIRED', 'scoped_comparison', statuses,
-                           _practical(before, after))
+                           _practical(before, after),
+                           _addons33_bytes(before_fingerprint, after_fingerprint))
         except (Exception, KeyboardInterrupt) as exc:
             return self._failure('after', exc)
         finally:

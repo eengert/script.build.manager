@@ -31,6 +31,17 @@ def practical_block(*rows):
             'files': files, 'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified'}
 
 
+def bytes_block(status='UNVERIFIED'):
+    """The Addons33 byte-identity sibling block, in the shape finish() emits."""
+    return {'schema': 'bm-a15-addons33-bytes/1', 'scope': 'addons33_file_bytes', 'status': status}
+
+
+def after_with_bytes(*args, bytes_status='UNVERIFIED', **kwargs):
+    """A bridge after result that carries the sibling block (UNVERIFIED unless stated)."""
+    return bridge._result('after', 'ACQUIRED', 'scoped_comparison', *args,
+                          addons33_bytes=bytes_block(bytes_status), **kwargs)
+
+
 def public_witness():
     """Synthetic public witnesses with the shape public_state returns."""
     entry = '9' * 64
@@ -80,7 +91,7 @@ class DriverTests(fixtures.TripwireTestCase):
         self.public_call = self.public_patch.start()
         self.calls = []
         self.begin_result = bridge._result('before','ACQUIRED','baseline_held_in_memory')
-        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+        self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status='BYTES_IDENTICAL',
                                            practical=practical_block(*EXACT_ROWS))
         owner = self
         class Session:
@@ -309,7 +320,7 @@ class DriverTests(fixtures.TripwireTestCase):
         self.blocked('changed')
 
     def test_semantic_change_is_not_harmless_maintenance(self):
-        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',
+        self.after_result = after_with_bytes(
                                          ['PRESERVED']*4+['CHANGED_OR_MISSING'],
                                          practical=practical_block(*(EXACT_ROWS[:4]+[('MEANINGFUL',(),1)])))
         self.blocked('changed')
@@ -332,7 +343,7 @@ class DriverTests(fixtures.TripwireTestCase):
     def test_maintenance_beside_a_strict_change_keeps_the_strict_refusal(self):
         rows = list(EXACT_ROWS)
         rows[2] = ('MAINTENANCE_ONLY', (('M1_UPTIME', 1),), 0)
-        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',
+        self.after_result = after_with_bytes(
                                            ['PRESERVED','PRESERVED','CHANGED_OR_MISSING','PRESERVED','PRESERVED'],
                                            practical=practical_block(*rows))
         code, result = self.run_driver()
@@ -344,7 +355,7 @@ class DriverTests(fixtures.TripwireTestCase):
 
     def test_comparator_rejection_is_recorded_inconclusive_and_never_a_practical_pass(self):
         rows = [('INCONCLUSIVE', (), 0)] + EXACT_ROWS[1:]
-        self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+        self.after_result = after_with_bytes(['PRESERVED']*5,
                                            practical=practical_block(*rows))
         code, result = self.run_driver()
         # The strict gate is unchanged, so a strict PRESERVED scope keeps its strict state.
@@ -353,6 +364,150 @@ class DriverTests(fixtures.TripwireTestCase):
         practical = result['after']['practical']
         self.assertEqual(practical['classification'], 'INCONCLUSIVE')
         self.assertEqual(practical['verdict'], 'NOT_DECIDED')
+
+    def test_addons33_bytes_block_is_validated_and_persisted_beside_the_strict_result(self):
+        for status in ('BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'):
+            with self.subTest(status=status):
+                self.reset_run('bytes-' + status)
+                self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status=status,
+                                                     practical=practical_block(*EXACT_ROWS))
+                code, result = self.run_driver()
+                # Strict N6 outcome, exit semantics and per-file statuses do not depend on the block.
+                self.assertEqual(code, 0)
+                self.assertEqual((result['state'], result['reason']), ('SCOPED_PRESERVED', 'scoped_comparison'))
+                self.assertEqual(result['after']['scope_result'], 'PRESERVED')
+                self.assertEqual([row['status'] for row in result['after']['files']], ['PRESERVED'] * 5)
+                self.assertEqual(result['after']['addons33_bytes'],
+                                 {'schema': 'bm-a15-addons33-bytes/1', 'scope': 'addons33_file_bytes',
+                                  'status': status})
+                self.assertEqual(result['after']['practical']['verdict'], 'NOT_DECIDED')
+                encoded = json.dumps(result)
+                self.assertNotIn('PASS', encoded.replace('SCOPED_PRESERVED', ''))
+                self.assertNotIn('FAIL', encoded)
+
+    def test_different_bytes_with_an_agreeing_strict_projection_is_not_a_contradiction(self):
+        self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status='BYTES_DIFFERENT',
+                                             practical=practical_block(*EXACT_ROWS))
+        code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['after']['addons33_bytes']['status'], 'BYTES_DIFFERENT')
+        self.assertEqual(result['after']['practical']['files'][0]['classification'], 'EXACT')
+
+    def test_byte_status_never_changes_the_strict_gate_for_a_changed_file(self):
+        rows = list(EXACT_ROWS); rows[3] = ('MEANINGFUL', (), 1)
+        statuses = ['PRESERVED'] * 3 + ['CHANGED_OR_MISSING', 'PRESERVED']
+        for status in ('BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'):
+            with self.subTest(status=status):
+                self.reset_run('strict-' + status)
+                self.after_result = after_with_bytes(statuses, bytes_status=status,
+                                                     practical=practical_block(*rows))
+                code, result = self.run_driver()
+                self.assertNotEqual(code, 0)
+                self.assertEqual((result['state'], result['reason']), ('INCONCLUSIVE', 'changed'))
+                self.assertEqual(result['after']['addons33_bytes']['status'], status)
+
+    def test_malformed_addons33_bytes_blocks_refuse_and_are_never_persisted(self):
+        cases = {
+            'extra_key': lambda b: b.update(raw_private=SECRET),
+            'digest_key': lambda b: b.update(sha256='0' * 64),
+            'length_key': lambda b: b.update(length=1),
+            'missing_status': lambda b: b.pop('status'),
+            'missing_scope': lambda b: b.pop('scope'),
+            'missing_schema': lambda b: b.pop('schema'),
+            'wrong_schema': lambda b: b.update(schema='bm-a15-addons33-bytes/0'),
+            'wrong_scope': lambda b: b.update(scope='addons33_installed'),
+            'status_outside_vocabulary': lambda b: b.update(status='BYTES_PRESERVED'),
+            'status_pass': lambda b: b.update(status='PASS'),
+            'status_fail': lambda b: b.update(status='FAIL'),
+            'status_lowercase': lambda b: b.update(status='bytes_identical'),
+            'status_padded': lambda b: b.update(status='BYTES_IDENTICAL '),
+            'status_bool': lambda b: b.update(status=True),
+            'status_none': lambda b: b.update(status=None),
+            'status_list': lambda b: b.update(status=['BYTES_IDENTICAL']),
+            'status_secret': lambda b: b.update(status=SECRET),
+        }
+        for name, edit in cases.items():
+            with self.subTest(case=name):
+                block = bytes_block('BYTES_IDENTICAL')
+                edit(block)
+                self.reset_run('bytes-malformed-' + name)
+                self.after_result = bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED']*5,
+                                                   practical=practical_block(*EXACT_ROWS), addons33_bytes=block)
+                result = self.blocked('finish_refused')
+                self.assertNotIn('after', result)
+        for name, value in {'none': None, 'list': [], 'text': 'BYTES_IDENTICAL', 'tuple': ('BYTES_IDENTICAL',)}.items():
+            with self.subTest(block=name):
+                self.reset_run('bytes-notdict-' + name)
+                self.after_result = bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED']*5,
+                                                   practical=practical_block(*EXACT_ROWS))
+                if value is not None:
+                    self.after_result['addons33_bytes'] = value
+                result = self.blocked('finish_refused')
+                self.assertNotIn('after', result)
+
+    def test_dict_subclass_or_hostile_mapping_block_is_refused(self):
+        class Hostile(dict):
+            def __iter__(self): raise RuntimeError(SECRET)
+        for value in (Hostile(bytes_block('BYTES_IDENTICAL')),):
+            self.reset_run('bytes-hostile')
+            self.after_result = bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED']*5,
+                                               practical=practical_block(*EXACT_ROWS), addons33_bytes=value)
+            self.blocked()
+
+    def test_identical_bytes_contradicting_the_strict_addons33_result_are_refused(self):
+        rows = list(EXACT_ROWS); rows[0] = ('MEANINGFUL', (), 1)
+        self.after_result = after_with_bytes(['CHANGED_OR_MISSING'] + ['PRESERVED']*4,
+                                             bytes_status='BYTES_IDENTICAL', practical=practical_block(*rows))
+        result = self.blocked('finish_refused')
+        self.assertNotIn('after', result)
+
+    def test_identical_bytes_are_accepted_when_only_another_file_changed(self):
+        rows = list(EXACT_ROWS); rows[3] = ('MEANINGFUL', (), 1)
+        self.after_result = after_with_bytes(['PRESERVED']*3 + ['CHANGED_OR_MISSING', 'PRESERVED'],
+                                             bytes_status='BYTES_IDENTICAL', practical=practical_block(*rows))
+        code, result = self.run_driver()
+        self.assertEqual((result['state'], result['reason']), ('INCONCLUSIVE', 'changed'))
+        self.assertEqual(result['after']['addons33_bytes']['status'], 'BYTES_IDENTICAL')
+
+    def test_identical_bytes_with_a_meaningful_addons33_practical_row_are_refused(self):
+        # Strict PRESERVED already forbids this pairing; the byte check must not accept it either.
+        rows = list(EXACT_ROWS); rows[0] = ('MEANINGFUL', (), 1)
+        self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status='BYTES_IDENTICAL',
+                                             practical=practical_block(*rows))
+        self.blocked('finish_refused')
+
+    def test_comparator_fault_on_an_unchanged_projection_may_pair_with_identical_bytes(self):
+        rows = list(EXACT_ROWS); rows[0] = ('INCONCLUSIVE', (), 0)
+        self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status='BYTES_IDENTICAL',
+                                             practical=practical_block(*rows))
+        code, result = self.run_driver()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['after']['addons33_bytes']['status'], 'BYTES_IDENTICAL')
+
+    def test_missing_addons33_bytes_block_refuses_the_finish(self):
+        self.after_result = bridge._result('after', 'ACQUIRED', 'scoped_comparison', ['PRESERVED']*5,
+                                           practical=practical_block(*EXACT_ROWS))
+        self.assertNotIn('addons33_bytes', self.after_result)
+        result = self.blocked('finish_refused')
+        self.assertNotIn('after', result)
+
+    def test_byte_witness_never_promotes_s5_database_through_the_driver(self):
+        for status in ('BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'):
+            with self.subTest(status=status):
+                self.reset_run('s5-' + status)
+                self.after_result = after_with_bytes(['PRESERVED']*5, bytes_status=status,
+                                                     practical=practical_block(*EXACT_ROWS))
+                code, result = self.run_driver()
+                block = result['practical_precondition']
+                database = next(item for item in block['limitations'] if item['id'] == 'S5_DATABASE')
+                self.assertEqual(database['status'], 'UNVERIFIED')
+                self.assertEqual((block['assessment'], block['verdict']), ('INCONCLUSIVE', 'NOT_DECIDED'))
+
+    def test_host_source_covers_the_files_that_carry_the_byte_witness(self):
+        for path in ('tools/bm_preservation_acquisition.py', 'tools/bm_preservation_driver.py',
+                     'tools/bm_practical_precondition.py'):
+            self.assertIn(path, driver.HOST_PATHS)
+        self.assertNotIn('tools/bm_addons33_content.py', driver.HOST_PATHS)
 
     def test_malformed_practical_blocks_refuse_and_are_never_persisted(self):
         def first(block):
@@ -387,7 +542,7 @@ class DriverTests(fixtures.TripwireTestCase):
                 block = practical_block(*EXACT_ROWS)
                 edit(block)
                 self.reset_run('malformed-' + name)
-                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison',['PRESERVED']*5,
+                self.after_result = after_with_bytes(['PRESERVED']*5,
                                                    practical=block)
                 result = self.blocked('finish_refused')
                 self.assertNotIn('after', result)
@@ -408,7 +563,7 @@ class DriverTests(fixtures.TripwireTestCase):
         for name, (statuses, rows) in cases.items():
             with self.subTest(case=name):
                 self.reset_run('inconsistent-' + name)
-                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                self.after_result = after_with_bytes( statuses,
                                                    practical=practical_block(*rows))
                 self.blocked('finish_refused')
 
@@ -429,7 +584,7 @@ class DriverTests(fixtures.TripwireTestCase):
                 rows[index] = ('MAINTENANCE_ONLY', pairs, 0)
                 statuses = ['PRESERVED'] * 5
                 statuses[index] = 'CHANGED_OR_MISSING'
-                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                self.after_result = after_with_bytes( statuses,
                                                    practical=practical_block(*rows))
                 result = self.blocked('finish_refused')
                 self.assertNotIn('after', result)
@@ -445,7 +600,7 @@ class DriverTests(fixtures.TripwireTestCase):
                 rows[index] = ('MAINTENANCE_ONLY', (pair,), 0)
                 statuses = ['PRESERVED'] * 5
                 statuses[index] = 'CHANGED_OR_MISSING'
-                self.after_result = bridge._result('after','ACQUIRED','scoped_comparison', statuses,
+                self.after_result = after_with_bytes( statuses,
                                                    practical=practical_block(*rows))
                 code, result = self.run_driver()
                 # The strict gate still refuses the changed file, exactly as before.

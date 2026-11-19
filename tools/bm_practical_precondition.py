@@ -6,6 +6,11 @@ validated after.practical block), and two driver facts. It compares scope-specif
 fields for S1, S2, S5 and S7, checks the five-file classifications for eligibility, and
 lists each requirement that no witness in this flow establishes.
 
+The after block also carries the Addons33 byte-identity witness (D-032 clarification of
+2026-11-19). It is validated here, reported beside the S5_DATABASE limitation, and never
+promotes it: this assessment has no authenticated scenario context, so S5_DATABASE stays
+UNVERIFIED for every byte status, and a difference is never NOT_MET or a failure.
+
 It reads and writes no file, changes no strict result, and never emits a practical PASS
 or FAIL. In this task the assessment is always INCONCLUSIVE: no operation or ledger
 correlation is supplied, the operation's expected result is not supplied, and the
@@ -46,7 +51,16 @@ _BUNDLE_KEYS = frozenset(('build_version', 'executable', 'identifier', 'info_pli
                           'package_type', 'short_version'))
 _ASSOCIATION_KEYS = frozenset(('device_profile_id', 'entry_id', 'resolution_fingerprint', 'schema_version'))
 _BEGIN_KEYS = frozenset(('acquisition', 'files', 'scope_result'))
-_AFTER_KEYS = _BEGIN_KEYS | frozenset(('practical',))
+_AFTER_KEYS = _BEGIN_KEYS | frozenset(('practical', 'addons33_bytes'))
+_BYTES_KEYS = frozenset(('schema', 'scope', 'status'))
+_BYTES_STATUSES = frozenset(('BYTES_IDENTICAL', 'BYTES_DIFFERENT', 'UNVERIFIED'))
+# Informational S5_DATABASE reasons by validated byte status. None of them is a promotion.
+_S5_DATABASE_REASONS = {
+    None: 'other_addons33_content_unverified',
+    'BYTES_IDENTICAL': 'addons33_bytes_identical_scenario_unauthenticated',
+    'BYTES_DIFFERENT': 'addons33_bytes_differ',
+    'UNVERIFIED': 'addons33_bytes_unverified',
+}
 _FILE_ROW_KEYS = frozenset(('file', 'status'))
 _PRACTICAL_KEYS = frozenset(('classification', 'files', 'qualification', 'schema', 'verdict'))
 _PRACTICAL_ROW_KEYS = frozenset(('classification', 'file', 'maintenance', 'meaningful_count'))
@@ -308,13 +322,25 @@ def _check_practical(value, statuses):
     return labels
 
 
+def _check_addons33_bytes(value, statuses, labels):
+    _need(type(value) is dict and set(value) == _BYTES_KEYS)
+    _need(value['schema'] == 'bm-a15-addons33-bytes/1' and value['scope'] == 'addons33_file_bytes')
+    status = value['status']
+    _need(type(status) is str and status in _BYTES_STATUSES)
+    if status == 'BYTES_IDENTICAL':
+        # Identical bytes imply an identical projection. A difference of bytes needs no such check.
+        _need(statuses[0] == 'PRESERVED' and labels[0] in ('EXACT', 'INCONCLUSIVE'))
+    return status
+
+
 def _check_after(value):
     _need(type(value) is dict and set(value) == _AFTER_KEYS)
     _need(value['acquisition'] == 'ACQUIRED')
     statuses = _check_rows(value['files'], ('PRESERVED', 'CHANGED_OR_MISSING'))
     scope = 'PRESERVED' if all(status == 'PRESERVED' for status in statuses) else 'CHANGED_OR_MISSING'
     _need(value['scope_result'] == scope)
-    return _check_practical(value['practical'], statuses)
+    labels = _check_practical(value['practical'], statuses)
+    return labels, _check_addons33_bytes(value['addons33_bytes'], statuses, labels)
 
 
 def _entry(identifier, status, reason):
@@ -441,25 +467,27 @@ def _correlation_entry(correlation):
     return _entry('OPERATION_CORRELATION', NOT_MET, 'correlation_broken')
 
 
-def _limitations():
+def _limitations(bytes_status=None):
     # Structural: no witness in this flow establishes these scopes, and no scenario
-    # justifies excluding them. A future scenario must justify any exclusion.
+    # justifies excluding them. A future scenario must justify any exclusion. The validated
+    # Addons33 byte status refines only the reason of S5_DATABASE. It never promotes it,
+    # because no authenticated scenario context reaches this assessment.
     return [
         _entry('S4', UNVERIFIED, 'no_witness'),
-        _entry('S5_DATABASE', UNVERIFIED, 'other_addons33_content_unverified'),
+        _entry('S5_DATABASE', UNVERIFIED, _S5_DATABASE_REASONS[bytes_status]),
         _entry('S6', UNVERIFIED, 'no_unmanaged_census'),
         _entry('S8', UNVERIFIED, 'no_source_tree_census'),
         _entry('S9', UNVERIFIED, 'scenario_dependent'),
     ]
 
 
-def _block(prerequisites, reason):
+def _block(prerequisites, reason, bytes_status=None):
     return {'schema': SCHEMA, 'assessment': ASSESSMENT, 'reason': reason,
             'verdict': 'NOT_DECIDED', 'qualification': 'not_qualified',
-            'prerequisites': prerequisites, 'limitations': _limitations()}
+            'prerequisites': prerequisites, 'limitations': _limitations(bytes_status)}
 
 
-def _assessed(prerequisites):
+def _assessed(prerequisites, bytes_status):
     statuses = {item['status'] for item in prerequisites}
     if NOT_MET in statuses:
         reason = 'prerequisite_not_met'
@@ -467,7 +495,7 @@ def _assessed(prerequisites):
         reason = 'prerequisite_unverified'
     else:
         reason = 'limitation_unverified'
-    return _block(prerequisites, reason)
+    return _block(prerequisites, reason, bytes_status)
 
 
 def _blocked(reason):
@@ -480,7 +508,7 @@ def _assess(public_before, public_after, begin, after, quit_verified, source_bou
     _check_public(public_before)
     _check_public(public_after)
     _check_begin(begin)
-    labels = _check_after(after)
+    labels, bytes_status = _check_after(after)
     _check_flag(quit_verified)
     _check_flag(source_bound)
     _need(correlation is None or (type(correlation) is str and correlation in ('VERIFIED', 'BROKEN')))
@@ -492,7 +520,7 @@ def _assess(public_before, public_after, begin, after, quit_verified, source_bou
         _five_file(labels),
         _correlation_entry(correlation),
         _entry('EXPECTED_RESULT', UNVERIFIED, 'not_supplied'),
-    ])
+    ], bytes_status)
 
 
 def assess(*, public_before, public_after, begin, after, quit_verified, source_bound, correlation=None):

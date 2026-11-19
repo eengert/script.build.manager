@@ -1,4 +1,11 @@
-# Current Handoff — Build Manager Manual Mode (refreshed 2026-11-15)
+# Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
+
+## November 19 checkpoint — A15 S5 byte-identity witness (offline, local, unpushed)
+
+- Lane: Claude, `agent/claude`. Eric approved a scenario-specific D-032 clarification (see `.orchestrator/DECISIONS.md`, 2026-11-19; runbook addendum G). The offline implementation adds an Addons33 whole-file byte-identity witness to the acquisition session. It reports `after.addons33_bytes.status` (`BYTES_IDENTICAL`, `BYTES_DIFFERENT` or `UNVERIFIED`), the driver validates it, and the precondition assessment validates it and refines only the `S5_DATABASE` limitation reason.
+- The assessment cannot promote `S5_DATABASE` to MET: it has no authenticated scenario context, and none was invented. Strict N6, the practical block schema and `NOT_DECIDED` are unchanged. Different or missing bytes are UNVERIFIED, never FAIL. No Addons33 maintenance class exists.
+- `tools/bm_addons33_content.py` and its tests are a superseded, unwired experiment that never received a PASS. They are preserved unchanged.
+- Not independently reviewed, no native run, S6/S4/S8/S9 unresolved, A15 not accepted. The Nov 15 line below that calls the comparator "not integrated" is historical: the offline wiring was retained on 2026-11-17.
 
 ## November 15 checkpoint — D-032 practical beta readiness
 

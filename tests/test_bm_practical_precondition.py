@@ -51,6 +51,8 @@ OUTPUT_VOCABULARY = frozenset((
     'correlation_verified', 'correlation_broken', 'correlation_missing', 'not_supplied',
     'no_witness', 'other_addons33_content_unverified', 'no_unmanaged_census',
     'no_source_tree_census', 'scenario_dependent',
+    'addons33_bytes_identical_scenario_unauthenticated', 'addons33_bytes_differ',
+    'addons33_bytes_unverified',
 ))
 
 
@@ -114,14 +116,21 @@ def strict_for(label):
     return 'PRESERVED' if label in ('EXACT', 'INCONCLUSIVE') else 'CHANGED_OR_MISSING'
 
 
-def after_block(*rows, statuses=None):
+def addons33_bytes(status):
+    """The sibling block AcquisitionSession.finish() emits (bm-a15-addons33-bytes/1)."""
+    return {'schema': 'bm-a15-addons33-bytes/1', 'scope': 'addons33_file_bytes', 'status': status}
+
+
+def after_block(*rows, statuses=None, bytes_status=None):
     rows = rows or EXACT_ROWS
     if statuses is None:
         statuses = [strict_for(row[0]) for row in rows]
     scope = 'PRESERVED' if all(status == 'PRESERVED' for status in statuses) else 'CHANGED_OR_MISSING'
+    if bytes_status is None:
+        bytes_status = 'BYTES_IDENTICAL' if statuses[0] == 'PRESERVED' else 'BYTES_DIFFERENT'
     return {'acquisition': 'ACQUIRED', 'scope_result': scope,
             'files': [{'file': name, 'status': status} for name, status in zip(witness.FILES, statuses)],
-            'practical': practical(*rows)}
+            'practical': practical(*rows), 'addons33_bytes': addons33_bytes(bytes_status)}
 
 
 def begin_block():
@@ -205,6 +214,90 @@ class PreconditionTests(unittest.TestCase):
         self.assertEqual(set(limitations), {'S4', 'S5_DATABASE', 'S6', 'S8', 'S9'})
         for item in limitations.values():
             self.assertEqual(item['status'], 'UNVERIFIED')
+
+    def s5_database(self, block):
+        return next(item for item in block['limitations'] if item['id'] == 'S5_DATABASE')
+
+    def test_addons33_bytes_refine_only_the_s5_database_reason_and_never_promote_it(self):
+        reasons = {'BYTES_IDENTICAL': 'addons33_bytes_identical_scenario_unauthenticated',
+                   'BYTES_DIFFERENT': 'addons33_bytes_differ', 'UNVERIFIED': 'addons33_bytes_unverified'}
+        for status, reason in reasons.items():
+            with self.subTest(status=status):
+                for correlation in (None, 'VERIFIED'):
+                    block = assess(correlation=correlation, after=after_block(bytes_status=status))
+                    self.assertEqual(self.s5_database(block),
+                                     {'id': 'S5_DATABASE', 'status': 'UNVERIFIED', 'reason': reason})
+                    self.assertTrue(all(item['status'] == 'UNVERIFIED' for item in block['limitations']))
+                    self.assertEqual(block['assessment'], 'INCONCLUSIVE')
+                    self.assertEqual(block['verdict'], 'NOT_DECIDED')
+                    self.assertEqual(block['qualification'], 'not_qualified')
+                    # The S5 prerequisite is the identity-and-projection check and is unaffected.
+                    self.assertEqual(entry(block, 'S5')['status'], 'MET')
+
+    def test_unreached_and_invalid_inputs_keep_the_default_s5_database_reason(self):
+        for block in (precondition.not_reached(), assess(after=None)):
+            self.assertEqual(self.s5_database(block)['reason'], 'other_addons33_content_unverified')
+
+    def test_different_bytes_with_an_unchanged_projection_are_not_a_contradiction(self):
+        block = assess(after=after_block(bytes_status='BYTES_DIFFERENT'))
+        self.assertNotEqual(block['reason'], 'input_invalid')
+        self.assertEqual(entry(block, 'S5')['status'], 'MET')
+        self.assertEqual(self.s5_database(block)['status'], 'UNVERIFIED')
+
+    def test_a_byte_difference_is_never_not_met_or_a_failure(self):
+        block = assess(after=after_block(bytes_status='BYTES_DIFFERENT'))
+        self.assertNotIn('NOT_MET', {item['status'] for item in block['limitations']})
+        self.assertEqual(block['reason'], 'prerequisite_unverified')
+
+    def test_invalid_addons33_bytes_blocks_are_rejected_and_never_support_any_result(self):
+        def mutated(change):
+            after = after_block()
+            change(after['addons33_bytes'])
+            return after
+        cases = {
+            'extra_key': lambda b: b.update(extra='BYTES_IDENTICAL'),
+            'missing_status': lambda b: b.pop('status'),
+            'missing_scope': lambda b: b.pop('scope'),
+            'wrong_schema': lambda b: b.update(schema='bm-a15-addons33-bytes/0'),
+            'wrong_scope': lambda b: b.update(scope='addons33_installed'),
+            'status_outside_vocabulary': lambda b: b.update(status='BYTES_PRESERVED'),
+            'status_pass': lambda b: b.update(status='PASS'),
+            'status_lowercase': lambda b: b.update(status='bytes_identical'),
+            'status_not_text': lambda b: b.update(status=True),
+            'status_none': lambda b: b.update(status=None),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                block = assess(after=mutated(change))
+                self.assertInvalid(block)
+                # Invalid evidence supports nothing: the limitation keeps its default reason.
+                self.assertEqual(self.s5_database(block)['reason'], 'other_addons33_content_unverified')
+        for value in (None, [], 'BYTES_IDENTICAL', ('BYTES_IDENTICAL',)):
+            with self.subTest(block=value):
+                after = after_block()
+                after['addons33_bytes'] = value
+                self.assertInvalid(assess(after=after))
+
+    def test_identical_bytes_contradicting_the_strict_addons33_result_are_rejected(self):
+        changed = after_block(('MEANINGFUL', (), 1), *EXACT_ROWS[1:], bytes_status='BYTES_IDENTICAL')
+        self.assertInvalid(assess(after=changed))
+        # Same agreement when only the Addons33 strict row is CHANGED_OR_MISSING.
+        other_changed = after_block(*EXACT_ROWS[:1], ('MEANINGFUL', (), 1), *EXACT_ROWS[2:],
+                                    bytes_status='BYTES_IDENTICAL')
+        self.assertNotEqual(other_changed['files'][0]['status'], 'CHANGED_OR_MISSING')
+        self.assertNotEqual(assess(after=other_changed)['reason'], 'input_invalid')
+
+    def test_identical_bytes_with_a_non_exact_capable_addons33_row_are_rejected(self):
+        after = after_block(*EXACT_ROWS[:1], *EXACT_ROWS[1:], bytes_status='BYTES_IDENTICAL')
+        after['practical']['files'][0].update(classification='MEANINGFUL', meaningful_count=1)
+        after['practical']['classification'] = 'MEANINGFUL'
+        self.assertInvalid(assess(after=after))
+
+    def test_a_comparator_fault_on_an_unchanged_projection_may_pair_with_identical_bytes(self):
+        block = assess(after=after_block(('INCONCLUSIVE', (), 0), *EXACT_ROWS[1:],
+                                         bytes_status='BYTES_IDENTICAL'))
+        self.assertNotEqual(block['reason'], 'input_invalid')
+        self.assertEqual(self.s5_database(block)['status'], 'UNVERIFIED')
 
     def test_changed_library_selection_or_build_tree_fails_s1(self):
         base = public()
@@ -370,7 +463,10 @@ class PreconditionTests(unittest.TestCase):
         pass_label['practical']['files'][1]['classification'] = 'PASS'
         pass_verdict = after_block(*EXACT_ROWS)
         pass_verdict['practical']['verdict'] = 'PASS'
+        no_bytes = after_block()
+        del no_bytes['addons33_bytes']
         cases = {
+            'after_without_addons33_bytes': dict(after=no_bytes),
             'public_not_mapping': dict(public_before=None),
             'public_missing_bundle': dict(public_before={k: v for k, v in public().items() if k != 'bundle'}),
             'library_extra_field': dict(public_before=public(library=library)),
