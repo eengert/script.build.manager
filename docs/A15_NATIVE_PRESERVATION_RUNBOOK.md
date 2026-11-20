@@ -642,7 +642,7 @@ existing grammar; no new audio permission or runtime claim is introduced.
 
 ## Authoritative run card for the A15 Create conflict
 
-**Status: BLOCKED.** This card supersedes the original-product execution inputs. The consolidated delta review passed and controlled staging and Git-bound verification passed on November 19, 2026. Before any native admission or launch, resolve U1's remaining identity binding and obtain Eric's separate authorization for the exact operation. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
+**Status: BLOCKED.** This card supersedes the original-product execution inputs. The consolidated delta review, controlled staging and Git-bound verification passed. The November 20 stopped U1 check established the executable and Estuary XML identities for the accepted effects review. Before native admission or launch, reconcile the outstanding review references below and obtain Eric's separate authorization for the exact operation. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
 
 ### Source and stage provenance
 
@@ -708,11 +708,38 @@ with launch eligibility assessed separately.
 
 | Gate | Evidence to bind and disposition |
 | --- | --- |
-| U1 Kodi API effects | **Open on installed identity.** The accepted consolidated review bounded the call-traceable effects for pinned Kodi `a3a448d26b8d560a65655dab2cd122994dc4e146` and Estuary under the reviewed operator sequence. The supported stopped verifier reports Kodi 21.3, build `20251031-a3a448d26b`, and Info.plist SHA-256 `9f37ef7b63021ef2ab01b98a44f2f62c8eb68c3f61c014510cc3b7166450bcac`. These records do not hash the Kodi executable bytes or installed Estuary assets. An authorized stopped identity binding of the executable and reached Estuary assets is still required. The review found that the keyboard layout action can persist `locale.activekeyboardlayout`. Never focus or select the layout or language key. If either key receives focus or is actuated, or its state cannot be established, stop the scenario and preserve the evidence |
+| U1 Kodi API effects | **Stopped installed identity verified.** Bind the records below to L2 and L2A. The accepted effects review applies to the reviewed Kodi and Estuary identities and the prescribed operator sequence. The native record must establish continuity with the bound executable and assets, actual Estuary use, and compliance with that sequence. The keyboard layout action can persist `locale.activekeyboardlayout`. Never focus or select the layout or language key. If either key receives focus or is actuated, or its state cannot be established, stop the scenario and preserve the evidence |
 | U2 Create temporary staging | `resources/lib/a15_observation.py` observes the directory returned by the existing `TemporaryDirectory` in the actual Create interpreter. Before staged writes it compares the effective cached Python parent and actual direct child, walks the real chain with no-follow, and checks disjointness from the portable home, profile, home add-ons and app add-ons. Known macOS system aliases are recognized. It samples the same chain and leaf identities before cleanup and checks the same parent and absence of the child after cleanup. Fixed markers encode these results without raw paths or environment values. A cold start at the unique first candidate distinguishes the existing Python write/unlink probe in that parent from cold fallback. Use the former only after binding the running Python's tempfile selection behavior to reviewed source and excluding candidate changes. If cold fallback was observed, earlier candidate probe effects stay unresolved unless independently bounded |
 | U3 actual path confinement | Bind the stopped path results to the fresh product and active profile plus the runtime Create, restart and publication root markers below. The Create marker uses the actual ArtifactStore input and BuildLibrary root before store construction, including the existing library lock. The startup markers use actual restart and frozen roots and the lock leaves that the inspected paths opened. The execution proof also uses the existing no-follow Build Library I/O and U2 staging observations. For the no-recovery, store-only route there is no publication write or artifact import to account for. The markers and stopped metadata are bounded observations. Require documented continuity and exclusion of competing writers or redirection through use. A transient substitution or unbounded competing writer cannot be cleared by matching snapshots |
 | U4 startup and independent S7 | For the no-recovery route require stopped journal ABSENT, then the four startup absence/confined observations below plus the guard no-owner marker, all from the authenticated startup interval, and continuity from stopped preflight. Require journal ABSENT after and S7 MET at both boundaries. The actual startup recovery call reports a visible journal including acknowledged; `journal_present` or missing expected observations defeats this route. To admit any other branch, bound its actual effects and destinations under the original U4 requirement. The pending-publication flag remains independent and cannot stand in for journal absence |
 | S4 acquisition | Verify L6–L8, exact root/version, zero public scope, private off, no overlay and no local-capture consent, using the reviewed source path and authenticated native sequence. The completed closure reports whether each artifact-bearing acquisition actually used the verified store branch. Require a fresh store-only marker with confined artifact and install roots. A package-cache import, repository scan, incomplete acquisition, missing marker or an unbounded alias leaves this route unresolved. Existing §5 probe stays optional and cannot prove which branch actually ran. Any alternative must bound actual protected reads and all destinations under the existing S4 proof |
+
+The stopped U1 originals and comparison records are in
+`.qualification-evidence/a15-u1-installed-identity-20261120T130255Z/`.
+The `SHA256SUMS` file has SHA-256
+`6b1a1d4b725f2d96e3faa287b60528c026270a1fff5b3711226020ba1d7c648e`.
+`identify-before.json` and `verify-after.json` establish stopped state and zero
+processes at both boundaries. The latter also binds the verified 89 product and
+five adapter files to the pinned manifest and Git candidate.
+
+- `installed-executable.json` and `installed-reference-comparison.json`
+  record a byte-for-byte match for the installed x86_64 Kodi 21.3 executable
+  and Info.plist against the [Team Kodi macOS release image](https://mirrors.kodi.tv/releases/osx/x86_64/kodi-21.3-Omega-x86_64.dmg).
+  Executable SHA-256 is `565ed77a5279df1d34586ba86bf59d81007d125e6593b18866b139718e4bad3c`.
+  Build `20251031-a3a448d26b` is embedded in the executable and appears in
+  the release Info.plist. The read-only mounted release passed strict
+  signature verification for `org.xbmc.kodi`, Team `QR7RHK8K4X`
+  (`reference-codesign-verify.txt`). The [upstream release tag](https://github.com/xbmc/xbmc/releases/tag/21.3-Omega)
+  points to the reviewed commit `a3a448d26b8d560a65655dab2cd122994dc4e146`.
+- `estuary-xml-sha256.json` records identical bytes for all 105 upstream
+  Estuary XML files, including `addon.xml`, across the installed bundle,
+  the signed release and the pinned source. This covers the dialogs,
+  keyboard, includes and unload actions. The stopped check found no portable
+  `addons/skin.estuary` override. One installed-only file,
+  `xml/script-skinviewtypes-includes.xml`, is recorded in
+  `estuary-include-comparison.json`. The matching upstream XML and the
+  installed-candidate Create XML have no reference to that file. The
+  finding covers the reviewed Create scenario and its reached XML.
 
 U1 source entry points for the accepted conditional review are
 [AddonsOperations.cpp](https://github.com/xbmc/xbmc/blob/a3a448d26b8d560a65655dab2cd122994dc4e146/xbmc/interfaces/json-rpc/AddonsOperations.cpp),
