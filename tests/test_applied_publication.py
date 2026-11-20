@@ -111,6 +111,79 @@ class PublicationTests(unittest.TestCase):
                 "startup.evidence.journal_present", "startup.evidence.publication_roots_confined",
             ])
 
+    def test_startup_excludes_pending_and_owned_journals_from_terminal_evidence(self):
+        for boundary, phase, owner_present in (("B", "pending", False), ("A", "acknowledged", True)):
+            with self.subTest(phase=phase):
+                if boundary == "A":
+                    self.setUp()
+                _, target = self.staged(boundary)
+                if not owner_present:
+                    self.x.store.transaction_path.unlink()
+                self.assertEqual(self.library.publication_journal().state, phase)
+                self.assertEqual(self.x.store.transaction_path.is_file(), owner_present)
+                phases = []
+                with (
+                    patch.object(observation, "_portable_profile", return_value=self.x.base),
+                    patch.object(observation, "_BM_DATA", Path("bm")),
+                    patch.object(observation, "emit", side_effect=phases.append),
+                    patch.object(frozen_install, "emit", side_effect=phases.append),
+                ):
+                    self.assert_complete(target, self.recover())
+                self.assertEqual(phases, [
+                    "startup.evidence.journal_present", "startup.evidence.publication_roots_confined",
+                ])
+
+    def test_startup_marker_requires_confined_roots_and_current_unowned_completion(self):
+        _, target = self.staged("A")
+        owner_path = self.x.store.transaction_path
+        owner_bytes = owner_path.read_bytes()
+        self.assert_complete(target, self.recover())
+        phases = []
+        confined_prefix = [
+            "startup.evidence.journal_present", "startup.evidence.publication_roots_confined",
+        ]
+        lock = Path(self.library.root) / "library.lock"
+        finish = BuildLibrary._record_applied_completion
+        sync = frozen_install._sync_publication_storage
+
+        def sync_then_owner_appears(store):
+            sync(store)
+            if barrier.call_count == 1:
+                owner_path.write_bytes(owner_bytes)
+
+        def finish_then_owner_appears(library, observed, *, resolution_store):
+            disposition = finish(library, observed, resolution_store=resolution_store)
+            owner_path.write_bytes(owner_bytes)
+            return disposition
+
+        with (
+            patch.object(observation, "_portable_profile", return_value=self.x.base),
+            patch.object(observation, "_BM_DATA", Path("bm")),
+            patch.object(observation, "emit", side_effect=phases.append),
+            patch.object(frozen_install, "emit", side_effect=phases.append),
+        ):
+            lock.unlink()
+            self.assert_complete(target, self.recover())
+            self.assertTrue(lock.is_file())
+            self.assertEqual(phases, [
+                "startup.evidence.journal_present", "startup.evidence.publication_roots_unverified",
+            ])
+            phases.clear()
+            with patch.object(BuildLibrary, "_record_applied_completion", return_value="superseded"):
+                self.assertEqual(self.recover().outcome, "superseded")
+            self.assertEqual(phases, confined_prefix)
+            phases.clear()
+            with patch.object(frozen_install, "_sync_publication_storage",
+                              side_effect=sync_then_owner_appears) as barrier:
+                self.assert_complete(target, self.recover())
+            self.assertEqual(phases, confined_prefix)
+            phases.clear()
+            with patch.object(BuildLibrary, "_record_applied_completion", autospec=True,
+                              side_effect=finish_then_owner_appears):
+                self.assertEqual(self.recover().outcome, "complete")
+            self.assertTrue(owner_path.is_file())
+            self.assertEqual(phases, confined_prefix)
+
     def staged(self, boundary="B", prior=True):
         previous = self.x.seed_prior_association() if prior else None
         target = self.x.target()

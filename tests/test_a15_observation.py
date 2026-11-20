@@ -1,4 +1,5 @@
 """Offline coverage for passive A15 collection and refusal to claim evidence."""
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -344,6 +345,48 @@ class A15ObservationTests(unittest.TestCase):
                 alias()
                 self.assertEqual(driver.stopped_path_evidence(target, public), ("ABSENT", None, "UNVERIFIED"))
                 artifact.unlink()
+
+    def test_canonical_bytes_require_original_single_link_file_and_library_chain(self):
+        _, public = self.stopped_state()
+        library = Path(self.library.root)
+        applied = library / "applied.json"
+        association = AppliedBuildAssociation("1" * 64, "profile-one", "2" * 64).to_dict()
+        data = _encode(association)
+        applied.write_bytes(data)
+        public["association"] = association
+        public["trees"]["build-library"][applied.name] = driver.bm.sha256_hex(data)
+        directory_chain = driver._directory_chain
+        with directory_chain(library) as (_, chain):
+            pass
+
+        def identity():
+            info = applied.stat()
+            return (info.st_dev, info.st_ino), info.st_ctime_ns
+
+        original = identity()
+        self.assertEqual(driver._applied_canonical(library, chain, public, original), "TRUE")
+        self.assertEqual(driver._applied_canonical(library, chain, public,
+                                                   (original[0], original[1] - 1)), "UNVERIFIED")
+        applied.rename(self.temp / "previous-applied")
+        applied.write_bytes(data)
+        current = identity()
+        self.assertNotEqual(current[0], original[0])
+        self.assertEqual(driver._applied_canonical(library, chain, public, original), "UNVERIFIED")
+        self.assertEqual(driver._applied_canonical(library, chain[:-1], public, current), "UNVERIFIED")
+
+        opened_chains = []
+
+        @contextmanager
+        def replace_chain_on_recheck(path):
+            with directory_chain(path) as (fd, observed):
+                opened_chains.append(observed)
+                yield fd, observed if len(opened_chains) == 1 else observed[:-1]
+
+        with patch.object(driver, "_directory_chain", replace_chain_on_recheck):
+            self.assertEqual(driver._applied_canonical(library, chain, public, current), "UNVERIFIED")
+        self.assertEqual(opened_chains, [chain, chain])
+        os.link(applied, self.temp / "applied-hardlink")
+        self.assertEqual(driver._applied_canonical(library, chain, public, identity()), "UNVERIFIED")
 
     def test_stopped_observation_error_and_count_limit_are_unverified(self):
         target, public = self.stopped_state()
