@@ -1,5 +1,11 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-19)
 
+## November 19 checkpoint — A15 controlled stage PASS
+
+- Consolidated Claude review PASS for `130833d4..fdb24bb`. One durable supported stage of `99927bb81f7503837032d1e6a49d67d46c468970` used the approved unchanged config. Independent stopped verification had checked/ok Git binding and matched 89 product files and all five adapter 0.0.17 files. Adapter tree SHA-256 `98bc8125d1761ddca9fd2f5d8a785a7b712f44cd0c9069dfb6f7328b491dd2b2`.
+- Manifest `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-instrumented-stage-20261119/stage-20261120T024407Z-99927bb81f75/stage_manifest.json`, SHA-256 `b104fcf93c25a4a4ea2cab92425a0d1f1b044621065217229960d0b7e28e2073`. Original helper outputs, source binding, checksums and verified replaced-tree backups are retained in the new evidence directory.
+- Native A15 remains BLOCKED. Supported verification identified stopped Kodi 21.3 build `20251031-a3a448d26b`. U1 still needs the Kodi executable and installed Estuary asset binding. A later authorization must cover the exact native sequence and adapter use, fresh admission and the pre-READY log baseline. The keyboard layout/language-key stop rule is explicit in the run card.
+
 ## November 19 checkpoint — A15 evidence collection candidate
 
 - Source candidate `99927bb81f7503837032d1e6a49d67d46c468970` adds bounded staging/cleanup, actual store-branch, native root, startup recovery and stopped-path observations. Product tree SHA-256 `431adf98e258de0109f45ec57cfcca53df5004f8f29219b473ba232d30ee7167` (89 files). The driver adds fixed supplemental stopped codes. Accepted comparison, S7 and verdict logic are unchanged.
