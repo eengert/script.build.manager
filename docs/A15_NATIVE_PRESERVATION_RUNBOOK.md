@@ -642,7 +642,7 @@ existing grammar; no new audio permission or runtime claim is introduced.
 
 ## Authoritative run card for the A15 Create conflict
 
-**Status: BLOCKED.** This card supersedes the original-product execution inputs. The consolidated delta review, controlled staging and Git-bound verification passed. The November 20 stopped U1 check established the executable and Estuary XML identities for the accepted effects review. Before native admission or launch, reconcile the outstanding review references below and obtain Eric's separate authorization for the exact operation. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
+**Status: READY FOR ERIC AUTHORIZATION.** This card supersedes the original-product execution inputs. The consolidated delta review, controlled staging and Git-bound verification passed. The November 20 stopped U1 check established the executable and Estuary XML identities for the accepted effects review. The original review records below close the historical review gates. Native admission and launch require Eric's separate authorization and the fresh checks in this card. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
 
 ### Source and stage provenance
 
@@ -667,7 +667,7 @@ The durable stage outputs bind the same manifest and original paths. Their embed
 
 The original comparator, validator, precondition, S4 and S6 review decisions retain their original scope. The comparator, Addons33 witness and precondition source are unchanged. The consolidated Claude delta review passed for `130833d4..fdb24bb`, covering the new product and host evidence routes, with U1 conditional on installed identity. The full relayed report is attached to supervisor item `c6fbbc85-bc3c-4766-87ef-62b154edd6b5`, SHA-256 `8880a0dcd364af0f5df1040f2b4a9828af0b65b406de47db4057e7227e76e649`. Supervisor acceptance is item `acf819d8-a0a9-4d8a-bb20-e8f58cf5ba49`.
 
-The [Supervisor - Build Manager](https://chatgpt.com/c/6af886d5-1964-83e9-8cbc-0201bf682eb1) chat retains full relayed Claude report bodies for the first four rows. The identifiers below identify relay items. Original Claude-session records for these reviews were not located. Review conclusions are R under §1.1. A retrieval can establish a relay item's identity as T.
+The [Supervisor - Build Manager](https://chatgpt.com/c/6af886d5-1964-83e9-8cbc-0201bf682eb1) chat retains full relayed Claude report bodies for the first four rows. The table gives the relay item identifiers. The original session locators follow the table.
 
 | Review | Retained reference and status |
 | --- | --- |
@@ -675,12 +675,39 @@ The [Supervisor - Build Manager](https://chatgpt.com/c/6af886d5-1964-83e9-8cbc-0
 | Driver practical-result validator | Full relayed PASS, item `c19eae93-9692-4f00-8270-dcd20650f18a`, bound to `457e269` with driver blob `72b43c23…` |
 | Practical-precondition assessment | Full relayed PASS, item `7421c788-c1ae-4538-b4e4-09557541154f`, bound to `457e269` with precondition blob `64c19e9d…` |
 | Conditional S4 source justification | Full relayed PASS, item `e523f6fa-f9c4-4542-b7cf-f85079a5270e`, covers `735b847..457e269` and requires authenticated run evidence |
-| S5 byte-witness source work | Prior acceptance reported. Addendum G and `29c45a8` / `6bf489b` identify policy and source. Full review body and original reviewer record were not located |
-| S6 D1 documentation correction | Prior PASS reported. `735b847` identifies the correction. Full report body and original reviewer record were not located. Resolve the retained report reference for L2A |
-| Original run-card safety review | Supervisor chat user item `e1c0047b-cf28-4ad7-8e5b-f8427c81b952` attachment Pasted text(20261119-231905).txt, SHA-256 `93ef8cec300f05b5ad074c988af4308e08e3c7254a4bbadc7aedd041bcdcd4e7`. The relayed report accepted `130833d4` and identified the in-Create U2 observation requirement. Supervisor acceptance is item `b1d82da4-96fd-49ad-8a09-92dea6dc3ba1`. Original Claude-session record was not located |
-| External-practical-adjudication re-review | Historical condition 2 requests a narrow re-review. No retained disposition was located. Reconcile whether it was satisfied or superseded before authorizing execution |
+| S5 byte-witness correction | Original Codex source re-review PASS for `6bf489b36856fe0ebddca26ce142e56ebb0ef3b5`. It accepted fault containment and exact-string validation. The guard refused independent execution, so this verdict covers source. Actual S5 byte-witness adjudication follows the native run |
+| S6 D1 documentation correction | Original Claude re-review PASS for `e5f0526..735b8474c110cce6dd3784c2d75bf7dd2c0bcc31`. It accepted the corrected startup account, attribution and confinement requirements, and L2A provenance. Actual S6 remains subject to U1–U4 and sealed-run evidence |
+| Original run-card safety review | Supervisor chat user item `e1c0047b-cf28-4ad7-8e5b-f8427c81b952` attachment Pasted text(20261119-231905).txt, SHA-256 `93ef8cec300f05b5ad074c988af4308e08e3c7254a4bbadc7aedd041bcdcd4e7`. The relayed report accepted `130833d4` and identified the in-Create U2 observation requirement. Supervisor acceptance is item `b1d82da4-96fd-49ad-8a09-92dea6dc3ba1` |
+| External-practical-adjudication re-review | **Historical condition 2 satisfied.** The original Codex re-review of `731b29b..adaaf9c` found one remaining blocker, the S5 exported-reason mapping. The original final narrow re-review of `adaaf9c..d9caf8b257d593e729f9ca3cd0312e096526cdd1` returned PASS after verifying the single row against `_s5()`. This completes the requested documentation review |
 
-Bind existing reports and decisions by exact references. Retrieve missing report references or reconcile the outstanding requirements in the supervisor record. Do not reconstruct a reviewer report from a summary or repeat accepted reviews for bookkeeping.
+The original review locators below identify JSONL records by session and
+line. The hashes cover the exact record bytes, including the trailing newline.
+Record retrieval and identity are T. The review judgments are R.
+
+- **Codex original archive** `~/.codex/archived_sessions/rollout-2026-11-18T16-46-19-01a1f09f-ff2e-7b53-bdf4-78eb1bef7801.jsonl`.
+  The Addons33 byte-witness correction PASS is line 778, item
+  `msg_0e5530e281bde0a9016aff39e88c8087d284251d046728168e`, record SHA-256
+  `dea5d8075c53d5391e81e7e0d905810c887934699b8b50b262a137124a692b93`.
+  For condition 2, line 186 identifies the sole remaining mapping blocker.
+  Lines 193 and 200 bind the narrow follow-up to the exact Git delta and
+  exported reason `addons33_exact_and_identity_match`. Its PASS is line 203,
+  item `msg_0e5530e281bde0a9016afe3630fb5087d29b079c280cfb3d49`, record SHA-256
+  `94b4f8a21244a8418fae0a14737a94c1f16b99c17ca576a38ad6cf6dc6218718`.
+- **Claude original session** `~/.claude/projects/-Users-eengert-Documents-Kodi-worktrees-script-build-manager-claude/4b985fc5-5b80-4de0-9d20-4f5368c1f9cd.jsonl`.
+  The S6 D1 correction PASS is line 230, message
+  `4fe955b5-3a13-4a4f-b3fc-0d446e80c78e`, record SHA-256
+  `cd18799439951d66984c3e2d93bfb19a9800bf420738f8bb0bf049d2847abdd0`.
+  The original PASS messages for S4, comparator, driver validator, practical
+  precondition, run-card safety and consolidated evidence delta are on lines
+  399, 606, 728, 854, 1203 and 1784 respectively.
+- **Supervisor acceptance summary** item `359f6644-8776-426a-a288-01c0a1349b3c`
+  confirms the prior S5 and S6 PASS decisions. Use the original records above
+  for their scope and findings. The earlier relayed reports retain the
+  provenance listed in the table.
+
+Bind these records in L2A and retain their references through independent
+adjudication. The offline review decisions establish eligibility to seek
+authorization. S5 and S6 still require actual-run disposition.
 
 ### Evidence routes and their limits
 
@@ -765,8 +792,10 @@ specify the stop and recovery boundaries below. No prelaunch verification or
 native operation is authorized by the offline repair.
 
 - Work only in `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`,
-  branch `agent/codex`, at the exact independently reviewed full commit supplied
-  in that authorization. Preserve the four known `.agent` histories.
+  branch `agent/codex`, at the exact full commit named in that authorization.
+  Bind any documentation-only continuation to the independently reviewed
+  host-tool bytes at `fdb24bbd027f6950e79735286578035df62521fe`.
+  Preserve the four known `.agent` histories.
 - Only `/Applications/Kodi Build Manager Test.app`, portable `-p`, is eligible.
   Use unchanged automated admission. No repeated human closure confirmation is
   required. Any refusal stops target access; never query or terminate a foreign

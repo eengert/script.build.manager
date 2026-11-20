@@ -1,9 +1,14 @@
 # Current Handoff — Build Manager Manual Mode (refreshed 2026-11-20)
 
+## November 20 checkpoint — A15 ready for Eric authorization
+
+- Recovered original Codex PASS for the S5 byte-witness correction at `6bf489b` and original Claude PASS for the S6 D1 documentation correction at `735b847`. The original November 18 Codex review sequence closes historical condition 2. The `adaaf9c` re-review left one S5 export-mapping blocker, and the one-row `d9caf8b` re-review passed. The run card records exact original references, hashes and verdict scopes.
+- The next step is Eric's separate authorization for one pinned portable Test.app Create-conflict attempt, including adapter 0.0.17, physical operator input, bounded evidence collection and first use of the approved authenticated PID-bound HTTP quit. Fresh admission, the pre-READY log baseline, actual S4–S9 evidence and independent sealed-ledger adjudication still apply. No native result has been established.
+
 ## November 20 checkpoint — A15 U1 installed identity VERIFIED
 
 - Stopped admission and final Git-bound verification bracketed the comparison. The installed x86_64 Kodi 21.3 build `20251031-a3a448d26b` exactly matched the signed Team Kodi release executable, SHA-256 `565ed77a5279df1d34586ba86bf59d81007d125e6593b18866b139718e4bad3c`. All 105 upstream Estuary XML files matched the release and reviewed commit. No portable Estuary override was present. The installed-only XML and include check are recorded with the original observations in `.qualification-evidence/a15-u1-installed-identity-20261120T130255Z/`. The SHA-256 of its `SHA256SUMS` is `6b1a1d4b725f2d96e3faa287b60528c026270a1fff5b3711226020ba1d7c648e`.
-- Native A15 remains BLOCKED. Reconcile outstanding review references and obtain Eric's separate authorization for the pinned scenario, adapter and operator sequence. The run card requires fresh stopped admission, the pre-READY log baseline, authenticated native evidence including the Estuary and keyboard restrictions, and independent adjudication after the ledger is sealed.
+- The U1 checkpoint left the historical review references and separate native authorization pending. The reconciliation above closes the historical review references.
 
 ## November 19 checkpoint — A15 controlled stage PASS
 
