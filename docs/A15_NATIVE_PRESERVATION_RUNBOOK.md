@@ -642,14 +642,14 @@ existing grammar; no new audio permission or runtime claim is introduced.
 
 ## Authoritative run card for the A15 Create conflict
 
-**Status: READY FOR ERIC AUTHORIZATION.** This card supersedes the original-product execution inputs. The consolidated delta review, controlled staging and Git-bound verification passed. The November 20 stopped U1 check established the executable and Estuary XML identities for the accepted effects review. The original review records below close the historical review gates. Native admission and launch require Eric's separate authorization and the fresh checks in this card. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
+**Status: BLOCKED ON DOCUMENTATION REVIEW, CONTROLLED STAGING AND SEPARATE NATIVE AUTHORIZATION.** The reviewed G1/G2 source supports the bounded journal-present route below. The prior stage and U1 identity check remain historical evidence. Native admission requires the fresh manifest, identity continuity, separate authorization and all checks in this card. The sole scenario is `BM-ITEM8-INSTALL-20261015` 1.0.0, only `metadata.generic.albums` 1.0.20 selected, current skin excluded, private capture off, zero public configuration settings and files, expected 32733.
 
 ### Source and stage provenance
 
-- Worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`. Instrumented product and host-tool source candidate `99927bb81f7503837032d1e6a49d67d46c468970`, Git tree `096a0624182ef06df3514f08eeff5a5fa9513d82`. Its product tree SHA-256 is `431adf98e258de0109f45ec57cfcca53df5004f8f29219b473ba232d30ee7167` (89 files). The `resources` Git tree is `efe9b903279e00d2a67b508e6afdd05159cf6c86`.
-- The new host driver SHA-256 is `a7dc321a501ae6b0704b99fecfed9569586147ae8b3cf45cbf47988142c0d340`. The staging helper SHA-256 is still `eabee188c999d2e21738e70fa10e98bf082eec7931ebb5cbeb2bb1614797311a`. The staged adapter is `0.0.17`, with five files and tree SHA-256 `98bc8125d1761ddca9fd2f5d8a785a7b712f44cd0c9069dfb6f7328b491dd2b2`. The supported verifier checked its exact tree and generated source binding with the new candidate. Approval for native A15 use remains pending.
-- **`A15_MANIFEST`** is `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-instrumented-stage-20261119/stage-20261120T024407Z-99927bb81f75/stage_manifest.json`, SHA-256 `b104fcf93c25a4a4ea2cab92425a0d1f1b044621065217229960d0b7e28e2073`. Use this exact path and hash in L1, pre-run verification, the driver, READY correlation and final verification. Bind the later authorized host SHA to the reviewed host bytes. The staging host was `fdb24bbd027f6950e79735286578035df62521fe`, with a documentation-only delta from `99927bb`.
-- Staging and verification records are under `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-instrumented-stage-20261119`. `stage-dry-run.json` and `stage-durable.json` agree on the product, adapter and approved configuration fingerprint. `verify-after-stage.json` records stopped state and zero processes, installed equality to manifest and candidate, and checked/ok Git binding for 89/89 product and 5/5 adapter files. `source-binding.json`, `verification-binding.json` and `SHA256SUMS` record the source, helper and evidence identities. The helper retained the replaced trees in the run directory. Fresh stopped admission remains required for native qualification.
+- Worktree `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`, branch `agent/codex`. Reviewed G1/G2 source `6d43aec84b905acc0f1d6af6368a80436d5c4699`, Git tree `199bb3b762964160f9d9f326cbafd45dab3853a5`, resources tree `9bd0f0517da0fbba90d9601b48452df95c9d327c`, 89-file product tree SHA-256 `5fd1d59a799216b30e8751a76ec02376890812dca18ded7016dcc84a8d98fdca`. A test or documentation continuation must match these product and host-tool bytes.
+- Reviewed driver SHA-256 `f9b41123a550c9c5c63c8db8ad3eddb31a1195429b412b7c8f97479cd25d7531`. Staging helper SHA-256 `eabee188c999d2e21738e70fa10e98bf082eec7931ebb5cbeb2bb1614797311a`. Adapter source is unchanged. Controlled staging must regenerate and verify the five-file adapter 0.0.17 tree with the reviewed product binding. Native authorization must name that exact adapter tree.
+- **`A15_MANIFEST` is pending.** Use only the fresh absolute path and SHA-256 established by separately authorized controlled staging and stopped Git-bound verification for the reviewed source. Bind that single manifest and the exact authorized host revision in L1, pre-run verification, READY and final verification. Stop before driver startup if the manifest or binding is missing.
+- The prior stage of `99927bb81f7503837032d1e6a49d67d46c468970` uses `.qualification-evidence/a15-instrumented-stage-20261119/stage-20261120T024407Z-99927bb81f75/stage_manifest.json`, SHA-256 `b104fcf93c25a4a4ea2cab92425a0d1f1b044621065217229960d0b7e28e2073`. The stopped verification, source binding and replaced-tree backups remain historical. Its adapter tree SHA-256 `98bc8125d1761ddca9fd2f5d8a785a7b712f44cd0c9069dfb6f7328b491dd2b2` applies to that stage only.
 - The five recovered records bind the original `bbfbb7e440b7093eb3ccff7576b23888930d4021` product, its 88-file tree and the November 18 installation. They are historical and cannot admit the instrumented candidate. The older `a5a4a23` and `d2a7897` manifests are also ineligible.
 - Original records remain under `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-claude/.qualification-evidence/bm-claude-final-candidate-stage-20261118`. The same relative paths identify the byte-for-byte copies under `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex/.qualification-evidence/a15-pinned-stage-provenance-20261119`.
 
@@ -705,6 +705,11 @@ Record retrieval and identity are T. The review judgments are R.
   for their scope and findings. The earlier relayed reports retain the
   provenance listed in the table.
 
+The **A15 U4 G1/G2 DELTA REVIEW: PASS** is in the same original Claude
+session at line 2569, message `8c7a6742-c87e-4f9c-97d6-2f2d65a19178`,
+record SHA-256 `06cd87933f15707246258d193aeb357db0a8102f331936cd6ec77e943f189c71`.
+It covers `6d43aec` and required test-only T1 coverage.
+
 Bind these records in L2A and retain their references through independent
 adjudication. The offline review decisions establish eligibility to seek
 authorization. S5 and S6 still require actual-run disposition.
@@ -724,22 +729,89 @@ two startup lock leaves and checks the publication journal's presence against
 the existing Build Library tree observation. The probe reads metadata, applies a
 4,096-entry and depth-16 bound, and retains identities only in memory.
 `ready.json.a15_stopped_evidence` exports `journal` as ABSENT, PRESENT or UNVERIFIED
-and `paths` as OBSERVED or UNVERIFIED. On completed comparison,
+and `paths` as OBSERVED or UNVERIFIED. It exports `applied_canonical` as
+TRUE, FALSE or UNVERIFIED. TRUE binds the admitted association, public-tree
+digest and stable no-follow applied-file read to the canonical bytes. On
+completed comparison,
 `result.json.a15_stopped_evidence` exports `journal_before`, `journal_after` and
 `paths` as STABLE_BOUNDARIES, DIFFERENT or UNVERIFIED. Ordinary startup may create
 a previously absent restart or frozen-install lock. Changes to an existing lock
 or to a public leaf identity prevent a stable result. Codes expose no path, name
-or inode. The controller must cancel before launch unless journal is ABSENT and
-paths is OBSERVED for this no-recovery route. READY is the driver handshake,
-with launch eligibility assessed separately.
+or inode. READY is the driver handshake. The controller must also satisfy the
+explicitly authorized route below before launch.
 
 | Gate | Evidence to bind and disposition |
 | --- | --- |
 | U1 Kodi API effects | **Stopped installed identity verified.** Bind the records below to L2 and L2A. The accepted effects review applies to the reviewed Kodi and Estuary identities and the prescribed operator sequence. The native record must establish continuity with the bound executable and assets, actual Estuary use, and compliance with that sequence. The keyboard layout action can persist `locale.activekeyboardlayout`. Never focus or select the layout or language key. If either key receives focus or is actuated, or its state cannot be established, stop the scenario and preserve the evidence |
 | U2 Create temporary staging | `resources/lib/a15_observation.py` observes the directory returned by the existing `TemporaryDirectory` in the actual Create interpreter. Before staged writes it compares the effective cached Python parent and actual direct child, walks the real chain with no-follow, and checks disjointness from the portable home, profile, home add-ons and app add-ons. Known macOS system aliases are recognized. It samples the same chain and leaf identities before cleanup and checks the same parent and absence of the child after cleanup. Fixed markers encode these results without raw paths or environment values. A cold start at the unique first candidate distinguishes the existing Python write/unlink probe in that parent from cold fallback. Use the former only after binding the running Python's tempfile selection behavior to reviewed source and excluding candidate changes. If cold fallback was observed, earlier candidate probe effects stay unresolved unless independently bounded |
 | U3 actual path confinement | Bind the stopped path results to the fresh product and active profile plus the runtime Create, restart and publication root markers below. The Create marker uses the actual ArtifactStore input and BuildLibrary root before store construction, including the existing library lock. The startup markers use actual restart and frozen roots and the lock leaves that the inspected paths opened. The execution proof also uses the existing no-follow Build Library I/O and U2 staging observations. For the no-recovery, store-only route there is no publication write or artifact import to account for. The markers and stopped metadata are bounded observations. Require documented continuity and exclusion of competing writers or redirection through use. A transient substitution or unbounded competing writer cannot be cleared by matching snapshots |
-| U4 startup and independent S7 | For the no-recovery route require stopped journal ABSENT, then the four startup absence/confined observations below plus the guard no-owner marker, all from the authenticated startup interval, and continuity from stopped preflight. Require journal ABSENT after and S7 MET at both boundaries. The actual startup recovery call reports a visible journal including acknowledged; `journal_present` or missing expected observations defeats this route. To admit any other branch, bound its actual effects and destinations under the original U4 requirement. The pending-publication flag remains independent and cannot stand in for journal absence |
+| U4 startup and independent S7 | Use the route selected in L1 and its exact startup and final evidence below. S7 remains independent at both boundaries. A clear pending-publication flag cannot establish journal absence or prove the retained journal is acknowledged |
 | S4 acquisition | Verify L6–L8, exact root/version, zero public scope, private off, no overlay and no local-capture consent, using the reviewed source path and authenticated native sequence. The completed closure reports whether each artifact-bearing acquisition actually used the verified store branch. Require a fresh store-only marker with confined artifact and install roots. A package-cache import, repository scan, incomplete acquisition, missing marker or an unbounded alias leaves this route unresolved. Existing §5 probe stays optional and cannot prove which branch actually ran. Any alternative must bound actual protected reads and all destinations under the existing S4 proof |
+
+#### U4 startup routes
+
+Select the route in L1 before READY and bind its supporting facts in L2 and
+L2A. Stop on refused, missing, inconsistent or uncertain evidence. A
+different journal state requires separate authorization and an accepted
+evidence procedure for that state.
+
+- **Journal absent.** Require `journal=ABSENT` and `paths=OBSERVED` in
+  READY with stopped-to-startup continuity. Require the ordered startup
+  observations `guard_frozen_owner_absent`, `restart_root_confined`,
+  `publication_roots_confined`, `journal_and_frozen_owner_absent` and
+  `frozen_owner_absent_at_return`. Require `journal_after=ABSENT`.
+  A journal-present observation invalidates this route.
+- **Canonical acknowledged journal.** This route applies only to the exact
+  Create-conflict scenario above. Require fresh stopped, bounded no-follow
+  evidence of a stable validated acknowledged journal, candidate equality to
+  parsed applied authority, exact canonical applied bytes, and valid bound
+  resolution and saved-build authority. Prove absence of active restart,
+  frozen and capture owners, conflicting holds and contradictory pending
+  publication. Establish confinement and an existing safe
+  `build-library/library.lock` before launch. Bind these observations and the
+  verified installed source to the original READY with `journal=PRESENT`,
+  `paths=OBSERVED` and `applied_canonical=TRUE`. READY supplements the
+  independent stopped authority, owner and lock observations. The prior
+  classification receipt in `.qualification-evidence/a15-journal-classification-20261120T153255Z/journal-classification.json`
+  (SHA-256 `b13e43b5c398718fbbef746c2ee55720ee9999c297ce82da9893af996204bbf7`)
+  is historical evidence of this case.
+
+For the canonical acknowledged route, require these exact
+`startup.evidence.` phases in order, from authenticated launch through
+pre-Create observation.
+
+1. `guard_frozen_owner_absent`
+2. `restart_root_confined`
+3. `journal_present`
+4. `publication_roots_confined`
+5. `acknowledged_publication_no_owner_completed`
+
+The service calls BM-020 before BM-022 (`service.py:17-20`). The guard
+emits first, followed by restart-root observation on the no-transaction
+classification (`frozen_install.py:4945`, `startup.py:122-145`).
+Publication recovery reports journal presence before root observation
+(`frozen_install.py:4827-4838`). That observation checks the frozen-store and
+library locks and the resolution directory (`a15_observation.py:199-214`).
+The final phase follows successful completion and durability checks, with a
+bounded terminal recheck of the journal, canonical applied bytes and frozen
+owner absence (`frozen_install.py:4906-4910`, `a15_observation.py:216-235`).
+It establishes those terminal conditions. Excluding an earlier applied rewrite
+still requires the independent READY and stopped-boundary proof, continuity
+of publication authority, confinement of the actual lock and sync destinations,
+and exclusion of competing writers or redirection.
+
+The journal-absent-only phases `journal_and_frozen_owner_absent` and
+`frozen_owner_absent_at_return` cannot satisfy this sequence. A contradictory,
+unverified, missing or out-of-order startup phase leaves U4 unresolved. The
+canonical acknowledged route requires `journal_after=PRESENT`,
+`paths=STABLE_BOUNDARIES` and `public_comparison=PRESERVED` in the original
+result.json, plus unchanged acknowledged journal and canonical applied
+authority at the final stopped boundary, owner absence and no conflicting
+holds. Require independent S7 closure, strict N6 and all applicable S1–S9 and
+U1–U4 evidence. The expected 32733 conflict is required. Preservation is
+adjudicated separately under the existing D-032 classifications.
+
+#### U1 installed identity
 
 The stopped U1 originals and comparison records are in
 `.qualification-evidence/a15-u1-installed-identity-20261120T130255Z/`.
@@ -784,8 +856,10 @@ Use the actual installed runtime's source identity in adjudication.
 
 Eric's later authorization must name the full reviewed host and staged
 product identities, manifest and adapter 0.0.17, the fixed portable Test.app
-target, the exact scenario, and the operator. It must cover the stopped
-admission, approved evidence collection, one launch, scoped observation and UI
+target, the exact scenario, selected U4 route and operator. It must cover
+stopped admission, approved evidence collection (including bounded passive
+authority checks at both stopped boundaries for the canonical acknowledged
+route), one launch, scoped observation and UI
 navigation, physical B-1 input, one confirmation, verified UI exit, one
 authenticated PID-bound quit and final stopped verification. It must also
 specify the stop and recovery boundaries below. No prelaunch verification or
@@ -793,8 +867,8 @@ native operation is authorized by the offline repair.
 
 - Work only in `/Users/eengert/Documents/Kodi/worktrees/script.build.manager-codex`,
   branch `agent/codex`, at the exact full commit named in that authorization.
-  Bind any documentation-only continuation to the independently reviewed
-  host-tool bytes at `fdb24bbd027f6950e79735286578035df62521fe`.
+  Bind any test or documentation continuation to the independently reviewed
+  host-tool bytes at `6d43aec84b905acc0f1d6af6368a80436d5c4699`.
   Preserve the four known `.agent` histories.
 - Only `/Applications/Kodi Build Manager Test.app`, portable `-p`, is eligible.
   Use unchanged automated admission. No repeated human closure confirmation is
@@ -1033,10 +1107,14 @@ Do not retry, switch quit transports, or infer shutdown from CANCEL.
    fresh single-process `begin()`. Observe stdout READY and durable ready.json,
    verify its host/manifest/staged identities and record observation time.
    READY is not permission to execute; the separate native task supplies that.
-2. Check the driver's stopped evidence in the original ready.json. For the
-   no-recovery route require `journal=ABSENT` and `paths=OBSERVED`. Stop before
-   launch and CANCEL the original session on any other value or absent field.
-   Only after observed READY and these checks, invoke supported `test_app_launch` once. Record
+2. Check the original ready.json against the route named in L1 and the
+   independent stopped observations in L2/L2A. The absent route requires
+   `journal=ABSENT` and `paths=OBSERVED`. The canonical acknowledged route
+   requires `journal=PRESENT`, `paths=OBSERVED` and `applied_canonical=TRUE`,
+   plus every stopped authority and owner prerequisite under U4 startup routes.
+   On a mismatch or missing evidence, stop before launch and CANCEL the original
+   session. Only after observed READY and these checks, invoke supported
+   `test_app_launch` once. Record
    its timestamped call/result, then immediately obtain the authoritative PID
    through the existing read-only helper before any UI action:
 
@@ -1254,8 +1332,8 @@ by itself.
 
 **Filter in memory; never print log lines.** Accept only a complete diagnostic
 message of the form `[script.build.manager] diagnostic phase=create.capture.X`
-after the ordinary Kodi timestamp/thread/log-level envelope, with no extra
-message suffix. Match X against this exact allowlist, also checked against the
+after the full Kodi timestamp, thread, log-level and `<logger>:` envelope, with
+no extra message suffix. Match X against this exact allowlist, also checked against the
 staged candidate's `failure_diagnostics.PHASES`:
 
 ```text
@@ -1282,7 +1360,8 @@ allowlist. Use each only for the stated boundary.
 | --- | --- |
 | `startup.evidence.guard_frozen_owner_absent`, `startup.evidence.restart_root_confined` | Existing guard inspected no frozen transaction and both BM-020 classifications were no transaction, with the actual portable restart root and safe lock leaf observed |
 | `startup.evidence.publication_roots_confined`, `startup.evidence.journal_and_frozen_owner_absent`, `startup.evidence.frozen_owner_absent_at_return` | Actual recovery call used the confined library and frozen roots and read no journal and no frozen transaction. Frozen startup then returned without a frozen owner |
-| `startup.evidence.journal_present`, `startup.evidence.restart_root_unverified`, `startup.evidence.publication_roots_unverified` | No-recovery and confinement proof unavailable from this sequence |
+| `startup.evidence.journal_present`, `startup.evidence.publication_roots_confined`, `startup.evidence.acknowledged_publication_no_owner_completed` | Ordered journal-present portion of the canonical acknowledged route. Require the guard and restart phases first and the independent stopped and READY evidence described under U4 startup routes |
+| `startup.evidence.restart_root_unverified`, `startup.evidence.publication_roots_unverified` | Startup confinement proof is unavailable |
 | `create.evidence.roots_confined`, `create.evidence.acquisition_store_only` | Actual Create storage roots observed and the completed artifact-bearing closure used only verified ArtifactStore hits |
 | `create.evidence.roots_unverified`, `create.evidence.acquisition_unverified` | An actual root or acquisition route could not support the bounded claim |
 | Exactly one of `create.evidence.staging_confined_before`, `create.evidence.staging_confined_first_candidate_before`, `create.evidence.staging_confined_cold_before` | Before writes, the actual stage was confined. Respectively cached Python selection, a cold unique first candidate, or a cold selection whose earlier probes are unbounded |
@@ -1291,8 +1370,8 @@ allowlist. Use each only for the stated boundary.
 Discard all other messages and surrounding content without output. Retain only
 the ordered fixed phase names, times, source and freshness outcomes and original
 sanitized tool response. Append L2A references after those records exist, before
-sealing. The no-recovery, store-only positive route needs all required markers
-with no contradicting or unresolved ones. For U2 it needs one confined stage
+sealing. The authorized startup route and store-only acquisition require all
+their markers with no contradictions or unresolved observations. For U2 require one confined stage
 observation and the matching cleanup observation. The cold unique-first marker
 also needs the reviewed installed tempfile semantics described above. Do not retain raw bytes, raw
 lines, headers, thread identifiers, private-value hashes or unrelated content.
