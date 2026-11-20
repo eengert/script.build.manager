@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from resources.lib import build_library as lib
+from resources.lib import a15_observation as observation, build_library as lib, frozen_install
 from resources.lib.build_library import BuildLibrary, LibraryInstallTarget, LibrarySource
 from resources.lib.config import ConfigurationInspector, ReadOnlyConfigurationBackend
 from resources.lib.frozen import AddonCaptureNode, ProvenanceStatus
@@ -63,6 +63,53 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual((applied.entry_id, applied.device_profile_id),
                          (target.source.entry_id, target.device_profile_id))
         self.assertEqual(applied.resolution_fingerprint, result.resolution_manifest.resolution_fingerprint)
+
+    def test_canonical_acknowledged_startup_observes_roots_and_completes_without_writes(self):
+        target = self.x.target()
+        self.assert_complete(target, self.install(target))
+        journal = Path(self.library.root) / "applied-publication.json"
+        applied = journal.with_name("applied.json")
+        before = (journal.read_bytes(), applied.read_bytes(), self.snapshot(), self.library.selection_state())
+        phases = []
+        with (
+            patch.object(observation, "_portable_profile", return_value=self.x.base),
+            patch.object(observation, "_BM_DATA", Path("bm")),
+            patch.object(observation, "emit", side_effect=phases.append),
+            patch.object(frozen_install, "emit", side_effect=phases.append),
+            patch.object(lib, "_atomic", side_effect=AssertionError("unexpected publication write")) as write,
+            patch.object(frozen_install, "write_lifecycle_record",
+                         side_effect=AssertionError("unexpected owner write")) as owner_write,
+        ):
+            self.assert_complete(target, self.recover())
+            self.assertEqual(phases, [
+                "startup.evidence.journal_present",
+                "startup.evidence.publication_roots_confined",
+                "startup.evidence.acknowledged_publication_no_owner_completed",
+            ])
+            write.assert_not_called()
+            owner_write.assert_not_called()
+            self.assertEqual(before, (journal.read_bytes(), applied.read_bytes(),
+                                      self.snapshot(), self.library.selection_state()))
+
+            # A late durability failure does not produce the completion marker.
+            phases.clear()
+            with patch.object(frozen_install, "_sync_publication_storage",
+                              side_effect=[None, None, OSError("late sync failure")]):
+                self.assertEqual(self.recover().outcome, "needs_attention")
+            self.assertEqual(phases, [
+                "startup.evidence.journal_present", "startup.evidence.publication_roots_confined",
+            ])
+
+            # A stale completion outcome alone cannot prove retained authority.
+            phases.clear()
+            def remove_journal(*args, **kwargs):
+                journal.unlink()
+                return "complete"
+            with patch.object(BuildLibrary, "_record_applied_completion", side_effect=remove_journal):
+                self.assertEqual(self.recover().outcome, "complete")
+            self.assertEqual(phases, [
+                "startup.evidence.journal_present", "startup.evidence.publication_roots_confined",
+            ])
 
     def staged(self, boundary="B", prior=True):
         previous = self.x.seed_prior_association() if prior else None

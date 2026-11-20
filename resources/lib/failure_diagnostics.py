@@ -31,6 +31,7 @@ PHASES = frozenset({
     'startup.evidence.publication_roots_confined',
     'startup.evidence.publication_roots_unverified',
     'startup.evidence.journal_present',
+    'startup.evidence.acknowledged_publication_no_owner_completed',
     'startup.evidence.journal_and_frozen_owner_absent',
     'startup.evidence.frozen_owner_absent_at_return',
     'status.provider', 'status.presentation', 'status.view_model',

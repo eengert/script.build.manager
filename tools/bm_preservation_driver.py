@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import select
 import stat
 import sys
@@ -23,7 +24,9 @@ from tools import bm_public_preservation_witness as witness
 from tools import bm_practical_preservation_comparator as comparator
 from tools import bm_practical_precondition as precondition
 from resources.lib.a15_observation import _directory_chain
-from resources.lib.build_library import BuildLibrary
+from resources.lib.build_library import (
+    AppliedBuildAssociation, BuildLibrary, STATE_LIMIT, _encode, _json, _read_at,
+)
 from resources.lib.frozen_install import FrozenInstallStore
 from resources.lib.capture_lifecycle import FILENAME as CAPTURE_RECORD
 
@@ -174,6 +177,36 @@ def _public_path_identities(fd, public_tree, device, budget, depth=0):
     return result
 
 
+def _applied_canonical(library, library_chain, public, applied_identity):
+    """Bind the admitted digest and association to the same stopped file."""
+    try:
+        digest = public["trees"]["build-library"]["applied.json"]
+        if type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            return "UNVERIFIED"
+        applied = AppliedBuildAssociation.from_dict(public["association"])
+        with _directory_chain(library) as (fd, chain):
+            if chain != library_chain:
+                return "UNVERIFIED"
+            before = isolation.exists(fd, "applied.json")
+            if (before is None or not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or (tuple(isolation.identity(before)), before.st_ctime_ns) != applied_identity):
+                return "UNVERIFIED"
+            data = _read_at(fd, "applied.json", STATE_LIMIT)
+            after = isolation.exists(fd, "applied.json")
+            fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+            if (data is None or after is None or len(data) != before.st_size
+                    or any(getattr(before, field) != getattr(after, field) for field in fields)
+                    or bm.sha256_hex(data) != digest
+                    or AppliedBuildAssociation.from_dict(_json(data)) != applied):
+                return "UNVERIFIED"
+        with _directory_chain(library) as (_, fresh_chain):
+            if chain != fresh_chain:
+                return "UNVERIFIED"
+        return "TRUE" if bm.sha256_hex(_encode(applied.to_dict())) == digest else "FALSE"
+    except Exception:
+        return "UNVERIFIED"
+
+
 def stopped_path_evidence(target, public):
     """Supplemental path/journal facts from the admitted, stopped target."""
     journal = "UNVERIFIED"
@@ -209,9 +242,13 @@ def stopped_path_evidence(target, public):
                     raise ValueError("public root changed")
         if not isinstance(public["trees"]["frozen-artifacts"].get("artifacts"), dict):
             raise ValueError("unverified artifact directory")
-        return journal, (root_chain, trees, locks)
+        canonical = "UNVERIFIED"
+        if journal != "UNVERIFIED":
+            canonical = _applied_canonical(
+                library, library_chain, public, trees["build-library"][1].get("applied.json"))
+        return journal, (root_chain, trees, locks), canonical
     except Exception:
-        return journal, None
+        return journal, None, "UNVERIFIED"
 
 
 def stopped_path_comparison(before, after):
@@ -487,7 +524,7 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         evidence = Evidence(evidence_path, services)
         need(not pending(signals), 'protocol_invalid')
         public_before = public_state(services, manifest, manifest_sha)
-        journal_before, paths_before = stopped_path_evidence(services.target, public_before)
+        journal_before, paths_before, applied_canonical = stopped_path_evidence(services.target, public_before)
         session = AcquisitionSession(services, manifest=manifest, git_repo=REPO)
         begin = project_acquisition(session.begin(), 'before')
         need(isolation.exists(evidence.fd, 'quit.json') is None, 'quit_unverified')
@@ -497,7 +534,8 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
             'host_commit':host_commit,'manifest_sha256':manifest_sha,
             'staged_candidate':manifest['candidate']['commit'], 'public_baseline_acquired':True,
             'a15_stopped_evidence': {'journal': journal_before,
-                                     'paths': 'OBSERVED' if paths_before is not None else 'UNVERIFIED'},
+                                     'paths': 'OBSERVED' if paths_before is not None else 'UNVERIFIED',
+                                     'applied_canonical': applied_canonical},
             'begin':begin, 'native_operation_authorized':False})
         announce(output, 'READY')
         signal = wait_signal(signals)
@@ -505,7 +543,7 @@ def run(services, *, manifest_path, evidence_path, host_commit, signals, output)
         evidence.quit_receipt(public_before['bundle'], ready_ns)
         host_source(services, host_commit)
         public_after = public_state(services, manifest, manifest_sha)
-        journal_after, paths_after = stopped_path_evidence(services.target, public_after)
+        journal_after, paths_after, _ = stopped_path_evidence(services.target, public_after)
         after = project_acquisition(session.finish(), 'after')
         public_comparison = 'PRESERVED' if public_before == public_after else 'CHANGED_OR_MISSING'
         result.update(after=after, public_comparison=public_comparison)

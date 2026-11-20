@@ -38,7 +38,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
-from resources.lib.a15_observation import observe_publication_roots
+from resources.lib.a15_observation import (
+    observe_acknowledged_publication_completion, observe_publication_roots,
+)
 from resources.lib.addons import KodiRuntimeAddonBackend, RepositoryPackage
 from resources.lib.artifacts import ArtifactStore, ArtifactValidationError, validate_addon_zip
 from resources.lib.build_library import LibraryInstallTarget, LibraryError
@@ -4824,9 +4826,13 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
                 return None
         observed = publication if publication is not None else library.publication_journal()
         transaction = target.inspect()
+        acknowledged_without_owner = None
         if startup_observation and publication is None:
             if observed is not None:
                 emit("startup.evidence.journal_present")
+                if (observe_publication_roots(target, library, journal_present=True)
+                        and observed.state == "acknowledged" and transaction is None):
+                    acknowledged_without_owner = observed
             elif transaction is None:
                 observe_publication_roots(target, library)
                 emit("startup.evidence.journal_and_frozen_owner_absent")
@@ -4898,6 +4904,9 @@ def recover_applied_publication(*, store=None, library=None, policy_backend=None
                 if disposition == "current":
                     raise FrozenInstallStateConflict("publication lifecycle cleanup is incomplete")
         _sync_publication_storage(target)
+        if (acknowledged_without_owner is not None and observed == acknowledged_without_owner
+                and transaction is None and disposition == "complete"):
+            observe_acknowledged_publication_completion(target, library, observed)
         return resolved(disposition, resolution if disposition == "complete" else None)
     except Exception:
         return FrozenInstallResult("needs_attention", transaction=transaction,

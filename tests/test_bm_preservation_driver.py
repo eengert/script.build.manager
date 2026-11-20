@@ -181,17 +181,35 @@ class DriverTests(fixtures.TripwireTestCase):
 
     def test_path_observations_are_supplemental_and_never_promote_or_refuse_driver(self):
         with mock.patch.object(driver, 'stopped_path_evidence', side_effect=[
-            ('PRESENT', None), ('UNVERIFIED', None),
+            ('PRESENT', None, 'UNVERIFIED'), ('UNVERIFIED', None, 'UNVERIFIED'),
         ]):
             code, result = self.run_driver()
         self.assertEqual(code, 0)
         self.assertEqual(result['state'], 'SCOPED_PRESERVED')
         self.assertEqual(result['practical_precondition']['verdict'], 'NOT_DECIDED')
         ready = json.loads((self.evidence / 'ready.json').read_text())
-        self.assertEqual(ready['a15_stopped_evidence'], {'journal': 'PRESENT', 'paths': 'UNVERIFIED'})
+        self.assertEqual(ready['a15_stopped_evidence'], {
+            'journal': 'PRESENT', 'paths': 'UNVERIFIED', 'applied_canonical': 'UNVERIFIED',
+        })
         self.assertEqual(result['a15_stopped_evidence'], {
             'journal_before': 'PRESENT', 'journal_after': 'UNVERIFIED', 'paths': 'UNVERIFIED',
         })
+
+    def test_ready_exports_only_canonical_status_and_preserves_source_identity(self):
+        with mock.patch.object(driver, 'stopped_path_evidence', return_value=('PRESENT', ((), {}, {}), 'TRUE')):
+            code, _ = self.run_driver()
+        self.assertEqual(code, 0)
+        ready = json.loads((self.evidence / 'ready.json').read_text())
+        self.assertEqual(ready['host_commit'], 'c' * 40)
+        self.assertEqual(ready['manifest_sha256'], 'b' * 64)
+        self.assertEqual(ready['staged_candidate'], 'a' * 40)
+        self.assertFalse(ready['native_operation_authorized'])
+        self.assertEqual(ready['a15_stopped_evidence'], {
+            'journal': 'PRESENT', 'paths': 'OBSERVED', 'applied_canonical': 'TRUE',
+        })
+        association = public_witness()['association']
+        self.assertNotIn(association['entry_id'], json.dumps(ready))
+        self.assertNotIn(association['resolution_fingerprint'], json.dumps(ready))
 
     def test_review_p01_recopy_old_receipt_only_proves_form_and_file_time(self):
         destination = self.evidence

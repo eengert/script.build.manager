@@ -196,13 +196,40 @@ def observe_restart_root(store):
         emit("startup.evidence.restart_root_confined")
 
 
-def observe_publication_roots(store, library):
+def observe_publication_roots(store, library, *, journal_present=False):
     try:
-        _check_roots(_portable_profile(), (
+        paths = (
             ("", store.root, "frozen_install_transaction.lock"),
-            ("build-library", library.root, None),
-        ))
+            ("build-library", library.root, "library.lock" if journal_present else None),
+        )
+        if journal_present:
+            paths += (("install_resolutions", store.resolutions_dir, None),)
+        _check_roots(_portable_profile(), paths)
     except Exception:
         emit("startup.evidence.publication_roots_unverified")
+        return False
     else:
         emit("startup.evidence.publication_roots_confined")
+        return True
+
+
+def observe_acknowledged_publication_completion(store, library, observed):
+    """Confirm the completed authority without creating or taking another lock."""
+    from resources.lib.build_library import STATE_LIMIT, _encode, _read_at
+
+    try:
+        with _directory_chain(store.root) as (fd, _):
+            try:
+                os.stat(store.transaction_path.name, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                return
+            with _directory_chain(library.root) as (library_fd, _):
+                if library._publication_at(library_fd) != observed:
+                    return
+                if _read_at(library_fd, "applied.json", STATE_LIMIT) != _encode(observed.candidate.to_dict()):
+                    return
+    except Exception:
+        return
+    emit("startup.evidence.acknowledged_publication_no_owner_completed")
