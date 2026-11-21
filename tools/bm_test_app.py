@@ -15,6 +15,9 @@ Subcommands (every one prints deterministic, sanitized JSON on stdout):
   platform-preflight     Git-bound read-only local TCP runtime preflight
   platform-adapter-state Git-bound checked enable/disable of diagnostic driver
   af3-health authenticated read-only health inspection of the existing AF3 set
+  af3-prepare-zip generate a private, isolated pinned-release adapter candidate
+  af3-verify-zip verify the installed ZIP projection and adapter while stopped
+  af3-health-zip authenticated health using the separate pinned ZIP binding
 
 HTTP remains the default. Explicit --rpc-transport tcp is restricted to
 127.0.0.1:9090, the diagnostic control commands, and run platform_check.
@@ -60,6 +63,7 @@ import time
 import unicodedata
 import urllib.parse
 import warnings
+import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -3659,14 +3663,23 @@ def run_adapter(
     timeout: float,
     rpc_transport: str = "http",
     require_authenticated: bool = False,
+    _zip_source: Optional[Af3ZipSource] = None,
+    _expected_pid: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Invoke one BM-023A adapter mode and report its fresh, allowlisted result."""
     if mode not in ADAPTER_MODES:
         raise HelperError("argument_invalid")
     if type(require_authenticated) is not bool:
         raise HelperError("argument_invalid")
-    if mode == "platform_check" and git_repo is None:
+    if _zip_source is not None and (
+        mode != "platform_check" or git_repo is not None or rpc_transport != "http"
+        or not require_authenticated or _expected_pid is None or manifest != _zip_source.manifest
+        or manifest_sha256 != _zip_source.manifest_sha256
+    ):
         raise HelperError("argument_invalid")
+    if _zip_source is None:
+        if mode == "platform_check" and git_repo is None:
+            raise HelperError("argument_invalid")
     if mode == _adapter.XBMC_METADATA_MODE and git_repo is None:
         raise HelperError("argument_invalid")
     if rpc_transport not in ("http", "tcp") or (rpc_transport == "tcp" and (mode != "platform_check" or "username" in rpc)):
@@ -3679,7 +3692,10 @@ def run_adapter(
         raise HelperError("argument_invalid")
     target = services.target
     identity = identify(services, require="running")
-    verification = verify_installed(services, manifest, git_repo=git_repo)
+    if _zip_source is not None and identity.pid != _expected_pid:
+        raise HelperError("listener_pid_mismatch", port=8080)
+    verification = (_zip_source.verify(services) if _zip_source else
+                    verify_installed(services, manifest, git_repo=git_repo))
     if not verification["installed_equals_manifest"] or (
         git_repo is not None and not verification["installed_equals_candidate"]
     ):
@@ -3787,7 +3803,8 @@ def run_adapter(
         raise HelperError("listener_pid_mismatch", port=port)
     after = after_identity.report()["process"]
     # The run (or Kodi's updater) must not have altered the staged candidate.
-    final = verify_installed(services, manifest, git_repo=git_repo)
+    final = (_zip_source.verify(services) if _zip_source else
+             verify_installed(services, manifest, git_repo=git_repo))
     if mode in ("platform_check", "auto_keep", _adapter.XBMC_METADATA_MODE) and _platform_invocation_snapshot(target, manifest) != platform_witness:
         raise HelperError("platform_source_changed")
     if mode in _adapter.AF3_FIXTURE_MODES and _af3_invocation_snapshot(target, manifest) != fixture_witness:
@@ -3840,6 +3857,172 @@ _AF3_HEALTH_AUDIT_SHA = "6654e02f0c3da67667d6944bc4501105e953d773257b5910fb9550b
 _AF3_HEALTH_JOURNAL_SHA = "576aeb430b5d86fcdacb1c6be837ecf2f1d57c9653b4f5e800814c327d252344"
 
 
+_AF3_ZIP_COMMIT = "dcdae7bcf69df9cac5e078c7fb086ded518cdc0d"
+_AF3_ZIP_PATH = PROJECT / ".qualification-evidence/private-beta-local-package-dcdae7bcf69d/script.build.manager-0.1.0.zip"
+_AF3_ZIP_SHA = "07a53b6d72025376436fc9a78be08a34ae63bc5d7d17f91e0ed7535497abc050"
+_AF3_ZIP_TREE = "4c004f2c672830a4879e4fb93b3a3c68072d2ef548057bcd725b8833437628c8"
+_AF3_ZIP_STAGE = PROJECT / (
+    ".qualification-evidence/a15-journal-present-stage-20261120T182140Z/"
+    "stage-20261120T182335Z-dcdae7bcf69d/stage_manifest.json"
+)
+_AF3_ZIP_STAGE_SHA = "ab3339edc083deb1517406c666f99872ae52ced381e7b778f439f10728c668a6"
+_AF3_ZIP_PRIOR_DRIVER_TREE = "da73b03e894a49e89a0f38448c92f158c76fe59ec64bff3b1e57e3d2c56f40e4"
+_AF3_ZIP_EXCLUDED = "resources/config/packages/bm022-fixture/package.json"
+
+
+@dataclass(frozen=True)
+class Af3ZipSource:
+    manifest: Dict[str, Any]
+    git_binding: Dict[str, Any]
+
+    @property
+    def manifest_sha256(self):
+        return sha256_hex(manifest_bytes(self.manifest))
+
+    def verify(self, services):
+        result = verify_installed(services, self.manifest, git_repo=None)
+        if not result["installed_equals_manifest"]:
+            raise HelperError("installed_tree_mismatch")
+        return {**result, "git_binding": self.git_binding}
+
+    def receipt(self):
+        return {
+            "zip_sha256": _AF3_ZIP_SHA,
+            "zip_product_tree_sha256": self.manifest["build_manager"]["tree_sha256"],
+            "adapter_tree_sha256": self.manifest["driver"]["tree_sha256"],
+            "adapter_file_sha256": {entry["path"]: entry["sha256"]
+                                    for entry in self.manifest["driver"]["files"]},
+            "baseline_stage_manifest_sha256": _AF3_ZIP_STAGE_SHA,
+            "projection_sha256": self.manifest_sha256,
+        }
+
+
+def _af3_zip_projection(release, stage):
+    """Project the one authenticated ZIP, explicitly accounting for its two deltas."""
+    original = {entry["path"]: entry for entry in stage["build_manager"]["files"]}
+    files = []
+    seen = set()
+    prefix = BUILD_MANAGER_ID + "/"
+    with zipfile.ZipFile(io.BytesIO(release)) as archive:
+        for member in archive.infolist():
+            name = member.filename.removeprefix(prefix)
+            if (not member.filename.startswith(prefix) or not _manifest_path_ok(name)
+                    or member.is_dir() or name in seen or name not in original
+                    or member.file_size > MAX_BLOB_BYTES):
+                raise ValueError("ZIP member")
+            seen.add(name)
+            data = archive.read(member)
+            entry = dict(original[name])
+            digest = sha256_hex(data)
+            if name == "addon.xml":
+                if parse_addon_xml(data) != (BUILD_MANAGER_ID, "0.1.0"):
+                    raise ValueError("ZIP descriptor")
+                # The transformed bytes are bound to the ZIP, not a Git blob.
+                entry.pop("git_blob")
+                entry.update(sha256=digest, size=len(data))
+            elif (digest != entry["sha256"] or len(data) != entry["size"]
+                  or git_object_id(b"blob", data, stage["candidate"]["object_format"]) != entry["git_blob"]):
+                raise ValueError("ZIP source")
+            files.append(entry)
+    files.sort(key=lambda entry: entry["path"])
+    digest = tree_digest((e["path"], e["sha256"], e["size"]) for e in files)
+    if len(files) != 88 or set(original) - seen != {_AF3_ZIP_EXCLUDED} or digest != _AF3_ZIP_TREE:
+        raise ValueError("ZIP projection")
+    return {**stage["build_manager"], "files": files, "file_count": len(files),
+            "total_bytes": sum(e["size"] for e in files), "tree_sha256": digest}
+
+
+def _af3_zip_config(raw, stage, product, *, prepare):
+    """Replace or reverse one generated assignment, proving all other bytes."""
+    driver_hashes = {e["path"]: e["sha256"] for e in stage["driver"]["files"]
+                     if e["path"] in _adapter._PLATFORM_ADAPTER_FILES}
+    config_row = next(e for e in stage["driver"]["files"] if e["path"] == "adapter_config.py")
+
+    def assignment(tree):
+        binding = _adapter.platform_source_binding(
+            {e["path"]: e["sha256"] for e in tree["files"]}, driver_hashes,
+            _AF3_ZIP_COMMIT, _adapter._AF3_MANIFEST_SHA)
+        return f"PLATFORM_SOURCE_BINDING = {binding!r}\n".encode("ascii")
+
+    old, new = assignment(stage["build_manager"]), assignment(product)
+    current, replacement = (old, new) if prepare else (new, old)
+    if not raw.endswith(current) or raw.count(current) != 1:
+        raise ValueError("binding assignment")
+    transformed = raw[:-len(current)] + replacement
+    baseline = raw if prepare else transformed
+    if sha256_hex(baseline) != config_row["sha256"] or len(baseline) != config_row["size"]:
+        raise ValueError("adapter configuration identity")
+    return transformed if prepare else raw
+
+
+def load_af3_zip_source(services, repo, *, prepare):
+    """Authenticate release and original Git stage, then bind the exact five adapter files."""
+    try:
+        stage_raw = _adapter._platform_read(_AF3_ZIP_STAGE, MAX_MANIFEST_BYTES)
+        if sha256_hex(stage_raw) != _AF3_ZIP_STAGE_SHA:
+            raise ValueError("stage seal")
+        stage = validate_manifest(parse_json_strict(stage_raw))
+        if (stage["candidate"]["commit"] != _AF3_ZIP_COMMIT
+                or stage["driver"]["tree_sha256"] != _AF3_ZIP_PRIOR_DRIVER_TREE):
+            raise ValueError("stage identity")
+        git_binding = verify_git_binding(services, stage, repo)
+        if not git_binding["ok"]:
+            raise ValueError("stage Git identity")
+        release = _adapter._platform_read(_AF3_ZIP_PATH, 2 << 20)
+        if sha256_hex(release) != _AF3_ZIP_SHA:
+            raise ValueError("ZIP seal")
+        product = _af3_zip_projection(release, stage)
+    except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError):
+        raise HelperError("af3_health_refused", reason="zip_source_binding") from None
+
+    driver_root = services.target.addon_dir(DRIVER_ID)
+    try:
+        config = _adapter._platform_read(driver_root / "adapter_config.py", MAX_BLOB_BYTES)
+        config = _af3_zip_config(config, stage, product, prepare=prepare)
+    except (OSError, ValueError):
+        raise HelperError("driver_config_mismatch") from None
+
+    driver = dict(stage["driver"])
+    driver["files"] = [
+        {**entry, "sha256": sha256_hex(config), "size": len(config)}
+        if entry["path"] == "adapter_config.py" else entry for entry in driver["files"]
+    ]
+    driver["total_bytes"] = sum(e["size"] for e in driver["files"])
+    driver["tree_sha256"] = tree_digest((e["path"], e["sha256"], e["size"]) for e in driver["files"])
+    source = Af3ZipSource({**stage, "build_manager": product, "driver": driver}, git_binding)
+    services.target.require_chain(driver_root)
+    expected_driver = stage["driver"] if prepare else driver
+    if not verify_tree_dir(driver_root, expected_driver, stage["candidate"]["object_format"])["ok"]:
+        raise HelperError("installed_tree_mismatch")
+    return source, config
+
+
+def prepare_af3_zip(services, repo, output):
+    """Publish a private isolated adapter ZIP. This command has no RPC or install path."""
+    path = check_cli_path(output, services)
+    if path.suffix != ".zip":
+        raise HelperError("argument_invalid")
+    source, config = load_af3_zip_source(services, repo, prepare=True)
+    git = GitSource(repo, services.git_exe, services.git_runner)
+    identity = git.resolve_commit(_AF3_ZIP_COMMIT)
+    rows = source.manifest["driver"]["files"]
+    blobs = git.read_blobs(identity, [e["source_git_blob"] for e in rows if not e["generated"]])
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w") as archive:
+        for row in rows:
+            data = config if row["generated"] else blobs[row["source_git_blob"]]
+            if sha256_hex(data) != row["sha256"] or len(data) != row["size"]:
+                raise HelperError("driver_source_mismatch")
+            item = zipfile.ZipInfo(DRIVER_ID + "/" + row["path"])
+            item.create_system = 3
+            item.external_attr = 0o100600 << 16
+            archive.writestr(item, data)
+    raw = bundle.getvalue()
+    write_new_file_atomic(path, raw, 0o600)
+    return {"ok": True, "command": "af3-prepare-zip", **source.receipt(),
+            "adapter_zip_sha256": sha256_hex(raw), "native_health": "unverified"}
+
+
 def _af3_health_audit():
     """Authenticate sealed historical evidence; never execute its scripts."""
     try:
@@ -3865,15 +4048,24 @@ def _af3_health_audit():
             "fresh_runtime_measurement": False, "original_files": 4497, "original_directories": 254}
 
 
-def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc):
+def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc, _zip_source=None, _expected_pid=None):
     """Observe this existing set. Never complete its failed provisioning attempt.
 
     Host health reads plus the existing source-only platform diagnostic. The
     latter writes its ordinary result witness; no new in-Kodi mode is added.
     """
-    if (git_repo is None or manifest["candidate"]["commit"] != _AF3_HEALTH_SOURCE
-            or manifest_sha256 != _AF3_HEALTH_STAGE_SHA):
+    if _zip_source is None:
+        if (git_repo is None or manifest["candidate"]["commit"] != _AF3_HEALTH_SOURCE
+                or manifest_sha256 != _AF3_HEALTH_STAGE_SHA):
+            raise HelperError("argument_invalid")
+    elif (git_repo is not None or manifest != _zip_source.manifest
+          or manifest_sha256 != _zip_source.manifest_sha256):
         raise HelperError("argument_invalid")
+
+    def verify_source():
+        if _zip_source is not None:
+            return _zip_source.verify(services)
+        return verify_installed(services, manifest, git_repo=git_repo)
     address = validate_loopback_host(rpc.get("host", DEFAULT_RPC_HOST))
     if (address != "127.0.0.1" or type(rpc.get("port")) is not int or rpc["port"] != 8080
             or rpc.get("username", DEFAULT_RPC_USERNAME) != "kodi"):
@@ -3882,8 +4074,12 @@ def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc):
     historical = _af3_health_audit()
     target = services.target
     identity = identify(services, require="running")
-    verified = verify_installed(services, manifest, git_repo=git_repo)
-    if not verified["installed_equals_candidate"] or not verified["installed_equals_manifest"]:
+    if _zip_source is not None and (_expected_pid is None or identity.pid != _expected_pid):
+        raise HelperError("listener_pid_mismatch", port=8080)
+    verified = verify_source()
+    if not verified["installed_equals_manifest"] or (
+        _zip_source is None and not verified["installed_equals_candidate"]
+    ):
         raise HelperError("installed_tree_mismatch")
     journal_path = target.userdata_dir / "bm-af3-fixture-v1.jsonl"
     def journal():
@@ -3900,7 +4096,7 @@ def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc):
     # package audit or ordinary JSON-RPC inventory. Reuse the reviewed check.
     platform = run_adapter(services, mode="platform_check", manifest=manifest,
         manifest_sha256=manifest_sha256, rpc=rpc, git_repo=git_repo, timeout=300,
-        require_authenticated=True)
+        require_authenticated=True, **({"_zip_source": _zip_source, "_expected_pid": identity.pid} if _zip_source else {}))
     if (not platform["ok"] or not platform["invocation"]["authenticated"]
             or platform["invocation"]["test_app_pid"] != identity.pid
             or platform["result"].get("platform_check", {}).get("overall") != "requirements_verified"
@@ -3939,12 +4135,16 @@ def run_af3_health(services, *, manifest, manifest_sha256, git_repo, rpc):
     if settings() != before_settings or journal() != original_journal:
         raise HelperError("af3_health_refused", reason="state_changed")
     final_identity = identify(services, require="running")
-    final = verify_installed(services, manifest, git_repo=git_repo)
+    final = verify_source()
     if final_identity.pid != identity.pid:
         raise HelperError("listener_pid_mismatch", port=8080)
-    if not final["installed_equals_candidate"] or _platform_invocation_snapshot(target, manifest) != witness:
+    if not final["installed_equals_manifest"] or (
+        _zip_source is None and not final["installed_equals_candidate"]
+    ) or _platform_invocation_snapshot(target, manifest) != witness:
         raise HelperError("platform_source_changed")
-    return {"ok": True, "command": "af3-health", "candidate_commit": _AF3_HEALTH_SOURCE,
+    return {"ok": True, "command": "af3-health-zip" if _zip_source else "af3-health",
+        "candidate_commit": manifest["candidate"]["commit"],
+        **({"zip_binding": _zip_source.receipt()} if _zip_source else {}),
         "manifest_sha256": manifest_sha256, "authenticated": True, "listener_pid_verified": True,
         "identity": final_identity.report(), "git_binding": final["git_binding"],
         "original_package_source_integrity": historical,
@@ -4868,6 +5068,19 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--rpc-transport", choices=("http",), default="http")
     _add_output(health)
 
+    zip_health = commands.add_parser("af3-health-zip", help="native health of the pinned AF3 release ZIP")
+    zip_health.add_argument("--repo")
+    _add_rpc_arguments(zip_health)
+    _add_output(zip_health)
+    prepare_zip = commands.add_parser("af3-prepare-zip", help="generate an isolated ZIP-bound adapter candidate")
+    prepare_zip.add_argument("--repo")
+    prepare_zip.add_argument("--candidate-zip", required=True)
+    _add_output(prepare_zip)
+
+    verify_zip = commands.add_parser("af3-verify-zip", help="verify the stopped ZIP and adapter installation")
+    verify_zip.add_argument("--repo")
+    _add_output(verify_zip)
+
     quit_parser = commands.add_parser("quit", help="gracefully quit the Test.app over loopback RPC")
     _add_rpc_arguments(quit_parser)
     quit_parser.add_argument("--timeout", type=float, help="seconds to wait for the process to exit")
@@ -5001,6 +5214,24 @@ def _dispatch(args: argparse.Namespace, services: Services) -> Tuple[Dict[str, A
         if not payload["adapter_ok"]:
             return payload, EXIT_ADAPTER_FAILED
         return payload, EXIT_OK if payload["ok"] else EXIT_FAILED
+    if command in ("af3-prepare-zip", "af3-verify-zip", "af3-health-zip"):
+        repo = _git_repo(args, services)
+        if command == "af3-prepare-zip":
+            return prepare_af3_zip(services, repo, args.candidate_zip), EXIT_OK
+        running = command == "af3-health-zip"
+        identity = identify(services, require="running" if running else "not_running")
+        source, _ = load_af3_zip_source(services, repo, prepare=False)
+        if not running:
+            source.verify(services)
+            if identify(services, require="not_running") != identity:
+                raise HelperError("platform_source_changed")
+            return {"ok": True, "command": command, **source.receipt(),
+                    "identity": identity.report(), "native_health": "unverified"}, EXIT_OK
+        config_rpc = load_config(Path(args.config), services)["rpc"] if args.config else {}
+        return run_af3_health(services, manifest=source.manifest,
+            manifest_sha256=source.manifest_sha256, git_repo=None,
+            rpc=_merge_rpc(config_rpc, args), _zip_source=source,
+            _expected_pid=identity.pid), EXIT_OK
     if command == "af3-health":
         manifest, manifest_sha = load_manifest(args.manifest, services)
         config_rpc = load_config(Path(args.config), services)["rpc"] if args.config else {}

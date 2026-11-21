@@ -87,6 +87,35 @@ class HealthTests(unittest.TestCase):
         self.assertEqual((cache/'untrusted.pyc').read_bytes(),b'untrusted synthetic bytes')
         self.assert_no_mutation()
 
+    def run_zip_health(self):
+        source = host.Af3ZipSource(self.w.manifest, {"checked": True, "ok": True})
+        return self.run_health(manifest_sha256=source.manifest_sha256,
+                               git_repo=None, _zip_source=source, _expected_pid=self.w.pid)
+
+    def test_zip_route_reuses_authenticated_platform_and_health(self):
+        report = self.run_zip_health()
+        self.assertEqual(report["command"], "af3-health-zip")
+        self.assertTrue(report["authenticated"])
+        self.assertEqual(report["platform_check"]["overall"], "requirements_verified")
+        self.assertEqual(len(report["native_registration_health"]["packages"]), 17)
+        self.assert_no_mutation()
+
+    def test_zip_route_refuses_listener_or_missing_pil_authority(self):
+        self.w.listener_pids = {991122}
+        with self.assertRaisesRegex(host.HelperError, "listener_pid_mismatch"):
+            self.run_zip_health()
+        self.assertEqual(self.w.executed, [])
+        self.w.listener_pids = {self.w.pid}
+        self.platform["ok"] = False
+        diagnostic = self.platform["platform_check"]
+        diagnostic["overall"] = "unverified"
+        diagnostic["graph"] = {"status": "refused", "failure_category": "provider_unverified"}
+        for provider in diagnostic["providers"].values():
+            provider["closure_status"] = "unverified"
+        with self.assertRaisesRegex(host.HelperError, "af3_health_refused"):
+            self.run_zip_health()
+        self.assert_no_mutation()
+
     def test_missing_package_refuses(self):
         self.native.pop(next(iter(self.native)))
         with self.assertRaises(host.HelperError):self.run_health()
