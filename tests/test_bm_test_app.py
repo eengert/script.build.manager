@@ -6204,7 +6204,7 @@ class TestStaticSafety(unittest.TestCase):
             "__future__", "argparse", "ast", "base64", "ctypes", "errno", "getpass", "hashlib", "http", "io", "ipaddress", "json",
             "os", "plistlib", "re", "secrets", "shutil", "sqlite3", "stat", "subprocess", "sys", "tempfile",
             "time", "unicodedata", "urllib", "warnings", "xml", "dataclasses", "datetime", "pathlib", "types",
-            "typing", "tools", "socket",
+            "typing", "tools", "socket", "zipfile",
         }
         self.assertEqual(imported - allowed, set())
         # The explicit PID-bound IPv4 TCP option now needs socket; other
