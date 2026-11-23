@@ -1,3 +1,51 @@
+# Native AF3 beta workflow — INCONCLUSIVE (2026-11-23)
+
+- One approved portable launch at da9da5988d9a67333d3e0b68fbac7cb99551ae28. Native admission, fallback, manual AF3 Keep and Create passed. Saved build has the exact 15 typed public settings and 17 expected artifacts.
+- One confirmed Install restored typed Slide=false, then ended in public CONFIGURE ACTION_FAILED / FROZEN_CONFIGURATION_ACTION_FAILED. Prior applied association stayed in place. Failed transaction retained; no second reconciliation.
+- Graceful quit, zero processes and original adapter verified. Cache restore preserved 227 live collisions and all 235 quarantined originals. Packages and the two known generated includes verified. See .qualification-evidence/active-af3-native-da9da59/REPORT.md.
+- Next product task: isolate the AF3 public configuration action failure and verify truthful terminal completion, association and no-op reconciliation. Preserve the failed fixture unless separately authorized.
+
+# AF3 observer Keychain integration — ready for narrow review (2026-11-23)
+
+Commit da9da5988d9a67333d3e0b68fbac7cb99551ae28 adds observer --keychain using the existing credential provider. Availability yes. All 47 affected tests passed. Interactive remains the default. No Test.app launch or mutation. Next: narrow independent review, then use the two documented diagnostic commands during the authorized run.
+
+# Approved native AF3 execution — stopped at credential handoff (2026-11-23)
+
+Fresh stopped admission passed at f4f6b2336d92f225f16b5e12a0fcb25511e0cd6f. Original adapter and caches remain in place. No launch spent. Operator availability for the hidden local HTTP password prompts is required before staging and launch. See `.qualification-evidence/active-af3-approved-20261123/REPORT.md`.
+
+# AF3 admission bridge — ready for independent review (2026-11-23)
+
+- Commit `f4f6b2336d92f225f16b5e12a0fcb25511e0cd6f` adds the stopped exact-file adapter swap, read-only authenticated origin/startup observer, offline tests and combined runbook. Affected 106 and final focused 10 passed. See `.qualification-evidence/af3-admission-bridge-20261123/REPORT.md`.
+- Fixed product and adapter candidate hashes matched. No live target access or changes. Runtime HOME registration, startup marker/cache and D-028/PIL remain native checks.
+- Next: independently review only the bridge, then use the combined runbook under the bounded native authorization. Preserve recovery artifacts on any refusal.
+
+# Active AF3 native qualification — blocked after stopped admission (2026-11-22)
+
+Stopped admission passed on 05d48d9, including 17 store hits, 235 exact caches, original adapter and public baseline. Separate embedded AF3 source/HOME-origin observation remains unavailable on the admitted route. No staging, cache moves or launch. See `.qualification-evidence/active-af3-execution-20261122/REPORT.md`.
+
+# AF3 ZIP-bound adapter — offline candidate ready for independent review (2026-11-21)
+
+- Host, tests and runbook committed in `9e63148804ccf691766dfd9f08cda3b153819f07`; cache tool is separate at `f7fa0da155ad21b8b0b351036f2bb978510986d9`.
+- Isolated five-file candidate generated and reproduced byte for byte, SHA-256 `76ce64952561dd79df53f76c0efae28a28ad9074b1254e00852f99b0954acceb`. Exact ZIP and Git-stage route tests passed. Native health remains unverified. See `.qualification-evidence/af3-zip-binding-20261121/REPORT.md` for validation identities and cleanup.
+- Next: independent review of those two commits. Obtain explicit adapter-only staging authority and verify fresh stopped admission before the one authorized native AF3 run.
+
+# AF3 admission tooling — BLOCKED (2026-11-21)
+
+- Committed cache quarantine and restore tool, scratch tests and runbook at `f7fa0da155ad21b8b0b351036f2bb978510986d9`. Six focused tests passed. See `.qualification-evidence/af3-admission-tooling-20261121/REPORT.md` for evidence and cleanup.
+- The current adapter rejects the ZIP's altered addon.xml and missing staged fixture before native D-028/PIL. Scratch exact ZIP binding recognition does not provide native evidence. No native route, app access or deployment.
+- Next: independent cache review and separately review/authorize a ZIP-specific runtime binding or equivalent diagnostic. Then fresh admission before any cache move or launch.
+
+# Active AF3 normal-launch qualification — BLOCKED (2026-11-21)
+
+Fresh fixed-target identify verified stopped, zero processes. Phase 1 blocked by absence of a reviewed reversible quarantine/restore procedure. The existing health diagnostic also pins a different installed tree. No live mutation or launch. See `.qualification-evidence/active-af3-normal-launch-admission-20261121/REPORT.md` for evidence and the two next admission requirements.
+
+# WF-TESTAPP-CONFINED-LAUNCH — blocked (2026-11-21)
+
+- Existing Kodi 8080 wildcard startup conflicts with the tested Seatbelt rules. A local-only wildcard answered on both host addresses. Adding a remote-loopback rule only to inbound prevented listen even with an explicit loopback bind.
+- Clean incoming `agent/codex` HEAD `dcdae7bcf69df9cac5e078c7fb086ded518cdc0d`. No launcher patch or commit. No native actions or installed MCP changes.
+- Evidence and cleanup recorded in `.qualification-evidence/af3-confined-launch-admission-20261121/REPORT.md`. Scratch children were reaped.
+- Next gate requires a reviewed loopback-only 8080 listener or Eric's explicit scope decision on an equivalent authenticated IPC path. Independent review and separate authorization precede native use.
+
 # BM-UI-NATIVE-SKIN-STAGE — PASS (2026-11-10)
 
 - Done: one supported stage of independently reviewed `20a75f7b8506d46847590a3a1d59b4959cfb254e`, agent/codex, unchanged HEAD. Correct disposable Test.app/zero-process admission passed; previous installed candidate 50c5f5ffe51058f1dc561e94f7567d8818971b42 and adapter verified against its manifest first. Existing approved machine-local configuration hash unchanged and validated normally.
