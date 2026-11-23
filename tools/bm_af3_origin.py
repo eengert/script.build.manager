@@ -1,5 +1,6 @@
 """Read-only AF3 registration and bounded startup-source evidence for Test.app."""
 import argparse
+from dataclasses import replace
 import json
 import os
 import struct
@@ -9,6 +10,7 @@ from tools import bm_af3_cache as cache
 from tools import bm_af3_adapter_stage as stage
 from tools import bm_profile_isolation as fs
 from tools import bm_test_app as host
+from tools import bm_test_app_keychain as keychain
 
 ADDON = 'plugin.video.themoviedb.helper'
 MONITOR = ADDON + '/resources/tmdbhelper/lib/monitor/service.py'
@@ -139,8 +141,12 @@ def main():
     running.add_argument('--baseline', required=True)
     running.add_argument('--baseline-sha256', required=True)
     running.add_argument('--expected-pid', type=int, required=True)
+    running.add_argument('--keychain', action='store_true',
+                         help='use the fixed Test.app HTTP Keychain item instead of a Terminal prompt')
     args = parser.parse_args()
     services = host.Services.production()
+    if args.command == 'observe' and args.keychain:
+        services = replace(services, password_prompt=keychain.make_keychain_password_prompt())
     native = fs.Native()
     try:
         if args.command == 'prepare':

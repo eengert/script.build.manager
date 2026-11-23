@@ -44,12 +44,19 @@ refusal. Never bypass a mismatch by copying a config over the destination.
    af3-health-zip workflow against authenticated loopback HTTP 8080. Require
    requirements_verified, the D-028/PIL authority and all 17 exact dependency
    versions enabled and nonbroken. Preserve that result and use its PID below.
+
+       python3 -B tools/bm_test_app_keychain.py af3-health-zip --rpc-host 127.0.0.1 --rpc-port 8080 --rpc-user kodi --output /absolute/evidence/af3-health-zip.json
+
 4. With Estuary still active and before launching any add-on manually, run:
 
-       python3 -B -m tools.bm_af3_origin observe --baseline /absolute/evidence/af3-before-launch.json --baseline-sha256 BASELINE_SHA256 --expected-pid HEALTH_PID
+       python3 -B -m tools.bm_af3_origin observe --keychain --baseline /absolute/evidence/af3-before-launch.json --baseline-sha256 BASELINE_SHA256 --expected-pid HEALTH_PID
 
-   The existing helper prompts for the HTTP password on the controlling
-   terminal. Keep credentials out of arguments, logs and evidence.
+   Both commands use the reviewed local Keychain item `BM-TestApp-HTTP-RPC`
+   for account `kodi` when challenged by the verified listener. Missing,
+   inaccessible or malformed credentials stop admission. For interactive
+   use, invoke `tools/bm_test_app.py` for health and omit `--keychain` for
+   the observer. The controlling-terminal prompt hides input. Keep
+   credentials out of arguments, the environment, logs and evidence.
    Retain the sanitized JSON output. Require status observed, the same PID,
    authenticated true, 17 portable_home registrations, startup_marker true and
    the fresh monitor cache digest. A missing, substituted or unrecognized
