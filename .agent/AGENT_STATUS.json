@@ -1,7 +1,7 @@
 {
   "agent": "codex",
-  "active_agent": "codex",
-  "status": "native_inconclusive",
+  "active_agent": "claude",
+  "status": "idle",
   "task": "BM-ITEM4-AF3-NATIVE-BETA",
   "head": "da9da5988d9a67333d3e0b68fbac7cb99551ae28",
   "report": ".qualification-evidence/active-af3-native-da9da59/REPORT.md",
@@ -609,7 +609,7 @@
                                                                                                 "previous_task_record": {
                                                                                                   "active_agent": "codex",
                                                                                                   "status": "review_pending",
-                                                                                                  "task": "Item 8 AF3 RB-1/RB-2 correction \u2014 READY FOR INDEPENDENT RE-REVIEW",
+                                                                                                  "task": "Item 8 AF3 RB-1/RB-2 correction — READY FOR INDEPENDENT RE-REVIEW",
                                                                                                   "reason": "Both bypasses reproduced and corrected; zero mutation proofs; 3891 full offline PASS; 10 guard removals detected.",
                                                                                                   "last_commit": "9bc7ad180f86f8b04da99dabe28601bbc6c7f7a8",
                                                                                                   "updated_at": "2026-10-19T16:30:32.970991+00:00",
@@ -619,7 +619,7 @@
                                                                                                   "previous_task_record": {
                                                                                                     "active_agent": "codex",
                                                                                                     "status": "review_pending",
-                                                                                                    "task": "Item 8 AF3 F-1 final identity correction \u2014 READY FOR RE-REVIEW",
+                                                                                                    "task": "Item 8 AF3 F-1 final identity correction — READY FOR RE-REVIEW",
                                                                                                     "reason": "AF3 identity refusal corrected; RG-1..RG-7 covered; 3879 full offline PASS; 16 mutation runs detected.",
                                                                                                     "last_commit": "d09a38dead10b5fcb46115a55508f75d24fc2b71",
                                                                                                     "updated_at": "2026-10-19T14:19:39.643870+00:00",
@@ -629,7 +629,7 @@
                                                                                                     "previous_task_record": {
                                                                                                       "active_agent": "codex",
                                                                                                       "status": "paused",
-                                                                                                      "task": "Item 8 AF3 correction \u2014 LOW-QUOTA CHECKPOINT; PARTIAL",
+                                                                                                      "task": "Item 8 AF3 correction — LOW-QUOTA CHECKPOINT; PARTIAL",
                                                                                                       "reason": "Operator immediate stop. Final affected 1064 PASS; 9 safety mutants detected; offline closure PASS. Final full suite interrupted exit 130; independent review pending.",
                                                                                                       "last_commit": "1b55a8d16309390c456b97f1eebc4f5142695a1c",
                                                                                                       "updated_at": "2026-10-18T20:09:16.646741+00:00",
@@ -655,7 +655,7 @@
                                                                                                           "previous_task_record": {
                                                                                                             "active_agent": "codex",
                                                                                                             "status": "idle",
-                                                                                                            "task": "Item 8 Create capture Stage 1 \u2014 COMPLETE offline; STOP for ChatGPT review",
+                                                                                                            "task": "Item 8 Create capture Stage 1 — COMPLETE offline; STOP for ChatGPT review",
                                                                                                             "reason": "Durable capture-only foundation locally committed; native Create/startup/runtime not activated. Final focused 657 PASS; full 3488 with only 2 independently reproduced exact-baseline failures. Item 8 remains OPEN. Stage 2 requires separate authority after review.",
                                                                                                             "last_commit": "b908b687f306566403f2cf6b1da88a90e1243d3e",
                                                                                                             "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
@@ -727,7 +727,7 @@
                                                                                                                           "previous_task_record": {
                                                                                                                             "active_agent": "codex",
                                                                                                                             "status": "idle",
-                                                                                                                            "task": "D-028 Test.app runtime verification \u2014 NOT PASS admission",
+                                                                                                                            "task": "D-028 Test.app runtime verification — NOT PASS admission",
                                                                                                                             "reason": "PIL classification/staging/UI PASS; production builtin xbmc.python authority fails closed on Kodi -32602. Stop for bounded correction authorization.",
                                                                                                                             "last_commit": "8480a25f9556c9a55c4ae663fedbe250faa51b3a",
                                                                                                                             "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
@@ -1317,7 +1317,7 @@
                                                                                                     },
                                                                                                     "prior_status_before_af3_f1_20261019": {
                                                                                                       "status": "review_pending",
-                                                                                                      "task": "Item 8 AF3 correction \u2014 READY FOR INDEPENDENT RE-REVIEW",
+                                                                                                      "task": "Item 8 AF3 correction — READY FOR INDEPENDENT RE-REVIEW",
                                                                                                       "reason": "Final full offline suite 3865 PASS, exit 0; no post-checkpoint source changes. Evidence closeout complete; independent Claude review required before runtime staging.",
                                                                                                       "last_commit": "1b55a8d16309390c456b97f1eebc4f5142695a1c",
                                                                                                       "updated_at": "2026-10-19T11:12:15.663733+00:00",
@@ -1406,7 +1406,7 @@
                                                                                             "prior_status_before_d028_regression_correction_20261020": {
                                                                                               "agent": "codex",
                                                                                               "status": "blocked",
-                                                                                              "task": "Item 8 D-028 preparation correction \u2014 resumed validation",
+                                                                                              "task": "Item 8 D-028 preparation correction — resumed validation",
                                                                                               "result": "BLOCKED: complete guarded suite has 14 failure reports and 6 errors; no commit",
                                                                                               "head": "84f524a1a298bda520e241ff1e0ba99c244ac76f",
                                                                                               "review_range": "84f524a1a298bda520e241ff1e0ba99c244ac76f plus uncommitted candidate.patch; SHA-256 ed4f685830593bc4a16f24188ff8f9219a05e51f0e3eda0107e1067c505e59ad",
@@ -1578,5 +1578,10 @@
         }
       }
     }
-  }
+  },
+  "reason": null,
+  "last_commit": "3fe6f8f",
+  "matrix_sha": "66b0fd8a123ef778b23ba42703937b07eefc4e6f",
+  "next_agent": null,
+  "updated_at": "2026-11-23T20:19:53Z"
 }
